@@ -160,13 +160,43 @@ func treeIdentity(dir string) (real string, dev, ino uint64, err error) {
 	return real, uint64(st.Dev), uint64(st.Ino), nil // Dev is an int32 on darwin
 }
 
-// gitHead is the commit HEAD names in dir, "" when dir is not a git checkout or has no commit.
+// probeGit runs the git of this package's tree checks (gitHeadOf, treeMatch), as a variable so that a test can fail it.
+var probeGit = source.Probe
+
+// gitProbeOptions are the options of those runs: the C locale, so that source.NotARepository can read git's answer.
+var gitProbeOptions = source.ProbeOptions{Limit: 1 << 16, Timeout: gitprobe.Timeout, Env: []string{"LC_ALL=C"}}
+
+// gitHead is gitHeadOf with a git that could not answer read as no HEAD: the HEAD of a spawn-hook record (NewAssignment), which no
+// writer ever replaces.
 func gitHead(dir string) string {
-	out, err := source.Probe(dir, source.ProbeOptions{Limit: 1 << 16, Timeout: gitprobe.Timeout}, "rev-parse", "--verify", "-q", "HEAD^{commit}")
-	if err != nil {
-		return ""
+	head, _ := gitHeadOf(dir)
+	return head
+}
+
+// gitHeadOf is the commit HEAD names in dir: "" with no error when git answers that dir is in no repository or that HEAD names no
+// commit yet, and an error when git gave no answer (it could not start, timed out or failed otherwise). A flow record is never made
+// from no answer (CRW-1496): an empty Head asks no ancestry of a later receipt.
+func gitHeadOf(dir string) (string, error) {
+	out, err := probeGit(dir, gitProbeOptions, "rev-parse", "--verify", "-q", "HEAD^{commit}")
+	switch {
+	case err == nil:
+		if head := text.Trim(string(out)); head != "" {
+			return head, nil
+		}
+		return "", fmt.Errorf("git rev-parse HEAD in %s printed no commit", dir)
+	case gitExitCode(err) == 1, source.NotARepository(err):
+		return "", nil
 	}
-	return text.Trim(string(out))
+	return "", fmt.Errorf("git rev-parse HEAD in %s: %w", dir, err)
+}
+
+// gitExitCode is the exit status of a git that ran and failed, 0 for any other error.
+func gitExitCode(err error) int {
+	var exit *source.ExitError
+	if errors.As(err, &exit) {
+		return exit.Code
+	}
+	return 0
 }
 
 // NewAssignment builds the record of one dispatch for session. worktree is the tree the packet assigned ("" for none without a
@@ -313,6 +343,8 @@ func (a Assignment) Remove(cwd string) {
 //   - a record of another session, origin, mode, root or op, or one neither open nor claimed, is an error;
 //   - a claimed record (or one an actor holds) is that child's contract and is returned as it is;
 //   - an open record whose tree still matches (another writer replaced it) is returned as it is;
+//   - an open record whose tree cannot be checked (git gave no answer, treeMatch) is an error, and so is one with a recorded HEAD
+//     that a would replace by none: a record never loses its ancestry check;
 //   - an open record whose tree no longer matches is replaced by a, and a is returned. Its CreatedAt is made strictly later than
 //     the replaced record's (that time and one nanosecond when the clock gives no later one), so a receipt the replaced contract
 //     would take never predates the new one.
@@ -337,9 +369,18 @@ func (a Assignment) replaceOpen(cwd string) (Assignment, error) {
 			return fmt.Errorf("the flow evidence assignment %s is recorded for root %s op %s, not root %s op %s", a.ID, rec.Root, rec.Op, a.Root, a.Op)
 		case rec.Status != AssignmentOpen && rec.Status != AssignmentClaimed:
 			return fmt.Errorf("the flow evidence assignment %s is %s", a.ID, rec.Status)
-		case rec.Status != AssignmentOpen || rec.AgentID != "" || treeStillMatches(rec):
+		case rec.Status != AssignmentOpen || rec.AgentID != "":
 			out = rec
 			return nil
+		}
+		if ok, err := treeMatch(rec); err != nil {
+			return fmt.Errorf("the tree of the flow evidence assignment %s cannot be checked: %w", a.ID, err)
+		} else if ok {
+			out = rec
+			return nil
+		}
+		if rec.Head != "" && a.Head == "" {
+			return fmt.Errorf("the flow evidence assignment %s records HEAD %s, and the tree %s now has none to record", a.ID, rec.Head, a.Root)
 		}
 		next := a
 		if prev, err := time.Parse(time.RFC3339Nano, rec.CreatedAt); err == nil {
@@ -732,31 +773,61 @@ func JudgeAssignedReceiptTurn(cwd, sessionID, agentID, turnID, transcriptPath, m
 		return AssignedRefused
 	}
 	dir := filepath.Join(stateDir(cwd), AssignmentsSubdir, sessionRecordDir(sessionID))
+	if beforeClaim != nil {
+		beforeClaim()
+	}
 	if !claimAssignment(filepath.Join(dir, a.ID+".json"), a.ID, sessionID, agentID, update) {
 		return AssignedRefused
 	}
 	return AssignedAccepted
 }
 
-// treeStillMatches reports whether the tree of assignment a is still the one it was recorded for: Root is absolute and names the
-// same real path, device and inode now, and a recorded Head is an ancestor of HEAD now (a Head of "" asks nothing). It is the tree
-// half of the claim's check (assignedReceiptValid), and EnsureFlowAssignment asks it before it reuses an open record (CRW-1496), so
-// the reuse check and the claim stay one rule.
-func treeStillMatches(a Assignment) bool {
+// beforeClaim, when set, runs between the judgement of a receipt and its claim under the record's lock: a test makes the record
+// change there (CRW-1496).
+var beforeClaim func()
+
+// treeMatch reports whether the tree of assignment a is still the one it was recorded for: Root is absolute and names the same real
+// path, device and inode now, and a recorded Head is an ancestor of HEAD now (a Head of "" asks nothing). The ancestry is git's
+// answer: yes, no (not an ancestor, a commit this history does not have, no commit or no repository now), or an error when git gave
+// none, which is never read as a mismatch (CRW-1496). It is the tree half of the claim's check (assignedReceiptValid), and
+// EnsureFlowAssignment and replaceOpen ask it before they reuse or replace an open record, so the reuse check and the claim stay one
+// rule.
+func treeMatch(a Assignment) (bool, error) {
 	if a.Root == "" || !filepath.IsAbs(a.Root) {
-		return false
+		return false, nil
 	}
 	real, dev, ino, err := treeIdentity(a.Root)
 	if err != nil || real != a.Root || dev != a.RootDev || ino != a.RootIno {
-		return false
+		return false, nil
 	}
-	if a.Head != "" {
-		_, err := source.Probe(a.Root, source.ProbeOptions{Limit: 1 << 16, Timeout: gitprobe.Timeout}, "merge-base", "--is-ancestor", a.Head, "HEAD")
-		if err != nil {
-			return false
-		}
+	if a.Head == "" {
+		return true, nil
 	}
-	return true
+	_, err = probeGit(a.Root, gitProbeOptions, "merge-base", "--is-ancestor", a.Head, "HEAD")
+	if err == nil {
+		return true, nil
+	}
+	if gitExitCode(err) == 1 {
+		return false, nil // not an ancestor
+	}
+	// merge-base also fails when a name it was given resolves to no commit: HEAD now, or the recorded Head in this history
+	head, herr := gitHeadOf(a.Root)
+	if herr != nil {
+		return false, herr
+	}
+	if head == "" {
+		return false, nil
+	}
+	if _, oerr := probeGit(a.Root, gitProbeOptions, "rev-parse", "--verify", "-q", a.Head+"^{commit}"); gitExitCode(oerr) == 1 {
+		return false, nil
+	}
+	return false, fmt.Errorf("git merge-base --is-ancestor %s HEAD in %s: %w", a.Head, a.Root, err)
+}
+
+// treeStillMatches is treeMatch for a check that refuses on no answer: the claim's (assignedReceiptValid).
+func treeStillMatches(a Assignment) bool {
+	ok, err := treeMatch(a)
+	return err == nil && ok
 }
 
 // assignedReceiptValid is the receipt check against one tree assignment: the tree still matches (treeStillMatches) and the receipt

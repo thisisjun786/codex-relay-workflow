@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 )
 
 // CRW-1482 (1209 field trial, defect C9). A flow run's executor works in the call worktree the engine made for it, while the stop
@@ -654,6 +656,177 @@ func TestFlowAssignment(t *testing.T) {
 			if rec := r.record(old.ID); rec != other {
 				t.Fatalf("the file holds %+v, want %+v", rec, other)
 			}
+		})
+	})
+
+	// The claim decides on the record it holds under the lock. The record may be replaced between the judgement and the claim (the
+	// tree recreated and the record placed again, replaceOpen): the claim then checks the receipt against the new contract as the
+	// judgement would have, its tree, HEAD and CreatedAt included, so a receipt older than the record it is accepted against is
+	// refused (CRW-1496).
+	t.Run("ReplacedBetweenCheckAndClaim", func(t *testing.T) {
+		body := "$ go test ./x\nok\n"
+		race := func(t *testing.T, receiptAt func(fresh Assignment) time.Time) (*flowTestRig, Assignment, Assignment, AssignedVerdict) {
+			t.Helper()
+			r := newFlowTestRig(t)
+			old := r.mint(flowTestOp, time.Now().Add(-2*time.Minute))
+			receipt := FlowReceiptPath(old)
+			flowWrite(t, receipt, body, time.Now().Add(-time.Minute))
+			tr := r.transcript(flowSpawnText(old.Op, old.ID, receipt))
+			var fresh Assignment
+			beforeClaim = func() {
+				beforeClaim = nil
+				flowRecreateTree(t, r.tree)
+				next, err := NewFlowAssignment(flowTestOwner, old.ID, r.tree, flowTestOp, time.Now())
+				assignMust(t, err)
+				got, err := EnsureFlowAssignment(r.cwd, next)
+				if err != nil || got.RootIno == old.RootIno || got != next {
+					t.Fatalf("the record placed again after the recreate = %+v, %v; want %+v", got, err, next)
+				}
+				fresh = got
+				flowWrite(t, FlowReceiptPath(fresh), body, receiptAt(fresh))
+			}
+			t.Cleanup(func() { beforeClaim = nil })
+			v := JudgeAssignedReceiptTurn(r.cwd, flowTestOwner, "agent-1", "turn-1", tr, flowTestJSON, "")
+			if beforeClaim != nil {
+				t.Fatal("the claim ran without the record replaced before it")
+			}
+			return r, old, fresh, v
+		}
+		t.Run("older receipt refused", func(t *testing.T) {
+			// the old receipt is put back in the new tree with its modification time kept: it predates the new record
+			r, old, fresh, v := race(t, func(Assignment) time.Time { return time.Now().Add(-time.Minute) })
+			if v != AssignedRefused {
+				t.Fatalf("a receipt older than the record it is claimed against judged %v", v)
+			}
+			if rec := r.record(old.ID); rec != fresh {
+				t.Fatalf("the record after the refused claim: %+v, want the new open record %+v", rec, fresh)
+			}
+			if got, ok := AcceptedReceipt(r.cwd, flowTestOwner, old.ID); ok {
+				t.Fatalf("AcceptedReceipt = %+v after a refused claim", got)
+			}
+		})
+		t.Run("receipt of the new contract accepted", func(t *testing.T) {
+			r, old, fresh, v := race(t, func(fresh Assignment) time.Time {
+				created, err := time.Parse(time.RFC3339Nano, fresh.CreatedAt)
+				assignMust(t, err)
+				return created.Add(time.Second)
+			})
+			if v != AssignedAccepted {
+				t.Fatalf("a receipt of the record held at the claim judged %v", v)
+			}
+			rec := r.record(old.ID)
+			if rec.Status != AssignmentClaimed || rec.RootIno != fresh.RootIno || rec.CreatedAt != fresh.CreatedAt || rec.ReceiptDigest != flowDigest(body) {
+				t.Fatalf("the claimed record %+v, want the new contract %+v claimed", rec, fresh)
+			}
+			if got, ok := AcceptedReceipt(r.cwd, flowTestOwner, old.ID); !ok || string(got.Bytes) != body {
+				t.Fatalf("AcceptedReceipt = %+v, %v", got, ok)
+			}
+		})
+		t.Run("accepted receipt older than its record", func(t *testing.T) {
+			// AcceptedReceipt reads the receipt with the claim's rule: a file older than the record's CreatedAt is no accepted receipt,
+			// whatever digest it has
+			r := newFlowTestRig(t)
+			a := r.mint(flowTestOp, time.Now().Add(-time.Minute))
+			flowAcceptIn(t, r, a, "agent-1")
+			flowWrite(t, FlowReceiptPath(a), "$ go test ./x\nok\n", time.Now().Add(-time.Hour))
+			if got, ok := AcceptedReceipt(r.cwd, flowTestOwner, a.ID); ok {
+				t.Fatalf("AcceptedReceipt took a receipt older than its record: %+v", got)
+			}
+		})
+	})
+
+	// A git that fails is no answer (CRW-1496): neither the HEAD of a new record nor the ancestry check of a recorded one is read from
+	// it. NewFlowAssignment, EnsureFlowAssignment and replaceOpen return the error, so the caller holds the call, and no record loses
+	// its recorded HEAD.
+	t.Run("GitFailureIsAnError", func(t *testing.T) {
+		setup := func(t *testing.T) (*flowTestRig, Assignment, []byte) {
+			t.Helper()
+			r := newFlowTestRig(t)
+			flowGitRepo(t, r.tree)
+			flowGitCommit(t, r.tree, "first")
+			old := r.mint(flowTestOp, time.Now().Add(-time.Minute))
+			if old.Head == "" {
+				t.Fatal("the minted record has no head")
+			}
+			raw, err := os.ReadFile(r.recordPath(old.ID))
+			assignMust(t, err)
+			return r, old, raw
+		}
+		// failGit makes the next n git runs of the package fail as a git that timed out (n < 0: every run), and counts them.
+		failGit := func(t *testing.T, n int) *int {
+			t.Helper()
+			failed := new(int)
+			real := probeGit
+			probeGit = func(dir string, o source.ProbeOptions, args ...string) ([]byte, error) {
+				if n < 0 || *failed < n {
+					*failed++
+					return nil, errors.New("git timed out")
+				}
+				return real(dir, o, args...)
+			}
+			t.Cleanup(func() { probeGit = real })
+			return failed
+		}
+		unchanged := func(t *testing.T, r *flowTestRig, id string, raw []byte) {
+			t.Helper()
+			if now, err := os.ReadFile(r.recordPath(id)); err != nil || string(now) != string(raw) {
+				t.Fatalf("the record changed (%v):\n%s\nwant\n%s", err, now, raw)
+			}
+		}
+		t.Run("new record", func(t *testing.T) {
+			r, old, _ := setup(t)
+			failGit(t, 1)
+			if a, err := NewFlowAssignment(flowTestOwner, old.ID, r.tree, flowTestOp, time.Now()); err == nil {
+				t.Fatalf("NewFlowAssignment with git failing = %+v, want an error (never an empty head)", a)
+			}
+		})
+		t.Run("ensure fails once", func(t *testing.T) {
+			r, old, raw := setup(t)
+			fresh, err := NewFlowAssignment(flowTestOwner, old.ID, r.tree, flowTestOp, time.Now())
+			assignMust(t, err)
+			failed := failGit(t, 1)
+			if got, err := EnsureFlowAssignment(r.cwd, fresh); err == nil {
+				t.Fatalf("EnsureFlowAssignment with git failing once = %+v, want the error", got)
+			}
+			if *failed != 1 {
+				t.Fatalf("%d git runs failed, want 1", *failed)
+			}
+			unchanged(t, r, old.ID, raw)
+			// git answers again: the record is the contract still, and is kept
+			if got, err := EnsureFlowAssignment(r.cwd, fresh); err != nil || got != old {
+				t.Fatalf("EnsureFlowAssignment once git answers = %+v, %v; want %+v", got, err, old)
+			}
+			unchanged(t, r, old.ID, raw)
+		})
+		t.Run("ensure during an outage", func(t *testing.T) {
+			// the record NewFlowAssignment made before the fix while git failed: no head
+			r, old, raw := setup(t)
+			headless := old
+			headless.Head, headless.CreatedAt = "", time.Now().UTC().Format(time.RFC3339Nano)
+			failGit(t, -1)
+			if got, err := EnsureFlowAssignment(r.cwd, headless); err == nil {
+				t.Fatalf("EnsureFlowAssignment with git failing = %+v, want the error", got)
+			}
+			unchanged(t, r, old.ID, raw)
+			if _, err := headless.replaceOpen(r.cwd); err == nil {
+				t.Fatal("replaceOpen with git failing replaced the record")
+			}
+			unchanged(t, r, old.ID, raw)
+		})
+		t.Run("no head over a head", func(t *testing.T) {
+			// the tree is no checkout any more (same inode): git answers that it has no HEAD, the record no longer matches, and its
+			// replacement would carry no head, so the record is not replaced
+			r, old, raw := setup(t)
+			assignMust(t, os.RemoveAll(filepath.Join(r.tree, ".git")))
+			fresh, err := NewFlowAssignment(flowTestOwner, old.ID, r.tree, flowTestOp, time.Now())
+			assignMust(t, err)
+			if fresh.Head != "" {
+				t.Fatalf("the head of a tree that is no checkout: %q", fresh.Head)
+			}
+			if got, err := EnsureFlowAssignment(r.cwd, fresh); err == nil {
+				t.Fatalf("EnsureFlowAssignment replaced a record with a head by one without: %+v", got)
+			}
+			unchanged(t, r, old.ID, raw)
 		})
 	})
 

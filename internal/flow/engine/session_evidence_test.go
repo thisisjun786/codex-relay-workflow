@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -943,22 +944,39 @@ func callStateReading(rows []Event) string {
 }
 
 // placedHolds checks a run whose evidence_placed row of cwd could not be stored: nothing is under cwd, the call's result is held
-// evidence_assignment_failed in the rows the journal kept in memory, and the run ends with the journal's error.
+// evidence_assignment_failed in the rows the journal kept in memory (failingJournal keeps every row it reports as failed), and the run
+// ends with the journal's error. It also checks itself: the same rows with the held row dropped must fail the check.
 func placedHolds(t *testing.T, k *evidenceKit, res *Result, cwd string) {
 	t.Helper()
+	rows, records := k.rowsOf("exe"), evidenceRecords(t, cwd)
+	for _, fault := range placedHoldsFaults(res, rows, records, cwd) {
+		t.Error(fault)
+	}
+	dropped := slices.DeleteFunc(slices.Clone(rows), func(e Event) bool { return e.Event == EvHeld })
+	if len(placedHoldsFaults(res, dropped, records, cwd)) == 0 {
+		t.Errorf("the check passes the rows with the held row dropped: %s", eventsOf(dropped))
+	}
+}
+
+// placedHoldsFaults is what placedHolds finds wrong with a run's result, the call's rows and the records under cwd.
+func placedHoldsFaults(res *Result, rows []Event, records []string, cwd string) []string {
+	var faults []string
 	if res.Status != RunScriptError || !strings.Contains(res.Error, "journal cannot be written") {
-		t.Errorf("run %s %s %q, want the journal's error", res.Status, res.ErrorKind, res.Error)
+		faults = append(faults, fmt.Sprintf("run %s %s %q, want the journal's error", res.Status, res.ErrorKind, res.Error))
 	}
-	if got := evidenceRecords(t, cwd); len(got) != 0 {
-		t.Errorf("records written under %s although no row names it: %v", cwd, got)
+	if len(records) != 0 {
+		faults = append(faults, fmt.Sprintf("records written under %s although no row names it: %v", cwd, records))
 	}
-	rows := k.rowsOf("exe")
 	if placed := rowsNamed(rows, EvEvidencePlaced); len(placed) != 1 || rowStr(placed[0].Data, "evidence_cwd") != cwd {
-		t.Errorf("evidence_placed rows %v, want the one of %s (rows %s)", placed, cwd, eventsOf(rows))
+		faults = append(faults, fmt.Sprintf("evidence_placed rows %v, want the one of %s (rows %s)", placed, cwd, eventsOf(rows)))
 	}
-	if held := rowsNamed(rows, EvHeld); len(held) > 0 && rowStr(held[len(held)-1].Data, "reason") != ReasonEvidenceAssignmentFailed {
-		t.Errorf("held %v, want reason %s", held[len(held)-1].Data, ReasonEvidenceAssignmentFailed)
+	switch held := rowsNamed(rows, EvHeld); {
+	case len(held) != 1:
+		faults = append(faults, fmt.Sprintf("held rows %v, want one (rows %s)", held, eventsOf(rows)))
+	case rowStr(held[0].Data, "reason") != ReasonEvidenceAssignmentFailed:
+		faults = append(faults, fmt.Sprintf("held %v, want reason %s", held[0].Data, ReasonEvidenceAssignmentFailed))
 	}
+	return faults
 }
 
 // ownerReadAfterPrepared is a host whose read of the owner thread fails until a prepared row is in the journal.

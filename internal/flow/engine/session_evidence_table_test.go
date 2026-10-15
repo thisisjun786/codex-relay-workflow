@@ -3,7 +3,10 @@ package engine
 import (
 	"bytes"
 	"context"
+	"errors"
+	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -23,14 +26,13 @@ import (
 // record is left under EvidenceCwd, the owner's cwd or the host cwd, and on a path that goes on the bound child's receipt is
 // accepted at its host cwd. The WorktreeRecreated rows recreate the call's directory at the same path before the resume: every copy of
 // the record is placed again rooted at the new tree (ensureEvidence, evidenceRefresh), and WorktreeKept checks that a recovery of a
-// tree that did not change rewrites no record. A row is either a body or a skip reason that names where its scene is run.
+// tree that did not change rewrites no record. Every row has a body: a scene that cannot be built is not a row.
 
 // evidenceLifetimeRow is one scene of the table: entry path, death point, and a body that sets the scene up, recovers it and returns
-// the directories besides EvidenceCwd that must hold no open record; or a skip reason.
+// the directories besides EvidenceCwd that must hold no open record.
 type evidenceLifetimeRow struct {
 	name, entry, death string
 	body               func(t *testing.T, k *evidenceKit) []string
-	skip               string
 }
 
 // evidenceExeAgain is the executor call of evidenceExe with another input: a resumed run prepares the call again.
@@ -217,6 +219,58 @@ func evidenceLifetimeRows() []evidenceLifetimeRow {
 			return []string{owner, host}
 		}
 	}
+	// preparedOnly: the process dies right after the prepared row, before any record is written (EvidenceCwd cannot take one from
+	// then on, so the dying process writes nothing). The resumed call publishes its step, and the child's receipt is accepted.
+	preparedOnly := func(t *testing.T, k *evidenceKit) []string {
+		k.setOrch(func(Step, string, int) orchAnswer { return orchAnswer{hang: true} }, nil)
+		restore := func() {
+			if err := os.Chmod(k.evCwd, 0o755); err != nil {
+				t.Error(err)
+			}
+		}
+		t.Cleanup(restore)
+		k.dieAt(t, func(e Event) bool {
+			if !isRow(EvPrepared)(e) {
+				return false
+			}
+			if err := os.Chmod(k.evCwd, 0o555); err != nil {
+				t.Error(err)
+			}
+			return true
+		}, evidenceExe)
+		restore()
+		if got := eventsOf(k.rowsOf("exe")); got != EvPrepared {
+			t.Fatalf("the dead process left the rows %s, want the prepared row alone", got)
+		}
+		if got := evidenceRecords(t, k.evCwd); len(got) != 0 {
+			t.Fatalf("records the dead process left before its step %v", got)
+		}
+		accepted := k.claimAtHost(t, k.evCwd)
+		if got := value[[]any](t, k.h.run(evidenceExe)); got[0] != "completed" {
+			t.Fatalf("resumed %v: rows %s", got, eventsOf(k.rowsOf("exe")))
+		}
+		if accepted.Load() != 1 {
+			t.Errorf("%d receipts accepted, want 1", accepted.Load())
+		}
+		return nil
+	}
+	// publishedSuperseded: the step is published with the host cwd at EvidenceCwd and never taken, the process dies after the
+	// step_published row, and the resumed run supersedes the call: its record is released.
+	publishedSuperseded := func(t *testing.T, k *evidenceKit) []string {
+		k.setOrch(func(Step, string, int) orchAnswer { return orchAnswer{skip: true} }, nil)
+		k.dieAt(t, isRow(EvStepPublished), evidenceExe)
+		if got := evidenceRecords(t, k.evCwd); len(got) != 1 {
+			t.Fatalf("records the dead process left %v (rows %s)", got, eventsOf(k.rowsOf("exe")))
+		}
+		k.setOrch(nil, nil)
+		if got := value[[]any](t, k.h.run(evidenceExploreOnly)); got[0] != "completed" {
+			t.Fatalf("resumed %v: rows %s", got, eventsOf(k.rowsOf("exe")))
+		}
+		if got := rowsNamed(k.rowsOf("exe"), EvSuperseded); len(got) != 1 {
+			t.Errorf("superseded rows %v (rows %s)", got, eventsOf(k.rowsOf("exe")))
+		}
+		return nil
+	}
 	// orphan is OrphanBeforeStepRow: the record is written and the process dies before the step_published row.
 	orphan := func(body string) func(t *testing.T, k *evidenceKit) []string {
 		return func(t *testing.T, k *evidenceKit) []string {
@@ -314,6 +368,39 @@ func evidenceLifetimeRows() []evidenceLifetimeRow {
 			t.Errorf("evidence_receipt %v (rows %s)", r, eventsOf(rows))
 		}
 		return []string{owner, host}
+	}
+	// turnStarted: the host cwd is apart, the subagent is bound (thread_started), and the process dies before its turn_started row is
+	// stored or right after it. The resumed run adopts the subagent, whose receipt is accepted at its host cwd and recorded on the
+	// completed row.
+	turnStarted := func(after bool) func(t *testing.T, k *evidenceKit) []string {
+		return func(t *testing.T, k *evidenceKit) []string {
+			owner, host := hostApart(t, k)
+			k.setOrch(func(Step, string, int) orchAnswer { return orchAnswer{hang: true} }, nil)
+			want := 0
+			if after {
+				want = 1
+				k.dieAt(t, isRow(EvTurnStarted), evidenceExe, owner, host)
+			} else {
+				k.dieBefore(t, isRow(EvTurnStarted), evidenceExe, owner, host)
+			}
+			rows := k.rowsOf("exe")
+			if len(rowsNamed(rows, EvThreadStarted)) != 1 || len(rowsNamed(rows, EvTurnStarted)) != want {
+				t.Fatalf("the dead process left the rows %s, want thread_started and %d turn_started", eventsOf(rows), want)
+			}
+			st := k.orch.spawned()[0]
+			if v, _ := claim(t, st, host, "agent-1", "agent-1-turn1", []byte("red then green\n")); v != evidence.AssignedAccepted {
+				t.Fatalf("the adopted subagent's claim under its host cwd: %v", v)
+			}
+			k.complete("agent-1", st)
+			if got := value[[]any](t, k.h.run(evidenceExe)); got[0] != "completed" {
+				t.Fatalf("resumed %v: rows %s", got, eventsOf(k.rowsOf("exe")))
+			}
+			rows = k.rowsOf("exe")
+			if r := receiptOf(t, rows[len(rows)-1]); r["state"] != "accepted" {
+				t.Errorf("evidence_receipt %v (rows %s)", r, eventsOf(rows))
+			}
+			return []string{owner, host}
+		}
 	}
 	// heldDelivered is HeldDeliveredCrashBeforeEnd: the held row of a delivered turn is written and the process dies before it ended
 	// the call; the resumed held call goes on with a new attempt whose receipt is accepted.
@@ -474,12 +561,10 @@ func evidenceLifetimeRows() []evidenceLifetimeRow {
 		}
 	}
 	return []evidenceLifetimeRow{
-		{name: "PreparedOnly", entry: "prepare", death: "after prepared",
-			skip: "no record exists before the step: TestSessionRunDeathAtEachRow/*/prepared resumes it, and every later row of this table starts from it"},
+		{name: "PreparedOnly", entry: "prepare", death: "after prepared", body: preparedOnly},
 		{name: "OrphanBeforeStepRow/superseded", entry: "supersede", death: "before step_published", body: orphan(evidenceExploreOnly)},
 		{name: "OrphanBeforeStepRow/preparedAgain", entry: "re-prepare", death: "before step_published", body: orphan(evidenceExeAgain)},
-		{name: "PublishedSuperseded", entry: "publish", death: "after step_published",
-			skip: "TestSessionEvidenceAttemptLifetime/OpenSupersededByResume and HeldSupersededInSuffix run it with the host cwd at EvidenceCwd; the rows below run it from another cwd"},
+		{name: "PublishedSuperseded", entry: "publish", death: "after step_published", body: publishedSuperseded},
 		{name: "ResumedFromAnotherCwd/superseded", entry: "other-cwd resume", death: "after step_published", body: otherCwd(evidenceExploreOnly, false)},
 		{name: "ResumedFromAnotherCwd/preparedAgain", entry: "other-cwd resume", death: "after step_published", body: otherCwd(evidenceExeAgain, true)},
 		{name: "ResumedFromAnotherCwd/sameStep", entry: "other-cwd resume", death: "after step_published", body: otherCwd(evidenceExe, true)},
@@ -489,8 +574,8 @@ func evidenceLifetimeRows() []evidenceLifetimeRow {
 		{name: "HostCopyBeforeThreadStarted/superseded", entry: "supersede", death: "before thread_started", body: hostCopy("superseded")},
 		{name: "HostCopyBeforeThreadStarted/preparedAgain", entry: "re-prepare", death: "before thread_started", body: hostCopy("preparedAgain")},
 		{name: "BoundAfterThreadStarted", entry: "bind", death: "after thread_started", body: bound},
-		{name: "TurnStarted", entry: "bind", death: "before and after turn_started",
-			skip: "TestSessionEvidence/RecoveredStepReusesAssignment/adopted open and adopted claimed, and TestSessionRunDeathAtEachRow/*/turn_started"},
+		{name: "TurnStarted/before", entry: "bind", death: "before turn_started", body: turnStarted(false)},
+		{name: "TurnStarted/after", entry: "bind", death: "after turn_started", body: turnStarted(true)},
 		{name: "HeldDeliveredCrashBeforeEnd", entry: "held resume", death: "after held", body: heldDelivered},
 		{name: "TerminalReplayedAfterDeath/null_model", entry: "prepare", death: "after null_model", body: terminal("contextWindowExceeded", EvNullModel, "null_model")},
 		{name: "TerminalReplayedAfterDeath/refused", entry: "prepare", death: "after refused", body: terminal("badRequest", EvRefused, "refused")},
@@ -506,8 +591,8 @@ func TestSessionEvidenceLifetimeTable(t *testing.T) {
 	t.Run("Meta", func(t *testing.T) {
 		names := map[string]bool{}
 		for _, r := range rows {
-			if r.body == nil && strings.TrimSpace(r.skip) == "" {
-				t.Errorf("the row %s has neither a body nor a skip reason", r.name)
+			if r.body == nil {
+				t.Errorf("the row %s has no body", r.name)
 			}
 			if r.entry == "" || r.death == "" {
 				t.Errorf("the row %s names no entry path or death point", r.name)
@@ -528,10 +613,7 @@ func TestSessionEvidenceLifetimeTable(t *testing.T) {
 	for _, r := range rows {
 		t.Run(r.name, func(t *testing.T) {
 			if r.body == nil {
-				if strings.TrimSpace(r.skip) == "" {
-					t.Fatalf("the row has neither a body nor a skip reason")
-				}
-				t.Skip(r.skip)
+				t.Fatal("the row has no body")
 			}
 			k := newEvidenceKit(t, true, ".crw/\n")
 			others := r.body(t, k)
@@ -540,5 +622,93 @@ func TestSessionEvidenceLifetimeTable(t *testing.T) {
 				noOpenLeft(t, cwd, cwd)
 			}
 		})
+	}
+}
+
+// failGitOnce puts a git on PATH that fails the first `git rev-parse --verify -q HEAD^{commit}` (the HEAD a flow record is made with)
+// once arm is called, as a git that timed out, and runs the real git otherwise; the returned func reports whether the failure was
+// spent.
+func failGitOnce(t *testing.T) (arm func(), spent func() bool) {
+	t.Helper()
+	real, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("no git")
+	}
+	dir := t.TempDir()
+	armed := filepath.Join(dir, "armed")
+	script := "#!/bin/sh\n" +
+		"if [ \"$*\" = 'rev-parse --verify -q HEAD^{commit}' ] && rm \"" + armed + "\" 2>/dev/null; then\n" +
+		"  echo 'error: git timed out' >&2\n  exit 3\nfi\n" +
+		"exec \"" + real + "\" \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	arm = func() {
+		if err := os.WriteFile(armed, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	spent = func() bool {
+		_, err := os.Lstat(armed)
+		return errors.Is(err, fs.ErrNotExist)
+	}
+	return arm, spent
+}
+
+// TestSessionEvidenceRefreshGitFailure: the resumed call goes on with its bound subagent, and git fails once while the record is
+// placed again (evidenceRefresh). A git that fails is no answer: the call holds evidence_assignment_failed, and no record is
+// rewritten (none loses its HEAD or is replaced by one made from no answer); the hold may release the attempt's open record as any
+// hold of a bound call does (CRW-1496).
+func TestSessionEvidenceRefreshGitFailure(t *testing.T) {
+	arm, spent := failGitOnce(t)
+	k := newEvidenceKit(t, true, ".crw/\n")
+	owner := t.TempDir()
+	k.setOwnerCwd(owner)
+	k.setHostCwd(owner)
+	k.setOrch(func(Step, string, int) orchAnswer { return orchAnswer{hang: true} }, nil)
+	k.dieAt(t, func(e Event) bool { return e.Kind == KindCall && e.Event == EvTurnStarted }, evidenceExe, owner)
+	rows := k.rowsOf("exe")
+	id := rowStr(rowsNamed(rows, EvStepPublished)[0].Data, "evidence_assignment")
+	agent := rowStr(rowsNamed(rows, EvThreadStarted)[0].Data, "thread_id")
+	spawn := k.orch.spawned()[0]
+	before := map[string][]byte{}
+	for _, cwd := range []string{k.evCwd, owner} {
+		before[cwd], _ = recordBytes(t, cwd, id)
+	}
+	// a call that goes on reads its subagent's turns: that subagent then finishes, so a run that does not hold ends
+	h := &turnsSignal{fakeSessionHost: k.host, agent: agent, read: make(chan struct{})}
+	k.cfg.Host = h
+	done := make(chan struct{})
+	go func() {
+		select {
+		case <-h.read:
+			k.complete(agent, spawn)
+		case <-done:
+		}
+	}()
+	arm()
+	res := k.h.run(evidenceExe)
+	close(done)
+	k.cfg.Host = k.host
+	if !spent() {
+		t.Fatal("the resumed process never asked git for the HEAD of the call's directory")
+	}
+	if got := value[[]any](t, res); got[0] != StatusHeld || got[1] != ReasonEvidenceAssignmentFailed {
+		t.Fatalf("resumed %v, want held %s (rows %s)", got, ReasonEvidenceAssignmentFailed, eventsOf(k.rowsOf("exe")))
+	}
+	// the hold ends the attempt, so its open record may be released; one that is left is the record as it was
+	for cwd, was := range before {
+		for _, path := range evidenceRecords(t, cwd) {
+			if strings.TrimSuffix(filepath.Base(path), ".json") != id {
+				continue
+			}
+			if now, err := os.ReadFile(path); err != nil || !bytes.Equal(now, was) {
+				t.Errorf("the record %s under %s was rewritten on a git failure (%v):\n%s\nwant\n%s", id, cwd, err, now, was)
+			}
+		}
+	}
+	if held := rowsNamed(k.rowsOf("exe"), EvHeld); len(held) != 1 || !strings.Contains(rowStr(held[0].Data, "detail"), "git") {
+		t.Errorf("held rows %v, want the one that names git's failure", held)
 	}
 }
