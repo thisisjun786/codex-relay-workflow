@@ -16,7 +16,7 @@ Judge the plan against the code at P, not against the architect's account of it:
 - Missing callers: every caller, reader and test that the change of a unit breaks is in some unit's regions.
 - Region overlap: two units whose regions overlap are ordered; no two units of the same wave edit the same region.
 - Failing-test plan: each unit names a test that fails before its change and passes after it, and the end command runs every package the unit can break.
-- Rollback: the plan says, as its rollback, how each landed unit is undone, and what an older binary reads of what the new one writes.
+- Rollback: the DESIGN has no rollback field; for a change to stored data or a behaviour change, `risks` must say how it rolls back: how the landed unit is undone, and what an older binary reads of what the new one writes. A unit of that kind whose rollback `risks` does not state is a finding.
 
 ## Prior findings
 

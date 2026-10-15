@@ -415,3 +415,17 @@ func TestArchitectOverlayNamesTheBackgroundFindings(t *testing.T) {
 		t.Errorf("the native spawn section does not set the background explorers apart from the call's helper:\n%s", spawn)
 	}
 }
+
+// TestRollbackIsAskedInRisksAndCheckedThere: the critic checks a plan's rollback, and the DESIGN has no field of its own for it, so
+// the critic's rule names the field it reads (risks) and the architect overlay asks for the rollback there.
+func TestRollbackIsAskedInRisksAndCheckedThere(t *testing.T) {
+	critic, _ := Overlay("critic", Options{})
+	architect, _ := Overlay("architect", Options{})
+	const rule = "for a change to stored data or a behaviour change, `risks` must say how it rolls back"
+	if !strings.Contains(critic, rule) {
+		t.Errorf("the critic's rollback rule does not name the field it reads: want %q", rule)
+	}
+	if !strings.Contains(architect, "For a change to stored data or a behaviour change, say in `risks` how it rolls back") {
+		t.Error("the architect overlay does not ask for the rollback in risks, which the critic checks")
+	}
+}
