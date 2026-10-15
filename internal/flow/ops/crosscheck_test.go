@@ -820,7 +820,7 @@ func TestCrosscheckServesRoundOneOnly(t *testing.T) {
 }
 
 // TestMilestoneCloseCarriesTheCrosscheckEvidence: crw.milestoneClose carries the crosscheck of its evidence into its answer as it is,
-// and records a close whose evidence has a final review and no crosscheck as before, with a null crosscheck; it refuses nothing.
+// and records a close whose evidence has a final review and no crosscheck as before, with a null crosscheck.
 func TestMilestoneCloseCarriesTheCrosscheckEvidence(t *testing.T) {
 	w := newWorld(t)
 	tip := w.relay.tip
@@ -842,9 +842,9 @@ func TestMilestoneCloseCarriesTheCrosscheckEvidence(t *testing.T) {
 	if string(out.Crosscheck) != "null" || !jsonEqual(t, out.Final, final) || out.GateHead != tip {
 		t.Errorf("close %+v", out)
 	}
-	// a needs_changes crosscheck is carried too: the refusal is the close's to add (u1473-close)
+	// a needs_changes crosscheck is not a close: crw.milestoneClose refuses it (close_unverified, TestMilestoneCloseRefusesWithoutAVerifiedCrosscheck)
 	nc := json.RawMessage(`{"verdict":"needs_changes"}`)
-	if _, err := w.op(NameMilestoneClose, "M1", map[string]any{"gate": map[string]any{"head": tip}, "crosscheck": nc}); err != nil {
+	if _, err := w.op(NameMilestoneClose, "M1", map[string]any{"gate": map[string]any{"head": tip}, "crosscheck": nc}); err == nil || ReasonOf(err.Error()) != "close_unverified" {
 		t.Errorf("a close with a needs_changes crosscheck: %v", err)
 	}
 }

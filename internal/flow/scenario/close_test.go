@@ -14,18 +14,22 @@ import (
 	flowcli "github.com/thisisjun786/codex-relay-workflow/internal/flow/cli"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/reviewadapter"
 )
 
 // The close of a milestone (CRW-1206, F13) on the whole stack of the scenario harness: the real agent backend on the fake App Server
 // host, a temporary store and repository, the lane of a project from its architect to its report.
 
 type closeResult struct {
-	State    string `json:"state"`
-	Tip      string `json:"tip"`
-	Source   string `json:"source"`
-	Reason   string `json:"reason"`
-	Gate     string `json:"gate"`
-	Final    string `json:"final"`
+	State  string `json:"state"`
+	Tip    string `json:"tip"`
+	Source string `json:"source"`
+	Reason string `json:"reason"`
+	Gate   string `json:"gate"`
+	// Crosscheck is the word of the crosscheck's verdict the milestone closed over (CRW-1473).
+	Crosscheck any `json:"crosscheck"`
+	// Ask is the question an escalated close asks (crosscheck_pending for a crosscheck that needs changes).
+	Ask      string `json:"ask"`
 	Archived int    `json:"archived"`
 	Audit    struct {
 		OK         int `json:"ok"`
@@ -52,27 +56,35 @@ func escalationReasons(l *Lab) []string {
 }
 
 // A milestone with a web criterion at C3: the run makes the test evidence at the integrated head, the QA capture call and both
-// oracle passes, the synthesis on the capture call's thread, and reviewer-final with the passed gate. Every acceptance rests on a unit
+// oracle passes, the synthesis on the capture call's thread, and the crosscheck with the passed gate. Every acceptance rests on a unit
 // check of its node (CRW-1465): the audit vouches for it on its crw.unitCheck row and the executor's pair, reads no thread from the
 // host, and archives nothing, since no reviewer thread was started.
 func TestCloseWithOraclePassesAuditsAndArchives(t *testing.T) {
 	l := NewLab(t, twoNodes()...)
 	l.Relay.Surfaces, l.Relay.Grade = []string{"logic", "web"}, "C3"
 	got := closeOf(t, l)
-	if got.State != "closed" || got.Gate != "pass" || got.Final != "ALIGNED" || got.Tip != l.Tip() {
+	if got.State != "closed" || got.Gate != "pass" || got.Crosscheck != "verified" || got.Tip != l.Tip() {
 		t.Fatalf("%+v; calls %v; escalations %v", got, l.Labels(), escalationReasons(l))
 	}
 	labels := l.Labels()
-	tail := labels[len(labels)-6:]
-	if tail[0] != "qa:M1" || tail[3] != "qa-synthesis:M1" || tail[4] != "reviewer-final:M1" || tail[5] != "reflection:M1" || !slices.Contains(tail[1:3], "qa-pass:A:M1") || !slices.Contains(tail[1:3], "qa-pass:B:M1") {
+	tail := labels[len(labels)-5:]
+	if tail[0] != "qa:M1" || tail[3] != "qa-synthesis:M1" || tail[4] != "reflection:M1" || !slices.Contains(tail[1:3], "qa-pass:A:M1") || !slices.Contains(tail[1:3], "qa-pass:B:M1") {
 		t.Fatalf("calls %v", labels)
 	}
 	roles := map[string]string{}
 	for _, c := range l.Calls() {
 		roles[c.Label] = c.Role
 	}
-	if roles["qa:M1"] != "executor" || roles["qa-pass:A:M1"] != "explorer" || roles["qa-pass:B:M1"] != "explorer" || roles["reviewer-final:M1"] != "reviewer-final" {
+	if roles["qa:M1"] != "executor" || roles["qa-pass:A:M1"] != "explorer" || roles["qa-pass:B:M1"] != "explorer" || slices.Contains(l.Roles(), "reviewer-final") {
 		t.Errorf("roles %v", roles)
+	}
+	// the crosscheck judged the range at the gate's head: one verified round of two passes, in checkouts under the run's directory
+	cc := l.Rows("crw.crosscheck")
+	if len(cc) != 1 || str(cc[0].Data, "state") != "verdict" || str(cc[0].Data, "head") != l.Tip() {
+		t.Errorf("crosscheck rows %+v", cc)
+	}
+	if calls := l.Crosschecker.Calls(); len(calls) != 2 {
+		t.Errorf("%d crosscheck passes, want A and B", len(calls))
 	}
 	// the QA call is one thread: the capture and the synthesis are its two turns, in a call-private scratch worktree at the head
 	qa, synth := callNamed(t, l, "qa:M1"), callNamed(t, l, "qa-synthesis:M1")
@@ -104,12 +116,12 @@ func TestCloseWithOraclePassesAuditsAndArchives(t *testing.T) {
 	if milestoneVerify != 1 {
 		t.Errorf("%d verifications of the integrated head", milestoneVerify)
 	}
-	// SP-QA-1, SP-QA-2 twice and SP-REVF-1 are decided
+	// SP-QA-1 and SP-QA-2 twice are decided; the crosscheck is no spawn, and reviewer-final (SP-REVF-1) is not called
 	rules := map[string]int{}
 	for _, r := range l.SpawnRows() {
 		rules[r.Rule]++
 	}
-	if rules["SP-QA-1"] != 1 || rules["SP-QA-2"] != 2 || rules["SP-REVF-1"] != 1 {
+	if rules["SP-QA-1"] != 1 || rules["SP-QA-2"] != 2 || rules["SP-REVF-1"] != 0 {
 		t.Errorf("rules %v", rules)
 	}
 	// the audit vouched for both acceptances on their unit-check rows; no reviewer thread was started, read or archived
@@ -192,7 +204,7 @@ func TestCloseEscalatesAnAuditMismatchAndKeepsTheThread(t *testing.T) {
 }
 
 // A QA that did not reach a verdict stops the close: a pass that is held is INCONCLUSIVE, the gate does not pass, the milestone is
-// escalated, and reviewer-final does not run.
+// escalated, and the crosscheck does not run.
 func TestCloseWithAHeldPassIsInconclusiveAndEscalates(t *testing.T) {
 	l := NewLab(t, oneNode()...)
 	l.Relay.Surfaces, l.Relay.Grade = []string{"web"}, "C3"
@@ -206,9 +218,12 @@ func TestCloseWithAHeldPassIsInconclusiveAndEscalates(t *testing.T) {
 		t.Fatalf("%+v; calls %v", got, l.Labels())
 	}
 	for _, label := range l.Labels() {
-		if label == "reviewer-final:M1" || label == "qa-synthesis:M1" {
+		if label == "qa-synthesis:M1" {
 			t.Errorf("the call %q ran after a pass that did not complete", label)
 		}
+	}
+	if n := len(l.Rows("crw.crosscheck")); n != 0 {
+		t.Errorf("%d crosscheck rows after a pass that did not complete", n)
 	}
 	if reasons := escalationReasons(l); !slices.Contains(reasons, "qa_inconclusive") {
 		t.Errorf("escalations %v", reasons)
@@ -219,7 +234,7 @@ func TestCloseWithAHeldPassIsInconclusiveAndEscalates(t *testing.T) {
 	}
 }
 
-// A failed verification of the integrated head fails the gate: the milestone is escalated, reviewer-final does not run and nothing
+// A failed verification of the integrated head fails the gate: the milestone is escalated, the crosscheck does not run and nothing
 // is archived. A milestone whose verification cannot run is held, and a resume that finds the verifier back goes on.
 func TestCloseGateFailsOnAFailedVerificationAndHoldsOnAMissingVerifier(t *testing.T) {
 	l := NewLab(t, oneNode()...)
@@ -229,7 +244,7 @@ func TestCloseGateFailsOnAFailedVerificationAndHoldsOnAMissingVerifier(t *testin
 	if got.State != "escalated" || got.Source != "final_gate" || got.Reason != "test_failed" {
 		t.Fatalf("%+v", got)
 	}
-	if slices.Contains(l.Labels(), "reviewer-final:M1") || len(l.Archived()) != 0 {
+	if len(l.Rows("crw.crosscheck")) != 0 || len(l.Archived()) != 0 {
 		t.Errorf("calls %v, archived %v", l.Labels(), l.Archived())
 	}
 
@@ -258,32 +273,33 @@ func TestCloseGateFailsOnAFailedVerificationAndHoldsOnAMissingVerifier(t *testin
 	}
 }
 
-// A reviewer-final verdict that does not verify the range keeps the milestone open (CRW-1471): reviewer-final answers needs_changes
-// with a P1 defect over a passed gate, and the run escalates the milestone from reviewer_final. Nothing reads it as a close: no
-// crw.milestoneClose, no reflection of the architect, no report up, and the one reviewer-final call is not asked again.
+// A crosscheck verdict that does not verify the range keeps the milestone open (CRW-1471, CRW-1473): the crosscheck's pass A finds a
+// P1 core_function finding over a passed gate, its V is needs_changes, and the run escalates the milestone crosscheck_pending with ask
+// crosscheck_pending (the 자식 hands it to the 부모 with V and the fix packet). Nothing reads it as a close: no crw.milestoneClose, no
+// reflection of the architect, no report up, no hold, and the crosscheck is not asked again.
 func TestNeedsChangesFinalDoesNotCloseTheMilestone(t *testing.T) {
 	l := NewLab(t, oneNode()...)
-	l.On("^reviewer-final:M1$", func(*Call) *fakehostPlan {
-		p := Say(VerdictFinalNeedsChanges(Defect("f1", "correctness", "P1", "the range breaks the criterion")))
-		return &p
-	})
+	l.Crosschecks("M1", 1, 0, "A", 1, Crosscheck{Verdict: "needs_changes", Findings: []reviewadapter.Finding{Finding("P1", "the range breaks the criterion")}})
 	res := l.Run()
 	if res.Status != engine.RunCompleted {
 		t.Fatalf("run %s: %s: %s\ncalls: %v", res.Status, res.ErrorKind, res.Error, l.Labels())
 	}
 	got := Value[closeResult](t, res)
-	if got.State != "escalated" || got.Source != "reviewer_final" || got.Reason != "needs_changes" {
+	if got.State != "escalated" || got.Source != "crosscheck" || got.Reason != "crosscheck_pending" || got.Ask != "crosscheck_pending" {
 		t.Fatalf("%+v; calls %v; escalations %v", got, l.Labels(), escalationReasons(l))
 	}
-	if reasons := escalationReasons(l); !slices.Contains(reasons, "reviewer_final_needs_changes") {
-		t.Errorf("escalations %v, want reviewer_final_needs_changes", reasons)
+	if reasons := escalationReasons(l); !slices.Contains(reasons, "crosscheck_pending") {
+		t.Errorf("escalations %v, want crosscheck_pending", reasons)
 	}
-	finals := l.Rows("crw.reviewerFinal")
-	if len(finals) != 1 || str(finals[0].Data, "state") != "verdict" || str(finals[0].Data, "verdict") != "needs_changes" {
-		t.Errorf("reviewer-final rows %+v, want one verdict of needs_changes", finals)
+	cc := l.Rows("crw.crosscheck")
+	if len(cc) != 1 || str(cc[0].Data, "state") != "verdict" {
+		t.Fatalf("crosscheck rows %+v, want one verdict", cc)
+	}
+	if v, _ := cc[0].Data["verdict"].(map[string]any); str(v, "verdict") != "needs_changes" {
+		t.Errorf("the crosscheck's V %v, want needs_changes", cc[0].Data["verdict"])
 	}
 	if n := len(l.Rows("crw.milestoneClose")); n != 0 {
-		t.Errorf("%d crw.milestoneClose rows: the milestone closed over a final review that needs changes", n)
+		t.Errorf("%d crw.milestoneClose rows: the milestone closed over a crosscheck that needs changes", n)
 	}
 	if n := len(l.Rows("crw.reportUp")); n != 0 {
 		t.Errorf("%d crw.reportUp rows: a milestone that did not close was reported up", n)
@@ -291,21 +307,17 @@ func TestNeedsChangesFinalDoesNotCloseTheMilestone(t *testing.T) {
 	if n := len(l.Rows("crw.hold")); n != 0 {
 		t.Errorf("%d crw.hold rows: a verdict is not held", n)
 	}
-	var finalCalls int
 	for _, label := range l.Labels() {
-		if label == "reflection:M1" {
-			t.Errorf("the architect reflected on a range reviewer-final did not verify: %v", l.Labels())
-		}
-		if strings.HasPrefix(label, "reviewer-final:M1") {
-			finalCalls++
+		if label == "reflection:M1" || strings.HasPrefix(label, "reviewer-final:") {
+			t.Errorf("the call %s ran over a range the crosscheck did not verify: %v", label, l.Labels())
 		}
 	}
-	if finalCalls != 1 {
-		t.Errorf("%d reviewer-final calls, want one: a verdict is not asked again; calls %v", finalCalls, l.Labels())
+	if n := len(l.Crosschecker.Calls()); n != 2 {
+		t.Errorf("%d crosscheck passes, want the two of one round: a verdict is not asked again", n)
 	}
 }
 
-// A resume of a run that closed does nothing: the gate, the final review, the close, the audit and the archive are all replayed
+// A resume of a run that closed does nothing: the gate, the crosscheck, the close, the audit and the archive are all replayed
 // from the journal, and the host is asked for nothing - no call, no read of a thread, no archive.
 func TestResumeAfterAClosedMilestoneRunsNothing(t *testing.T) {
 	l := NewLab(t, oneNode()...)
@@ -533,7 +545,7 @@ func TestQAArtifactsAreHandedOnByThePathTheyCanBeOpenedAt(t *testing.T) {
 }
 
 // A capture call that edits the tracked code of its scratch worktree to make the surface work exercised another tree than the head
-// the gate pinned: its receipt is INCONCLUSIVE, no pass is asked for it, the milestone is escalated and reviewer-final does not run
+// the gate pinned: its receipt is INCONCLUSIVE, no pass is asked for it, the milestone is escalated and the crosscheck does not run
 // (CRW-1206 correction, d2). The artifacts under .crw/ are not an edit.
 func TestQAOverEditedSourceIsInconclusiveAndEscalates(t *testing.T) {
 	l := NewLab(t, oneNode()...)
@@ -549,9 +561,12 @@ func TestQAOverEditedSourceIsInconclusiveAndEscalates(t *testing.T) {
 		t.Fatalf("%+v; calls %v", got, l.Labels())
 	}
 	for _, label := range l.Labels() {
-		if strings.HasPrefix(label, "qa-pass:") || label == "qa-synthesis:M1" || label == "reviewer-final:M1" {
+		if strings.HasPrefix(label, "qa-pass:") || label == "qa-synthesis:M1" {
 			t.Errorf("the call %q ran over a capture of an edited tree", label)
 		}
+	}
+	if n := len(l.Rows("crw.crosscheck")); n != 0 {
+		t.Errorf("%d crosscheck rows over a capture of an edited tree", n)
 	}
 	rows := l.Rows("crw.qaReceipt")
 	if len(rows) != 1 || str(rows[0].Data, "state") != "INCONCLUSIVE" || str(rows[0].Data, "reason") != "capture_source_modified" {

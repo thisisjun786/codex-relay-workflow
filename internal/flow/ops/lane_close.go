@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/reviewadapter"
 )
 
 // ---- crw.milestoneClose ----
@@ -13,10 +14,13 @@ import (
 // milestoneCloseOp is crw.milestoneClose(milestone, evidence): the close of a milestone once every lane has landed, over the
 // evidence the close made: the final gate that passed on the head H it pinned (finalgate.go) and the review that took that gate as
 // its input - the crosscheck's verdict V (crosscheck.go, evidence member crosscheck) or, for a close made before the crosscheck, the
-// review of reviewer-final (final). The op carries both into its answer as they are and refuses neither. The row names the range, the tip the close judged and whether that tip is still the head of the
-// gate: a target that moved on after the gate - another actor, or a lane that integrated a new head after a resume - makes the gate
-// a judgement of a head that is gone, and the answer says so (moved), so the close judges the new head again. Proven holds only
-// while the integration target is still the tip the row names.
+// review of reviewer-final (final). The op carries both into its answer as they are. It closes only over a verified review
+// (CRW-1473): a crosscheck must be a V of verified, of the milestone and of the gate's head; evidence with no crosscheck and a final
+// review (a journal of the close before the crosscheck) must hold a verified final verdict; evidence with neither, or with one that
+// does not verify, is refused (close_unverified) and nothing is recorded. The row names the range, the tip the close judged and
+// whether that tip is still the head of the gate: a target that moved on after the gate - another actor, or a lane that integrated a
+// new head after a resume - makes the gate a judgement of a head that is gone, and the answer says so (moved), so the close judges
+// the new head again. Proven holds only while the integration target is still the tip the row names.
 type milestoneCloseOp struct{ l *Lane }
 
 // CloseResultOutcome is the answer of crw.milestoneClose.
@@ -53,6 +57,17 @@ func (o *milestoneCloseOp) Run(ctx context.Context, req engine.OpRequest) (engin
 		}
 		ms = obj.ID
 	}
+	var gateHead string
+	if present(evidence.Gate) {
+		var g struct {
+			Head string `json:"head"`
+		}
+		_ = json.Unmarshal(evidence.Gate, &g)
+		gateHead = g.Head
+	}
+	if why := closeUnverified(ms, gateHead, evidence.Crosscheck, evidence.Final); why != "" {
+		return engine.OpResult{}, &Refusal{ReasonCloseUnverified, "milestone " + ms + ": " + why}
+	}
 	r := rows(req.Journal.Events())
 	plan := planOf(r, ms)
 	tip, err := o.l.d.Relay.IntegrationTip(ctx, plan)
@@ -81,6 +96,64 @@ func (o *milestoneCloseOp) Run(ctx context.Context, req engine.OpRequest) (engin
 		out.Crosscheck = evidence.Crosscheck
 	}
 	return engine.OpResult{Result: result(out), Data: map[string]any{"milestone": ms, "plan": plan, "base": base, "tip": tip, "gate_head": out.GateHead, "moved": out.Moved}}, nil
+}
+
+// ReasonCloseUnverified is the refusal of a milestone close whose evidence holds no verified review of the gate's head.
+const ReasonCloseUnverified = "close_unverified"
+
+// closeUnverified says why the evidence of a close does not let the milestone close ("" when it does): a crosscheck V that is not
+// verified, or is of another milestone or another head than the gate's; with no crosscheck, a final review that is not a verified
+// verdict; with neither, no review at all.
+func closeUnverified(ms, gateHead string, crosscheck, final json.RawMessage) string {
+	if present(crosscheck) {
+		var v struct {
+			Verdict   string `json:"verdict"`
+			Milestone string `json:"milestone"`
+			Head      string `json:"head"`
+		}
+		if err := json.Unmarshal(crosscheck, &v); err != nil {
+			return "the crosscheck of the evidence is not a verdict: " + err.Error()
+		}
+		switch {
+		case v.Verdict != reviewadapter.VerdictVerified:
+			return fmt.Sprintf("the crosscheck's verdict is %q, not verified", v.Verdict)
+		case v.Milestone != ms:
+			return fmt.Sprintf("the crosscheck is of milestone %q, not of %s", v.Milestone, ms)
+		case gateHead == "" || v.Head != gateHead:
+			return fmt.Sprintf("the crosscheck is of the head %q, not of the gate's head %q", v.Head, gateHead)
+		}
+		return ""
+	}
+	if present(final) {
+		if finalVerified(final) {
+			return ""
+		}
+		return "the final review of the evidence is not a verified verdict"
+	}
+	return "the evidence holds neither a crosscheck nor a final review"
+}
+
+// finalVerified says whether a final review of a close's evidence is a verified verdict: the result of crw.reviewerFinal (state
+// verdict, the VERDICT_FINAL answer at verdict) or a bare answer whose word is verified.
+func finalVerified(final json.RawMessage) bool {
+	var f struct {
+		State   string          `json:"state"`
+		Verdict json.RawMessage `json:"verdict"`
+	}
+	if json.Unmarshal(final, &f) != nil {
+		return false
+	}
+	var word string
+	if json.Unmarshal(f.Verdict, &word) == nil {
+		return word == reviewadapter.VerdictVerified && (f.State == "" || f.State == StateVerdict)
+	}
+	var answer struct {
+		Verdict string `json:"verdict"`
+	}
+	if json.Unmarshal(f.Verdict, &answer) != nil {
+		return false
+	}
+	return answer.Verdict == reviewadapter.VerdictVerified && (f.State == "" || f.State == StateVerdict)
 }
 
 func (o *milestoneCloseOp) Proven(ctx context.Context, _ []engine.Event, row engine.Event) (bool, string, error) {

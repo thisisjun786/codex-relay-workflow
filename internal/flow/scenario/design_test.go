@@ -76,7 +76,7 @@ func TestDesignAuditNeedsChangesReturnsToArchitect(t *testing.T) {
 	if got.State != "closed" {
 		t.Fatalf("state %q", got.State)
 	}
-	want := []string{"architect", "design-audit:r1", "design-fix:r1", "design-audit:r2", "build:A:executor", "reviewer-final:M1", "reflection:M1"}
+	want := []string{"architect", "design-audit:r1", "design-fix:r1", "design-audit:r2", "build:A:executor", "reflection:M1"}
 	if labels := l.Labels(); !slices.Equal(labels, want) {
 		t.Fatalf("calls %v, want %v", labels, want)
 	}
@@ -393,11 +393,13 @@ func TestOpenQuestionRoutesThroughDesignAudit(t *testing.T) {
 		t.Errorf("an explorer was asked another question:\n%s", c.Text)
 		return nil
 	})
-	l.On("^reviewer-final:M1$", func(*Call) *fakehostPlan { p := Say(VerdictFinal(false)); return &p })
+	// the close re-plans through the architect's reflection: MISALIGNED alone makes the close due (reflection_misaligned)
+	l.On("^reflection:M1$", func(*Call) *fakehostPlan { p := Say(Reflection(false)); return &p })
 	got := runReplan(t, l)
 	if got.State != "replanned" {
 		t.Fatalf("%+v; calls %v", got, l.Labels())
 	}
+	closeReplanReasons(t, l)
 	// four explorers: before the first audit the small question and the one with an unknown notation, at the design head, and the
 	// same two again in the re-plan, at the head it pins (an answer about the first DESIGN's checkout is no answer about it); none for the authority
 	// question, which goes to the orchestrator again
@@ -634,10 +636,12 @@ func TestReplanAsksTheSameAuthorityQuestionOnce(t *testing.T) {
 	d := l.designFor()
 	d.OpenQuestions = []ops.OpenQuestion{policyQuestion}
 	l.Design = &d
-	l.On("^reviewer-final:M1$", func(*Call) *fakehostPlan { p := Say(VerdictFinal(false)); return &p })
+	// the close re-plans through the architect's reflection: MISALIGNED alone makes the close due (reflection_misaligned)
+	l.On("^reflection:M1$", func(*Call) *fakehostPlan { p := Say(Reflection(false)); return &p })
 	if got := runReplan(t, l); got.State != "replanned" {
 		t.Fatalf("%+v; calls %v", got, l.Labels())
 	}
+	closeReplanReasons(t, l)
 	asks := designQuestions(l)
 	if len(asks) != 1 {
 		t.Fatalf("%d design_question escalations, want one for the run", len(asks))
@@ -1088,5 +1092,25 @@ func TestResumeAfterOpenQuestionRoutingChange(t *testing.T) {
 	}
 	if res.Status == engine.RunCompleted || !refused || !strings.Contains(res.Error, "crw.designLedger") {
 		t.Errorf("the resume: %s %q (ledger refused %v), want the ledger's refusal", res.Status, res.Error, refused)
+	}
+}
+
+// closeReplanReasons checks that the close's crw.replanSignals row is due for the reflection's MISALIGNED alone.
+func closeReplanReasons(t *testing.T, l *Lab) {
+	t.Helper()
+	var reasons []string
+	found := false
+	for _, r := range l.Rows("crw.replanSignals") {
+		if str(r.Data, "phase") == "close" {
+			found = true
+			reasons = nil
+			list, _ := r.Data["reasons"].([]any)
+			for _, x := range list {
+				reasons = append(reasons, fmt.Sprint(x))
+			}
+		}
+	}
+	if !found || !slices.Equal(reasons, []string{"reflection_misaligned"}) {
+		t.Errorf("the close's crw.replanSignals reasons %v (row found %v), want [reflection_misaligned]", reasons, found)
 	}
 }

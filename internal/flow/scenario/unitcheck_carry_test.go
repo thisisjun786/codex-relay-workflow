@@ -114,7 +114,7 @@ func TestUnitCheckCarriesARepeatedFindingAfterTheRoundCapBeforeTheTierStep(t *te
 		if !slices.Equal(carried, []string{id}) {
 			t.Errorf("carried %v, want [%s]", carried, id)
 		}
-		if want := []string{"architect", "design-audit:r1", "build:A:executor", "fix:A:executor:r1", "fix:A:executor:r2", "reviewer-final:M1", "reflection:M1"}; !slices.Equal(l.Labels(), want) {
+		if want := []string{"architect", "design-audit:r1", "build:A:executor", "fix:A:executor:r1", "fix:A:executor:r2", "reflection:M1"}; !slices.Equal(l.Labels(), want) {
 			t.Errorf("calls %v, want %v", l.Labels(), want)
 		}
 		if n := len(l.Checker.Calls("A")); n != 3 {
