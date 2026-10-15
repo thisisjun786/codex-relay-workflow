@@ -141,7 +141,7 @@ func TestDesignAuditCarriesPriorFindingsAndDispositionsFromRoundTwo(t *testing.T
 // asks for a fix with one P2 defect), and the second makes the milestone re-plan while B-1 has not started. The re-plan's DESIGN raises
 // the first DESIGN's open question again and one the first did not; an explorer's answer reads one head, so both go to explorers in its
 // audit round. The re-plan's audit and explorer calls pin the signal's tip, and the critic's packet names the head, the range from the DESIGN's base and the heads landed (C-1); the first DESIGN's audit
-// and explorer calls pin no head and the critic's packet has no HEAD line; B-1 is released after the re-plan.
+// and explorer calls pin the design head its phase sampled and the critic's packet has no HEAD line; B-1 is released after the re-plan.
 func TestReplanCriticAndExplorerCallsCarryTheSignalHead(t *testing.T) {
 	l := newLaneLab(t, labIssue{Key: "C-1", Milestone: "M1"}, labIssue{Key: "A-1", Milestone: "M1", After: []string{"C-1"}}, labIssue{Key: "B-1", Milestone: "M1", After: []string{"A-1"}})
 	nodeA, nodeB, nodeC := l.nodeOf["A-1"], l.nodeOf["B-1"], l.nodeOf["C-1"]
@@ -158,6 +158,13 @@ func TestReplanCriticAndExplorerCallsCarryTheSignalHead(t *testing.T) {
 			l.mu.Unlock()
 			d := l.design()
 			d.OpenQuestions = append(d.OpenQuestions, again)
+			// the re-plan rewrites the started A-1's tests and done condition: the critic must see what A-1 was released with
+			for i := range d.Issues {
+				if d.Issues[i].Node == nodeA {
+					d.Issues[i].TestsFirst = []string{"a test A-1 was not released with"}
+					d.Issues[i].DoneCondition = "a done condition A-1 was not released with"
+				}
+			}
 			return labSay(d), true
 		case strings.HasPrefix(c.Label, "build:"+nodeA+":") || strings.HasPrefix(c.Label, "fix:"+nodeA+":"):
 			return l.executorTurn(c, map[string]any{"plan_mismatch": "the plan assumed something else: " + c.Label}), true
@@ -209,8 +216,8 @@ func TestReplanCriticAndExplorerCallsCarryTheSignalHead(t *testing.T) {
 	if len(replanExplore) != 2 || heads[replanExplore[0]] != tip || heads[replanExplore[1]] != tip {
 		t.Errorf("the re-plan's explorer calls %v (want two, at head %s); heads %v", replanExplore, tip, heads)
 	}
-	if len(firstExplore) != 1 || heads[firstExplore[0]] != "" || heads["design-audit:r1"] != "" {
-		t.Errorf("the first DESIGN's explorer calls %v and audit pin heads %v, want one explorer and no head", firstExplore, heads)
+	if len(firstExplore) != 1 || heads[firstExplore[0]] != base || heads["design-audit:r1"] != base {
+		t.Errorf("the first DESIGN's explorer calls %v and audit pin heads %v, want one explorer and the design head %s", firstExplore, heads, base)
 	}
 	l.mu.Lock()
 	r1, rp := l.texts["design-audit:r1"], l.texts[audit]
@@ -229,8 +236,10 @@ func TestReplanCriticAndExplorerCallsCarryTheSignalHead(t *testing.T) {
 	_, released, _ := strings.Cut(rp, "RELEASED PLANS")
 	released, _, _ = strings.Cut(released, "\n\n")
 	for _, n := range []string{nodeC, nodeA} {
-		if !strings.Contains(released, "- "+n+" (") || !strings.Contains(released, "approach: write the file of "+n) {
-			t.Errorf("the re-plan's critic packet lacks the released plan of %s:\n%s", n, rp)
+		if !strings.Contains(released, "- "+n+" (") || !strings.Contains(released, `"approach":"write the file of `+n+`"`) ||
+			!strings.Contains(released, `"tests_first":["the file of `+n+` exists"]`) || !strings.Contains(released, `"done_condition":"the file of `+n+` is committed"`) ||
+			!strings.Contains(released, `"size_fit":"executor"`) {
+			t.Errorf("the re-plan's critic packet lacks the whole released plan of %s:\n%s", n, rp)
 		}
 	}
 	if strings.Contains(released, "- "+nodeB+" (") {
@@ -399,6 +408,87 @@ func TestDesignPhaseReadsOneHead(t *testing.T) {
 	l.mu.Unlock()
 	if !strings.Contains(arch, "BACKGROUND FINDINGS (read at "+before+",") {
 		t.Errorf("the architect packet does not name the head of the background findings:\n%s", arch)
+	}
+}
+
+// TestFirstDesignAuditLoopReadsTheDesignHead: the whole audit loop of the first DESIGN reads the design head the phase sampled, as the
+// background explorers and the architect do. Commits land on the integration target during the background phase and again while the
+// open question's explorer runs; the open question's explorer, design-answers, the critic of every round (its null_model retry
+// included) and design-fix all name the sampled head and run at it, r0 records it, and the critic's packet of the first DESIGN has no
+// re-plan head block.
+func TestFirstDesignAuditLoopReadsTheDesignHead(t *testing.T) {
+	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+	q := ops.OpenQuestion{ID: "q1", Question: "which file holds the base text?", Scope: "repo", FilesNeeded: []string{"README.md"}}
+	l.designEdit = func(d *ops.Design) { d.OpenQuestions = []ops.OpenQuestion{q} }
+	before := l.git(l.repo, "rev-parse", "integration")
+	lands := 0
+	land := func(msg string) {
+		tree := l.git(l.repo, "rev-parse", "integration^{tree}")
+		next := l.git(l.repo, "commit-tree", tree, "-p", "integration", "-m", msg)
+		l.git(l.repo, "update-ref", "refs/heads/integration", next)
+		lands++
+	}
+	l.turn = func(c labCall, r fakehost.TurnRequest) (fakehost.TurnPlan, bool) {
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		switch {
+		case strings.HasPrefix(c.Label, "explore-bg:") && lands == 0:
+			land("landed during the background phase")
+		case strings.HasPrefix(c.Label, "explore:") && lands == 1:
+			land("landed during the audit loop")
+		case c.Label == "design-audit:r1":
+			return labSay(map[string]any{"verdict": "needs_changes", "findings": []any{map[string]any{"ref": "D1", "severity": "P2", "finding": "state the order", "evidence": []string{}}}, "summary": "one thing"}), true
+		case c.Label == "design-audit:r2":
+			return fakehost.TurnPlan{Message: "not json"}, true
+		}
+		return fakehost.TurnPlan{}, false
+	}
+	spec := l.start("start", "project-lane", "--args", fmt.Sprintf(`{"plan":%q,"milestone":"M1"}`, l.plan), "--handoff", l.file)
+	l.closed(l.runToEnd(spec.RunID))
+	if lands != 2 {
+		t.Fatalf("%d commits landed during the design phase, want 2", lands)
+	}
+	heads, starts := map[string]string{}, map[string]string{}
+	baseTip := ""
+	for _, e := range l.events() {
+		if e.Kind == engine.KindCall && e.Event == engine.EvPrepared && e.Op == "agent" && e.Label != "" {
+			heads[e.Label] = str(e.Data, "head")
+			if alloc, ok := e.Data["allocation"].(map[string]any); ok {
+				starts[e.Label] = str(alloc, "start_commit")
+			}
+		}
+		if e.Kind == engine.KindCall && e.Op == ops.OpDesignLedger && e.Event == engine.EvCompleted && baseTip == "" {
+			baseTip = str(e.Data, "base_tip")
+		}
+	}
+	seen := map[string]bool{}
+	for label, head := range heads {
+		for _, prefix := range []string{"architect", "explore:", "design-answers:", "design-audit:", "design-fix:"} {
+			if !strings.HasPrefix(label, prefix) {
+				continue
+			}
+			seen[prefix] = true
+			if head != before || starts[label] != before {
+				t.Errorf("%s names head %q and runs at %q, want the sampled design head %s", label, head, starts[label], before)
+			}
+		}
+	}
+	for _, label := range []string{"design-audit:r1", "design-fix:r1", "design-audit:r2", "design-audit:r2:retry", "design-answers:r1"} {
+		if _, ok := heads[label]; !ok {
+			t.Errorf("no call %s: %v", label, heads)
+		}
+	}
+	if len(seen) != 5 {
+		t.Errorf("the calls of the first DESIGN's loop: %v", heads)
+	}
+	if baseTip != before {
+		t.Errorf("r0 records the DESIGN ran at %q, want %s", baseTip, before)
+	}
+	l.mu.Lock()
+	r1 := l.texts["design-audit:r1"]
+	l.mu.Unlock()
+	if strings.Contains(r1, "HEAD: ") || strings.Contains(r1, "LANDED HEADS") || strings.Contains(r1, "RELEASED PLANS") || strings.Contains(r1, "UNSTARTED NODES") {
+		t.Errorf("the first DESIGN's critic packet carries re-plan sections:\n%s", r1)
 	}
 }
 

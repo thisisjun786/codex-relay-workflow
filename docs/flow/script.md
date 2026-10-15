@@ -305,8 +305,8 @@ and a string that is no handle of a result of this run. Like every `crw.*` call,
 `internal/flow/workflows/project-lane.js` is the built-in workflow that runs the issues of a milestone (`args`: `plan`, `milestone`,
 and `cap`, the executors at once, default 3). Its steps, in order: `crw.milestone` reads the nodes of the milestone in the order the
 scheduler offers them; in the phase `explore`, the run samples one design head, the integration tip of the run's plan (`crw.designHead`, recorded once,
-so a resume reads the same head): every background explorer and the architect's first call name it as their `head`, so they read one commit whatever
-lands on the target meanwhile, the architect's checkout, and so the head `r0` records the DESIGN ran at, is made at it, and the explorer's packet
+so a resume reads the same head): every background explorer, the architect's first call and every call of the first DESIGN's audit loop (the open
+questions' explorers, design-answers, the critic and its retry, design-fix) name it as their `head`, so they read one commit whatever lands on the target meanwhile, the architect's checkout, and so the head `r0` records the DESIGN ran at, is made at it, and the explorer's packet
 (`READ AT:`) and the architect's `BACKGROUND FINDINGS` name it; before the architect's first DESIGN, one background question for each node goes to an
 explorer (`crw.explore('background', ...)`, CRW-1466): the question names the node's id, its issue key and its title, its `files_needed` are the
 node's declared regions (none declared: not named), and `crw.exploreRoute` spawns it (`spawned_background`) or reuses an answer of the same
@@ -320,7 +320,8 @@ explorers (SP-EXPL-1), and the ones whose scope carries an out-of-authority nota
 thread in a non-blocking `design_question` escalation: an authority question in the audit round that routed it, approved or not, a
 question beyond the cap once the DESIGN is approved; the escalation's evidence names the question digests it asked, so a later round
 or a re-plan does not ask one again on its own (`asked_in_run`); an explorer's answer is reused for the same question at the same head only: the explorers
-of a re-plan read the head it pins, and the digest of an open question asked there is made of its text and that head, so a question of the first DESIGN,
+of a re-plan read the head it pins, and the digest of an open question asked there is made of its text and that head (the first DESIGN's open questions
+are read at its design head and keep the digest of their text: every answer of that loop reads the one head), so a question of the first DESIGN,
 or of a re-plan at another head, goes to an explorer again and counts against the cap, while a question that goes to the owner thread keeps the digest
 of its text, so it is asked once in the run and its answer holds at every head; because only the latest design ask of a run is current for `crw flow answer`,
 an ask carries the questions of the DESIGN the run asked already that no answer has reached, and the questions the run asked that no answer has reached and the
@@ -541,9 +542,9 @@ and the head each node landed with.
 
 **Revisions.** The ledger holds revisions `r0`, `r1`, ...: a revision is recorded only over an approved audit of its own, made after the revision before it
 (the re-plan's DESIGN goes through the same audit rounds as the first DESIGN, `needs_changes` returning it to the architect on the same thread; the critic's packet
-carries `RELEASED PLANS`, the plan each started node was released with as `crw.releasedPlans` reads it from the revision of its release - approach, `edit_regions`,
-`decision_refs` and the decisions they name - and a started node whose issue differs from it, or a decision such a plan names that the DESIGN drops or changes,
-is a P1 finding), and the nodes that have not started are
+carries `RELEASED PLANS`, the plan each started node was released with as `crw.releasedPlans` reads it from the revision of its release - the whole issue, every field, and the whole
+decisions its `decision_refs` name - and a started node whose issue differs from it in any field, or a decision such a plan names that the DESIGN drops or changes
+in any field, is a P1 finding), and the nodes that have not started are
 released under a revision only after that, because the signal that re-plans keeps every new release back until it is decided. A lane that started keeps the
 revision it was released under; it ends under it and lands or is held as usual. Each revision records the slice digest of every node of the plan it was made
 against - for a revision after the first, the plan the architect and the auditor evaluated (`plan` of `crw.replanSignals`, handed to `crw.designLedger`), so that a plan revision made while

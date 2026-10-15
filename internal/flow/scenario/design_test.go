@@ -219,10 +219,10 @@ var earlierExplorers = map[string][3]string{
 const earlierMilestoneDigest = "5cbd767ee536ad48e19c4c78d76960971b476e71271307c2b23bbe245ff25460"
 
 // TestARunRecordedBeforeTheEndConditionResumesItsExplorers (CRW-1382, post-evaluation d4): the end condition changes nothing a run
-// recorded before it replays. An explorer given no end condition is the call the earlier binary made - the same packet, the same FINDINGS
-// schema, the same input digest - so a run whose explorers were recorded before CRW-1382 replays them on a resume instead of running them
-// live again (and coming to the design ledger's refusal of a run past its design audit); only the explorer given the commands has the
-// packet section and the schema member end_conditions. The milestone's digest leaves the end condition out, so the plan a run pinned
+// recorded before it replays. An explorer given no end condition has the packet and the FINDINGS schema the earlier binary gave it; only
+// the explorer given the commands has the packet section and the schema member end_conditions. Its input digest is not the earlier
+// binary's: the call names the design head the first DESIGN's phase samples (crw.designHead), which the earlier binary's calls did not
+// carry, and the head is part of a call's input. The milestone's digest leaves the end condition out, so the plan a run pinned
 // before CRW-1382 is the plan the relay holds after it, whatever end condition the handoff's bodies carry.
 func TestARunRecordedBeforeTheEndConditionResumesItsExplorers(t *testing.T) {
 	check := func(t *testing.T, l *Lab, given string) {
@@ -245,8 +245,11 @@ func TestARunRecordedBeforeTheEndConditionResumesItsExplorers(t *testing.T) {
 				}
 				continue
 			}
-			if got != want {
-				t.Errorf("explorer %s: prompt, schema and input digests %v, the earlier binary's %v: a resume of a run recorded before CRW-1382 runs it live again", ev.Label, got, want)
+			if got[0] != want[0] || got[1] != want[1] {
+				t.Errorf("explorer %s: prompt and schema digests %v, the earlier binary's %v", ev.Label, got[:2], want[:2])
+			}
+			if str(ev.Data, "head") == "" || got[2] == want[2] {
+				t.Errorf("explorer %s: head %q and input digest %s, want the design head in its input", ev.Label, str(ev.Data, "head"), got[2])
 			}
 		}
 		if seen != 2 {
@@ -395,8 +398,8 @@ func TestOpenQuestionRoutesThroughDesignAudit(t *testing.T) {
 	if got.State != "replanned" {
 		t.Fatalf("%+v; calls %v", got, l.Labels())
 	}
-	// four explorers: before the first audit the small question and the one with an unknown notation, and the same two again in
-	// the re-plan, at the head it pins (an answer about the first DESIGN's checkout is no answer about it); none for the authority
+	// four explorers: before the first audit the small question and the one with an unknown notation, at the design head, and the
+	// same two again in the re-plan, at the head it pins (an answer about the first DESIGN's checkout is no answer about it); none for the authority
 	// question, which goes to the orchestrator again
 	explorers := l.CallsOf("explorer")
 	if len(explorers) != 4 {
@@ -404,13 +407,13 @@ func TestOpenQuestionRoutesThroughDesignAudit(t *testing.T) {
 	}
 	atHead := 0
 	for _, ev := range l.Events() {
-		// the background explorers read the design head of the first DESIGN; the open questions' explorers are counted here
+		// every explorer reads a pinned head: the first DESIGN's its design head, the re-plan's the head it pins
 		if ev.Kind == engine.KindCall && ev.Op == "agent" && ev.Event == engine.EvPrepared && str(ev.Data, "role") == "explorer" && !strings.HasPrefix(ev.Label, BackgroundLabel) && str(ev.Data, "head") != "" {
 			atHead++
 		}
 	}
-	if atHead != 2 {
-		t.Errorf("%d explorers at a pinned head, want the re-plan's two", atHead)
+	if atHead != 4 {
+		t.Errorf("%d open-question explorers at a pinned head, want all four", atHead)
 	}
 	for _, c := range explorers {
 		if text := textOfCall(l, c.ID); strings.Contains(text, "ship the flag") {

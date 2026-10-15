@@ -38,10 +38,14 @@ for (const n of ms.nodes) for (const c of n.end_condition || []) END_CONDITIONS.
 // its own thread (design-answers, CRW-1466), and needs_changes sends it back to the architect on its own thread, for
 // AUDIT_ROUNDS rounds. From the second round on the critic's packet carries the findings of the earlier rounds by id (r<round>.<index>)
 // and the architect's disposition of each, from the DESIGN its design-fix answered (PRIOR FINDINGS). tag names
-// the labels of a re-plan's rounds. The answer is {ok, arch, answers}, or {ok: false, result} with what the milestone came to when
+// the labels of a re-plan's rounds. Every call of the loop reads one head: a re-plan's context names its pinned head, and designHead
+// is the head the first DESIGN's phase sampled (crw.designHead), which the first DESIGN's loop reads with no re-plan context. The answer is {ok, arch, answers}, or {ok: false, result} with what the milestone came to when
 // the design could not be approved.
-async function auditedDesign(first, tag, context) {
+async function auditedDesign(first, tag, context, designHead) {
   let arch = first
+  // the head every call of the loop reads: a re-plan's pinned head, or the design head the first DESIGN's phase sampled
+  // (crw.designHead), so the open questions' explorers, the critic and the architect's turns judge the code the DESIGN was written for
+  const at = (context && context.head) || designHead || undefined
   // the tokens of the loop are those its calls report (meta.tokens; crw.explore's tokens for its explorers), and its cap is made of
   // budget.run: both are the same on a resume that replays them, whatever ceiling the resume has
   const cap = budget.run === null ? DESIGN_TOKEN_CAP : Math.min(DESIGN_TOKEN_CAP, budget.run * DESIGN_TOKEN_WARN)
@@ -66,7 +70,9 @@ async function auditedDesign(first, tag, context) {
     // the end condition commands of the issues are run once, by the first explorer of the first DESIGN's first round (CRW-1382)
     const ends = round === 1 && tag === '' ? END_CONDITIONS : []
     // a re-plan's explorers read the head it judges (CRW-1458); the first DESIGN's context has no head key, so its bytes are as before
-    const asked = await crw.explore('open_questions', arch.output.open_questions, context && context.head ? { milestone: ms.id, head: context.head } : { milestone: ms.id }, { endConditions: ends })
+    // the first DESIGN's open questions keep the reuse key of their text (no head in the route's context): every answer of its loop reads
+    // the same design head; their explorers are placed at it (opts.head)
+    const asked = await crw.explore('open_questions', arch.output.open_questions, context && context.head ? { milestone: ms.id, head: context.head } : { milestone: ms.id }, { endConditions: ends, head: at })
     await tokenCap(asked.tokens, round)
     // the authority questions of the round are asked now, approved or not (CRW-1366): an answer is the next round's
     await askOrchestrator(asked.answers, 'out_of_authority', asked.carried)
@@ -76,25 +82,25 @@ async function auditedDesign(first, tag, context) {
     // round got an answer, design-answers resumes the architect with them, and the DESIGN it answers with is the one audited (and the
     // handle a design-fix and the ledger resume); a question it raises there is routed in the next round
     if (answeredQuestions(answers).length) {
-      arch = await agent.call(designAnswersPacket(answers, context), { resume: arch, schema: DESIGN, head: context && context.head, label: 'design-answers:' + tag + 'r' + round })
+      arch = await agent.call(designAnswersPacket(answers, context), { resume: arch, schema: DESIGN, head: at, label: 'design-answers:' + tag + 'r' + round })
       if (arch.status !== 'completed') return { ok: false, result: await crw.milestoneHalt(ms, 'architect', arch.status, arch.reason, arch.callId) }
       await tokenCap(tokensOf(arch), round)
     }
     const cand = { design: arch.output, answers }
     await crw.spawnDecision('AUDIT', 'spawn', { role: 'critic', inputs: { milestone: ms.id, round, tag } })
     // the critic of a re-plan audits at the head the re-plan judges, in a read-only checkout of it, as the architect's turns are (CRW-1458)
-    let call = await agent.call(designAuditPacket(ms, cand, round, prior, context), { agentType: 'critic', schema: DESIGN_AUDIT, head: context && context.head, label: 'design-audit:' + tag + 'r' + round })
+    let call = await agent.call(designAuditPacket(ms, cand, round, prior, context), { agentType: 'critic', schema: DESIGN_AUDIT, head: at, label: 'design-audit:' + tag + 'r' + round })
     let audit = await crw.designAudit(ms.id, round, cand, arch, call)
     if (audit.state === 'null_model') {
       await tokenCap(tokensOf(call), round)
-      call = await agent.call(designAuditPacket(ms, cand, round, prior, context), { agentType: 'critic', schema: DESIGN_AUDIT, head: context && context.head, label: 'design-audit:' + tag + 'r' + round + ':retry' })
+      call = await agent.call(designAuditPacket(ms, cand, round, prior, context), { agentType: 'critic', schema: DESIGN_AUDIT, head: at, label: 'design-audit:' + tag + 'r' + round + ':retry' })
       audit = await crw.designAudit(ms.id, round, cand, arch, call)
     }
     await tokenCap(tokensOf(call), round)
     if (audit.state === 'approved') return { ok: true, arch, answers, carried: asked.carried }
     if (audit.state !== 'needs_changes') return { ok: false, result: await crw.milestoneHalt(ms, 'design_audit', audit.state, audit.reason, call.callId) }
     // back to the architect, on its own thread: the DESIGN it revises is the one it wrote, and it disposes of each finding by its id
-    arch = await agent.call(designFixPacket(audit, context, round), { resume: arch, schema: DESIGN, head: context && context.head, label: 'design-fix:' + tag + 'r' + round })
+    arch = await agent.call(designFixPacket(audit, context, round), { resume: arch, schema: DESIGN, head: at, label: 'design-fix:' + tag + 'r' + round })
     if (arch.status !== 'completed') return { ok: false, result: await crw.milestoneHalt(ms, 'architect', arch.status, arch.reason, arch.callId) }
     const dispositions = arch.output.dispositions
     prior.push({ round, findings: auditFindings(round, audit.findings), dispositions: dispositions === undefined ? null : dispositions })
@@ -191,7 +197,7 @@ phase('design')
 await crw.spawnDecision('ARCH_1', 'spawn', { role: 'architect', inputs: { milestone: ms.id, nodes: ms.nodes.length } })
 const first = await agent.call(architectPacket(ms, background.answers, designAt.head), { agentType: 'architect', schema: DESIGN, head: designAt.head, label: 'architect' })
 if (first.status !== 'completed') return crw.milestoneHalt(ms, 'architect', first.status, first.reason, first.callId)
-const designed0 = await auditedDesign(first, '')
+const designed0 = await auditedDesign(first, '', undefined, designAt.head)
 if (!designed0.ok) return designed0.result
 const arch = designed0.arch
 await crw.designLedger(ms.id, { design: arch.output, answers: designed0.answers, architect: arch })

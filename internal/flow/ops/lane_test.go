@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -424,8 +425,8 @@ func TestReleasedPlansAndDesignHead(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("released plans %+v, want A only", got)
 	}
-	if p := got[0]; p.Node != "A" || p.Issue != "CRW-A" || p.Revision != "r0" || p.Approach != "approach A" || !slices.Equal(p.EditRegions, []string{"A/"}) ||
-		!slices.Equal(p.DecisionRefs, []string{"D1"}) || len(p.Decisions) != 1 || p.Decisions[0].Change != "change" {
+	want := designOf("A", "B").Issues[0]
+	if p := got[0]; p.Node != "A" || p.Revision != "r0" || !reflect.DeepEqual(p.Plan, want) || len(p.Decisions) != 1 || !reflect.DeepEqual(p.Decisions[0], designOf("A").Decisions[0]) {
 		t.Errorf("the released plan of A: %+v", p)
 	}
 	var head DesignHead

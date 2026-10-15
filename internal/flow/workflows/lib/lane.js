@@ -434,7 +434,8 @@ async function superseded(node, rel) {
 //
 // opts.endConditions are the end condition commands of the milestone's issues ({issue, command}, CRW-1382): the first explorer this
 // fan-out spawns is given them to run once, and its answer names them (end_conditions_asked) so crw.exploreRecord can warn of a command
-// that failed, ran no test or was not reported. They are not an argument of crw.exploreRoute or of crw.exploreRecord's context.
+// that failed, ran no test or was not reported. They are not an argument of crw.exploreRoute or of crw.exploreRecord's context, and
+// neither is opts.head: the head the explorer calls are placed at when the context names none.
 export async function explore(kind, questions, ctx, opts) {
   const plan = await crw.exploreRoute(kind, ctx, questions)
   const spawn = plan.routes.filter((r) => r.route === 'spawn')
@@ -446,15 +447,18 @@ export async function explore(kind, questions, ctx, opts) {
   // a background explorer (CRW-1466) is labelled explore-bg:<milestone>:<digest12>, so a reader of the explore: labels (an open
   // question's, a research or evidence question's) never takes one for its own; every other kind keeps its label
   const prefix = kind === 'background' ? 'explore-bg:' : 'explore:'
+  // the head the explorers read: the context's (it is part of the route, and of the reuse key of a re-plan's or an evidence question),
+  // else opts.head, a head the calls are placed at that the route does not key on (the first DESIGN's design head)
+  const callHead = ctx.head || (opts && opts.head) || undefined
   for (const wave of chunks(spawn, EXPLORER_CONCURRENCY)) {
     // the explorer given the end conditions answers FINDINGS_END; every other one is the call it was before CRW-1382 (its packet and
     // its schema), so a run recorded then replays it
     const calls = await parallel(wave.map((r) => () => r.digest === endsFor
       ? agent.call(explorerPacket(kind, r, ctx, ends), {
-        agentType: 'explorer', node: ctx.node || undefined, head: ctx.head || undefined, schema: FINDINGS_END, label: prefix + (ctx.node || ctx.milestone) + ':' + r.digest.slice(0, 12),
+        agentType: 'explorer', node: ctx.node || undefined, head: callHead, schema: FINDINGS_END, label: prefix + (ctx.node || ctx.milestone) + ':' + r.digest.slice(0, 12),
       })
       : agent.call(explorerPacket(kind, r, ctx), {
-        agentType: 'explorer', node: ctx.node || undefined, head: ctx.head || undefined, schema: FINDINGS, label: prefix + (ctx.node || ctx.milestone) + ':' + r.digest.slice(0, 12),
+        agentType: 'explorer', node: ctx.node || undefined, head: callHead, schema: FINDINGS, label: prefix + (ctx.node || ctx.milestone) + ':' + r.digest.slice(0, 12),
       })), { keys: wave.map((r) => r.digest.slice(0, 12)), label: 'explore' })
     wave.forEach((r, i) => {
       const call = calls[i]

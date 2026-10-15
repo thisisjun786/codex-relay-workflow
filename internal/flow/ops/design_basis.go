@@ -59,19 +59,17 @@ func (o *designHeadOp) Proven(ctx context.Context, ev []engine.Event, row engine
 
 // releasedPlansOp is crw.releasedPlans(milestone): for each node of the milestone that has started (a release that stands, as the
 // signal path counts it), the issue plan of the ledger revision it was released under, as crw.issuePlan gives it to its lane. The
-// critic of a re-plan reads them (RELEASED PLANS): the whole DESIGN keeps each started node's issue as it was released.
+// critic of a re-plan reads them (RELEASED PLANS): the whole DESIGN keeps each started node's issue as it was released, every field.
 type releasedPlansOp struct{ l *Lane }
 
-// ReleasedPlan is the plan a started node was released with.
+// ReleasedPlan is the plan a started node was released with: the whole issue of the revision it was released under, every field of
+// it, and the whole decisions its decision_refs name, so the critic sees any drift of the DESIGN from them.
 type ReleasedPlan struct {
-	Node         string     `json:"node"`
-	Issue        string     `json:"issue"`
-	Revision     string     `json:"revision"`
-	DesignDigest string     `json:"design_digest"`
-	Approach     string     `json:"approach"`
-	EditRegions  []string   `json:"edit_regions"`
-	DecisionRefs []string   `json:"decision_refs"`
-	Decisions    []Decision `json:"decisions"`
+	Node         string      `json:"node"`
+	Revision     string      `json:"revision"`
+	DesignDigest string      `json:"design_digest"`
+	Plan         DesignIssue `json:"plan"`
+	Decisions    []Decision  `json:"decisions"`
 }
 
 func (o *releasedPlansOp) Run(_ context.Context, req engine.OpRequest) (engine.OpResult, error) {
@@ -100,13 +98,13 @@ func (o *releasedPlansOp) Run(_ context.Context, req engine.OpRequest) (engine.O
 		if !found {
 			return engine.OpResult{}, fmt.Errorf("crw.releasedPlans: revision %s plans no issue for node %s, which was released under it", revision, node)
 		}
-		p := ReleasedPlan{Node: node, Issue: is.Issue, Revision: revision, DesignDigest: dataStr(rel, "design_digest"), Approach: is.Approach,
-			EditRegions: nonNil(is.EditRegions), DecisionRefs: nonNil(is.DecisionRefs), Decisions: []Decision{}}
+		is.EditRegions, is.TestsFirst, is.DecisionRefs, is.OrderAfter = nonNil(is.EditRegions), nonNil(is.TestsFirst), nonNil(is.DecisionRefs), nonNil(is.OrderAfter)
+		p := ReleasedPlan{Node: node, Revision: revision, DesignDigest: dataStr(rel, "design_digest"), Plan: is, Decisions: []Decision{}}
 		design, err := ledgerDesign(led)
 		if err != nil {
 			return engine.OpResult{}, fmt.Errorf("crw.releasedPlans: node %s: %w", node, err)
 		}
-		for _, ref := range p.DecisionRefs {
+		for _, ref := range is.DecisionRefs {
 			for _, d := range design.Decisions {
 				if d.ID == ref {
 					p.Decisions = append(p.Decisions, d)

@@ -195,7 +195,7 @@ export function designAuditPacket(ms, cand, round, prior, context) {
     replanned ? unstartedSection(ms, context.unstarted) : '',
     replanned ? 'The DESIGN is the whole DESIGN of the milestone, not a delta, in every round of this audit, the architect\'s design-fix answers included: every node of the milestone has its issue in it, the started ones as they were released; an unstarted node with no issue in the DESIGN is a P1 finding that names the node, and so is a started node whose issue is missing.' : '',
     context && Array.isArray(context.released) ? releasedSection(context.released) +
-      '\nCompare the DESIGN with it: a started node whose issue in the DESIGN differs from its entry in RELEASED PLANS in approach, edit_regions or decision_refs is a P1 finding that names the node, and so is a decision a released plan names that the DESIGN drops or changes.' : '',
+      '\nCompare the DESIGN with it: a started node whose issue in the DESIGN differs from its plan in RELEASED PLANS in any field is a P1 finding that names the node, and so is a decision a released plan names that the DESIGN drops or changes in any field.' : '',
     section('DESIGN', [canon(cand.design)]),
     section('ANSWERS TO THE OPEN QUESTIONS (each with its route and what it got)', answerLines(cand.answers)),
     'An open question of the DESIGN with no entry in ANSWERS TO THE OPEN QUESTIONS (one the architect raised when the answers came back to its thread, which no route has taken yet) is a P1 finding that names the question, so the next round routes it.',
@@ -203,14 +203,13 @@ export function designAuditPacket(ms, cand, round, prior, context) {
 }
 
 // releasedSection lists the plans the started nodes were released with (crw.releasedPlans): each node with the revision it was
-// released under, its approach, edit regions and decision refs, and the decisions those refs name.
+// released under, its whole issue plan (every field) and the whole decisions its decision_refs name, so the critic sees any drift.
+// An entry with no plan member (the flat form an earlier lane binary recorded) is rendered from its own fields.
 function releasedSection(released) {
-  return section('RELEASED PLANS (the started nodes, each as the revision it was released under plans it)', released.length === 0 ? ['- none'] : released.map((p) =>
-    '- ' + p.node + ' (' + p.issue + '), released under ' + p.revision +
-    '\n  approach: ' + p.approach +
-    '\n  edit_regions: ' + (p.edit_regions.length ? p.edit_regions.join(', ') : 'none') +
-    '\n  decision_refs: ' + (p.decision_refs.length ? p.decision_refs.join(', ') : 'none') +
-    '\n  decisions: ' + ((p.decisions || []).length ? p.decisions.map((d) => d.id + ': ' + d.change).join(' | ') : 'none')))
+  return section('RELEASED PLANS (the started nodes, each with the whole issue plan of the revision it was released under and the decisions it names)', released.length === 0 ? ['- none'] : released.map((p) => {
+    const plan = p.plan || p
+    return '- ' + p.node + ' (' + plan.issue + '), released under ' + p.revision + '\n  plan: ' + canon(plan) + '\n  decisions: ' + canon(p.decisions || [])
+  }))
 }
 
 // answeredQuestions are the answers of a round's open questions that hold an answer for the architect (CRW-1466): a question an

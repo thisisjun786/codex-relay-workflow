@@ -178,18 +178,26 @@ func priorFindingsOf(packet string) ([]string, bool) {
 // a P1 finding. The first DESIGN's critic packet has no such section, and a re-plan with no started node says none.
 func TestCriticReplanPacketListsReleasedPlans(t *testing.T) {
 	cand := "{ design: { decisions: [], issues: [] }, answers: [] }"
-	released := "[{ node: 'n1', issue: 'CRW-1', revision: 'r0', approach: 'split the store first', edit_regions: ['a.go', 'a_test.go'], decision_refs: ['D1'], " +
-		"decisions: [{ id: 'D1', change: 'split the store' }] }]"
+	released := "[{ node: 'n1', revision: 'r0', design_digest: 'dg0', plan: { issue: 'CRW-1', node: 'n1', size_fit: 'executor', size_reason: '', issue_size_decision: 'ok', " +
+		"edit_regions: ['a.go', 'a_test.go'], approach: 'split the store first', tests_first: ['TestSplit'], done_condition: 'go test ./a', decision_refs: ['D1'], order_after: [], group: null }, " +
+		"decisions: [{ id: 'D1', evidence: ['a.go:1'], change: 'split the store', alternatives: ['keep it'], assumptions: ['one writer'] }] }]"
 	replan := packetText(t, "critic-released-packet", "designAuditPacket",
 		"designAuditPacket(ms, "+cand+", 1, [], { head: 'tip1', base_tip: 'base0', landed: [{ node: 'n1', head: 'h1' }], unstarted: ['n2', 'n3'], released: "+released+" })")
 	for _, want := range []string{
 		"RELEASED PLANS",
-		"- n1 (CRW-1), released under r0\n  approach: split the store first\n  edit_regions: a.go, a_test.go\n  decision_refs: D1\n  decisions: D1: split the store",
-		"a started node whose issue in the DESIGN differs from its entry in RELEASED PLANS in approach, edit_regions or decision_refs is a P1 finding that names the node",
+		"- n1 (CRW-1), released under r0\n  plan: {\"approach\":\"split the store first\",\"decision_refs\":[\"D1\"],\"done_condition\":\"go test ./a\",\"edit_regions\":[\"a.go\",\"a_test.go\"],\"group\":null,\"issue\":\"CRW-1\",\"issue_size_decision\":\"ok\",\"node\":\"n1\",\"order_after\":[],\"size_fit\":\"executor\",\"size_reason\":\"\",\"tests_first\":[\"TestSplit\"]}",
+		"\n  decisions: [{\"alternatives\":[\"keep it\"],\"assumptions\":[\"one writer\"],\"change\":\"split the store\",\"evidence\":[\"a.go:1\"],\"id\":\"D1\"}]",
+		"a started node whose issue in the DESIGN differs from its plan in RELEASED PLANS in any field is a P1 finding that names the node, and so is a decision a released plan names that the DESIGN drops or changes in any field",
 	} {
 		if !strings.Contains(replan, want) {
 			t.Errorf("the critic packet of a re-plan lacks %q:\n%s", want, replan)
 		}
+	}
+	// an entry of the flat form an earlier lane binary recorded is rendered, not thrown on
+	flat := packetText(t, "critic-released-flat-packet", "designAuditPacket",
+		"designAuditPacket(ms, "+cand+", 1, [], { head: 'tip1', base_tip: 'base0', landed: [], unstarted: [], released: [{ node: 'n1', issue: 'CRW-1', revision: 'r0', approach: 'a', edit_regions: [], decision_refs: [], decisions: [] }] })")
+	if !strings.Contains(flat, "- n1 (CRW-1), released under r0\n  plan: {") || !strings.Contains(flat, `"approach":"a"`) {
+		t.Errorf("a flat released entry:\n%s", flat)
 	}
 	none := packetText(t, "critic-released-none-packet", "designAuditPacket",
 		"designAuditPacket(ms, "+cand+", 1, [], { head: 'tip1', base_tip: 'base0', landed: [], unstarted: ['n1', 'n2', 'n3'], released: [] })")
