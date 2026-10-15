@@ -220,7 +220,8 @@ func (r *Runner) firstContaining(ctx context.Context, head string) string {
 }
 
 // pushedRun is the summary of this queue's run that pushed the entry's head (its tag and summary), nil when no run file says so.
-func (r *Runner) pushedRun(e Entry) *Summary {
+// A run whose summary is still the pushing marker (the signal ended it during the push) counts when its head is in the branch.
+func (r *Runner) pushedRun(ctx context.Context, e Entry) *Summary {
 	paths, _ := filepath.Glob(filepath.Join(r.Cfg.RunsDir, "*.summary.json"))
 	var found *Summary
 	for _, p := range paths {
@@ -229,8 +230,15 @@ func (r *Runner) pushedRun(e Entry) *Summary {
 			continue
 		}
 		var s Summary
-		if json.Unmarshal(data, &s) == nil && s.Merged == e.Spec() && s.Result == "pushed" && headRE.MatchString(s.Head) && (found == nil || s.Tag > found.Tag) {
-			found = &s
+		if json.Unmarshal(data, &s) == nil && s.Merged == e.Spec() && headRE.MatchString(s.Head) && (found == nil || s.Tag > found.Tag) {
+			switch s.Result {
+			case "pushed":
+				found = &s
+			case resultPushing:
+				if rc, err := r.git(ctx, r.Cfg.Checkout, nil, "merge-base", "--is-ancestor", s.Head, r.Cfg.remoteRef()); err == nil && rc == 0 {
+					found = &s
+				}
+			}
 		}
 	}
 	return found
@@ -253,7 +261,7 @@ func (r *Runner) recoverLanding(ctx context.Context, tag string, e Entry, pr tra
 		l.Issues = append(l.Issues, is.String())
 	}
 	configured := len(r.Cfg.ReviewCommand) > 0
-	if run := r.pushedRun(e); run != nil {
+	if run := r.pushedRun(ctx, e); run != nil {
 		l.DevBefore, l.DevAfter, l.Merged = run.Base, run.Head, run.Head
 		l.Verification = LandingVerification{Record: run.Record, Status: 0}
 		if data, err := os.ReadFile(run.Record); err == nil {

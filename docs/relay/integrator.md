@@ -81,6 +81,9 @@ verification or the review stays in `pending/` with the new head (`head-moved:<s
 
 Run files, in `runs_dir`: `<tag>.log`, `<tag>.out` and `<tag>.summary.json` (`tag`, `base`, `head`, `merged`, `left_out`, `record`,
 `result`, the shell runner's own shape), `<tag>.verify.log`, and the verification record `<tag>.json` that `verify_command` writes.
+Right before the push the run writes `"result": "pushing"` into its summary, a marker the run's own result overwrites; a push that landed with no
+`pushed` summary behind it (the signal ended the call after git exited 0) leaves the marker, and the recovery of that landing accepts it when its head
+is in the branch, so the run's verification record and review verdict are still found. `pushing` is a marker, never a pass result.
 
 ### Exit status
 
