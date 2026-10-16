@@ -127,7 +127,8 @@ committed batch:
    `failed`) and no `summary_notice` row names its summary id, the run writes one (the summary id, the plan, the document, the logical id
    `summary-<summary id>`, and `text`, the notice in this build's words); the row is written once for a summary id, whether the entry is
    new or the relay answered one it held. The run reads the rows again after the write, so an intent another writer stored first is the
-   one whose text goes.
+   one whose text goes. An intent that only this second read finds, for an entry newer than the states the run read, is neither sent nor
+   settled: the next reconcile reads both again and sends it.
 3. Every `summary_notice` of the stream without a `summary_notice_settled` row is delivered: when its entry is confirmed or superseded
    first, the settlement is `obsolete` and nothing is sent (the new entry has an intent of its own); otherwise
    `crw manage send-parent --thread <child thread> --logical-id summary-<summary id>` carries the `summary_owed` notice (the summary

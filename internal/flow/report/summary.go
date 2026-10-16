@@ -106,8 +106,14 @@ func ReconcileSummary(ctx context.Context, env SummaryEnv) (SummaryOutcome, erro
 	if err != nil {
 		return out, err
 	}
+	// read is the summary ids whose rows were read together with the states above: the newest entry and every intent read so far
+	read := map[string]bool{newest.SummaryID: true}
+	for _, n := range notices {
+		read[n.id] = true
+	}
 	// (a) the intent: the newest entry is owed and has none. The rows are read again after the write: another writer may have stored the
 	// intent between the read above and this write (AppendOnce then writes nothing), and the notice goes in the text of the row that holds it.
+	// An intent that only the second read finds and whose entry the states above do not hold is left to the next reconcile.
 	if owed(newest.State) && !hasNotice(notices, newest.SummaryID) {
 		text := SummaryNoticeText(newest.SummaryID, env.Plan, env.Document)
 		wrote, _, err := env.Rows.AppendOnce(ctx, NewRow{Kind: KindSummaryNotice, Payload: map[string]any{
@@ -134,6 +140,11 @@ func ReconcileSummary(ctx context.Context, env SummaryEnv) (SummaryOutcome, erro
 		}
 		if !notice.found {
 			// no row holds the id, which AppendOnce rules out: nothing is sent or settled, and the next reconcile reads the rows again
+			continue
+		}
+		if _, known := state[id]; !known && !read[id] {
+			// the rows read again after the write hold an intent another writer stored after the states were read (a newer entry): its
+			// state is not known here, so it is neither settled nor sent, and the next reconcile reads both again
 			continue
 		}
 		if !owed(state[id]) {

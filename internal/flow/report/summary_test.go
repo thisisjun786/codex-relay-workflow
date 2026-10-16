@@ -674,3 +674,83 @@ func TestSummaryIntentWrittenByAnotherWriterFirstSendsItsText(t *testing.T) {
 		})
 	}
 }
+
+// interposingAppender is the row writer of a run whose first summary_notice write lets another writer act first (between the reconcile's
+// read of the summary states and its read of the rows again): before forwarding the write, it calls between once.
+type interposingAppender struct {
+	inner   ForeignAppender
+	between func() error
+	done    bool
+}
+
+func (a *interposingAppender) Append(ctx context.Context, row NewRow) (int64, error) {
+	return a.inner.Append(ctx, row)
+}
+
+func (a *interposingAppender) AppendOnce(ctx context.Context, row NewRow, key string) (bool, int64, error) {
+	if row.Kind == KindSummaryNotice && !a.done {
+		a.done = true
+		if err := a.between(); err != nil {
+			return false, 0, err
+		}
+	}
+	return a.inner.AppendOnce(ctx, row, key)
+}
+
+// A newer summary S2 that another writer enqueued and stored the intent of between this reconcile's read of the states and its read of the
+// rows again is not settled by this reconcile, whose states do not know S2: the next reconcile sends S2 once, in the other writer's text,
+// and settles it accepted. S1, superseded by S2 before its send, settles obsolete and is never sent.
+func TestSummaryNewerIntentStoredBetweenTheReadsWaitsForTheNextReconcile(t *testing.T) {
+	w := summaryWorld(t)
+	other := ForeignAppender{Store: w.st, Run: testRun, Now: fixedNow}
+	const otherText = "T2: the newer summary is owed, in the other writer's words"
+	var s2 string
+	rows := &interposingAppender{inner: ForeignAppender{Store: w.st, Run: testRun, Now: fixedNow}, between: func() error {
+		w.verdict("A", "needs_changes", "the guard is missing", "the loop never ends")
+		s2 = w.enqueue()
+		_, err := other.Append(ctx, NewRow{Kind: KindSummaryNotice, Payload: intentPayload(s2, otherText)})
+		return err
+	}}
+	env := w.summaryEnv(rows)
+	out, err := ReconcileSummary(ctx, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s1 := out.SummaryID
+	if !rows.done || s2 == "" || s2 == s1 {
+		t.Fatalf("the other writer did not act between the reads: done %v s1 %q s2 %q", rows.done, s1, s2)
+	}
+	if out.Intents != 1 || out.Sent != 0 {
+		t.Fatalf("the first reconcile: %+v, want its own intent of S1 and no send", out)
+	}
+	results := func() map[string][]string {
+		got := map[string][]string{}
+		for _, r := range w.rows(KindSummarySettled) {
+			got[r.Str("summary_id")] = append(got[r.Str("summary_id")], r.Str("result"))
+		}
+		return got
+	}
+	if got := results(); !slices.Equal(got[s1], []string{SettledObsolete}) || len(got[s2]) != 0 {
+		t.Fatalf("after the first reconcile settled %v, want S1 obsolete and S2 unsettled", got)
+	}
+	again, err := ReconcileSummary(ctx, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.SummaryID != s2 || again.Intents != 0 || again.Sent != 1 || again.Settled != 1 {
+		t.Fatalf("the next reconcile: %+v, want one send and one settlement of S2", again)
+	}
+	if _, err := ReconcileSummary(ctx, env); err != nil {
+		t.Fatal(err)
+	}
+	sent := w.sender.parentSent()
+	if len(sent) != 1 || sent[0].LogicalID != "summary-"+s2 || sent[0].Text != otherText {
+		t.Fatalf("sent %+v, want one send of summary-%s in the other writer's text", sent, s2)
+	}
+	if got := results(); !slices.Equal(got[s1], []string{SettledObsolete}) || !slices.Equal(got[s2], []string{SettledAccepted}) {
+		t.Errorf("settled %v, want S1 obsolete and S2 accepted, each once", got)
+	}
+	if esc := w.rows(engine.EvEscalation); len(esc) != 0 {
+		t.Errorf("escalations %+v", esc)
+	}
+}
