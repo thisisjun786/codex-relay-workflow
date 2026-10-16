@@ -16,7 +16,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"runtime/debug"
 	"sort"
 	"strconv"
@@ -26,6 +25,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/homeguard"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // CRW-964: `crw-dev ci local`. It runs the local step table in a clean worktree of the
@@ -54,13 +54,12 @@ type localOptions struct {
 	Runner    string
 	HeavyGate string
 	Keep      bool
-	// WorkRoot is the directory the clean worktree is made in; it may not be inside TMPDIR, /tmp or /var/tmp.
+	// WorkRoot is the directory the clean worktree is made in. It is judged by what it is (absolute, not
+	// in the account's real home), never by where it lies: TMPDIR, /tmp and /var/tmp are allowed.
 	WorkRoot string
 	// Parallel is the Go test parallelism every step runs with (GOFLAGS=-p=N); 0 means 4.
 	Parallel int
-	// allowTempRoot lets a test work root sit under TMPDIR. Only tests set it; the command never does.
-	allowTempRoot bool
-	Plan          []localJob
+	Plan     []localJob
 	// Env is extra environment for every step, after the isolated home and TZ (tests use it).
 	Env []string
 	// Tools are the tool roots the configuration file names (paths.build_cache, paths.build_work).
@@ -77,9 +76,9 @@ type localOptions struct {
 	buildInfo func() (*debug.BuildInfo, bool)
 	// stepTmp is the fresh TMPDIR every step of this run gets (localStepTempDir), set once per run.
 	stepTmp string
-	// socketLimit replaces the host's socket path limit (localSocketLimit) when it is non-zero. Only tests set it;
-	// the command never does.
-	socketLimit int
+	// socketRoot replaces tmploc.SocketRoot as the root the pre-check makes its socket folder below
+	// (localSocketDirCheck) when it is not empty. Only tests set it; the command never does.
+	socketRoot string
 	// gitCeilings are directories the .git walk above a step TMPDIR stops below (the entry itself is not
 	// checked), so a stray .git on the test host does not decide the candidate. Only tests set it; the
 	// command never does.
@@ -113,7 +112,7 @@ func Local(args []string, stdout, stderr io.Writer) int {
 	heavyGate := flags.String("heavy-gate", "", "the heavy-check gate to run heavy steps through (default $"+localHeavyGateEnv+")")
 	runner := flags.String("runner", "local", "where this run happened; the record names it")
 	keep := flags.Bool("keep", false, "keep the clean worktree for debugging")
-	workRoot := flags.String("work-root", "", "the directory the clean worktree is made in (default: the XDG state directory); never inside TMPDIR, /tmp or /var/tmp")
+	workRoot := flags.String("work-root", "", "the directory the clean worktree is made in (default: the XDG state directory)")
 	parallel := flags.Int("parallel", 4, "the Go test parallelism every step runs with (GOFLAGS=-p=N)")
 	description := "Run every job and step of .github/workflows/ci.yml locally, in a clean worktree of the\n" +
 		"commit being verified, and write a verification-record/1. The record is answered without\n" +
@@ -192,8 +191,19 @@ func localVerify(opts localOptions, reusePath string, stdout io.Writer) (verific
 			return verificationRecord{}, false, err
 		}
 	}
-	if err := homeguard.Refuse(localTempDir()); err != nil {
+	// CRW-1569 pre-check 1 and 2: the temporary directory (TMPDIR, or tmploc.DefaultDir when it is unset)
+	// is absolute and not in the account's real home, judged before anything is written there (the
+	// writability check makes a probe directory), and then a writable directory. A refusal names the
+	// directory, its source and why; nothing is chosen in its place.
+	tempDir, err := tmploc.Dir()
+	if err != nil {
+		return verificationRecord{}, false, err
+	}
+	if err := homeguard.Refuse(tempDir); err != nil {
 		return verificationRecord{}, false, fmt.Errorf("TMPDIR: %w", err)
+	}
+	if _, err := tmploc.Check(); err != nil {
+		return verificationRecord{}, false, err
 	}
 	localScrubGitEnv()
 	opts.HeavyGate = localAbsGate(opts.HeavyGate)
@@ -408,11 +418,22 @@ func localExecute(opts localOptions, plan []localJob, current verificationRecord
 	if err != nil {
 		return verificationRecord{}, false, err
 	}
+	// CRW-1569 pre-check 3 and 4, before anything is made below the work root and before any checkout or
+	// step: the socket folder fits, and the steps' TMPDIR is made below the temporary directory. A refusal
+	// writes no record.
+	if err := localSocketDirCheck(opts); err != nil {
+		return verificationRecord{}, false, err
+	}
+	if opts.stepTmp, err = localStepTempDir(opts); err != nil {
+		return verificationRecord{}, false, err
+	}
 	if err := os.MkdirAll(root, 0o755); err != nil {
+		os.RemoveAll(opts.stepTmp)
 		return verificationRecord{}, false, err
 	}
 	temp, err := os.MkdirTemp(root, localTempPrefix)
 	if err != nil {
+		os.RemoveAll(opts.stepTmp)
 		return verificationRecord{}, false, err
 	}
 	worktree := filepath.Join(temp, "tree")
@@ -434,17 +455,12 @@ func localExecute(opts localOptions, plan []localJob, current verificationRecord
 		}
 	}
 	defer cleanup()
-	// CRW-1489: the steps' TMPDIR is chosen before the checkout, so every record this run makes knows it.
-	// A run with no usable candidate is refused here, before any checkout or step, and leaves no record.
-	if opts.stepTmp, err = localStepTempDir(opts, root); err != nil {
-		return verificationRecord{}, false, err
-	}
 	// CRW-1489 (B): every record this run makes names where it ran (recordRunEnv).
 	cwd, err := os.Getwd()
 	if err != nil {
 		return verificationRecord{}, false, fmt.Errorf("the run's working directory: %w", err)
 	}
-	runEnv := &recordRunEnv{Cwd: cwd, Root: opts.Root, CallerTmpDir: os.Getenv("TMPDIR"), TmpDir: opts.stepTmp, Home: home}
+	runEnv := &recordRunEnv{Cwd: cwd, Root: opts.Root, CallerTmpDir: tmploc.Env(), TmpDir: opts.stepTmp, Home: home}
 	checkoutErr := ""
 	if out, err := runGit(opts.Root, "-c", "core.hooksPath=/dev/null", "worktree", "add", "--detach", worktree, current.HeadCommit); err != nil {
 		checkoutErr = fmt.Sprintf("%v%s", err, localReason(string(out)))
@@ -747,34 +763,8 @@ func localStepEnv(home, temp string, opts localOptions) ([]string, error) {
 	return env, nil
 }
 
-// localStepSocketSuffix is the most a test adds below its TMPDIR for a Unix socket path: the longest of
-// them is TMPDIR plus 67 bytes (internal/manage/core_tmpfs_test.go:91). A step TMPDIR must leave room
-// for it under the host's socket limit.
-const localStepSocketSuffix = 67
-
-// localSocketLimit is the host's Unix socket path limit: 104 bytes on darwin and 108 elsewhere, the
-// same rule as crwconfig.Check.
-func localSocketLimit() int {
-	if runtime.GOOS == "darwin" {
-		return 104
-	}
-	return 108
-}
-
-// localStepDirLen is the exact length of a step TMPDIR made by localMkStepDir(parent, prefix): the
-// parent, a separator, the prefix and 8 hex characters.
-func localStepDirLen(parent, prefix string) int {
-	return len(filepath.Clean(parent)) + 1 + len(prefix) + 8
-}
-
-// localStepTmpFits reports whether a step TMPDIR made below parent leaves room for the longest socket a
-// test binds below it: its length plus localStepSocketSuffix is under limit.
-func localStepTmpFits(parent, prefix string, limit int) bool {
-	return localStepDirLen(parent, prefix)+localStepSocketSuffix < limit
-}
-
-// localMkStepDir makes <parent>/<prefix><8 lowercase hex> (mode 0700). The name has a fixed width, so
-// its length (localStepDirLen) is known before it exists; os.MkdirTemp's suffix is 1 to 10 digits.
+// localMkStepDir makes <parent>/<prefix><8 lowercase hex> (mode 0700). The name has a fixed width
+// (os.MkdirTemp's suffix is 1 to 10 digits).
 func localMkStepDir(parent, prefix string) (string, error) {
 	parent = filepath.Clean(parent)
 	for try := 0; try < 16; try++ {
@@ -827,58 +817,51 @@ func localGitAbove(dir string, ceilings []string) string {
 	return ""
 }
 
-// localStepTempDir makes the fresh TMPDIR every step of a run gets (CRW-1489). The failing tests find a
-// repository by walking up from TMPDIR for a .git, so a TMPDIR below a stray .git (a sandbox's /tmp/.git)
-// made them judge the wrong tree; and the tests bind sockets up to 67 bytes below TMPDIR. The first
-// candidate that fits both is made: a, ci<8 hex> directly below the caller's TMPDIR, which keeps the
-// caller's disk; then b, t<8 hex> directly below the work root. A candidate's parent is its physical
-// path, resolved from the value as written (filepath.EvalSymlinks, no lexical Clean first), and the
-// .git check, the length and the step directory are of that path; a parent that does not resolve is
-// skipped with its reason. A candidate that does not fit is never made. When neither fits, the run is
-// refused (temp_dir_unusable), naming each candidate's reason. The record's callerTmpDir stays the raw
-// TMPDIR value and its tmpDir is the directory made.
-func localStepTempDir(opts localOptions, workRoot string) (string, error) {
-	limit := opts.socketLimit
-	if limit == 0 {
-		limit = localSocketLimit()
+// localStepTempDir makes the fresh TMPDIR every step of a run gets (CRW-1489): ci<8 hex> directly below
+// the temporary directory (tmploc.Check: TMPDIR, or tmploc.DefaultDir when it is unset), taken at its
+// physical place, resolved from the value as written (no lexical Clean first). It is the one candidate
+// (CRW-1569): its length is not judged, because no test socket lies below TMPDIR (CRW-1568), and the run
+// never moves the steps elsewhere. The failing tests find a repository by walking up from TMPDIR for a
+// .git, so a .git at or above it (a sandbox's /tmp/.git) refuses the run (temp_dir_unusable) before
+// anything is made. The record's callerTmpDir stays the raw TMPDIR value and its tmpDir is the directory
+// made.
+func localStepTempDir(opts localOptions) (string, error) {
+	parent, err := tmploc.Check()
+	if err != nil {
+		return "", err
 	}
-	var reasons []string
-	for _, candidate := range []struct{ name, parent, prefix string }{
-		{"the caller's TMPDIR", localTempDir(), "ci"},
-		{"the work root", workRoot, "t"},
-	} {
-		if !filepath.IsAbs(candidate.parent) {
-			reasons = append(reasons, fmt.Sprintf("%s %q is not absolute", candidate.name, candidate.parent))
-			continue
-		}
-		// The parent is taken at its physical place, resolved from the value as written with the kernel's semantics: a lexical
-		// Clean first would read "/a/link/../tmp" as /a/tmp, while the kernel follows link before the "..". The .git check, the
-		// length and the step directory are all of this one path.
-		parent, err := filepath.EvalSymlinks(candidate.parent)
-		if err != nil {
-			reasons = append(reasons, fmt.Sprintf("%s %q does not resolve: %v", candidate.name, candidate.parent, err))
-			continue
-		}
-		// Both checks are made before anything is created, and a refused candidate names every reason.
-		var why []string
-		if !localStepTmpFits(parent, candidate.prefix, limit) {
-			length := localStepDirLen(parent, candidate.prefix)
-			why = append(why, fmt.Sprintf("gives a step TMPDIR of %d bytes, %d with the %d a test's socket adds, not under the limit %d",
-				length, length+localStepSocketSuffix, localStepSocketSuffix, limit))
-		}
-		if git := localGitAbove(parent, opts.gitCeilings); git != "" {
-			why = append(why, "is below "+git)
-		}
-		if len(why) == 0 {
-			dir, err := localMkStepDir(parent, candidate.prefix)
-			if err == nil {
-				return dir, nil
-			}
-			why = append(why, err.Error())
-		}
-		reasons = append(reasons, fmt.Sprintf("%s %s %s", candidate.name, parent, strings.Join(why, " and ")))
+	if git := localGitAbove(parent, opts.gitCeilings); git != "" {
+		return "", fmt.Errorf("temp_dir_unusable: %s is below %s; set TMPDIR to a directory with no .git at or above it", parent, git)
 	}
-	return "", fmt.Errorf("temp_dir_unusable: %s; set TMPDIR to a short directory with no .git at or above it, or pass a short --work-root", strings.Join(reasons, "; "))
+	dir, err := localMkStepDir(parent, "ci")
+	if err != nil {
+		return "", fmt.Errorf("temp_dir_unusable: %s: the step TMPDIR: %w; set TMPDIR to a writable directory", parent, err)
+	}
+	return dir, nil
+}
+
+// localSocketPattern names the socket folder the pre-check makes and removes.
+const localSocketPattern = "crw-ci-sock-"
+
+// localSocketDirCheck is the pre-check of the socket folder (CRW-1569): a folder is made below the
+// socket root (tmploc.SocketRoot, the one root every test socket lies below) and removed, and it must
+// leave room for the longest socket tail a test puts below it (tmploc.SocketFits with
+// tmploc.SocketTailMax, the one budget). A refusal is socket_dir_unusable with its reason; for a folder
+// that does not fit, the reason gives the bytes needed, the bound and how far over.
+func localSocketDirCheck(opts localOptions) error {
+	root := tmploc.SocketRoot
+	if opts.socketRoot != "" {
+		root = opts.socketRoot
+	}
+	dir, err := os.MkdirTemp(root, localSocketPattern)
+	if err != nil {
+		return fmt.Errorf("socket_dir_unusable: %s: %w", root, err)
+	}
+	defer os.RemoveAll(dir)
+	if err := tmploc.SocketFits(dir, tmploc.SocketTailMax); err != nil {
+		return fmt.Errorf("socket_dir_unusable: %s: %w", dir, err)
+	}
+	return nil
 }
 
 // localIgnoredEnv names the caller's variables a sealed step does not inherit and that could change
@@ -925,8 +908,8 @@ func localNodeMismatch(plan []localJob, jobs []workflowJob, observed string) []s
 }
 
 // localWorkRoot is the directory a clean worktree is made in: the caller's choice, or the XDG state
-// directory of the real user. A root inside TMPDIR, /tmp or /var/tmp is refused, because the
-// repository's own checkout tests assert the checkout lies outside them.
+// directory of the real user. It must be absolute and not in the account's real home. Where it lies is
+// not judged (CRW-1569): a root inside TMPDIR, /tmp or /var/tmp is accepted.
 func localWorkRoot(opts localOptions) (string, error) {
 	root := opts.WorkRoot
 	if root == "" {
@@ -947,30 +930,7 @@ func localWorkRoot(opts localOptions) (string, error) {
 	if err := homeguard.Refuse(root); err != nil {
 		return "", fmt.Errorf("the work root: %w", err)
 	}
-	for _, banned := range localBannedRoots(opts) {
-		if banned == "" {
-			continue
-		}
-		if localWithin(root, filepath.Clean(banned)) {
-			return "", fmt.Errorf("work_root_in_tmp: %s is inside %s; choose a work root outside the temporary directories with --work-root", root, banned)
-		}
-	}
 	return root, nil
-}
-
-// localBannedRoots are the directories a work root may not be inside: TMPDIR, the system temporary
-// directories, and nothing when a test has allowed its own root.
-func localBannedRoots(opts localOptions) []string {
-	if opts.allowTempRoot {
-		return nil
-	}
-	return []string{localTempDir(), os.TempDir(), "/tmp", "/var/tmp"}
-}
-
-// localWithin reports whether path is dir or lies below it.
-func localWithin(path, dir string) bool {
-	rel, err := filepath.Rel(dir, path)
-	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // localStepEnvValues is a step's own environment with the run's placeholders filled in.
@@ -1050,15 +1010,6 @@ func localPathEnv(env []string) string {
 		}
 	}
 	return os.Getenv("PATH")
-}
-
-// localTempDir is where a run makes its temporary root: TMPDIR, so the caller decides, and never a
-// path inside the repository.
-func localTempDir() string {
-	if dir := os.Getenv("TMPDIR"); dir != "" {
-		return dir
-	}
-	return os.TempDir()
 }
 
 // localAbs resolves a path against root unless it is already absolute.
