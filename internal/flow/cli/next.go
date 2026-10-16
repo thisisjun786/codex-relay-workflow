@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/bound"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/crwcmd"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/journal"
 )
@@ -200,16 +201,21 @@ func (c *command) next(args []string) int {
 	agents := openSubagents(c.runEvents(cm, run), steps)
 	ans.Slots = NextSlots{Limit: maxThreads, Open: len(agents), Agents: agents}
 	var closes []string
+	// the owner runs a then as printed: it names the crw that runs, not the bare crw a PATH without it does not find (CRW-1572)
+	crw := crwcmd.Word()
+	if w := crwcmd.Warning(); w != "" {
+		ans.Warnings = append(ans.Warnings, w)
+	}
 	for _, st := range steps {
 		ns := NextStep{Step: st}
 		switch st.Action {
 		case engine.StepSpawn:
 			ns.Tool = ToolCall{Name: "spawn_agent", Arguments: map[string]any{"agent_type": st.AgentType, "message": st.Message, "model": st.Model,
 				"reasoning_effort": st.ReasoningEffort, "fork_context": false}}
-			ns.Then = fmt.Sprintf("crw flow dispatched %s %s --agent <the id spawn_agent returned> --k %d --attempt %d", run, st.Call, st.K, st.Attempt)
+			ns.Then = fmt.Sprintf("%s flow dispatched %s %s --agent <the id spawn_agent returned> --k %d --attempt %d", crw, run, st.Call, st.K, st.Attempt)
 		case engine.StepSendInput:
 			ns.Tool = ToolCall{Name: "send_input", Arguments: map[string]any{"target": st.AgentID, "message": st.Message}}
-			ns.Then = fmt.Sprintf("crw flow dispatched %s %s --agent %s --k %d --attempt %d", run, st.Call, st.AgentID, st.K, st.Attempt)
+			ns.Then = fmt.Sprintf("%s flow dispatched %s %s --agent %s --k %d --attempt %d", crw, run, st.Call, st.AgentID, st.K, st.Attempt)
 		case engine.StepClose:
 			ns.Tool = ToolCall{Name: "close_agent", Arguments: map[string]any{"target": st.AgentID}}
 			closes = append(closes, st.AgentID)
@@ -510,29 +516,31 @@ const KindRoleStoreChanged = "role_store_changed"
 // nextHint says what to do next.
 func nextHint(ans NextAnswer, info RunInfo, closes []string) string {
 	var parts []string
+	// each command of the hint starts with the crw that runs (CRW-1572)
+	crw := crwcmd.Word()
 	if ans.Resumed > 0 {
-		parts = append(parts, fmt.Sprintf("no process held run %s: next ran crw flow resume %s --detach (process %d)", ans.Run, ans.Run, ans.Resumed))
+		parts = append(parts, fmt.Sprintf("no process held run %s: next ran %s flow resume %s --detach (process %d)", ans.Run, crw, ans.Run, ans.Resumed))
 	}
 	switch ans.State {
 	case NextEnded:
-		parts = append(parts, fmt.Sprintf("run %s is over (%s, status %s): crw flow show %s", ans.Run, info.State, cell(info.Status), ans.Run))
+		parts = append(parts, fmt.Sprintf("run %s is over (%s, status %s): %s flow show %s", ans.Run, info.State, cell(info.Status), crw, ans.Run))
 	case NextPaused:
 		if pausedForAnswer(info) {
 			// the run stopped for an answer (its drain): the answer applies and resumes it once no process holds the run
-			parts = append(parts, fmt.Sprintf("run %s ended paused for an answer: run the same crw flow answer again (it applies and resumes the run); crw flow resume %s goes on without it", ans.Run, ans.Run))
+			parts = append(parts, fmt.Sprintf("run %s ended paused for an answer: run the same %s flow answer again (it applies and resumes the run); %s flow resume %s goes on without it", ans.Run, crw, crw, ans.Run))
 			break
 		}
-		parts = append(parts, fmt.Sprintf("run %s is paused (%s): crw flow resume %s goes on", ans.Run, info.Paused, ans.Run))
+		parts = append(parts, fmt.Sprintf("run %s is paused (%s): %s flow resume %s goes on", ans.Run, info.Paused, crw, ans.Run))
 	case NextWaitingDecision:
-		parts = append(parts, fmt.Sprintf("run %s waits for a decision: crw flow show %s lists its questions", ans.Run, ans.Run))
+		parts = append(parts, fmt.Sprintf("run %s waits for a decision: %s flow show %s lists its questions", ans.Run, crw, ans.Run))
 	case NextStarting:
 		parts = append(parts, fmt.Sprintf("run %s's process is starting: it holds the run and has not recorded its started row or bound the owner's line yet, so no spawn format is given: "+
-			"crw flow next %s --wait 600 --json reads it again", ans.Run, ans.Run))
+			"%s flow next %s --wait 600 --json reads it again", ans.Run, crw, ans.Run))
 	}
 	if len(ans.Steps) > 0 {
 		parts = append(parts, sessionLoop(ans.Run))
 	} else if ans.State != NextEnded && ans.State != NextStarting {
-		parts = append(parts, fmt.Sprintf("no step to take: wait_agent(targets=[<open agents>], timeout_ms=600000) on the subagents that work, then crw flow next %s --wait 600 --json", ans.Run))
+		parts = append(parts, fmt.Sprintf("no step to take: wait_agent(targets=[<open agents>], timeout_ms=600000) on the subagents that work, then %s flow next %s --wait 600 --json", crw, ans.Run))
 	}
 	spawns := 0
 	for _, st := range ans.Steps {
@@ -644,12 +652,12 @@ func (c *command) dispatched(args []string) int {
 		}
 		if !LockHeld(sel.Path, run) {
 			answer["status"] = "queued"
-			answer["detail"] = fmt.Sprintf("no process holds run %s: the report waits in its inbox, and the run answers it when it is resumed (crw flow next %s resumes it)", run, run)
+			answer["detail"] = fmt.Sprintf("no process holds run %s: the report waits in its inbox, and the run answers it when it is resumed (%s flow next %s resumes it)", run, crwcmd.Word(), run)
 			break
 		}
 		if !time.Now().Before(deadline) {
 			answer["status"] = "queued"
-			answer["detail"] = fmt.Sprintf("run %s has not answered yet: the report stays in its inbox and the run answers it; crw flow next %s shows what is left", run, run)
+			answer["detail"] = fmt.Sprintf("run %s has not answered yet: the report stays in its inbox and the run answers it; %s flow next %s shows what is left", run, crwcmd.Word(), run)
 			break
 		}
 		time.Sleep(nextPoll)

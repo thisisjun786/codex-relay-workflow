@@ -585,7 +585,7 @@ func TestSessionProjectMilestoneEndToEndOnTheFakeHost(t *testing.T) {
 		ans = k.next(5)
 		if ans.Resumed != 0 {
 			resumes++
-			if !strings.Contains(ans.Hint, "crw flow resume "+k.run+" --detach") {
+			if !strings.Contains(bare(ans.Hint), "crw flow resume "+k.run+" --detach") {
 				t.Errorf("next resumed the run without saying so: %s", ans.Hint)
 			}
 		}

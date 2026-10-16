@@ -255,7 +255,8 @@ func TestFlowRunWakeE2ESettlesUnderTheSameRule(t *testing.T) {
 		t.Fatal(err)
 	}
 	w.tick(3)
-	if got := w.turnsOf(ownerA); len(got) != 1 || !strings.Contains(got[0], "crw flow next "+flowRun) {
+	// the wake names its commands with the crw that runs (CRW-1572), here this test binary, never the bare crw
+	if got := w.turnsOf(ownerA); len(got) != 1 || !strings.Contains(got[0], " flow next "+flowRun) || strings.Contains(got[0], "crw flow next") {
 		t.Fatalf("the owner's turns %q\n%s", got, w.dump())
 	}
 	w.tick(2)
