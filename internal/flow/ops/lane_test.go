@@ -239,7 +239,7 @@ func TestLedgerAndReleaseNeedAnApprovedAudit(t *testing.T) {
 	}
 }
 
-// An audit that was not made by an independent reviewer is not an approval: the model family of the auditor differs from the
+// An audit that was not made by an independent critic is not an approval: the model family of the auditor differs from the
 // architect's, a call that did not complete is not an audit, and an approval over a P1 finding is no approval.
 func TestDesignAuditIndependence(t *testing.T) {
 	w := newWorld(t)
@@ -285,11 +285,77 @@ func TestDesignAuditStillRefusesAnArchitectFamilyCritic(t *testing.T) {
 		_ = json.Unmarshal(w.must("designAudit", "M", 1, cand, arch, critic), &r)
 		return r
 	}
-	if r := audit("claude-opus", "claude-sonnet"); r.State != StateRefused || r.Reason != "independence_refused" || r.Reviewer.Role != "critic" {
+	if r := audit("claude-opus", "claude-sonnet"); r.State != StateRefused || r.Reason != "independence_refused" || r.Critic.Role != "critic" {
 		t.Errorf("a critic of the architect's family: %+v", r)
 	}
-	if r := audit("claude-opus", "gpt-6.1-sol"); r.State != AuditApproved || r.Reviewer.Role != "critic" || r.Architect.Role != "architect" {
+	if r := audit("claude-opus", "gpt-6.1-sol"); r.State != AuditApproved || r.Critic.Role != "critic" || r.Architect.Role != "architect" {
 		t.Errorf("a critic of another family: %+v", r)
+	}
+}
+
+// TestDesignAuditRowNamesTheCriticRole (CRW-1453): the design audit is the critic's call, and the answer and the row say so: the
+// answer names the auditor under critic, and the row journals critic_call and critic_model beside the architect's. Neither names
+// a reviewer any more.
+func TestDesignAuditRowNamesTheCriticRole(t *testing.T) {
+	w := newWorld(t)
+	design, _ := json.Marshal(designOf("A"))
+	cand := Candidate{Design: design, Answers: json.RawMessage(`[]`)}
+	arch := call("c_arch", "completed", "claude-opus", nil)
+	arch.Meta.Role = "architect"
+	critic := call("c_crit", "completed", "gpt-6.1-sol", map[string]any{"verdict": "approved", "findings": []any{}, "summary": "ok"})
+	critic.Meta.Role = "critic"
+	out := w.must("designAudit", "M", 1, cand, arch, critic)
+	var answer map[string]any
+	if err := json.Unmarshal(out, &answer); err != nil {
+		t.Fatal(err)
+	}
+	brief, _ := answer["critic"].(map[string]any)
+	if brief == nil || brief["role"] != "critic" || answer["state"] != AuditApproved {
+		t.Errorf("the answer does not name the critic: %s", out)
+	}
+	if _, ok := answer["reviewer"]; ok {
+		t.Errorf("the answer still names a reviewer: %s", out)
+	}
+	audits := rows(w.j.Events()).opRows(OpDesignAudit)
+	if len(audits) != 1 {
+		t.Fatalf("audit rows %d", len(audits))
+	}
+	row := audits[0]
+	if dataStr(row, "critic_call") != "c_crit" || dataStr(row, "critic_model") != "gpt-6.1-sol" ||
+		dataStr(row, "architect_call") != "c_arch" || dataStr(row, "architect_model") != "claude-opus" {
+		t.Errorf("the row does not name the critic beside the architect: %v", row.Data)
+	}
+	for _, k := range []string{"reviewer_call", "reviewer_model"} {
+		if _, ok := row.Data[k]; ok {
+			t.Errorf("the row still journals %s: %v", k, row.Data)
+		}
+	}
+}
+
+// TestOldReviewerAuditRowsStillRead (CRW-1453): a design audit an earlier binary journaled names its auditor reviewer_call and
+// reviewer_model, and its answer names it under reviewer. A run recorded then goes on on this binary: the approved audit lets its
+// DESIGN into the ledger, the release of a node reads that revision, and the old answer still decodes.
+func TestOldReviewerAuditRowsStillRead(t *testing.T) {
+	w := newWorld(t)
+	w.must("milestone", "plan-1", "M")
+	design, _ := json.Marshal(designOf("A"))
+	cand := Candidate{Design: design, Answers: json.RawMessage(`[]`)}
+	old := `{"state":"approved","reason":"","round":1,"candidate_digest":"` + cand.digest() + `","findings":[],"summary":"ok",` +
+		`"reviewer":{"callId":"c_aud","handle":"","status":"completed","reason":"","role":"critic"},"architect":{"callId":"c_arch","handle":"","status":"completed","reason":"","role":"architect"}}`
+	w.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: "c_old_audit", Op: OpDesignAudit, Event: engine.EvCompleted,
+		Data: map[string]any{"result": old, "milestone": "M", "round": float64(1), "candidate_digest": cand.digest(), "state": AuditApproved, "reason": "",
+			"reviewer_call": "c_aud", "architect_call": "c_arch", "reviewer_model": "gpt-y", "architect_model": "claude-x"}})
+	var res AuditResult
+	if err := json.Unmarshal([]byte(old), &res); err != nil || res.State != AuditApproved || res.CandidateDigest != cand.digest() {
+		t.Fatalf("the old answer does not decode: %+v %v", res, err)
+	}
+	if _, err := w.op("designLedger", "M", map[string]any{"revision": "r0", "design": json.RawMessage(design), "answers": json.RawMessage(`[]`), "architect": call("c_arch", "completed", "claude-x", nil)}); err != nil {
+		t.Fatalf("the ledger refuses a DESIGN over an old reviewer audit row: %v", err)
+	}
+	var rel ReleaseOutcome
+	_ = json.Unmarshal(w.must("release", "plan-1", "A", "M"), &rel)
+	if !rel.Released || rel.Revision != FirstRevision || rel.DesignDigest != cand.digest() {
+		t.Errorf("release over an old reviewer audit row: %+v", rel)
 	}
 }
 
