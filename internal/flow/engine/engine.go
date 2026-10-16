@@ -516,7 +516,14 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 			// a paused run did not finish: the hook reconciles the summary and the escalations once more and tells no completion
 			e.hookRun("paused", func(h UpwardHook) error { return h.BatchCommitted(ctx, e.runID) })
 		} else {
-			e.hookRun("finished", func(h UpwardHook) error { return h.RunFinished(ctx, e.runID, res.Status) })
+			// the finish of a cancelled run is told on a context the cancel did not cancel, bounded by finishHookGrace (CRW-1573): its
+			// completion notice goes up instead of an upward_hook_failed (context canceled) row
+			hctx, done := ctx, context.CancelFunc(func() {})
+			if res.ErrorKind == ErrKindCancelled {
+				hctx, done = context.WithTimeout(context.WithoutCancel(ctx), finishHookGrace)
+			}
+			e.hookRun("finished", func(h UpwardHook) error { return h.RunFinished(hctx, e.runID, res.Status) })
+			done()
 		}
 	}
 	// the end row is written with the rows still buffered: when that write fails the run did not end on disk, and the
@@ -526,6 +533,9 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 	}
 	return res, nil
 }
+
+// finishHookGrace bounds the finish hook of a cancelled run, which runs on a context the cancel did not cancel (CRW-1573).
+const finishHookGrace = 30 * time.Second
 
 // lineageOf numbers a process among the runs of a journal: the number of started rows the journal holds already.
 func lineageOf(j Journal, runID string) int {
