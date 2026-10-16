@@ -449,11 +449,13 @@ export function packet(node, plan, checkpoint, last) {
 }
 
 // failedSection names the sub-tasks of a split node whose receipt reported failed (failed: their receipts by id), in the plan's order,
-// each with its summary and gap; none, no section. Such a sub-task is committed with the rest and judged with the node.
+// each with its summary and gap; none, no section. Such a sub-task is committed with the rest and judged with the node. A receipt is
+// read by the sub-task's own id: an id every object inherits a member of (constructor, a valid sub-task id) is not read through the
+// prototype.
 function failedSection(subs, failed) {
   const lines = []
   subs.forEach((sub, i) => {
-    const r = failed[sub.id]
+    const r = Object.prototype.hasOwnProperty.call(failed, sub.id) ? failed[sub.id] : null
     if (r) lines.push('- ' + (i + 1) + '. ' + sub.id + ': ' + (r.summary || 'no summary') + (r.gap ? '\n  gap: ' + r.gap : ''))
   })
   if (lines.length === 0) return ''

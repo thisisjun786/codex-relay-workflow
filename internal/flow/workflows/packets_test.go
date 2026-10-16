@@ -558,3 +558,22 @@ func TestSubTaskPacketIsTheNextSubTaskOnTheThread(t *testing.T) {
 		t.Errorf("the sub-task packet after a failed sub-task:\n%s", failed)
 	}
 }
+
+// TestAFailedSectionNamesOnlyTheSubTasksThatReportedFailed (CRW-1459): the failed receipts of a split node's sub-tasks are read by the
+// sub-task's own id, never through the object's prototype: a sub-task whose id is a name every object inherits (constructor, a valid
+// sub-task id) is not named as reported failed when no receipt of it failed, in the packet of a fresh thread and in the next sub-task's
+// turn, and it is named when it did fail.
+func TestAFailedSectionNamesOnlyTheSubTasksThatReportedFailed(t *testing.T) {
+	plan := strings.ReplaceAll(splitPlan, "'store'", "'constructor'")
+	fresh := packetText(t, "executor-packet-split-constructor", "packet", "packet('n1', "+plan+", { head: 'h1', tree: 't1' }, { findings: [], ci: null, receipt: null, split: { done: 1, failed: {} } })")
+	next := packetText(t, "subtask-packet-constructor", "subTaskPacket", "subTaskPacket("+plan+", 1, {})")
+	for name, text := range map[string]string{"the packet of a fresh thread": fresh, "the next sub-task's turn": next} {
+		if strings.Contains(text, "REPORTED FAILED") || strings.Contains(text, "constructor: no summary") {
+			t.Errorf("%s names a sub-task that did not fail:\n%s", name, text)
+		}
+	}
+	failed := packetText(t, "subtask-packet-constructor-failed", "subTaskPacket", "subTaskPacket("+plan+", 1, { constructor: { summary: 'half of the store', gap: 'the index is missing' } })")
+	if !strings.Contains(failed, "\n- 1. constructor: half of the store\n  gap: the index is missing") {
+		t.Errorf("the turn after a failed sub-task constructor:\n%s", failed)
+	}
+}
