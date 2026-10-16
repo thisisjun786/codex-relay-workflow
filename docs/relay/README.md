@@ -665,6 +665,7 @@ Global options come BEFORE the subcommand:
 | `ack-proof` | compute the proof from your OWN turn id |
 | `ack` | record the project session's acknowledgement |
 | `verify-acks` | complete acknowledgements authored without a host |
+| `receipt-pull` | pull a completion the daemon deferred as busy into the parent's own live turn, with no send; needs `--socket` and `CODEX_THREAD_ID` equal to `--task` |
 | `verdict` | record a verdict; needs_changes routes a revision to the same `child` session |
 | `decision-reply` / `decision-show` | the project session's decision on a `child` session's blocked_needs_input receipt, or an `answer` on a receipt the relay itself observed ending interrupted or failed, delivered to the `child` session; read back |
 | `assignment-show` / `assignment-find` / `assignment-mark` | one issue, one `child` session, and where it stands |
@@ -803,6 +804,21 @@ The project session, from inside its own turn:
     PROOF=$(codex-session-relay ack-proof --event <eventId> --turn <my turn id> | jq -r .ackProof)
     codex-session-relay --socket $SOCK ack --event <eventId> --ack-turn <my turn id> --ack-proof $PROOF
     codex-session-relay --socket $SOCK verdict --event <eventId> --verdict verified --verdict-turn <my turn id>
+
+A completion the daemon deferred because the parent was busy in its own turn can be pulled into that turn, and
+acknowledged from it. The parent, from inside its live turn:
+
+    codex-session-relay --socket $SOCK receipt-pull --event <eventId> --turn <my turn id> --task <my task id>
+    codex-session-relay --socket $SOCK ack --event <eventId> --ack-turn <my turn id> --ack-proof $PROOF
+
+The caller's process must report its own thread in `CODEX_THREAD_ID`, and that id must equal `--task`, which must
+be the completion's recipient. The host must report the recipient active with `--turn` in progress. Otherwise the pull
+is refused, and so is any pull of a completion that is held, already sent, behind a current unheld completion to the same
+parent, or under an older generation or superseded revision. A held, withheld or superseded predecessor does not block a
+current receipt. The pull sends nothing and starts no turn. The answer carries the receipt text the
+parent reads. The completion is then `inbox_only`, which the daemon never claims. Only the pulling turn can acknowledge it. A
+repeated pull from that turn answers the same record, and a pull from another turn is refused. An acknowledgement from
+any other turn is refused with `ack_turn_unverified`.
 
 `--ack-proof` is required and is never computed during an acknowledgement. The proof is over the
 project session's own turn id, which is absent from the delivered message, so quoting the message back

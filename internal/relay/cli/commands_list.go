@@ -43,5 +43,5 @@ var offlineCommands = []string{
 var daemonRequiredCommands = []string{"emit", "intent-claim", "intent-disposition"}
 var hostRequiredCommands = []string{
 	"daemon", "deliver", "reconcile", "recover", "service run", "service start", "service restart",
-	"verify-acks", "managed-start", "supervisor-send", "supervisor-read",
+	"verify-acks", "managed-start", "supervisor-send", "supervisor-read", "receipt-pull",
 }
