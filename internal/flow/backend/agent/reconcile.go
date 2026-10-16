@@ -211,11 +211,12 @@ func (b *Backend) HarvestTurn(ctx context.Context, thread, turn, op string) (eng
 }
 
 // AwaitTurn implements engine.ReconHost: it follows the turn of a thread another process started to its end, on the
-// bus and by reading it, and interrupts it if ctx ends first, the way a turn this process started is followed.
-func (b *Backend) AwaitTurn(ctx context.Context, thread, turn, op string) (engine.TurnOutcome, error) {
-	_ = b.hold(ctx, thread)
+// bus and by reading it, and interrupts it if ctx ends first, the way a turn this process started is followed. Its hold resumes
+// the thread with the run's tools, as RunTurn's does: it can be the first hold after an App Server restart (CRW-1559).
+func (b *Backend) AwaitTurn(ctx context.Context, thread, turn, op string, tools *engine.RepositoryTools) (engine.TurnOutcome, error) {
+	_ = b.hold(ctx, thread, tools)
 	feed := b.client.Bus().Subscribe(thread)
 	defer feed.Close()
-	w := &turnWatch{b: b, spec: engine.TurnSpec{ThreadID: thread, Op: op}, turnID: turn, feed: feed}
+	w := &turnWatch{b: b, spec: engine.TurnSpec{ThreadID: thread, Op: op, Tools: tools}, turnID: turn, feed: feed}
 	return w.await(ctx)
 }
