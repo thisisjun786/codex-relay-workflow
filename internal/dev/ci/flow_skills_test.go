@@ -427,6 +427,163 @@ func TestRunSkillNamesTheBundleSplitRequest(t *testing.T) {
 	})
 }
 
+// A node the architect sized `split` with sub-tasks (CRW-1459) is released to one executor: the sub-tasks run in their order on the node's one
+// executor thread, each next one a `subtask:<node>:<tier>:s<k>` turn of that thread; each before the last is unit-checked and committed as a
+// checkpoint against its own regions, with no verification and no land; the last goes through the node's commit, verification and land, so the
+// node is judged once. A sub-task that reported failed is named in the next packet and judged with the node; a fresh thread starts at the
+// node's last commit and its packet at the first sub-task not done. A split with no sub-tasks (a DESIGN recorded before S-1) still goes up as
+// `size_split`. crw-run, the task packet page and the two flow documents say so, and none of them still sends every split up.
+
+// splitRunProblems judges the "Run a milestone with a flow run" section of crw-run for the split node's sub-task loop.
+func splitRunProblems(section string) []string {
+	flat := normalized(section)
+	var problems []string
+	for _, p := range wordingMissing(flat, []string{
+		`(?i)sized \x60split\x60[^.]*sub-tasks[^.]*released to one executor`,
+		`(?i)sub-tasks run in their order on the node's one executor thread`,
+		"`subtask:<node>:<tier>:s<k>`",
+		`(?i)before the last[^.]*unit[- ]check[^.]*checkpoint[^.]*no verification and no land`,
+		`(?i)judged once`,
+		`(?i)reported failed[^.]*named in the next[^.]*judged with the node`,
+		`(?i)fresh thread[^.]*node's last commit[^.]*first sub-task not done`,
+		`(?i)split with no sub-tasks[^.]*\x60size_split\x60`,
+		`(?i)(sends|sends it) no task packet for (any )?(a |the )?sub-task`,
+	}) {
+		problems = append(problems, "the section lacks "+p)
+	}
+	if m := regexp.MustCompile(`(?i)sizes as a split goes up as|the child divides the plan's node`).FindString(flat); m != "" {
+		problems = append(problems, "the section still sends every split up ("+m+")")
+	}
+	return problems
+}
+
+// splitDocProblems judges a flow document (script.md, journal.md) for the checkpoint commits of a split node.
+func splitDocProblems(text string) []string {
+	flat := normalized(text)
+	var problems []string
+	for _, p := range wordingMissing(flat, []string{
+		`(?i)split node makes one checkpoint \x60crw\.commit\x60 (for each|per) sub-task before the last`,
+		`(?i)is judged once`,
+		"`subtask:<node>:<tier>:s<k>`",
+	}) {
+		problems = append(problems, "the document lacks "+p)
+	}
+	if m := regexp.MustCompile(`(?i)a node sized for a child or a split is not released to an executor`).FindString(flat); m != "" {
+		problems = append(problems, "the document still releases no split to an executor ("+m+")")
+	}
+	return problems
+}
+
+// splitPacketProblems judges the introduction of the task packet page: the sub-tasks of a split node are the run's own turns.
+func splitPacketProblems(intro string) []string {
+	flat := normalized(intro)
+	var problems []string
+	for _, p := range wordingMissing(flat, []string{
+		`(?i)node sized \x60split\x60 with sub-tasks[^.]*one executor thread`,
+		"`subtask:<node>:<tier>:s<k>`",
+		`(?i)sends no packet for (any of them|a sub-task)`,
+	}) {
+		problems = append(problems, "the introduction lacks "+p)
+	}
+	return problems
+}
+
+func TestRunSkillSaysASplitRunsSubTasksOnOneExecutor(t *testing.T) {
+	if p := splitRunProblems(sectionOf(readRepoText(t, runSkillFile), "Run a milestone with a flow run")); len(p) > 0 {
+		t.Errorf("%s:\n  %s", runSkillFile, strings.Join(p, "\n  "))
+	}
+	packetPage := readRepoText(t, "plugins/crw/skills/crw-run/references/task-packet.md")
+	if i := strings.Index(packetPage, "\n## Child task titles"); i > 0 {
+		packetPage = packetPage[:i]
+	}
+	if p := splitPacketProblems(packetPage); len(p) > 0 {
+		t.Errorf("task-packet.md introduction:\n  %s", strings.Join(p, "\n  "))
+	}
+	for _, doc := range []string{"docs/flow/script.md", "docs/flow/journal.md"} {
+		if p := splitDocProblems(readRepoText(t, doc)); len(p) > 0 {
+			t.Errorf("%s:\n  %s", doc, strings.Join(p, "\n  "))
+		}
+	}
+	// The pages name what the lane really does: the sub-task turn's label and the checkpoint commit against the sub-task's regions.
+	lane := readRepoText(t, "internal/flow/workflows/project-lane.js")
+	for _, want := range []string{"label: 'subtask:' + node + ':' + tier + ':s'", "crw.commit(node, ex, sub.edit_regions)", "!(plan.sub_tasks && plan.sub_tasks.length)"} {
+		if !strings.Contains(lane, want) {
+			t.Errorf("project-lane.js no longer has %s; revisit crw-run, task-packet.md, script.md and journal.md", want)
+		}
+	}
+
+	t.Run("fixture: a section without the sub-task loop is reported", func(t *testing.T) {
+		good := "## Run a milestone with a flow run\n\n" +
+			"A node the architect sized `split` with sub-tasks is released to one executor. Its sub-tasks run in their order on the node's one executor thread: the build does the first, each next one is a `subtask:<node>:<tier>:s<k>` turn of the same thread. " +
+			"A sub-task before the last is unit-checked like any work of the node and then committed as a checkpoint against its own regions, with no verification and no land. " +
+			"The last goes through the node's commit, verification and land, so the node is judged once. A sub-task that reported failed is named in the next packet and judged with the node. " +
+			"A fresh thread starts at the node's last commit, and its packet at the first sub-task not done. A split with no sub-tasks still goes up as `size_split`. " +
+			"This thread sends no task packet for a sub-task.\n"
+		if p := splitRunProblems(sectionOf(good, "Run a milestone with a flow run")); len(p) > 0 {
+			t.Fatalf("the good text is reported: %v", p)
+		}
+		for label, mutate := range map[string]func(string) string{
+			"no executor": func(s string) string { return strings.Replace(s, "is released to one executor", "goes up", 1) },
+			"no thread": func(s string) string {
+				return strings.Replace(s, "on the node's one executor thread", "on executors", 1)
+			},
+			"no label": func(s string) string { return strings.Replace(s, "`subtask:<node>:<tier>:s<k>`", "next", 1) },
+			"verified": func(s string) string {
+				return strings.Replace(s, "with no verification and no land", "verified and landed", 1)
+			},
+			"judged often": func(s string) string { return strings.Replace(s, "judged once", "judged each time", 1) },
+			"failed":       func(s string) string { return strings.Replace(s, "named in the next packet and ", "", 1) },
+			"restart": func(s string) string {
+				return strings.Replace(s, "at the first sub-task not done", "at the first sub-task", 1)
+			},
+			"no legacy": func(s string) string {
+				return strings.Replace(s, "A split with no sub-tasks still goes up as `size_split`. ", "", 1)
+			},
+			"packet": func(s string) string { return strings.Replace(s, "sends no task packet", "sends a task packet", 1) },
+			"old split": func(s string) string {
+				return s + "Executors build it, so an issue the architect sizes as a split goes up as `size_split` and the child divides the plan's node.\n"
+			},
+		} {
+			if p := splitRunProblems(sectionOf(mutate(good), "Run a milestone with a flow run")); len(p) == 0 {
+				t.Errorf("%s: the changed text is accepted", label)
+			}
+		}
+	})
+
+	t.Run("fixture: a document without the checkpoint commits is reported", func(t *testing.T) {
+		good := "A split node makes one checkpoint `crw.commit` per sub-task before the last, each after a `subtask:<node>:<tier>:s<k>` turn, and is judged once.\n"
+		if p := splitDocProblems(good); len(p) > 0 {
+			t.Fatalf("the good text is reported: %v", p)
+		}
+		for label, bad := range map[string]string{
+			"no checkpoint": strings.Replace(good, "one checkpoint `crw.commit` per sub-task", "one commit", 1),
+			"judged often":  strings.Replace(good, "is judged once", "is judged after each", 1),
+			"no label":      strings.Replace(good, ", each after a `subtask:<node>:<tier>:s<k>` turn", "", 1),
+			"old release":   good + "A node sized for a child or a split is not released to an executor.\n",
+		} {
+			if p := splitDocProblems(bad); len(p) == 0 {
+				t.Errorf("%s: the changed text is accepted", label)
+			}
+		}
+	})
+
+	t.Run("fixture: a packet introduction without the sub-task turns is reported", func(t *testing.T) {
+		good := "A node sized `split` with sub-tasks runs them on its one executor thread, each next one a turn the run sends (`subtask:<node>:<tier>:s<k>`), and the thread sends no packet for any of them.\n"
+		if p := splitPacketProblems(good); len(p) > 0 {
+			t.Fatalf("the good text is reported: %v", p)
+		}
+		for label, bad := range map[string]string{
+			"no thread": strings.Replace(good, "on its one executor thread", "on executors", 1),
+			"no label":  strings.Replace(good, " (`subtask:<node>:<tier>:s<k>`)", "", 1),
+			"a packet":  strings.Replace(good, "sends no packet", "sends a packet", 1),
+		} {
+			if p := splitPacketProblems(bad); len(p) == 0 {
+				t.Errorf("%s: the changed text is accepted", label)
+			}
+		}
+	})
+}
+
 const (
 	issueBoundaries   = "plugins/crw/skills/crw-plan/references/issue-boundaries.md"
 	compileSourceFile = "internal/flow/compile/compile.go"
