@@ -227,9 +227,11 @@ func (c *command) execute(spec Spec, state string, resume bool, sigs <-chan os.S
 	if err != nil {
 		return c.fail("run %s: %v", spec.RunID, err)
 	}
+	worldClosed := true
 	closeWorld := func() {
 		if world.Close != nil {
 			if err := world.Close(); err != nil {
+				worldClosed = false
 				fmt.Fprintf(c.stderr, "crw flow %s: error: the rows of the run could not be stored: %v\n", c.name, err)
 			}
 		}
@@ -256,6 +258,9 @@ func (c *command) execute(spec Spec, state string, resume bool, sigs <-chan os.S
 		spent = engine.RunSpent(world.Journal.Events(), spec.RunID).Total
 		if budget, err = runBudget(spec, spent, spec.TokenBudget); err != nil {
 			return c.fail("%v", err)
+		}
+		if err := restoreCleanedWorkdirs(c.ctx, state, spec, world.Journal.Events()); err != nil {
+			return c.fail("run %s: %v", spec.RunID, err)
 		}
 	}
 	ctx, cancel := context.WithCancel(c.ctx)
@@ -321,12 +326,16 @@ func (c *command) execute(spec Spec, state string, resume bool, sigs <-chan os.S
 	}
 	closeWorld()
 	world.Close = nil
-	if err := writeResult(state, spec.RunID, res, c.now()); err != nil {
-		fmt.Fprintf(c.stderr, "crw flow %s: error: the result of run %s could not be written: %v\n", c.name, spec.RunID, err)
+	resultErr := writeResult(state, spec.RunID, res, c.now())
+	if resultErr != nil {
+		fmt.Fprintf(c.stderr, "crw flow %s: error: the result of run %s could not be written: %v\n", c.name, spec.RunID, resultErr)
 	}
 	// a run that ended cancelled gives up its executions here, under the run lock this process still holds (CRW-1573)
 	if res.ErrorKind == engine.ErrKindCancelled {
 		c.settleOwnCancel(state, spec)
+	}
+	if worldClosed && resultErr == nil && cleanupTerminal(res) {
+		c.cleanupFinishedUnderLock(state, spec.Socket, spec.RunID)
 	}
 	// a run the operator paused ended as asked (CRW-1487): a resume goes on with it
 	if res.Status != engine.RunCompleted && res.Status != engine.RunPaused {

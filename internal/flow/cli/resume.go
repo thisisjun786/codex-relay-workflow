@@ -354,6 +354,14 @@ func (c *command) resumeHold(state, run string) engine.ResumeHold {
 		rec = spec.Env
 		hold.Backend = spec.Backend
 		hold.Budget = func(spent, asked int64) (int64, error) { return runBudget(spec, spent, asked) }
+		hold.Prepare = func(events []engine.Event) error {
+			return restoreCleanedWorkdirs(c.ctx, state, spec, events)
+		}
+		hold.Finished = func(res *engine.Result) {
+			if cleanupTerminal(res) {
+				c.cleanupFinishedUnderLock(state, spec.Socket, run)
+			}
+		}
 	}
 	hold.Tools = repositoryTools(c.getenv, rec)
 	return hold

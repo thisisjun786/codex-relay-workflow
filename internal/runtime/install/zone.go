@@ -20,6 +20,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/workdirs"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/swapgate"
@@ -170,7 +171,7 @@ func listingHasWal(entries []backedUp) bool {
 
 type backedUp struct {
 	Path       string `json:"path"`
-	Kind       string `json:"kind"` // dir, file, link-file (a symbolic link to a regular file: its bytes are copied)
+	Kind       string `json:"kind"` // dir, file, link-file (a symbolic link to a regular file: its bytes are copied), workdir (omitted), symlink (metadata only)
 	Size       int64  `json:"size"`
 	Mode       uint32 `json:"mode"`     // the source permission bits
 	CopyMode   uint32 `json:"copyMode"` // the copy: the source, with the owner able to open it (see copyMode)
@@ -179,6 +180,13 @@ type backedUp struct {
 	source     string // where the bytes are read from
 	storeWal   bool   // the store's write-ahead log, whichever path it was resolved to (CRW-862)
 	vanished   bool   // the store's log went between the walk's read and its own information (CRW-862, PR #735 P1 3)
+}
+
+// metadataOnly reports whether the entry records a path without copying its bytes: a disposable
+// worktree root (workdir) or a link under or standing as one (symlink). It has no copy, digest or
+// integrity part — the manifest inventory only.
+func (e backedUp) metadataOnly() bool {
+	return e.Kind == "workdir" || e.Kind == "symlink"
 }
 
 // swapGate is OPS-4.4 asked of the relay the record selects now (the candidate's own on a
@@ -219,7 +227,7 @@ func afterBackup(gate Object, note string) string {
 	if record.Get(backup, "made") != true {
 		return note
 	}
-	return strings.Replace(note, "nothing was written", "nothing but the backup was written", 1) + " The copy of the state directory taken before this step stays at " + record.Text(backup, "destination") + " (with its manifest beside it), and a rerun needs a new destination."
+	return strings.Replace(note, "nothing was written", "nothing but the backup was written", 1) + " The copy of the state databases and records taken before this step stays at " + record.Text(backup, "destination") + " (with its manifest beside it), and a rerun needs a new destination."
 }
 
 // refusedAfterGate is a refusal of the swap after the gate answered: it carries the gate, and with it the backup.
@@ -256,7 +264,7 @@ func backupState(ctx context.Context, o Options, dest, route string) (Object, er
 			return failure(false, "%s could not be examined: %w", path, err)
 		}
 	}
-	entries, skipped, err := listState(source, selection.DBPath())
+	entries, skipped, err := listState(ctx, source, selection.DBPath())
 	if err != nil {
 		return failure(false, "%v", err)
 	}
@@ -278,7 +286,7 @@ func backupState(ctx context.Context, o Options, dest, route string) (Object, er
 		// The refusal rests on the first listing, and the store's log is a file another connection checkpoints away at any moment: a large log that is gone
 		// now makes the need smaller than the listing says. The state directory is read once more, still before any byte is copied, and the check is made
 		// again only when that listing needs less; the guarantee of room before the copy is kept, and a log that is still there refuses as before.
-		if relisted, relistedSkipped, err := listState(source, selection.DBPath()); err == nil && needOf(relisted) < needOf(entries) {
+		if relisted, relistedSkipped, err := listState(ctx, source, selection.DBPath()); err == nil && needOf(relisted) < needOf(entries) {
 			walWasListed = listingHasWal(entries) && !listingHasWal(relisted)
 			entries, skipped = relisted, relistedSkipped
 			roomErr = stateBackupRoom(filepath.Dir(dest), needOf(entries))
@@ -310,6 +318,10 @@ func backupState(ctx context.Context, o Options, dest, route string) (Object, er
 		if e.vanished {
 			// the log went between the listing's read and its own information: it is recorded as gone before its copy
 			walGone = true
+			continue
+		}
+		if e.metadataOnly() {
+			copied = append(copied, e)
 			continue
 		}
 		target := filepath.Join(dest, filepath.FromSlash(e.Path))
@@ -357,7 +369,7 @@ func backupState(ctx context.Context, o Options, dest, route string) (Object, er
 	}
 	// The verification: what is in the backup is what was read, and what the state directory holds now is
 	// what was read as well, so the copy is neither damaged nor a mixture of two moments.
-	again, againSkipped, err := listState(source, selection.DBPath())
+	again, againSkipped, err := listState(ctx, source, selection.DBPath())
 	if err != nil {
 		return failure(true, "the state directory could not be read again: %v", err)
 	}
@@ -382,7 +394,7 @@ func backupState(ctx context.Context, o Options, dest, route string) (Object, er
 		return failure(true, "the state directory changed under the copy (%s), so the backup is not a copy of any one moment", diff)
 	}
 	for _, e := range copied {
-		if e.Kind == "dir" {
+		if e.Kind == "dir" || e.metadataOnly() {
 			continue
 		}
 		now, err := digestOf(e.source)
@@ -420,7 +432,7 @@ func backupState(ctx context.Context, o Options, dest, route string) (Object, er
 		return nil
 	}
 	for _, e := range copied {
-		if e.Kind != "dir" {
+		if e.Kind != "dir" && !e.metadataOnly() {
 			if err := setMode(e); err != nil {
 				return failure(true, "%v", err)
 			}
@@ -501,17 +513,17 @@ func backupState(ctx context.Context, o Options, dest, route string) (Object, er
 // checks (CRW-862).
 func backupMeaning(route string) string {
 	if route == backupForOperator {
-		return "a copy of the relay state directory taken by crw install backup-state outside an install, with the relay service known stopped and the store's write gate held exclusively; copy only, byte for byte"
+		return "a copy of the relay state databases and records taken by crw install backup-state outside an install, with the relay service known stopped and the store's write gate held exclusively; included files copied byte for byte, regenerable worktrees inventoried without their contents"
 	}
-	return "a copy of the relay state directory taken by crw install before the swap that brings the additive DAG zone or ordinary indexes (D-01, CRW-472, OPS-4.5); copy only, byte for byte"
+	return "a copy of the relay state databases and records taken by crw install before the swap that brings the additive DAG zone or ordinary indexes (D-01, CRW-472, OPS-4.5); included files copied byte for byte, regenerable worktrees inventoried without their contents"
 }
 
 // backupResultMeaning is the result's account of the copy, in the route's own words.
 func backupResultMeaning(route string) string {
 	if route == backupForOperator {
-		return "the state directory was copied, byte for byte, with the relay service known stopped and the store's write gate held exclusively; nothing was moved or deleted, and the copy stays whatever happens next (a rerun needs a new destination)"
+		return "the state databases and records were copied, byte for byte, with the relay service known stopped and the store's write gate held exclusively; regenerable worktrees were inventoried without their contents. Nothing was moved or deleted, and the copy stays whatever happens next (a rerun needs a new destination)"
 	}
-	return "the state directory was copied, byte for byte, after the daemon and in-flight cells answered and before the swap; nothing was moved or deleted, and the copy stays whatever happens next (a rerun needs a new destination)"
+	return "the state databases and records were copied, byte for byte, after the daemon and in-flight cells answered and before the swap; regenerable worktrees were inventoried without their contents. Nothing was moved or deleted, and the copy stays whatever happens next (a rerun needs a new destination)"
 }
 
 // refuseDestination is why dest cannot hold a backup, or nil: it lies in the source, or in the install's own
@@ -601,7 +613,7 @@ func enoughRoom(parent string, need int64) error {
 // relay.sqlite3-wal, so the copy opens with the commits only the log held. Its -shm is not listed at all: SQLite
 // rebuilds that index from the log on open, so a backup neither copies it nor refuses when one appears or goes. A
 // socket, a FIFO or a device is listed as skipped. A link to anything else is a refusal.
-func listState(source, dbPath string) ([]backedUp, []string, error) {
+func listState(ctx context.Context, source, dbPath string) ([]backedUp, []string, error) {
 	sidecars := sidecarsFor(source, dbPath)
 	var entries []backedUp
 	var skipped []string
@@ -645,6 +657,27 @@ func listState(source, dbPath string) ([]backedUp, []string, error) {
 			}
 			return err
 		}
+		if workdirs.IsRoot(rel) {
+			if info.Mode()&fs.ModeSymlink != 0 {
+				target, err := os.Readlink(path)
+				if err != nil {
+					return err
+				}
+				entries = append(entries, backedUp{Path: rel, Kind: "symlink", Mode: uint32(info.Mode().Perm()), LinkTarget: target})
+				return nil
+			}
+			// A worktree is omitted only while its current preserved state proves it reconstructable:
+			// changed, untracked or unpreserved data is copied like any other directory.
+			if info.IsDir() && workdirs.BackupSafe(ctx, source, rel) {
+				entries = append(entries, backedUp{Path: rel, Kind: "workdir", Mode: uint32(info.Mode().Perm())})
+				links, err := workdirLinkEntries(path, rel)
+				if err != nil {
+					return err
+				}
+				entries = append(entries, links...)
+				return fs.SkipDir
+			}
+		}
 		switch mode := info.Mode(); {
 		case mode.IsDir():
 			entries = append(entries, backedUp{Path: rel, Kind: "dir", Mode: uint32(mode.Perm()), CopyMode: uint32(copyMode(true, mode.Perm()))})
@@ -654,6 +687,10 @@ func listState(source, dbPath string) ([]backedUp, []string, error) {
 			target, err := os.Readlink(path)
 			if err != nil {
 				return err
+			}
+			if workdirs.Contains(rel) {
+				entries = append(entries, backedUp{Path: rel, Kind: "symlink", Mode: uint32(mode.Perm()), LinkTarget: target})
+				return nil
 			}
 			resolved, err := filepath.EvalSymlinks(path)
 			if err != nil {
@@ -816,6 +853,10 @@ func aggregateOf(entries []backedUp) (string, int, int64) {
 	var files int
 	var bytes int64
 	for _, e := range entries {
+		if e.metadataOnly() {
+			fmt.Fprintf(h, "%q\t%s\t%q\n", e.Path, e.Kind, e.LinkTarget)
+			continue
+		}
 		if e.Kind == "dir" {
 			fmt.Fprintf(h, "%s\tdir\n", e.Path)
 			continue
@@ -895,11 +936,40 @@ func digestOf(path string) (string, error) {
 func scratchNeed(entries []backedUp) int64 {
 	var need int64
 	for _, e := range entries {
-		if e.Kind != "dir" && (e.Path == "relay.sqlite3" || e.Path == walSidecar) {
+		if !e.metadataOnly() && e.Kind != "dir" && (e.Path == "relay.sqlite3" || e.Path == walSidecar) {
 			need += e.Size
 		}
 	}
 	return need
+}
+
+// workdirLinkEntries inventories every link below an omitted root without following any link.
+func workdirLinkEntries(dir, rel string) ([]backedUp, error) {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	var entries []backedUp
+	err = fs.WalkDir(root.FS(), ".", func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.Type()&fs.ModeSymlink == 0 {
+			return nil
+		}
+		target, err := root.Readlink(p)
+		if err != nil {
+			return err
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		entries = append(entries, backedUp{Path: rel + "/" + filepath.ToSlash(p), Kind: "symlink", Mode: uint32(info.Mode().Perm()), LinkTarget: target})
+		return nil
+	})
+	return entries, err
 }
 
 // copyFileInto copies source to target (created, never replaced) with a fixed buffer, so a file of any size
@@ -951,7 +1021,7 @@ func sqliteIntegrityCheck(ctx context.Context, dest string, copied []backedUp) (
 		// Only the store's own file and its log are duplicated: they are the only files the check opens. A prefix match
 		// would also take a directory or a leftover journal that merely starts with the same name, and a flattened name
 		// would collide with the store in the scratch directory (CRW-862 generation 4, failure class 1).
-		if e.Kind == "dir" || (e.Path != "relay.sqlite3" && e.Path != walSidecar) {
+		if e.Kind == "dir" || e.metadataOnly() || (e.Path != "relay.sqlite3" && e.Path != walSidecar) {
 			continue
 		}
 		// streamed with a fixed buffer, as the backup's own copy is: a store of any size is duplicated
