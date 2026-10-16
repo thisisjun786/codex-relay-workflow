@@ -268,6 +268,15 @@ func lastTerminal(rows []engine.Event) (status, reason string) {
 // raised one ended without waiting for an answer (CRW-1437).
 var reportUpAsks = map[string]bool{"bundle_split_request": true}
 
+// Waits tells whether the run waits for an answer to the question: it is the current question of its node and ask, no decision answered
+// it, and it is no request to send up (ReportUp). It is the one rule ps, show and next (Summarize) and the night batch digest
+// (BuildDigest) read the questions by.
+func (q Question) Waits() bool { return q.Current && q.Applied == "" && !q.ReportUp }
+
+// SendsUp tells whether the question is a request to send up with `crw flow report-up` that stands: the current question of its node
+// and ask, which no decision answered, whose ask is a request to send up (ReportUp). The run waits for no answer to it.
+func (q Question) SendsUp() bool { return q.Current && q.Applied == "" && q.ReportUp }
+
 // Questions reads the questions a run asked: its escalation rows that carry an ask, the revision each has among those of its
 // node and ask, and the decision_applied row that answered it. The latest question of a node and ask is the current one. A question
 // whose ask is a request to send up (reportUpAsks) is marked ReportUp.
@@ -418,7 +427,7 @@ func Summarize(rec RunRecord, events []engine.Event, live bool, pid int) RunInfo
 	// a request to send up (a bundle split request) is no decision the run waits for: it neither makes a finished run held nor a live
 	// one waiting_decision
 	for _, q := range Questions(events) {
-		if q.Current && q.Applied == "" && !q.ReportUp {
+		if q.Waits() {
 			info.Waiting++
 		}
 	}
