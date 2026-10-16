@@ -596,3 +596,35 @@ func TestHarnessInstallCorruptRepairRendersPort(t *testing.T) {
 		t.Fatalf("rendered report misses the repair line:\n%s", text)
 	}
 }
+
+// The derived installation version is the stamped suffix the cache directory names (CRW-1582):
+// the check matches the manifest's full version against the cache, never a release alone.
+func TestHarnessInstallRootMatchesTheFullSuffixedVersion(t *testing.T) {
+	root := t.TempDir()
+	home := harnessInstallHomeAt(t, root, "local", [][]string{{"local", "crw", "0.4.0+aaaaaaaaaaaa"}})
+	payload := filepath.Join(root, "payload")
+	if err := os.MkdirAll(filepath.Join(payload, ".codex-plugin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeManifest := func(version string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(payload, ".codex-plugin", "plugin.json"),
+			[]byte(`{"name":"crw","version":"`+version+`"}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeManifest("0.4.0+aaaaaaaaaaaa")
+	resolve := func() (string, error) { return home, nil }
+	check := harnessInstallInstalledRootCheck(payload, resolve, os.ReadFile)
+	if check.Severity != HarnessPass {
+		t.Fatalf("the stamped suffix is the install root: %+v", check)
+	}
+	writeManifest("0.4.0+bbbbbbbbbbbb")
+	check = harnessInstallInstalledRootCheck(payload, resolve, os.ReadFile)
+	if check.Severity == HarnessPass {
+		t.Fatalf("a different derived suffix matched: %+v", check)
+	}
+	if version := harnessRunPluginVersion(filepath.Join(payload, ".codex-plugin", "plugin.json")); version == nil || *version != "0.4.0+bbbbbbbbbbbb" {
+		t.Fatalf("the report's version %v drops the suffix", version)
+	}
+}

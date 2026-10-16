@@ -42,14 +42,17 @@ type Config struct {
 	// VerifyCommand is the verification of the merged tree: argv run in the worktree with
 	// CRW_VERIFY_HEAD, CRW_VERIFY_BASE and CRW_VERIFY_RECORD in its environment.
 	VerifyCommand []string `json:"verify_command"`
-	// RecordVersionCommand re-derives the plugin manifest's version line in the worktree.
+	// RecordVersionCommand is a retired setting (CRW-1582): the committed manifest carries the
+	// release and no re-derive runs, so the field is accepted and ignored.
 	RecordVersionCommand []string `json:"record_version_command"`
-	// RecordVersionEnv is added to RecordVersionCommand's environment; {tmpdir} in a value is
+	// RecordVersionEnv is accepted and ignored with RecordVersionCommand.
+	//
+	// Deprecated:
 	// the run's private temporary directory below WorkRoot.
 	RecordVersionEnv map[string]string `json:"record_version_env"`
 
-	// PluginDir is the plugin package's directory and PluginManifest the file whose version
-	// line may conflict, both relative to the repository root.
+	// PluginDir and PluginManifest are retired repository-relative settings, accepted for
+	// compatibility. The integrator neither rewrites the package nor resolves its conflicts.
 	PluginDir      string `json:"plugin_dir"`
 	PluginManifest string `json:"plugin_manifest"`
 
@@ -116,7 +119,7 @@ func (c Config) Resolved() (Config, error) {
 	for _, p := range []struct {
 		name string
 		argv []string
-	}{{"gate_command", c.GateCommand}, {"verify_command", c.VerifyCommand}, {"record_version_command", c.RecordVersionCommand}} {
+	}{{"gate_command", c.GateCommand}, {"verify_command", c.VerifyCommand}} {
 		if len(p.argv) == 0 || p.argv[0] == "" {
 			problems = append(problems, p.name+" is required")
 		}

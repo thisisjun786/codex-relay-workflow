@@ -207,42 +207,41 @@ func TestPassHeadNotInCheckoutGoesToConflict(t *testing.T) {
 	w.mustWhere("8", "conflict")
 }
 
-// Two heads that bump the version line differently conflict on that line alone: it is
-// resolved, the line is re-derived on the merged tree, and the verifier (which checks the
-// derived line) passes.
-func TestPassVersionLineConflictIsResolvedAndRederived(t *testing.T) {
-	w := newWorld(t)
-	a := w.head("a", map[string]string{"plugins/crw/skills/a.txt": "a\n", manifestPath: manifest("v-2-a")}, true)
-	b := w.head("b", map[string]string{"plugins/crw/skills/b.txt": "b\n", manifestPath: manifest("v-2-b")}, true)
-	w.pend("1", a)
-	w.pend("2", b)
-	rep := w.pass()
-	requireExit(t, rep, ExitPushed, "pushed")
-	if rep.Summary.Merged != "crw-1="+a+" crw-2="+b || rep.Summary.LeftOut != "" {
-		t.Fatalf("summary %+v", rep.Summary)
-	}
-	if got := w.fileAt("dev", manifestPath); got != strings.TrimRight(manifest("v-3"), "\n") {
-		t.Fatalf("manifest on dev:\n%s", got)
-	}
-	if !strings.Contains(w.git(w.remote, "log", "--format=%s", "-3", "dev"), "integration "+rep.Summary.Tag+": re-derive the plugin version line") {
-		t.Fatal("no re-derive commit")
-	}
-	if !strings.Contains(w.ctlRead("record-calls"), "tmp-"+rep.Summary.Tag) {
-		t.Fatalf("record command did not get the run's private tmpdir: %q", w.ctlRead("record-calls"))
-	}
-	w.mustWhere("1", "done")
-	w.mustWhere("2", "done")
-}
-
-// A plugin change that does not conflict still has its version line re-derived.
-func TestPassPluginChangeWithoutConflictIsRederived(t *testing.T) {
+// A plugin change that does not conflict keeps the committed release: no version line is
+// re-derived and no recorder runs (CRW-1582).
+func TestPassPluginChangeKeepsFixedVersion(t *testing.T) {
 	w := newWorld(t)
 	a := w.head("a", map[string]string{"plugins/crw/skills/a.txt": "a\n"}, true)
 	w.pend("1", a)
 	rep := w.pass()
 	requireExit(t, rep, ExitPushed, "pushed")
-	if got := w.fileAt("dev", manifestPath); got != strings.TrimRight(manifest("v-2"), "\n") {
+	if got := w.fileAt("dev", manifestPath); got != strings.TrimSpace(manifest("0.4.0")) {
 		t.Fatalf("manifest on dev:\n%s", got)
+	}
+	if calls := w.ctlRead("record-calls"); calls != "" {
+		t.Fatalf("the version recorder ran:\n%s", calls)
+	}
+}
+
+// Two branches that each rewrote the version line conflict as any conflict does: the first
+// lands, the second is left to the queue's conflict folder, and nothing re-derives it
+// (CRW-1582).
+func TestPassVersionLineConflictIsAnOrdinaryConflict(t *testing.T) {
+	w := newWorld(t)
+	w.write(filepath.Join(w.root, "scripts", "verify.sh"), verifyFixedVersion("0.5.0"))
+	a := w.head("a", map[string]string{manifestPath: manifest("0.5.0")}, true)
+	b := w.head("b", map[string]string{manifestPath: manifest("0.6.0")}, true)
+	w.pend("1", a)
+	w.pend("2", b)
+	rep := w.pass()
+	requireExit(t, rep, ExitPushed, "pushed")
+	w.mustWhere("1", "done")
+	w.mustWhere("2", "conflict")
+	if got := w.fileAt("dev", manifestPath); got != strings.TrimSpace(manifest("0.5.0")) {
+		t.Fatalf("manifest on dev:\n%s", got)
+	}
+	if calls := w.ctlRead("record-calls"); calls != "" {
+		t.Fatalf("the version recorder ran:\n%s", calls)
 	}
 }
 
@@ -259,8 +258,8 @@ func TestPassNoPluginChangeRunsNoRecordCommand(t *testing.T) {
 // A conflict in the manifest beyond the version line is not resolved.
 func TestPassManifestConflictBeyondVersionLineIsLeftOut(t *testing.T) {
 	w := newWorld(t)
-	a := w.head("a", map[string]string{manifestPath: strings.Replace(manifest("v-1"), `"x"`, `"from a"`, 1)}, true)
-	b := w.head("b", map[string]string{manifestPath: strings.Replace(manifest("v-1"), `"x"`, `"from b"`, 1)}, true)
+	a := w.head("a", map[string]string{manifestPath: strings.Replace(manifest("0.4.0"), `"x"`, `"from a"`, 1)}, true)
+	b := w.head("b", map[string]string{manifestPath: strings.Replace(manifest("0.4.0"), `"x"`, `"from b"`, 1)}, true)
 	w.pend("1", a)
 	w.pend("2", b)
 	rep := w.pass()
@@ -274,13 +273,13 @@ func TestPassManifestConflictBeyondVersionLineIsLeftOut(t *testing.T) {
 // A version-line conflict next to another conflicted file is not resolved either.
 func TestPassVersionConflictNextToAnotherConflictIsLeftOut(t *testing.T) {
 	w := newWorld(t)
+	w.write(filepath.Join(w.root, "scripts", "verify.sh"), verifyFixedVersion("v-9-a"))
 	a := w.head("a", map[string]string{manifestPath: manifest("v-9-a"), "shared.txt": "line1\nA\nline3\n"}, true)
 	b := w.head("b", map[string]string{manifestPath: manifest("v-9-b"), "shared.txt": "line1\nB\nline3\n"}, true)
 	w.pend("1", a)
 	w.pend("2", b)
 	rep := w.pass()
-	// a changed the version line without a matching skill file, so its merged tree drifts and the
-	// verifier refuses it: the point here is only that b was not merged.
+	// a lands and the verifier sees its version; the point here is only that b was not merged.
 	if rep.Summary == nil || rep.Summary.LeftOut != "crw-2:conflict" {
 		t.Fatalf("report %+v", rep)
 	}
@@ -508,5 +507,87 @@ func TestWatchEndsWithTheContext(t *testing.T) {
 	w.r.Sleep = func(ctx context.Context, _ time.Duration) error { cancel(); return ctx.Err() }
 	if err := w.r.Watch(ctx, func(Report) {}); err == nil {
 		t.Fatal("watch ignored the cancelled context")
+	}
+}
+
+// verifyFixedVersion is the harness verify script with its version judgment bound to the
+// committed release the task's repository carries: the manifest's fixed version must reach
+// the verification's tree unchanged (CRW-1582).
+func verifyFixedVersion(version string) string {
+	return `#!/bin/sh
+n=$(cat "$CTL_DIR/verify-n" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "$CTL_DIR/verify-n"
+echo "$CRW_VERIFY_HEAD $CRW_VERIFY_BASE $CRW_VERIFY_RECORD $(pwd)" >> "$CTL_DIR/verify-calls"
+have=$(grep -o '"version": "[^"]*"' plugins/crw/.codex-plugin/plugin.json | cut -d'"' -f4)
+if [ "$have" != "` + version + `" ]; then echo "version drift $have != ` + version + `"; exit 9; fi
+echo '{"ok":true}' > "$CRW_VERIFY_RECORD"
+exit 0
+`
+}
+
+// fixManifest commits the fixed release version on the remote's dev and binds the world's
+// verifier to it.
+func fixManifest(w *world, version string) {
+	w.t.Helper()
+	if w.fileAt("dev", manifestPath) != strings.TrimSpace(manifest(version)) {
+		w.write(filepath.Join(w.other, manifestPath), manifest(version))
+		w.git(w.other, "add", "-A")
+		w.git(w.other, "commit", "-q", "-m", "fixed release "+version)
+		w.git(w.other, "push", "-q", "origin", "dev")
+	}
+	w.write(filepath.Join(w.root, "scripts", "verify.sh"), verifyFixedVersion(version))
+}
+
+// Plugin-edit branches carry no version line of their own: two of them merge and push, the
+// manifest keeps the committed release, and no re-derive runs or commits (CRW-1582).
+func TestPassPluginBranchesDoNotRecordVersion(t *testing.T) {
+	w := newWorld(t)
+	fixManifest(w, "0.4.0")
+	base := w.remoteDev()
+	h1 := w.head("crw-1", map[string]string{"plugins/crw/skills/a.txt": "a\n"}, true)
+	h2 := w.head("crw-2", map[string]string{"plugins/crw/skills/b.txt": "b\n"}, true)
+	w.pend("1", h1)
+	w.pend("2", h2)
+
+	rep := w.pass()
+	requireExit(t, rep, ExitPushed, "pushed")
+	for _, n := range []string{"1", "2"} {
+		w.mustWhere(n, "done")
+	}
+	if got := w.fileAt("dev", manifestPath); got != strings.TrimSpace(manifest("0.4.0")) {
+		t.Fatalf("the pushed manifest is %q, want the fixed release", got)
+	}
+	if calls := w.ctlRead("record-calls"); calls != "" {
+		t.Fatalf("the version recorder ran on plugin branches:\n%s", calls)
+	}
+	log := w.git(w.remote, "log", "--first-parent", "--format=%s", base+"..dev")
+	if n := strings.Count(log, "Merge crw-"); n != 2 || strings.Contains(log, "re-derive") || strings.Contains(log, "record") {
+		t.Fatalf("the pushed history is not the two merges alone:\n%s", log)
+	}
+	if !strings.Contains(w.ctlRead("verify-calls"), rep.Summary.Head) {
+		t.Fatalf("the verification did not judge the pushed head %s:\n%s", rep.Summary.Head, w.ctlRead("verify-calls"))
+	}
+}
+
+// A manifest line two branches each rewrote is a real conflict, not a version the integrator
+// may pick: the first lands with its own value, the second stays conflicted, and no recorder
+// runs (CRW-1582).
+func TestPassFixedVersionConflictStaysPending(t *testing.T) {
+	w := newWorld(t)
+	fixManifest(w, "0.4.0")
+	w.write(filepath.Join(w.root, "scripts", "verify.sh"), verifyFixedVersion("0.5.0"))
+	h1 := w.head("crw-1", map[string]string{manifestPath: manifest("0.5.0")}, true)
+	h2 := w.head("crw-2", map[string]string{manifestPath: manifest("0.6.0")}, true)
+	w.pend("1", h1)
+	w.pend("2", h2)
+
+	rep := w.pass()
+	requireExit(t, rep, ExitPushed, "pushed")
+	w.mustWhere("1", "done")
+	w.mustWhere("2", "conflict")
+	if got := w.fileAt("dev", manifestPath); got != strings.TrimSpace(manifest("0.5.0")) {
+		t.Fatalf("the pushed manifest is %q, want the merged branch's 0.5.0", got)
+	}
+	if calls := w.ctlRead("record-calls"); calls != "" {
+		t.Fatalf("the version recorder ran:\n%s", calls)
 	}
 }

@@ -1387,9 +1387,9 @@ among its commands, the child does not settle a conflict either.
    with a merge commit: `git merge --no-ff -m "Merge branch 'dev' into <branch>" <D>`. `git diff --name-only
    --diff-filter=U` lists the conflicting files. A file no declaration covers, a conflict that is not a change
    both sides made to one text file (a deleted or renamed file, a binary file, a link), and a place whose rule
-   is `renumber` end it here: `git merge --abort`, and the candidate goes back to its `child` session (below). The one
-   exception is the plugin manifest's version line, which no declaration has to settle with one agreed rule: settle it as the
-   paragraph after the rules below says, and abort only when it is anything else.
+   is `renumber` end it here: `git merge --abort`, and the candidate goes back to its `child` session (below).
+   A conflict in the plugin manifest's release version also goes back to its owning session; it is a human choice,
+   and neither side's value is selected by regenerating a payload digest.
 2. Settle each conflicting file by its rule and by nothing else. A file that merged cleanly stays as git made it.
    - `union`: keep every line of both sides, each side's lines in their own order, and add nothing. `git show
      :1:<path>` is the base, `:2:<path>` the candidate and `:3:<path>` the dev tip. When both sides only
@@ -1399,9 +1399,7 @@ among its commands, the child does not settle a conflict either.
      line both sides added out of the conflict, so what is left holds it once, and the check counts it twice.
    - `regenerate:<command>`: discard both sides' versions, take either side's (`git checkout --theirs
      <path>`) and run the declared command on the merged tree, from the repository root. For
-     `plugins/crw/.codex-plugin/plugin.json` that is `go run -tags dev ./cmd/crw-dev ci plugin
-     --record-version`, after the merge of the skills has settled, because the suffix digests the whole
-     payload. For `docs/port/refactor-backlog.md` that is `go run -tags dev ./cmd/crw-dev ci
+     `docs/port/refactor-backlog.md` that is `go run -tags dev ./cmd/crw-dev ci
      refactor-backlog --write`, after the merge of the fragment tree `docs/port/refactor-backlog.d/` has
      settled (entry files both sides add merge as the union), because the file is assembled from those
      fragments. Declare a command that works from the root of a fresh checkout with the caller's `PATH`: the
@@ -1411,21 +1409,13 @@ among its commands, the child does not settle a conflict either.
      block files under `docs/crw-run/dispatch-cases/`. A case is authored in those files, never in the
      generated document: a change made only in the document drifts from its inputs and `crw-dev ci validate` refuses it.
 
-The one file no declaration has to settle with one agreed rule is the plugin manifest's version line. When the
-file is in play (a conflict in `plugins/crw/.codex-plugin/plugin.json`, or a clean merge whose head re-recorded it), no
-declaration given has to touch it at all, and the file is the same regular file in the same mode in both parents and
-in the head, the check settles it by the built-in rule
-`regenerate:plugin-version`: the head's manifest must equal both parents' byte for byte but for the version it records,
-that version must keep the release component both parents record (the release is the owner's choice, not the
-payload's, so the rule neither picks one nor drops one), and the suffix must be the one the head's payload derives
-(`crw-dev ci plugin` computes it from the payload). A declaration that settles the file with one
-rule agreed by every declaration given keeps its say; a declaration that merely touches the file does not take the
-built-in rule's place, because the rule already holds the manifest to both parents apart from the version line and
-to the version the head's own payload derives. The rule applies whether the manifest conflicted or merged cleanly
-and was recorded again at the head, which is the shape a child's own update leaves when only one side re-recorded
-the version. Any other difference in that file, a version that is not the derived
-one, and every other path keep the refusal they have today, and the proof prints
-`applied: regenerate path=plugins/crw/.codex-plugin/plugin.json rule=regenerate:plugin-version version=<the version>`.
+The committed plugin manifest keeps the fixed release version (CRW-1582). Payload edits and merges leave
+that line unchanged. `crw-dev ci plugin --stage <new-directory>` derives the suffix only for an installation
+artifact outside the checkout; it does not resolve a source conflict or create a commit.
+The base-refresh proof retains its `regenerate:plugin-version` checks for historical suffixed merges.
+That compatibility check does not authorize a new suffix commit: current source CI requires the fixed
+release version. A branch still carrying a historical suffix must migrate its source manifest and pass
+the current checks before it is integrated.
 
 3. Add the settled files and commit; the merge commit has the parents P and D in that order. Before pushing
    anything run, with N the new commit:
