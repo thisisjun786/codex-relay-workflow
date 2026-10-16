@@ -115,7 +115,8 @@ Read the draft as a guess at where the criteria fall apart and apply the boundar
 it becomes an issue only with an observable result of its own, verifiable apart or landing after a prerequisite, and the
 closing check records the order edges. A bundle that fails those rules is not an issue. Where the parts cannot pass
 verification apart, the issue stays one issue, and the plan reports the answer, the draft and that reason to the user instead of
-writing a split. An `exception` object the command validates records the user's own statement naming this issue; it is kept in
+writing a split. An issue kept whole that is more than one executor's work gets `size_fit` `split`: its node is divided into
+sub-tasks on one executor thread, not into issues ([Set the size fields](../SKILL.md#set-the-size-fields)). An `exception` object the command validates records the user's own statement naming this issue; it is kept in
 the report and passed on to `crw-run` with its record. Check an issue again after it is changed,
 and check every issue a split writes as an issue.
 
@@ -241,12 +242,12 @@ changes what the next one sees.
    region map), `cycle` or `self_reference` (the boundary is wrong: reapply step 3), `region_order_missing` (two issues
    share an edit region and nothing orders them: name one as the other's prerequisite or put both in one group, the one
    ordering step 3 asks for), `group_cap` (a group of more than four issues), `after_unknown` (a prerequisite that is no
-   issue of the handoff), `size_value` (a `size_fit`, `size_reason` or `issue_size` outside its closed set) and
+   issue of the handoff), `size_value` (a `size_fit`, `size_reason` or `issue_size` outside its closed set, `size_fit` `child` included) and
    `milestone` (a milestone entry the issues and the run cannot use). Repair at the step that owns the defect and run the
    steps from there again; the plan is not closed with a refusal. A warning on stderr (`target_repository`, a repository that is not
    the checkout's absolute path; `target_base_ref`, a base ref written with `refs/heads/`) is not a refusal: correct the
    target to the form the run needs before the run. The preview lists `size_unreviewed` for an issue that
-   answered `over_line` with neither a bundle reason nor a split; that is not a refusal, and the plan is not closed until
+   answered `over_line` with neither a bundle reason nor a `size_fit` of `split` or `bundle_split`; that is not a refusal, and the plan is not closed until
    the size check has judged each such issue.
 
 A boundary change carries its relations with it. Keep every relation to work outside the

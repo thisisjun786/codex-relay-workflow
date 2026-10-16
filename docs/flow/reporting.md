@@ -10,13 +10,13 @@ messages ([supervisor-channel.md](../relay/supervisor-channel.md#direct-messages
 
 | What | From | To | By | Recorded as | Pump kind |
 | --- | --- | --- | --- | --- | --- |
-| an escalation of the run (`dispatch_unknown`, `tiers_exhausted`, `blocked_scope`, `size_split`, `restore_snapshot_mismatch`, a configuration fault, the run-level hold `plan_superseded` with the pinned and head revisions and the node, CRW-1291) | the run | the level above the run's project (the parent's management seat, else a supervisor registered at the initiative's scope, the legacy configuration, else a live store seat); a run whose plan names no project: the child's thread | the supervisor channel (`flow_escalation`); else `crw manage send-parent` | `escalation`, `escalation_notice`, `message_delivery` | `run_escalation` |
+| an escalation of the run (`dispatch_unknown`, `tiers_exhausted`, `blocked_scope`, `size_split`, with ask `bundle_split_request` for a node sized `bundle_split`, `restore_snapshot_mismatch`, a configuration fault, the run-level hold `plan_superseded` with the pinned and head revisions and the node, CRW-1291) | the run | the level above the run's project (the parent's management seat, else a supervisor registered at the initiative's scope, the legacy configuration, else a live store seat); a run whose plan names no project: the child's thread | the supervisor channel (`flow_escalation`); else `crw manage send-parent` | `escalation`, `escalation_notice`, `message_delivery` | `run_escalation` |
 | the completion digest (`state=`, `reason=`, `lanes=` of the milestone state the run came to; none for a run the operator paused) | the run | as an escalation | the supervisor channel (`flow_completion`); else `crw manage send-parent` | `completion_notice`, `message_delivery` | |
 | a run that stopped writing | nobody | the pump's management thread | the pump | | `run_dead` |
 | the plan summary that is owed | the run | the child's thread | `crw manage send-parent` | `summary_document`, `summary_notice`, `summary_notice_settled` | |
 | a milestone report | the run | the parent above the project (else a supervisor registered at the initiative's scope, the legacy configuration, else a live store seat) | the writer of `crw flow report-up` through the supervisor channel (`flow_milestone_report`) | `report`, `report_delivery`, `report_read` | `report_undelivered`, `report_unread` |
 | a run that started no node (`project_blocked`, CRW-1320) | the run | as a milestone report | the writer of `crw flow report-up` through the supervisor channel (`flow_project_blocked`) | `report`, `report_delivery`, `report_read` | `report_undelivered`, `report_unread` |
-| a project-level blocker or decision request | the child | as a milestone report | `crw flow report-up` through the supervisor channel (`flow_project_blocked`, `flow_project_decision_request`) | `report`, `report_delivery`, `report_read` | `report_undelivered`, `report_unread` |
+| a project-level blocker or decision request (the request for a bundle split of an issue whose node escalated `size_split` with ask `bundle_split_request` included) | the child | as a milestone report | `crw flow report-up` through the supervisor channel (`flow_project_blocked`, `flow_project_decision_request`) | `report`, `report_delivery`, `report_read` | `report_undelivered`, `report_unread` |
 | a decision only Jun can make | the child | the parent above the project (else the store seat, then the parent that holds it) | `crw flow report-up` through the supervisor channel (`flow_jun_decision_request`); under a supervisor registered at the initiative's scope it stands | `report`, `report_delivery` | `jun_decision`, only for one the channel did not take |
 | a step that waits for the owner (a session run, CRW-1348) | the run | the run's owner | the supervisor channel (`session_step_waiting`, `run:<id>`) | `session_wake`, `message_delivery` | |
 
@@ -79,7 +79,12 @@ above the project) ends the case: the next decision goes through the channel to 
 The run tells the level above its project about each escalation row it wrote, once: `report.RelaySender` stages it on the supervisor
 channel as a `flow_escalation` direct message through `project:<the project of the run's plan>`, subject `<run>/esc-<escalation id>`,
 and the relay daemon delivers it to the parent's management seat above the project (else a supervisor at the initiative's scope, else
-the store seat) as it delivers a report. The run records the notice as an `escalation_notice` row (the escalation id, the result, the
+the store seat) as it delivers a report. The notice names the run, the node, the reason and the class, then the detail, and, for an
+escalation that carries an ask, ends with `The run waits for your decision (<ask>).`. An escalation that asks `bundle_split_request`
+(a node the architect sized `bundle_split`, closed by the escalation) ends, in place of that line, with the request: a bundle split of
+the node's issue (named from the run's plan, else the node is named by its id) is the parent's to make, and the child asks the parent
+for it with `crw flow report-up --kind project_decision_request --run RUN --evidence FILE`, a project-level decision request
+([below](#milestone-reports-and-project-level-reports)). The run records the notice as an `escalation_notice` row (the escalation id, the result, the
 request id, and the thread the notice was addressed to: the recipient the channel staged it for), and a notice the channel did not stage
 is staged again, under the same subject, by the next reconcile. A run whose plan names no project has no relationship to stage under:
 its notice goes to the child's thread that started it with `crw manage send-parent --thread <child thread> --logical-id

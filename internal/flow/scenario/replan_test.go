@@ -551,7 +551,8 @@ func TestOldRevisionReceiptNotCounted(t *testing.T) {
 }
 
 // Only the nodes that have not started take the new revision: the lanes that started keep the packet of the revision they were
-// released under, and the DESIGN delta is what the others are built from.
+// released under, and the DESIGN delta is what the others are built from. The delta rewrites the unstarted B and C; it keeps the
+// started A as it was released, which crw.designLedger demands of a revision after the first (CRW-1472).
 func TestReplanRefreshesOnlyUnstartedPackets(t *testing.T) {
 	l := NewLab(t, chainNodes()...)
 	mismatching(l, "A")
@@ -559,7 +560,9 @@ func TestReplanRefreshesOnlyUnstartedPackets(t *testing.T) {
 	l.On("^replan:", func(*Call) *fakehostPlan {
 		d := l.designFor()
 		for i := range d.Issues {
-			d.Issues[i].Approach = "approach of " + d.Issues[i].Node + " after the re-plan"
+			if d.Issues[i].Node != "A" {
+				d.Issues[i].Approach = "approach of " + d.Issues[i].Node + " after the re-plan"
+			}
 		}
 		p := Say(d)
 		return &p
@@ -2462,6 +2465,8 @@ func TestASplitNodeHasStartedForTheSignal(t *testing.T) {
 		}
 	}
 	l.Design = &d
+	// a split with no sub-tasks, which its lane escalates: a DESIGN recorded before S-1 (CRW-1435)
+	l.UseLegacyDesign()
 	mismatching(l, "A")
 	fixedOnce(l, "A")
 	// B's size_split leaves the milestone incomplete
@@ -2515,6 +2520,8 @@ func TestAReplanKeepsASplitNodeUnderReleasedPlans(t *testing.T) {
 		}
 	}
 	l.Design = &d
+	// a split with no sub-tasks, which its lane escalates: a DESIGN recorded before S-1 (CRW-1435)
+	l.UseLegacyDesign()
 	mismatching(l, "A")
 	fixedOnce(l, "A")
 	// B's size_split leaves the milestone incomplete

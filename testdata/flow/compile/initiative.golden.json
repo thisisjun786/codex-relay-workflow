@@ -244,7 +244,7 @@
             "after": [
               "API-6"
             ],
-            "size_fit": "child",
+            "size_fit": "split",
             "size_reason": "steps_gt5",
             "issue_size": "over_line_accepted",
             "bundle_reason": "one concept: the price rule engine",

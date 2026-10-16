@@ -3,6 +3,8 @@
 package ci
 
 import (
+	"go/scanner"
+	"go/token"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -203,6 +205,138 @@ func TestIssueChildDispatchIsOnlyForAPlanWithNoFlowRun(t *testing.T) {
 		} {
 			if p := issueChildDispatchProblems(good); len(p) != 0 {
 				t.Errorf("%q is reported: %v", good, p)
+			}
+		}
+	})
+}
+
+// CRW-1464 (S-4, bundle CRW-1425): the code of the managed `child` session start is gone from the flow, not only from its docs. No
+// non-test Go file under internal/flow holds SchedRelay.ReleaseChild, the host settings document of cli/childhost.go (ChildHost and
+// its schema and refusal), or the ops.ChildRequest and ops.ChildResult types: the lane releases no `child` session since CRW-1415, and a
+// node a DESIGN recorded before S-1 sized for a child is an unreleased sized row (crw.release) that the lane escalates as size_split.
+//
+// What is read. Each Go token of a non-test file under internal/flow (testdata directories skipped): an identifier holds a word when
+// the word is part of its name (ErrChildHostUnset holds ChildHost), and a comment or a string literal holds a word on word boundaries.
+// The word "childhost" is matched in any case, so a file name or a lower-case spelling counts too.
+//
+// What stays. The op name of old journal rows is read as recorded: ops.OpReleaseChild (ops/lane.go, read by cli/runs.go and the
+// legacy readers) and engine.OpLegacyReleaseChild (engine/legacy.go, the detection of a legacy run). Those two identifiers are the
+// allowlist (goChildPathKept); an allowed identifier that no file names any more is stale and fails, so the list only shrinks.
+
+// goChildPathWord is a word of the deleted managed start in an identifier (part of its name).
+var goChildPathWord = regexp.MustCompile(`ReleaseChild|ChildHost|ChildRequest|ChildResult|(?i:childhost)`)
+
+// goChildPathTextWord is a word of the deleted managed start in a comment or a string literal (on word boundaries).
+var goChildPathTextWord = regexp.MustCompile(`\b(?:ReleaseChild|ChildHost|ChildRequest|ChildResult|(?i:childhost))\b`)
+
+// goChildPathKept are the identifiers that keep a word, each with its reason.
+var goChildPathKept = map[string]string{
+	"OpReleaseChild":       "the op name of an old crw.releaseChild row (ops/lane.go), which cli/runs.go and the legacy readers read as recorded",
+	"OpLegacyReleaseChild": "the engine's name of that op (engine/legacy.go), by which a legacy run is detected and refused",
+}
+
+// goChildPathHits is each place of src (a Go source file) that holds a word, as "line N: kind text"; kept collects the allowed
+// identifiers it names.
+func goChildPathHits(name string, src []byte, kept map[string]bool) []string {
+	fset := token.NewFileSet()
+	file := fset.AddFile(name, fset.Base(), len(src))
+	var s scanner.Scanner
+	var problems []string
+	s.Init(file, src, func(pos token.Position, msg string) { problems = append(problems, pos.String()+": "+msg) }, scanner.ScanComments)
+	for {
+		pos, tok, lit := s.Scan()
+		if tok == token.EOF {
+			break
+		}
+		line := fset.Position(pos).Line
+		switch {
+		case tok == token.IDENT && goChildPathWord.MatchString(lit):
+			if _, ok := goChildPathKept[lit]; ok {
+				kept[lit] = true
+				continue
+			}
+			problems = append(problems, "line "+strconv.Itoa(line)+": identifier "+lit)
+		case tok == token.COMMENT || tok == token.STRING:
+			for _, word := range goChildPathTextWord.FindAllString(lit, -1) {
+				problems = append(problems, "line "+strconv.Itoa(line)+": "+strings.ToLower(tok.String())+" names "+word)
+			}
+		}
+	}
+	return problems
+}
+
+func TestNoIssueChildGoSourceRemains(t *testing.T) {
+	root := repoRoot()
+	kept := map[string]bool{}
+	scanned := 0
+	var report []string
+	err := filepath.WalkDir(filepath.Join(root, "internal", "flow"), func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if d.Name() == "testdata" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		if strings.Contains(strings.ToLower(filepath.Base(rel)), "childhost") {
+			report = append(report, rel+": the file of the deleted managed start")
+		}
+		src, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		scanned++
+		for _, p := range goChildPathHits(rel, src, kept) {
+			report = append(report, rel+" "+p)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scanned < 100 {
+		t.Fatalf("only %d Go files scanned under internal/flow; the walk lost the tree", scanned)
+	}
+	if len(report) > 0 {
+		t.Errorf("the managed `child` session start is still in the flow's Go source:\n  %s", strings.Join(report, "\n  "))
+	}
+	for id, reason := range goChildPathKept {
+		if !kept[id] {
+			t.Errorf("the kept identifier %s (%s) is named by no file under internal/flow any more: drop it from goChildPathKept", id, reason)
+		}
+	}
+
+	t.Run("fixture: kept identifiers pass and each word is reported", func(t *testing.T) {
+		clean := "package p\n\n// an old crw.releaseChild row is read as recorded; a `child` session is a relay role id\n" +
+			"const OpReleaseChild = OpLegacyReleaseChild\n\nvar childTitle = \"crw child\"\n"
+		k := map[string]bool{}
+		if p := goChildPathHits("clean.go", []byte(clean), k); len(p) > 0 {
+			t.Errorf("a clean file is reported: %v", p)
+		}
+		if !k["OpReleaseChild"] || !k["OpLegacyReleaseChild"] {
+			t.Errorf("the kept identifiers were not seen: %v", k)
+		}
+		for _, src := range []string{
+			"package p\n\nfunc ReleaseChild() {}\n",
+			"package p\n\nvar ErrChildHostUnset = 1\n",
+			"package p\n\ntype ChildRequest struct{}\n",
+			"package p\n\ntype ChildResult struct{}\n",
+			"package p\n\n// see ReleaseChild\n",
+			"package p\n\n// kept in childhost.go\n",
+			"package p\n\nvar s = \"the ChildHost document\"\n",
+		} {
+			if p := goChildPathHits("bad.go", []byte(src), map[string]bool{}); len(p) != 1 || !strings.HasPrefix(p[0], "line 3: ") {
+				t.Errorf("%q: got %v, want one problem on line 3", src, p)
 			}
 		}
 	})

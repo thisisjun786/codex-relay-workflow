@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/supervisor"
@@ -239,7 +240,26 @@ func (h *RunHook) document() string {
 
 // escalations tells the level above the run's project (through the supervisor channel; the orchestrator thread through the fallback)
 // about each escalation row of the run that was not told yet. The escalation_notice row names the thread the notice was addressed to.
+// An escalation that asks bundle_split_request (a node sized for a bundle split, CRW-1437) names the request in place of the line that
+// the run waits for a decision: a bundle split of the node's issue (read from the run's plan, else the node is named by its id) is the
+// 부모's to make, and the 자식 asks for it with `crw flow report-up --kind project_decision_request`.
 func (h *RunHook) escalations(ctx context.Context, run RunInfo) error {
+	const askBundleSplit = "bundle_split_request"
+	var issues map[string]string // node -> issue of the run's plan, read once and only for a bundle split
+	issueOf := func(node string) string {
+		if issues == nil {
+			issues = map[string]string{}
+			if run.PlanID != "" {
+				// a plan that cannot be read names no issue: the notice names the node and still goes out
+				if snap, _, err := (&dag.Repo{Store: h.Store}).Snapshot(ctx, run.PlanID, 0); err == nil {
+					for _, n := range snap.Nodes {
+						issues[n.NodeID] = n.IssueKey
+					}
+				}
+			}
+		}
+		return issues[node]
+	}
 	var told = map[string]bool{}
 	for _, ev := range h.Journal.Events() {
 		if ev.Kind == engine.KindFlow && ev.Event == KindEscalationNotice {
@@ -260,7 +280,16 @@ func (h *RunHook) escalations(ctx context.Context, run RunInfo) error {
 		if d := textOr(ev.Data["detail"], ""); d != "" {
 			text += "\n" + d
 		}
-		if ask := textOr(ev.Data["ask"], ""); ask != "" {
+		switch ask := textOr(ev.Data["ask"], ""); ask {
+		case "":
+		case askBundleSplit:
+			node := textOr(ev.Data["node"], "-")
+			what := "the issue of node " + node
+			if issue := issueOf(node); issue != "" {
+				what = "issue " + issue + " (node " + node + ")"
+			}
+			text += "\nThe node is sized for a bundle split: a bundle split of " + what + " is the 부모's to make (the repository session). The 자식 (the project session) asks the 부모 for it with `crw flow report-up --kind project_decision_request --run " + h.Run + " --evidence FILE` (" + ask + ")."
+		default:
 			text += "\nThe run waits for your decision (" + ask + ")."
 		}
 		res, err := h.send(ctx, run, supervisor.KindFlowEscalation, "esc-"+id, text)

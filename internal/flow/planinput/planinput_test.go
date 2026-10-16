@@ -108,7 +108,7 @@ const fullBody = `## 바라는 동작
 
 ## 크기
 
-size_fit: child
+size_fit: split
 size_reason: regions_gt3
 `
 
@@ -156,7 +156,7 @@ func TestBuildMapsTheMilestoneToTheCompileInput(t *testing.T) {
 	if !reflect.DeepEqual(one.Regions, wantRegions) {
 		t.Errorf("regions = %+v; want %+v", one.Regions, wantRegions)
 	}
-	if one.SizeFit != "child" || one.SizeReason != "regions_gt3" || one.IssueSize != "" {
+	if one.SizeFit != "split" || one.SizeReason != "regions_gt3" || one.IssueSize != "" {
 		t.Errorf("size = %q %q %q", one.SizeFit, one.SizeReason, one.IssueSize)
 	}
 	if !reflect.DeepEqual(p.Issues[1].After, []string{"o:r:1"}) || !reflect.DeepEqual(p.Issues[2].After, []string{"o:r:1", "o:r:2"}) {
@@ -422,6 +422,17 @@ func TestBodyMappingRegionsAndSize(t *testing.T) {
 		t.Errorf("size = %q %q %q", is.SizeFit, is.SizeReason, is.IssueSize)
 	}
 	if got := rules(res.Warnings); !reflect.DeepEqual(got, []string{"size_value", "size_value"}) {
+		t.Errorf("warnings = %+v", res.Warnings)
+	}
+
+	// `child` left the closed set (a run starts no `child` session): a body that still says it is a size_value warning, as `huge` is,
+	// and the issue goes to the compiler with no size_fit (an executor by default)
+	res = build(t, milestone(open(1, "## Done when\n- a\n## Size\nsize_fit: child\nsize_reason: regions_gt3\n")), Options{})
+	is = only(t, res)
+	if is.SizeFit != "" || is.SizeReason != "regions_gt3" {
+		t.Errorf("size = %q %q", is.SizeFit, is.SizeReason)
+	}
+	if got := rules(res.Warnings); !reflect.DeepEqual(got, []string{"size_value"}) || !strings.Contains(res.Warnings[0].Detail, `"size_fit: child"`) {
 		t.Errorf("warnings = %+v", res.Warnings)
 	}
 }

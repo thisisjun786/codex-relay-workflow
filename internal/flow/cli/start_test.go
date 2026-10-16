@@ -305,13 +305,12 @@ func passes(facts []Fact) string {
 func TestStartRefusesChildHostFlag(t *testing.T) {
 	w := newWorld(t)
 	td := w.deps()
-	doc, _ := childHostDoc(t)
-	raw, err := json.Marshal(doc)
-	if err != nil {
-		t.Fatal(err)
-	}
+	// the document of the deleted managed start (CRW-1464), written as a literal: a start refuses the flag whatever the file holds
+	raw := `{"schema":"crw-flow-child-host/1","marker_root":"` + t.TempDir() + `",` +
+		`"parent":{"host_id":"host","settings":{"cwd":"` + t.TempDir() + `","sandbox":"workspace-write"}},` +
+		`"child":{"host_id":"host","title":"crw child","settings":{"cwd":"` + t.TempDir() + `","sandbox":"workspace-write"}}}`
 	hostFile := filepath.Join(t.TempDir(), "child-host.json")
-	if err := os.WriteFile(hostFile, raw, 0o600); err != nil {
+	if err := os.WriteFile(hostFile, []byte(raw), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	argv := []string{"start", "project-lane", "--backend", "app-server", "--thread", "thread-owner", "--state", w.state, "--args", `{"plan":"plan-1","milestone":"M1"}`, "--handoff", defaultHandoff(t)}

@@ -206,6 +206,8 @@ func (c *command) printDetail(d RunDetail) {
 			state = "answered by " + q.Applied
 		case !q.Current:
 			state = "replaced by a later question"
+		case q.ReportUp:
+			state = "a request to send up with crw flow report-up (" + q.Ask + "); the run waits for no answer"
 		}
 		fmt.Fprintf(w, "question %s r%d  node %s  %s  %s\n", q.ID, q.Revision, cell(q.Node), q.Reason, state)
 	}

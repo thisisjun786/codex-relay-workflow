@@ -64,7 +64,7 @@ export function architectPacket(ms, background, head) {
     '\n  regions: ' + (n.regions.length ? n.regions.join(', ') : 'undeclared') + '\n  criteria: ' + (n.criteria.length ? n.criteria.join(' | ') : 'none'))
   const parts = [
     'ROLE: architect. Plan milestone ' + ms.id + ' of plan ' + ms.plan + ' (' + ms.title + ').',
-    'Answer with DESIGN: the decisions, one plan for each issue node below (its size_fit, edit regions, approach, tests first and done condition), the open questions you cannot answer from what you read, and the risks.',
+    'Answer with DESIGN: the decisions, one plan for each issue node below (its size_fit, the sub_tasks of a split node, edit regions, approach, tests first and done condition), the open questions you cannot answer from what you read, and the risks.',
     section('NODES', nodes),
   ]
   if (background && background.length) {
@@ -209,13 +209,26 @@ export function designAuditPacket(ms, cand, round, prior, context) {
 // releasedSection lists the plans the started nodes were released with (crw.releasedPlans): each node with the revision it was
 // released under, its whole issue plan (every field) and the whole decisions its decision_refs name, so the critic sees any drift.
 // An entry with no plan member (the flat form an earlier lane binary recorded) is rendered from its own fields. A node sized for a
-// split or a child (kind) is listed with that: it started, its lane escalated it, and no executor started.
+// split without sub-tasks (the legacy row of a DESIGN recorded before S-1), a child or a bundle split (kind) is listed with that: it
+// started, its lane escalated it, and no executor started. A bundle split says a bundle_split_request escalation was raised for it and
+// names its id (escalation_id, CRW-1437); before that escalation is recorded it says only that its lane escalates it so. It makes no
+// claim about whether the request reached the 부모: crw.releasedPlans is replayed on a resume, and a delivery can change after it was
+// read. A split with sub-tasks is released to an executor (CRW-1459) and is listed as released, as an executor node is.
 function releasedSection(released) {
+  // how a started node started: released, or sized for a node its lane escalated as size_split with no executor
+  const how = (p) => {
+    if (p.kind === 'split') return 'sized for a split under ' + p.revision + ' with no sub-tasks (a legacy split row: no executor started; its lane escalated it as size_split)'
+    if (p.kind === 'child') return 'sized for a child under ' + p.revision + ' (no executor started; its lane escalated it as size_split)'
+    if (p.kind === 'bundle_split') {
+      const raised = p.escalation_id ? 'a bundle_split_request escalation was raised for it: ' + p.escalation_id
+        : 'its lane escalates it as size_split with ask bundle_split_request'
+      return 'sized for a bundle split under ' + p.revision + ' (no executor started; ' + raised + ')'
+    }
+    return 'released under ' + p.revision
+  }
   return section('RELEASED PLANS (the started nodes, each with the whole issue plan of the revision it was released under and the decisions it names)', released.length === 0 ? ['- none'] : released.map((p) => {
     const plan = p.plan || p
-    // a node sized for a split or a child started too: its lane escalated it on this plan and no executor started
-    const how = p.kind === 'split' || p.kind === 'child' ? 'sized for a ' + p.kind + ' under ' + p.revision + ' (no executor started; its lane escalated it as size_split)' : 'released under ' + p.revision
-    return '- ' + p.node + ' (' + plan.issue + '), ' + how + '\n  plan: ' + canon(plan) + '\n  decisions: ' + canon(p.decisions || [])
+    return '- ' + p.node + ' (' + plan.issue + '), ' + how(p) + '\n  plan: ' + canon(plan) + '\n  decisions: ' + canon(p.decisions || [])
   }))
 }
 
@@ -391,6 +404,10 @@ function receiptSection(title, receipt) {
 // has none of the turns of the thread before it, so the packet carries each that is there; with none (the first build) the packet is
 // the one it was before CRW-1469. The old reviewer path, which an earlier run replays, passes its explorer notes (an array) in that
 // place: the packet carries them as FINDINGS OF THE EXPLORER, the text it was before CRW-1469.
+// A node sized for a split names its sub-tasks (CRW-1459): last.split is the lane's progress over them, {done, failed} (the sub-tasks
+// with a checkpoint commit, from the first, and the receipts of those that reported failed, by id), and the packet carries SUB-TASKS,
+// each marked done or to do, and says to do the first one not done now, and only it; with every one done it is the node's packet over
+// the checkpoint that holds them. A plan with no sub-tasks has the packet it had before CRW-1459, whatever last.split is.
 export function packet(node, plan, checkpoint, last) {
   const parts = [
     'ROLE: executor. Node ' + node + ' (' + plan.issue + ': ' + plan.title + ').',
@@ -414,12 +431,57 @@ export function packet(node, plan, checkpoint, last) {
       receiptSection('LAST RECEIPT (the summary of the last receipt of this node, from a thread you do not continue)', was.receipt),
     ]) if (s) parts.push(s)
   }
+  const subs = plan.sub_tasks || []
+  if (subs.length) {
+    const split = (last && !Array.isArray(last) && last.split) || {}
+    const done = split.done || 0
+    const failed = split.failed || {}
+    parts.push(section('SUB-TASKS (this node is split: do them one at a time, in this order, on this thread; the run commits each one before the next, and the node is judged once, after the last)',
+      subs.map((sub, i) => '- ' + (i + 1) + '. ' + sub.id + ' (' + (i < done ? 'done' : 'to do') + '): ' + sub.summary +
+        '\n  edit regions: ' + (sub.edit_regions || []).join(', ') + '\n  done condition: ' + sub.done_condition)))
+    const f = failedSection(subs, failed)
+    if (f) parts.push(f)
+    parts.push(done < subs.length
+      ? 'Do sub-task ' + (done + 1) + ' (' + subs[done].id + ') now, and only it: edit only its regions and answer with RECEIPT when it is done; the next sub-task comes as the next turn of this thread.'
+      : 'Every sub-task is done and committed in your worktree: finish the node over them and answer with RECEIPT.')
+  }
   if (checkpoint) {
     parts.push(section('CHECKPOINT (a fresh tier takes over; the worktree starts at this head)', [
       '- head: ' + checkpoint.head, '- tree: ' + checkpoint.tree,
     ]))
   }
   parts.push('Answer with RECEIPT when you are done. Edit files only under the absolute path P of your worktree.')
+  return parts.join('\n\n')
+}
+
+// failedSection names the sub-tasks of a split node whose receipt reported failed (failed: their receipts by id), in the plan's order,
+// each with its summary and gap; none, no section. Such a sub-task is committed with the rest and judged with the node. A receipt is
+// read by the sub-task's own id: an id every object inherits a member of (constructor, a valid sub-task id) is not read through the
+// prototype.
+function failedSection(subs, failed) {
+  const lines = []
+  subs.forEach((sub, i) => {
+    const r = Object.prototype.hasOwnProperty.call(failed, sub.id) ? failed[sub.id] : null
+    if (r) lines.push('- ' + (i + 1) + '. ' + sub.id + ': ' + (r.summary || 'no summary') + (r.gap ? '\n  gap: ' + r.gap : ''))
+  })
+  if (lines.length === 0) return ''
+  return section('REPORTED FAILED (an earlier sub-task of this node whose receipt reported failed; it is part of this node and is judged with it)', lines)
+}
+
+// subTaskPacket is the next turn of a split node's executor thread (CRW-1459): sub-task i (from 0) of the plan's sub-tasks, after the
+// run committed the ones before it in the same worktree. failed are the receipts of the earlier sub-tasks that reported failed, by id
+// (failedSection).
+export function subTaskPacket(plan, i, failed) {
+  const subs = plan.sub_tasks
+  const sub = subs[i]
+  const parts = [
+    'ROLE: executor. Node ' + plan.node + ': sub-task ' + (i + 1) + ' of ' + subs.length + ' (' + sub.id + '): ' + sub.summary + '. ' +
+      'The run committed the sub-tasks before it in your worktree; do this one now, and only it, in the same worktree, and answer with RECEIPT when it is done.',
+    section('EDIT REGIONS', list(sub.edit_regions, 'undeclared')),
+    section('DONE CONDITION', [sub.done_condition]),
+  ]
+  const f = failedSection(subs, failed || {})
+  if (f) parts.push(f)
   return parts.join('\n\n')
 }
 

@@ -3,6 +3,7 @@ package skill
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -82,18 +83,18 @@ func TestSizeFitBoundaries(t *testing.T) {
 		exception bool
 	}{
 		{"ok with nothing counted is fits_executor", okReport, nil, false, "ok", "fits_executor", "executor", nil, false},
-		{"over_line with four edit regions is regions_gt3", overReport, map[string]any{"edit_regions": 4}, false, "over_line", "regions_gt3", "child", []string{"regions_gt3"}, false},
+		{"over_line with four edit regions is regions_gt3", overReport, map[string]any{"edit_regions": 4}, false, "over_line", "regions_gt3", "split", []string{"regions_gt3"}, false},
 		{"over_line_accepted with no signal is fits_executor and carries the exception record", acceptedReport, nil, false, "over_line_accepted", "fits_executor", "executor", nil, true},
-		{"ok with 25 minutes of verification is verify_gt20m", okReport, map[string]any{"verify_minutes": 25}, false, "ok", "verify_gt20m", "child", []string{"verify_gt20m"}, false},
+		{"ok with 25 minutes of verification is verify_gt20m", okReport, map[string]any{"verify_minutes": 25}, false, "ok", "verify_gt20m", "split", []string{"verify_gt20m"}, false},
 		{"three regions, two contract packages, five steps and twenty minutes are the boundary: fits_executor", okReport,
 			map[string]any{"edit_regions": 3, "contract_packages": 2, "steps": 5, "verify_minutes": 20}, false, "ok", "fits_executor", "executor", nil, false},
-		{"four regions", okReport, map[string]any{"edit_regions": 4}, false, "ok", "regions_gt3", "child", []string{"regions_gt3"}, false},
-		{"three contract packages", okReport, map[string]any{"contract_packages": 3}, false, "ok", "packages_contract_gt2", "child", []string{"packages_contract_gt2"}, false},
-		{"six steps", okReport, map[string]any{"steps": 6}, false, "ok", "steps_gt5", "child", []string{"steps_gt5"}, false},
-		{"21 minutes", okReport, map[string]any{"verify_minutes": 21}, false, "ok", "verify_gt20m", "child", []string{"verify_gt20m"}, false},
-		{"own goal with nothing counted", okReport, nil, true, "ok", "own_goal", "child", []string{"own_goal"}, false},
+		{"four regions", okReport, map[string]any{"edit_regions": 4}, false, "ok", "regions_gt3", "split", []string{"regions_gt3"}, false},
+		{"three contract packages", okReport, map[string]any{"contract_packages": 3}, false, "ok", "packages_contract_gt2", "split", []string{"packages_contract_gt2"}, false},
+		{"six steps", okReport, map[string]any{"steps": 6}, false, "ok", "steps_gt5", "split", []string{"steps_gt5"}, false},
+		{"21 minutes", okReport, map[string]any{"verify_minutes": 21}, false, "ok", "verify_gt20m", "split", []string{"verify_gt20m"}, false},
+		{"own goal with nothing counted", okReport, nil, true, "ok", "own_goal", "split", []string{"own_goal"}, false},
 		{"the first reason of the closed set's order is proposed, every one that holds is listed", overReport,
-			map[string]any{"edit_regions": 9, "steps": 7, "verify_minutes": 90}, true, "over_line", "regions_gt3", "child",
+			map[string]any{"edit_regions": 9, "steps": 7, "verify_minutes": 90}, true, "over_line", "regions_gt3", "split",
 			[]string{"regions_gt3", "steps_gt5", "verify_gt20m", "own_goal"}, false},
 		{"over_line with no signal stays fits_executor: the answer alone forces nothing", overReport, nil, false, "over_line", "fits_executor", "executor", nil, false},
 	}
@@ -234,10 +235,37 @@ func TestSizeFitClosedSets(t *testing.T) {
 	if got := strings.Join(SizeReasons, ","); got != "regions_gt3,packages_contract_gt2,steps_gt5,verify_gt20m,own_goal,fits_executor" {
 		t.Errorf("size reasons %s", got)
 	}
-	if got := strings.Join(SizeFits, ","); got != "executor,child,split" {
+	if got := strings.Join(SizeFits, ","); got != "executor,split,bundle_split" {
 		t.Errorf("size fits %s", got)
 	}
 	if got := strings.Join(IssueSizeAnswers, ","); got != "ok,over_line,over_line_accepted" {
 		t.Errorf("answers %s", got)
+	}
+}
+
+// TestSuggestSizeFitProposesSplitNotChild (CRW-1435, S-1): a count over its line proposes `split`, the value whose node runs its
+// sub-tasks on one executor thread, never `child` (a run starts no `child` session, and the closed set no longer has the value) and
+// never `bundle_split` (dividing the issue into issues is the parent's call, which no count makes). The note names no child either.
+func TestSuggestSizeFitProposesSplitNotChild(t *testing.T) {
+	for _, c := range []SizeFitCounts{{EditRegions: ptr(4)}, {ContractPackages: ptr(3)}, {Steps: ptr(6)}, {VerifyMinutes: ptr(21)}} {
+		p := SuggestSizeFit(SizeFitInput{Issue: "CRW-1", Answer: "over_line", Counts: c})
+		if p.SuggestedSizeFit != "split" {
+			t.Errorf("counts %+v: the suggester proposes %q, want split", c, p.SuggestedSizeFit)
+		}
+	}
+	if p := SuggestSizeFit(SizeFitInput{Issue: "CRW-1", Answer: "ok", OwnGoal: true}); p.SuggestedSizeFit != "split" || p.SizeReason != "own_goal" {
+		t.Errorf("own goal: %q / %q, want split / own_goal", p.SuggestedSizeFit, p.SizeReason)
+	}
+	if p := SuggestSizeFit(SizeFitInput{Issue: "CRW-1", Answer: "ok"}); p.SuggestedSizeFit != "executor" {
+		t.Errorf("nothing counted: %q, want executor", p.SuggestedSizeFit)
+	}
+	if slices.Contains(SizeFits, "child") || !slices.Contains(SizeFits, "bundle_split") {
+		t.Errorf("size fits %v: child is out of the closed set and bundle_split is in it", SizeFits)
+	}
+	p := SuggestSizeFit(SizeFitInput{Issue: "CRW-1", Answer: "ok", Counts: SizeFitCounts{Steps: ptr(9)}})
+	for _, text := range []string{p.Note, sizeFitSummary} {
+		if strings.Contains(text, "child") {
+			t.Errorf("the text names a child: %q", text)
+		}
 	}
 }

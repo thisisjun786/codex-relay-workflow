@@ -480,8 +480,9 @@ func TestLedgerRecordsTheEvaluatedPlan(t *testing.T) {
 	}
 	// B changes once more while the delta is audited
 	w.relay.plan = planOfNodes(map[string]string{"A": "a2", "B": "b3"}, "A", "B")
+	// the delta changes the unstarted B: the started A keeps the issue it was released with (crw.designLedger, CRW-1472)
 	d1 := designOf("A", "B")
-	d1.Issues[0].Approach = "approach A after the re-plan"
+	d1.Issues[1].Approach = "approach B after the re-plan"
 	design, _ := json.Marshal(d1)
 	cand := Candidate{Design: design, Answers: json.RawMessage(`[]`)}
 	w.must("designAudit", "M", 1, cand, call("c_arch2", "completed", "claude-x", nil),
@@ -673,5 +674,143 @@ func TestReleaseIsACompareAndSwapOnThePinnedPlan(t *testing.T) {
 	w.relay.plan = planOfNodes(map[string]string{"A": "a3", "B": "b2"}, "A", "B")
 	if rel := release("A"); rel.Released || rel.Reason != ReasonPlanChanged {
 		t.Fatalf("a plan after the judged one: %+v", rel)
+	}
+}
+
+// ---- the started, unstarted and blocked nodes of a signal (CRW-1439) ----
+
+// laneRow writes a completed row of an op for a node, as the lane's call would have, with the call id given.
+func (w *world) laneRow(op, call string, data map[string]any) {
+	w.t.Helper()
+	w.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: call, Op: op, Event: engine.EvCompleted, Data: data})
+}
+
+// unreleased is the data of a crw.release row that released nothing, under revision r0 when revision is set.
+func unreleased(node, kind, reason string, revision bool) map[string]any {
+	d := map[string]any{"plan": "plan-1", "node": node, "milestone": "M", "released": false, "kind": kind, "reason": reason}
+	if revision {
+		d["revision"] = "r0"
+	}
+	return d
+}
+
+// laneSplit is what a crw.signalBind answered and recorded of the milestone's nodes; blocked is nil when the answer has no blocked
+// member at all.
+type laneSplit struct {
+	started, unstarted, blocked []string
+	rowBlocked                  any
+}
+
+func (w *world) bindLanes(k int) laneSplit {
+	w.t.Helper()
+	raw := w.must("signalBind", "M", k, "", []Trigger{{Kind: "receipt", Call: fmt.Sprintf("c_receipt_%d", k), Node: "A", Digest: "d"}})
+	var got struct {
+		Started   []string  `json:"started"`
+		Unstarted []string  `json:"unstarted"`
+		Blocked   *[]string `json:"blocked"`
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		w.t.Fatal(err)
+	}
+	out := laneSplit{started: got.Started, unstarted: got.Unstarted}
+	if got.Blocked != nil {
+		out.blocked = *got.Blocked
+	}
+	row, _ := rows(w.j.Events()).opRows(OpSignalBind).last(func(engine.Event) bool { return true })
+	out.rowBlocked = row.Data["blocked"]
+	return out
+}
+
+// A node whose newest release row that stands ended it without an executor (node_not_in_plan, epoch_lost, a child, a split or a
+// bundle split sized node) has started: no signal re-plans it as unstarted. A node waiting after such a node, or after a node the
+// run gave up (a release, then an escalation that closed its execution, and no landing), is blocked and not unstarted either, and so
+// is a node waiting after a blocked one. A node after a held node, after one with an open escalation, or after one released and
+// running stays unstarted: that predecessor can still land. A superseded terminal row does not end its node.
+func TestUnstartedExcludesTerminalAndBlockedNodes(t *testing.T) {
+	w := newWorld(t)
+	order := []string{"A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M1", "N", "P", "Q"}
+	sliceOf := map[string]string{}
+	for _, n := range order {
+		sliceOf[n] = "s" + n
+	}
+	plan := planOfNodes(sliceOf, order...)
+	after := map[string][]string{"B": {"A"}, "C": {"B"}, "E": {"D"}, "G": {"F"}, "I": {"H"}, "K": {"J"}, "M1": {"L"}, "P": {"N"}, "Q": {"P", "ZZ"}}
+	for i := range plan.Nodes {
+		plan.Nodes[i].After = after[plan.Nodes[i].ID]
+		if plan.Nodes[i].After == nil {
+			plan.Nodes[i].After = []string{}
+		}
+	}
+	w.relay.plan = plan
+	w.ledgered(true, designOf(order...))
+	// A: the plan dropped it; B waits after A, C after B
+	w.laneRow(OpRelease, "c_rel_A", unreleased("A", "executor", "node_not_in_plan", true))
+	// D: released, then given up (the escalation closed its execution); E waits after D
+	w.laneRow(OpRelease, "c_rel_D", map[string]any{"plan": "plan-1", "node": "D", "milestone": "M", "released": true, "kind": "executor", "revision": "r0"})
+	w.laneRow(OpEscalate, "c_esc_D", map[string]any{"node": "D", "reason": "tiers_exhausted", "closed": true})
+	// F: a fenced write lost its epoch; G waits after F
+	w.laneRow(OpRelease, "c_rel_F", unreleased("F", "executor", "epoch_lost", true))
+	// H: held (plan_superseded, no revision); I after H stays unstarted
+	w.laneRow(OpRelease, "c_rel_H", unreleased("H", "executor", "plan_superseded", false))
+	// J: released, an open escalation (a decision is asked); K after J stays unstarted
+	w.laneRow(OpRelease, "c_rel_J", map[string]any{"plan": "plan-1", "node": "J", "milestone": "M", "released": true, "kind": "executor", "revision": "r0"})
+	w.laneRow(OpEscalate, "c_esc_J", map[string]any{"node": "J", "reason": "decision_needed", "closed": false})
+	// L: sized for a bundle split; M1 waits after L
+	w.laneRow(OpRelease, "c_rel_L", unreleased("L", "bundle_split", "size_split", true))
+	// N: an epoch_lost row a resume superseded; P after N and Q after P (and a node outside the milestone) stay unstarted
+	w.laneRow(OpRelease, "c_rel_N", unreleased("N", "executor", "epoch_lost", true))
+	w.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: "c_rel_N", Op: OpRelease, Event: engine.EvSuperseded})
+
+	got := w.bindLanes(1)
+	wantStarted := []string{"A", "D", "F", "J", "L"}
+	wantBlocked := []string{"B", "C", "E", "G", "M1"}
+	wantUnstarted := []string{"H", "I", "K", "N", "P", "Q"}
+	if !slices.Equal(got.started, wantStarted) || !slices.Equal(got.blocked, wantBlocked) || !slices.Equal(got.unstarted, wantUnstarted) {
+		t.Errorf("signal: started %v, blocked %v, unstarted %v; want started %v, blocked %v, unstarted %v", got.started, got.blocked, got.unstarted, wantStarted, wantBlocked, wantUnstarted)
+	}
+	if b, ok := got.rowBlocked.([]any); !ok || len(b) != len(wantBlocked) {
+		t.Errorf("the crw.signalBind row records blocked %v, want %v", got.rowBlocked, wantBlocked)
+	}
+	// a node the run gave up and then landed blocks nothing
+	w.laneRow(OpIntegrate, "c_int_D", map[string]any{"node": "D"})
+	got = w.bindLanes(2)
+	if slices.Contains(got.blocked, "E") || !slices.Contains(got.unstarted, "E") {
+		t.Errorf("after D landed: blocked %v, unstarted %v, want E unstarted", got.blocked, got.unstarted)
+	}
+}
+
+// A node whose newest release row is plan_changed (or relay_plan_changed, or a release that found no design for it) has not started,
+// even when an older row ended it: the lane asks again under the plan it reads next. Nor does it block the nodes after it.
+func TestPlanChangedNodeStaysUnstarted(t *testing.T) {
+	w := newWorld(t)
+	plan := planOfNodes(map[string]string{"A": "sa", "B": "sb", "C": "sc", "D": "sd", "E": "se"}, "A", "B", "C", "D", "E")
+	after := map[string][]string{"B": {"A"}, "D": {"C"}, "E": {"D"}}
+	for i := range plan.Nodes {
+		plan.Nodes[i].After = after[plan.Nodes[i].ID]
+		if plan.Nodes[i].After == nil {
+			plan.Nodes[i].After = []string{}
+		}
+	}
+	w.relay.plan = plan
+	w.ledgered(true, designOf("A", "B", "C", "D", "E"))
+	// A lost its epoch first, then its next release found the plan changed
+	w.laneRow(OpRelease, "c_rel_A1", unreleased("A", "executor", "epoch_lost", true))
+	w.laneRow(OpRelease, "c_rel_A2", unreleased("A", "executor", "plan_changed", false))
+	// C: the relay refused it for a plan past the pinned one
+	w.laneRow(OpRelease, "c_rel_C1", unreleased("C", "executor", "node_not_in_plan", true))
+	w.laneRow(OpRelease, "c_rel_C2", unreleased("C", "executor", "relay_plan_changed", false))
+	// D: the release found no design for it
+	w.laneRow(OpRelease, "c_rel_D", unreleased("D", "executor", "node_not_designed", false))
+
+	got := w.bindLanes(1)
+	want := []string{"A", "B", "C", "D", "E"}
+	if len(got.started) != 0 || !slices.Equal(got.unstarted, want) {
+		t.Errorf("signal: started %v, unstarted %v, want none started and %v unstarted", got.started, got.unstarted, want)
+	}
+	if got.blocked == nil || len(got.blocked) != 0 {
+		t.Errorf("signal: blocked %v, want an empty list (a plan_changed node blocks nothing)", got.blocked)
+	}
+	if b, ok := got.rowBlocked.([]any); !ok || len(b) != 0 {
+		t.Errorf("the crw.signalBind row records blocked %v, want an empty list", got.rowBlocked)
 	}
 }
