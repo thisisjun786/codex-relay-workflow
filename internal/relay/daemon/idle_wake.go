@@ -156,7 +156,7 @@ func (w *idleWake) idle(ctx context.Context, r *Report, host Host, now float64) 
 		if err != nil {
 			// The delivery wake of this report may stand; applying it again next tick writes nothing.
 			w.fail(reports, i, headFailed)
-			return fmt.Errorf("idle report for %s not applied to the supervisor channel: %w", report.ThreadID, err)
+			return fmt.Errorf("idle report for %s not applied to the 부모 channel: %w", report.ThreadID, err)
 		}
 		w.woken += count.Woken + count.Released
 	}
@@ -230,7 +230,7 @@ func (w *idleWake) hold(ctx context.Context, r *Report, host Host, now float64) 
 		// failure as the delivery heads' read above.
 		waiting, err := w.daemon.Channel.IdleWakeRecipients(ctx, now)
 		if err != nil {
-			return fmt.Errorf("busy supervisor recipients not read: %w", err)
+			return fmt.Errorf("busy 부모 recipients not read: %w", err)
 		}
 		heads = append(heads, waiting...)
 	}

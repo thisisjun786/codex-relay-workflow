@@ -503,9 +503,9 @@ func (d *Daemon) settle(ctx context.Context, r delivery.Relationship, turn store
 	}
 	switch {
 	case ownEvent != "":
-		report.Notes = append(report.Notes, "observation of "+turn.TurnID+" ("+turn.Status+") not asserted: the turn holds its own final child receipt "+ownEvent+", which is owed to the parent")
+		report.Notes = append(report.Notes, "observation of "+turn.TurnID+" ("+turn.Status+") not asserted: the turn holds its own final child receipt "+ownEvent+", which is owed to the 자식")
 	case laterEvent != "":
-		report.Notes = append(report.Notes, "observation of "+turn.TurnID+" ("+turn.Status+") not asserted: turn "+laterTurn+", admitted after it, holds the final child receipt "+laterEvent+", which is owed to the parent")
+		report.Notes = append(report.Notes, "observation of "+turn.TurnID+" ("+turn.Status+") not asserted: turn "+laterTurn+", admitted after it, holds the final child receipt "+laterEvent+", which is owed to the 자식")
 	}
 	report.Observed++
 }

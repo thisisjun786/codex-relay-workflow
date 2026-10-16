@@ -35,7 +35,8 @@ func (n NoticeChannel) Resolve(ctx context.Context, anchor string, userGrade boo
 	return map[string]any{"sender": r.Sender, "recipient": r.Recipient, "recipientScopeKind": r.RecipientScopeKind, "projectKey": r.ProjectKey, "initiativeKey": r.InitiativeKey, "source": r.Source}, nil
 }
 func (n NoticeChannel) Attempt(ctx context.Context, id string, now float64, owner string) error {
-	_, err := n.Channel.attempt(ctx, id, n.Host, now, 0, owner)
+	// The deliverer names its notice: the hold rule reads this attempt as a send by id.
+	_, err := n.Channel.attempt(ctx, id, n.Host, now, 0, owner, byIDAttempt)
 	return err
 }
 func (n NoticeChannel) Recover(ctx context.Context, id string, now float64) error {
@@ -176,7 +177,7 @@ func (c *Channel) refreshNotice(ctx context.Context, row store.SupervisorMessage
 	if row.State == "sending" {
 		instant = "transport_start"
 	}
-	detail := pyjson.Dumps(contract.OrderedObject{{Key: "fromEvent", Value: nil}, {Key: "toEvent", Value: nil}, {Key: "fromSubmission", Value: nil}, {Key: "toSubmission", Value: nil}, {Key: "at", Value: instant}, {Key: "reason", Value: "what notification " + pyvalue.StrRepr(row.ObligationID) + " says about its fault moved after it was staged"}}, pyjson.Options{})
+	detail := pyjson.Dumps(contract.OrderedObject{{Key: "fromEvent", Value: nil}, {Key: "toEvent", Value: nil}, {Key: "fromSubmission", Value: nil}, {Key: "toSubmission", Value: nil}, {Key: "at", Value: instant}, {Key: "reason", Value: "what notification " + pyvalue.StrRepr(row.ObligationID) + " says about its fault, or the words it is written in, moved after it was staged"}}, pyjson.Options{})
 	_, err = c.Store.Q(ctx).ExecContext(ctx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_restated',?,?)", at, row.MessageID, detail)
 	return true, err
 }

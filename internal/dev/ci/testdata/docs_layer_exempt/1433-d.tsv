@@ -1,0 +1,9 @@
+# CRW-1433 unit 1433-d: bare "supervisor" in docs/relay/invariants.md that names a process of the service-management daemon, not a layer. path<TAB>phrase<TAB>reason
+docs/relay/invariants.md	A supervisor is bounded by the owner's intent	I-65: the daemon's own supervisor process (service.json, stop request, worker segments), no session
+docs/relay/invariants.md	the supervisor's, and a supervisor launches no worker	I-197: the supervisor process against its worker process (EXIT_BOUND_SPENT), no session
+docs/relay/invariants.md	the daemon's supervisor pass	I-250 and its readers: the daemon pass that stages and sends reports, a process step
+docs/relay/invariants.md	the supervisor waits on that worker	the daemon supervisor process waits on its worker child process
+docs/relay/invariants.md	a supervisor can start between them	the daemon lock probe: a restarted supervisor process, no session
+docs/relay/invariants.md	mutual exclusion with a supervisor that is already running	the daemon lock probe: a running supervisor process, no session
+docs/relay/invariants.md	lands on a supervisor this command never examined	the daemon control write lands on a replacement supervisor process, no session
+docs/relay/invariants.md	so a supervisor that published readiness and then died	the daemon supervisor process that published readiness, no session

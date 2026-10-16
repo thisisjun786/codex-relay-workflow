@@ -104,7 +104,7 @@ func TestHandlesTheReachUpCommands(t *testing.T) {
 	}
 }
 
-// `crw flow apply` is gone with the issue child it received (CRW-1416): no command word, no usage line, and the word is a usage error.
+// `crw flow apply` is gone with the `child` session it received (CRW-1416): no command word, no usage line, and the word is a usage error.
 func TestApplyIsNoLongerACommand(t *testing.T) {
 	if Handles([]string{"apply"}) {
 		t.Error("apply is handled")

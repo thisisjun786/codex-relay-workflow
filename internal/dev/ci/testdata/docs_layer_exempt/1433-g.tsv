@@ -1,0 +1,2 @@
+# CRW-1433 unit 1433-g: process senses of the bare word "supervisor" (no layer). path<TAB>phrase<TAB>reason.
+docs/relay/subscriptions.md	the supervisor pass	the name of the daemon pass that sends the supervisor channel's messages (also in supervisor-channel.md, invariants.md, operations.md and README.md); a process step, not a session

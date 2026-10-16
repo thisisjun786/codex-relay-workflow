@@ -286,7 +286,266 @@ func TestEndsPausedNamesTheAskersThatEndARunPaused(t *testing.T) {
 	if !EndsPaused("operator") {
 		t.Errorf("an operator pause does not end a run paused")
 	}
+	if !EndsPaused("answer") {
+		t.Errorf("an answer's drain does not end a run paused")
+	}
 	if EndsPaused("deadline") {
 		t.Errorf("a deadline ask ends a run paused")
 	}
+}
+
+const drainReason = "crw flow answer: the run stops at its next boundary for an answer"
+
+// drainRun runs two sequential calls whose first turn is in flight (its handler blocks until released) while during asks the Control;
+// it returns the result and the journal's rows.
+func drainRun(t *testing.T, before, during func(ctl *Control)) (*Result, []Event) {
+	t.Helper()
+	h := newHarness(t)
+	ctl := &Control{}
+	hook := &recordingHook{}
+	h.cfg.Control, h.cfg.Upward = ctl, hook
+	inFlight, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	h.fake.Handler = func(r FakeRequest) FakeReply {
+		if strings.HasPrefix(r.Prompt, "one") {
+			once.Do(func() { close(inFlight) })
+			<-release
+		}
+		return FakeReply{Tokens: &Tokens{Input: 11, Output: 7}}
+	}
+	if before != nil {
+		before(ctl)
+	}
+	done := make(chan *Result, 1)
+	go func() {
+		done <- h.run(`const a = await agent.call('one', { agentType: 'explorer', label: 'a' })
+const b = await agent.call('two', { agentType: 'explorer', label: 'b' })
+return [a.status, b.status, b.reason]`)
+	}()
+	if during != nil {
+		select {
+		case <-inFlight:
+			during(ctl)
+		case res := <-done:
+			close(release)
+			return res, h.journal.Events()
+		case <-time.After(10 * time.Second):
+			t.Fatal("call a's turn never started")
+		}
+	}
+	close(release)
+	select {
+	case res := <-done:
+		if got := strings.Join(hook.calls, ","); res.Status == RunPaused && strings.Contains(got, "finished") {
+			t.Errorf("hook calls %s: a run that ends paused told its finish", got)
+		}
+		return res, h.journal.Events()
+	case <-time.After(15 * time.Second):
+		t.Fatal("the drained run did not end")
+	}
+	return nil, nil
+}
+
+// pausedAsks are the run_paused rows as by:reason, and interrupts the interrupt_requested rows.
+func pausedAsks(rows []Event) []string {
+	var out []string
+	for _, ev := range rows {
+		if ev.Kind == KindFlow && ev.Event == EvRunPaused {
+			out = append(out, fmt.Sprint(ev.Data["by"]))
+		}
+	}
+	return out
+}
+
+func interrupts(rows []Event) int { return len(rowsNamed(rows, EvInterruptRequested)) }
+
+func callOf(res *Result, label string) CallResult {
+	for _, c := range res.Calls {
+		if c.Label == label {
+			return c
+		}
+	}
+	return CallResult{}
+}
+
+// endPausedBy checks that the run ended paused with one run/paused end row by the asker, and no finished row.
+func endPausedBy(t *testing.T, res *Result, rows []Event, by string) {
+	t.Helper()
+	if res.Status != RunPaused || res.ErrorKind != "" {
+		t.Fatalf("the run ends %s/%s: %s, want %s", res.Status, res.ErrorKind, res.Error, RunPaused)
+	}
+	ends := endRowsAfterStart(rows)
+	if len(ends) != 1 || ends[0].Event != "paused" || ends[0].Data["by"] != by || ends[0].Data["status"] != RunPaused {
+		t.Fatalf("end rows after the last started %+v, want one paused row by %s", ends, by)
+	}
+	if err := endAgrees(rows); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestControlDrainLetsTheTurnInFlightEnd (CRW-1492): a drain (an answer's ask) stops the run at its next boundary without interrupting
+// the turn in flight: that turn ends completed with its tokens, the next call ends held engine_paused, and the run ends paused by
+// answer with one run_paused row and no finished row. A drain before the run holds its first call. A pause after a drain interrupts
+// the turn and ends the run by the operator; a second drain, or a drain after a pause, writes no row.
+func TestControlDrainLetsTheTurnInFlightEnd(t *testing.T) {
+	t.Run("drain during the turn", func(t *testing.T) {
+		res, rows := drainRun(t, nil, func(ctl *Control) { ctl.Drain("answer", drainReason) })
+		if n := interrupts(rows); n != 0 {
+			t.Errorf("a drain interrupted the turn in flight (%d interrupt_requested rows)", n)
+		}
+		if a := callOf(res, "a"); a.Status != StatusCompleted || a.Meta.Tokens.Input != 11 || a.Meta.Tokens.Output != 7 {
+			t.Errorf("the turn in flight ends %s/%s with tokens %+v, want completed with its tokens", a.Status, a.Reason, a.Meta.Tokens)
+		}
+		if b := callOf(res, "b"); b.Status != StatusHeld || b.Reason != ReasonEnginePaused {
+			t.Errorf("the call after the drain is %s/%s, want held/engine_paused", b.Status, b.Reason)
+		}
+		if got := fmt.Sprint(pausedAsks(rows)); got != "[answer]" {
+			t.Errorf("run_paused rows by %s, want one by answer", got)
+		}
+		for _, ev := range rows {
+			if ev.Kind == KindFlow && ev.Event == EvRunPaused && ev.Data["reason"] != drainReason {
+				t.Errorf("run_paused reason %v", ev.Data["reason"])
+			}
+		}
+		endPausedBy(t, res, rows, "answer")
+	})
+	t.Run("drain before the run", func(t *testing.T) {
+		res, rows := drainRun(t, func(ctl *Control) { ctl.Drain("answer", drainReason) }, nil)
+		if a := callOf(res, "a"); a.Status != StatusHeld || a.Reason != ReasonEnginePaused {
+			t.Errorf("the first call of a run drained before it started is %s/%s, want held/engine_paused", a.Status, a.Reason)
+		}
+		if got := fmt.Sprint(pausedAsks(rows)); got != "[answer]" {
+			t.Errorf("run_paused rows by %s, want one by answer", got)
+		}
+		endPausedBy(t, res, rows, "answer")
+	})
+	t.Run("pause after a drain", func(t *testing.T) {
+		res, rows := drainRun(t, nil, func(ctl *Control) {
+			ctl.Drain("answer", drainReason)
+			ctl.Pause("operator", "crw flow pause")
+		})
+		if n := interrupts(rows); n != 1 {
+			t.Errorf("a pause after a drain wrote %d interrupt_requested rows, want 1", n)
+		}
+		if got := fmt.Sprint(pausedAsks(rows)); got != "[answer operator]" {
+			t.Errorf("run_paused rows by %s, want answer then operator", got)
+		}
+		endPausedBy(t, res, rows, "operator")
+	})
+	t.Run("drain twice", func(t *testing.T) {
+		res, rows := drainRun(t, nil, func(ctl *Control) {
+			ctl.Drain("answer", drainReason)
+			ctl.Drain("answer", drainReason)
+		})
+		if got := fmt.Sprint(pausedAsks(rows)); got != "[answer]" {
+			t.Errorf("run_paused rows by %s, want one by answer", got)
+		}
+		if n := interrupts(rows); n != 0 {
+			t.Errorf("%d interrupt_requested rows, want none", n)
+		}
+		endPausedBy(t, res, rows, "answer")
+	})
+	t.Run("drain and pause at once", func(t *testing.T) {
+		// whichever is accepted first, the operator's pause names the end: a drain accepted before it is applied before it (Control
+		// applyM). A guard: the window it closes (between a drain's acceptance and its application) is too narrow to hit on demand
+		for i := 0; i < 100; i++ {
+			res, rows := drainRun(t, nil, func(ctl *Control) {
+				var wg sync.WaitGroup
+				wg.Add(2)
+				go func() { defer wg.Done(); ctl.Drain("answer", drainReason) }()
+				go func() { defer wg.Done(); ctl.Pause("operator", "crw flow pause") }()
+				wg.Wait()
+			})
+			if got := fmt.Sprint(pausedAsks(rows)); got != "[answer operator]" && got != "[operator]" {
+				t.Fatalf("ask %d: run_paused rows by %s, want the operator's last", i, got)
+			}
+			endPausedBy(t, res, rows, "operator")
+		}
+	})
+	t.Run("drain after a pause", func(t *testing.T) {
+		res, rows := drainRun(t, nil, func(ctl *Control) {
+			ctl.Pause("operator", "crw flow pause")
+			ctl.Drain("answer", drainReason)
+		})
+		if got := fmt.Sprint(pausedAsks(rows)); got != "[operator]" {
+			t.Errorf("run_paused rows by %s, want the operator's only", got)
+		}
+		endPausedBy(t, res, rows, "operator")
+	})
+}
+
+// TestControlDrainWaitsForAPublishedSessionStep (CRW-1492): a session step published before a drain is in flight: its call passed
+// the gate, so the drain neither cuts its wait for the owner nor interrupts the other turn; with the owner taking the step after the
+// drain, both calls complete and the run ends paused by answer with one run_paused row.
+func TestControlDrainWaitsForAPublishedSessionStep(t *testing.T) {
+	k := newSessionKit(t)
+	ctl := &Control{}
+	k.h.cfg.Control = ctl
+	// the owner fake takes steps one at a time, in the order of the calls' step directories: the first call's step it takes at once
+	// (its turn runs 200 ms), the second's it takes only once the drain was asked
+	var (
+		mu      sync.Mutex
+		once    sync.Once
+		first   string
+		release = make(chan struct{})
+		second  = make(chan struct{})
+		drained = make(chan struct{})
+	)
+	k.orch.answer = func(st Step, packet string, _ int) orchAnswer {
+		mu.Lock()
+		if first == "" {
+			first = st.Call
+		}
+		held := st.Call != first
+		mu.Unlock()
+		if held {
+			once.Do(func() { close(second) })
+			<-release
+		}
+		return orchAnswer{after: 200 * time.Millisecond}
+	}
+	go func() {
+		defer close(drained)
+		defer close(release)
+		select {
+		case <-second:
+		case <-time.After(10 * time.Second):
+			t.Error("no drain point: the owner never came to the second call's step")
+			return
+		}
+		// the second call's step is published and untaken; the first call's turn is in flight once its row is there
+		for wait := time.Now().Add(5 * time.Second); time.Now().Before(wait); time.Sleep(time.Millisecond) {
+			if len(rowsNamed(k.h.journal.Events(), EvTurnStarted)) > 0 {
+				ctl.Drain("answer", drainReason)
+				return
+			}
+		}
+		t.Error("no drain point: the first call's turn never started")
+	}()
+	done := make(chan *Result, 1)
+	go func() {
+		done <- k.h.run(`const r = await parallel([async () => agent.call('task alpha', { agentType: 'explorer', label: 'a' }), async () => agent.call('task beta', { agentType: 'explorer', label: 'b' })])
+return r.map(x => x.status)`)
+	}()
+	<-drained
+	var res *Result
+	select {
+	case res = <-done:
+	case <-time.After(10 * time.Second):
+		ctl.Pause("operator", "crw flow pause")
+		<-done
+		t.Fatalf("the drained run did not end with the owner taking its steps; call a rows %s; call b rows %s",
+			eventsOf(k.h.callRows("a")), eventsOf(k.h.callRows("b")))
+	}
+	rows := k.h.journal.Events()
+	if got := fmt.Sprint(value[[]string](t, res)); got != "[completed completed]" {
+		t.Errorf("calls %s, want both completed", got)
+	}
+	if n := interrupts(rows); n != 0 {
+		t.Errorf("a drain interrupted a turn (%d interrupt_requested rows)", n)
+	}
+	if got := fmt.Sprint(pausedAsks(rows)); got != "[answer]" {
+		t.Errorf("run_paused rows by %s, want one by answer", got)
+	}
+	endPausedBy(t, res, rows, "answer")
 }

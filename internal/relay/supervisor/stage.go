@@ -146,22 +146,38 @@ func (c *Channel) StageWithReading(ctx context.Context, o Obligation, reading ma
 		}
 		existing, err := c.Store.SupervisorMessage(tx, id)
 		if err == nil {
+			// The hold rule's restage entry: an acknowledged park of the same statement is kept and
+			// nothing is written; a derived hold is released when owed (plan-r3 section 2).
+			alreadyStaged := "this fact is already staged; one obligation is one message"
 			if existing.HoldReason.String == store.SupervisorHoldSuperseded {
-				if err = c.reopenProposal(tx, existing, at); err != nil {
+				verdict, why, err := c.reopenProposal(tx, existing, at, entryRestage)
+				if err != nil {
 					return err
+				}
+				if verdict == holdKeep && why == acknowledgedKeptReason {
+					alreadyStaged = why
 				}
 				existing, err = c.Store.SupervisorMessage(tx, id)
 				if err != nil {
 					return err
 				}
 			}
+			// hierarchy_unresolved's own release: the WHERE names the word and an unsent state, so this
+			// write can clear no other hold whatever the read above it says.
 			if existing.HoldReason.String == store.SupervisorHoldUnaddressed && existing.SenderTaskID == live.Sender && existing.RecipientTaskID == live.Recipient && existing.Unsent() {
-				if _, err = c.Store.Q(tx).ExecContext(tx, "UPDATE supervisor_messages SET hold_reason=NULL,updated_at=? WHERE message_id=?", at, id); err != nil {
+				released, err := c.Store.Q(tx).ExecContext(tx, "UPDATE supervisor_messages SET hold_reason=NULL,updated_at=? WHERE message_id=? AND hold_reason='"+store.SupervisorHoldUnaddressed+"' AND "+store.SupervisorUnsentSQL(""), at, id)
+				if err != nil {
 					return err
 				}
-				detail := pyjson.Dumps(contract.OrderedObject{{Key: "proposal", Value: "addressed"}, {Key: "reason", Value: unaddressedReleasedReason}}, pyjson.Options{})
-				if _, err = c.Store.Q(tx).ExecContext(tx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_reopened',?,?)", at, id, string(detail)); err != nil {
+				n, err := released.RowsAffected()
+				if err != nil {
 					return err
+				}
+				if n == 1 {
+					detail := pyjson.Dumps(contract.OrderedObject{{Key: "proposal", Value: "addressed"}, {Key: "reason", Value: unaddressedReleasedReason}}, pyjson.Options{})
+					if _, err = c.Store.Q(tx).ExecContext(tx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_reopened',?,?)", at, id, string(detail)); err != nil {
+						return err
+					}
 				}
 				existing, err = c.Store.SupervisorMessage(tx, id)
 				if err != nil {
@@ -184,9 +200,33 @@ func (c *Channel) StageWithReading(ctx context.Context, o Obligation, reading ma
 				submission = sql.NullInt64{Int64: report.submission, Valid: true}
 			}
 			restating := existing.EventID != nullString(eventID) || existing.SubmissionNo != submission
+			// An acknowledged park keeps the statement its recipient acknowledged. A newer statement the
+			// rule kept it through (not owed now) is not written over it, so that when the newer one is
+			// owed later the rule still reads it as a new statement and releases it.
+			keepStatement := false
+			if existing.HoldReason.String == store.SupervisorHoldSuperseded {
+				parked, err := holdKindOf(tx, c.Store, existing)
+				if err != nil {
+					return err
+				}
+				if parked == holdAcknowledged {
+					stored, err := rowStatementKey(existing)
+					if err != nil {
+						return err
+					}
+					now, err := freshStatementKey(obligationStatementColumns(o, report.submission), freshPacket)
+					if err != nil {
+						return err
+					}
+					keepStatement = stored != now
+				}
+			}
+			if keepStatement {
+				alreadyStaged = acknowledgedNewerStatementReason
+			}
 			if existing.SenderTaskID != r.Sender || existing.RecipientTaskID != r.Recipient {
 				if !existing.Unsent() {
-					return Refusal{"relation_owner_drift", "message " + strconv.Quote(id) + " was staged from " + strconv.Quote(existing.SenderTaskID) + " to " + strconv.Quote(existing.RecipientTaskID) + " and has " + fmt.Sprint(existing.AttemptCount) + " attempt(s), state " + strconv.Quote(existing.State) + "; the linkage now says " + strconv.Quote(r.Sender) + " reports to " + strconv.Quote(r.Recipient) + ". A message an attempt may have sent is never re-addressed, because its attempts would then describe a recipient they were never sent to - it went to the supervisor who was live when its transport started - so " + strconv.Quote(r.Recipient) + " has not been told by this channel, and the obligation stands until the tracking record confirms it"}
+					return Refusal{"relation_owner_drift", "message " + strconv.Quote(id) + " was staged from " + strconv.Quote(existing.SenderTaskID) + " to " + strconv.Quote(existing.RecipientTaskID) + " and has " + fmt.Sprint(existing.AttemptCount) + " attempt(s), state " + strconv.Quote(existing.State) + "; the linkage now says " + strconv.Quote(r.Sender) + " reports to " + strconv.Quote(r.Recipient) + ". A message an attempt may have sent is never re-addressed, because its attempts would then describe a recipient they were never sent to - it went to the 부모 who was live when its transport started - so " + strconv.Quote(r.Recipient) + " has not been told by this channel, and the obligation stands until the tracking record confirms it"}
 				}
 				var unsafe int
 				if err = c.Store.Q(tx).QueryRowContext(tx, "SELECT COUNT(*) FROM supervisor_attempts WHERE message_id=? AND "+store.SupervisorAttemptMayHaveGoneSQL(""), id).Scan(&unsafe); err != nil {
@@ -195,7 +235,29 @@ func (c *Channel) StageWithReading(ctx context.Context, o Obligation, reading ma
 				if unsafe != 0 {
 					return Refusal{"relation_owner_drift", "message " + strconv.Quote(id) + " was already attempted and is never re-addressed"}
 				}
-				update, err := c.Store.Q(tx).ExecContext(tx, "UPDATE supervisor_messages SET sender_task_id=?,recipient_task_id=?,project_key=?,packet=?,event_id=?,submission_no=?,state='queued',next_eligible_at=NULL,hold_reason=NULL,updated_at=? WHERE message_id=? AND sender_task_id=? AND recipient_task_id=? AND "+store.SupervisorNeverSentSQL(), r.Sender, r.Recipient, r.ProjectKey, encoded, nullString(eventID), submission, at, id, existing.SenderTaskID, existing.RecipientTaskID)
+				// The hold rule's readdress entry: an acknowledged park whose recipient stays (a new
+				// sender session) keeps its word and its state; every other hold is released, as on dev.
+				kind, err := holdKindOf(tx, c.Store, existing)
+				if err != nil {
+					return err
+				}
+				verdict, _, err := holdDecision(kind, holdChange{Entry: entryReaddress, SameRecipient: existing.RecipientTaskID == r.Recipient, SameSender: existing.SenderTaskID == r.Sender}, nil)
+				if err != nil {
+					return err
+				}
+				kept := verdict == holdKeep && existing.HoldReason.Valid
+				state, next, hold := "queued", sql.NullFloat64{}, sql.NullString{}
+				if kept {
+					state, next, hold = existing.State, existing.NextEligibleAt, existing.HoldReason
+				}
+				// A kept park whose acknowledged statement stands keeps its packet and columns; only the
+				// endpoints move. A release restates the packet from the live hierarchy before any send.
+				packet, toEvent, toSubmission := encoded, nullString(eventID), submission
+				if kept && keepStatement {
+					packet, toEvent, toSubmission = existing.Packet, existing.EventID, existing.SubmissionNo
+					restating = false
+				}
+				update, err := c.Store.Q(tx).ExecContext(tx, "UPDATE supervisor_messages SET sender_task_id=?,recipient_task_id=?,project_key=?,packet=?,event_id=?,submission_no=?,state=?,next_eligible_at=?,hold_reason=?,updated_at=? WHERE message_id=? AND sender_task_id=? AND recipient_task_id=? AND "+store.SupervisorNeverSentSQL(), r.Sender, r.Recipient, r.ProjectKey, packet, toEvent, toSubmission, state, next, hold, at, id, existing.SenderTaskID, existing.RecipientTaskID)
 				if err != nil {
 					return err
 				}
@@ -208,7 +270,16 @@ func (c *Channel) StageWithReading(ctx context.Context, o Obligation, reading ma
 				}
 				from := map[string]any{"sender": existing.SenderTaskID, "recipient": existing.RecipientTaskID, "projectKey": optionalText(existing.ProjectKey)}
 				to := map[string]any{"sender": r.Sender, "recipient": r.Recipient, "projectKey": r.ProjectKey}
-				detail := pyjson.Dumps(contract.OrderedObject{{Key: "from", Value: contract.OrderedObject{{Key: "sender", Value: from["sender"]}, {Key: "recipient", Value: from["recipient"]}, {Key: "projectKey", Value: from["projectKey"]}}}, {Key: "to", Value: contract.OrderedObject{{Key: "sender", Value: to["sender"]}, {Key: "recipient", Value: to["recipient"]}, {Key: "projectKey", Value: to["projectKey"]}}}, {Key: "releasedHold", Value: optionalText(existing.HoldReason)}, {Key: "releasedState", Value: existing.State}, {Key: "fromEvent", Value: optionalText(existing.EventID)}, {Key: "toEvent", Value: optionalText(nullString(eventID))}, {Key: "reason", Value: "the hierarchy moved before anything was sent"}}, pyjson.Options{})
+				// A kept hold is named under keptHold, a key only a kept hold writes, so every row dev
+				// writes stays what it was; nothing was released then.
+				held := contract.OrderedObject{{Key: "releasedHold", Value: optionalText(existing.HoldReason)}}
+				if kept {
+					held = contract.OrderedObject{{Key: "releasedHold", Value: nil}, {Key: "keptHold", Value: existing.HoldReason.String}}
+				}
+				fields := contract.OrderedObject{{Key: "from", Value: contract.OrderedObject{{Key: "sender", Value: from["sender"]}, {Key: "recipient", Value: from["recipient"]}, {Key: "projectKey", Value: from["projectKey"]}}}, {Key: "to", Value: contract.OrderedObject{{Key: "sender", Value: to["sender"]}, {Key: "recipient", Value: to["recipient"]}, {Key: "projectKey", Value: to["projectKey"]}}}}
+				fields = append(fields, held...)
+				fields = append(fields, contract.OrderedObject{{Key: "releasedState", Value: existing.State}, {Key: "fromEvent", Value: optionalText(existing.EventID)}, {Key: "toEvent", Value: optionalText(toEvent)}, {Key: "reason", Value: "the hierarchy moved before anything was sent"}}...)
+				detail := pyjson.Dumps(fields, pyjson.Options{})
 				if _, err = c.Store.Q(tx).ExecContext(tx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_readdressed',?,?)", at, id, string(detail)); err != nil {
 					return err
 				}
@@ -216,10 +287,10 @@ func (c *Channel) StageWithReading(ctx context.Context, o Obligation, reading ma
 				if err != nil {
 					return err
 				}
-				result = StageResult{"schema": channelVersion, "staged": false, "readdressed": true, "restated": restating, "messageId": id, "from": from, "to": to, "fromEvent": optionalText(existing.EventID), "toEvent": optionalText(nullString(eventID)), "reason": "staged for a hierarchy that has since moved, and never attempted, so it now goes to the live supervisor instead", "message": messageMap(current), "recipient": r.Recipient, "sender": r.Sender}
+				result = StageResult{"schema": channelVersion, "staged": false, "readdressed": true, "restated": restating, "messageId": id, "from": from, "to": to, "fromEvent": optionalText(existing.EventID), "toEvent": optionalText(toEvent), "reason": "staged for a hierarchy that has since moved, and never attempted, so it now goes to the live 부모 instead", "message": messageMap(current), "recipient": r.Recipient, "sender": r.Sender}
 				return nil
 			}
-			if restating {
+			if restating && !keepStatement {
 				update, err := c.Store.Q(tx).ExecContext(tx, "UPDATE supervisor_messages SET packet=?,event_id=?,submission_no=?,updated_at=? WHERE message_id=? AND "+store.SupervisorNeverSentSQL(), encoded, nullString(eventID), submission, at, id)
 				if err != nil {
 					return err
@@ -242,7 +313,7 @@ func (c *Channel) StageWithReading(ctx context.Context, o Obligation, reading ma
 					return nil
 				}
 			}
-			result = StageResult{"schema": channelVersion, "staged": false, "messageId": id, "reason": "this fact is already staged; one obligation is one message", "message": messageMap(existing)}
+			result = StageResult{"schema": channelVersion, "staged": false, "messageId": id, "reason": alreadyStaged, "message": messageMap(existing)}
 			return nil
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
@@ -253,7 +324,7 @@ func (c *Channel) StageWithReading(ctx context.Context, o Obligation, reading ma
 			return err
 		}
 		if !reportable {
-			return Refusal{"not_claimable", "nothing is owed upward for obligation " + strconv.Quote(o.ID) + ": " + reason + ", decided under the staging write lock. The obligation is preserved either way; what is refused is producing a second report about a fact somebody has already reported or the supervisor can already read for itself"}
+			return Refusal{"not_claimable", "nothing is owed upward for obligation " + strconv.Quote(o.ID) + ": " + reason + ", decided under the staging write lock. The obligation is preserved either way; what is refused is producing a second report about a fact somebody has already reported or the 부모 can already read for itself"}
 		}
 		row := store.SupervisorMessagesRow{MessageID: id, ObligationID: o.ID, ObligationKind: o.Kind, RelationshipID: o.RelationID, ProjectKey: nullString(r.ProjectKey), Purpose: purpose(o.Kind), Kind: packetKind(o.Kind), SenderTaskID: r.Sender, RecipientTaskID: r.Recipient, Subject: o.Subject, Packet: encoded, State: "queued", StagedAt: at, UpdatedAt: at, EventID: nullString(eventID)}
 		if reading != nil {
@@ -267,7 +338,7 @@ func (c *Channel) StageWithReading(ctx context.Context, o Obligation, reading ma
 			return err
 		}
 		if staged {
-			detail := pyjson.Dumps(contract.OrderedObject{{Key: "kind", Value: o.Kind}, {Key: "relationId", Value: o.RelationID}, {Key: "subject", Value: o.Subject}, {Key: "messageId", Value: id}, {Key: "note", Value: "staged on the supervisor channel"}}, pyjson.Options{})
+			detail := pyjson.Dumps(contract.OrderedObject{{Key: "kind", Value: o.Kind}, {Key: "relationId", Value: o.RelationID}, {Key: "subject", Value: o.Subject}, {Key: "messageId", Value: id}, {Key: "note", Value: "staged on the 부모 channel"}}, pyjson.Options{})
 			_, err = c.Store.Q(tx).ExecContext(tx, "INSERT INTO journal (at,kind,subject,detail) VALUES (?,'supervisor_report',?,?)", at, o.ID, string(detail))
 			if err != nil {
 				return err
@@ -289,7 +360,7 @@ func (c *Channel) StageWithReading(ctx context.Context, o Obligation, reading ma
 func (c *Channel) Get(ctx context.Context, id string) (store.SupervisorMessagesRow, error) {
 	row, err := c.Store.SupervisorMessage(ctx, id)
 	if errors.Is(err, sql.ErrNoRows) {
-		return row, Refusal{"not_claimable", "no supervisor message is staged as " + pyvalue.StrRepr(id)}
+		return row, Refusal{"not_claimable", "no 부모 message is staged as " + pyvalue.StrRepr(id)}
 	}
 	return row, err
 }
@@ -374,7 +445,7 @@ func (c *Channel) StageStandingWithObservations(ctx context.Context, projectKey 
 			staged = append(staged, answer)
 		}
 	}
-	return map[string]any{"schema": channelVersion, "projectKey": projectKey, "staged": staged, "refused": refused, "gaps": standing["gaps"], "limits": "staging is not sending and sending is not reading. Each message here has to be sent and read back before anything says it arrived, and a readback shows arrival rather than that a supervisor read it"}, nil
+	return map[string]any{"schema": channelVersion, "projectKey": projectKey, "staged": staged, "refused": refused, "gaps": standing["gaps"], "limits": "staging is not sending and sending is not reading. Each message here has to be sent and read back before anything says it arrived, and a readback shows arrival rather than that the 부모 read it"}, nil
 }
 
 func observationReadingKey(o Obligation, reading map[string]any) string {

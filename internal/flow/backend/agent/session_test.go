@@ -204,6 +204,72 @@ func TestSessionTraceIgnoresOwnerCrwState(t *testing.T) {
 	}
 }
 
+// CRW-1493: the owner cwd's .crw is left out of the outside digest relative to the owner cwd itself, not through a repository
+// prefix read back from git: an owner whose repository-relative path starts with a space (`repo/" lead"/sub`) keeps its .crw out,
+// its other paths in, and the twin path with the space trimmed (`repo/lead/sub/.crw`) is still seen.
+func TestSessionTraceKeepsLeadingSpaceOwner(t *testing.T) {
+	dir := t.TempDir()
+	repo := filepath.Join(dir, "repo")
+	run := func(cwd string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = cwd
+		cmd.Env = append(cmd.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.invalid", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.invalid")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	run(dir, "init", "-q", "-b", "main", repo)
+	owner := filepath.Join(repo, " lead", "sub")
+	writeFile(t, filepath.Join(repo, "a.txt"), "a\n")
+	writeFile(t, filepath.Join(owner, "keep.txt"), "k\n")
+	run(repo, "add", "-A")
+	run(repo, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "first")
+	first := run(repo, "rev-parse", "HEAD")
+	if !gitFails(repo, "check-ignore", "-q", " lead/sub/.crw/x") {
+		t.Fatal("the owner checkout ignores .crw")
+	}
+	wt := filepath.Join(dir, "wt")
+	run(repo, "worktree", "add", "--detach", "-q", wt, first)
+	alloc, err := agent.NewAllocator(agent.AllocatorConfig{Repo: repo, StateDir: filepath.Join(dir, "state"), RunID: "run-s"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := agent.NewSessionBackend(alloc, owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.BoundDir = filepath.Join(dir, "flow-bound")
+	ctx := context.Background()
+	trace := func() engine.TraceDigests {
+		t.Helper()
+		d, err := b.Trace(ctx, wt)
+		if err != nil || d.Workspace == "" || d.Outside == "" || d.Shared == "" {
+			t.Fatalf("trace %+v %v", d, err)
+		}
+		return d
+	}
+	before := trace()
+	// the hook's record under the owner cwd's .crw is not a change outside P
+	writeFile(t, filepath.Join(owner, ".crw", "evidence-assignments", "owner-s", "a1.json"), "{}\n")
+	if now := trace(); now != before {
+		t.Fatalf("the hook's .crw state under a leading-space owner changed the trace: %+v -> %+v", before, now)
+	}
+	// a tracked file of the owner and the trimmed twin's .crw still are
+	for _, p := range []string{
+		filepath.Join(owner, "keep.txt"),
+		filepath.Join(repo, "lead", "sub", ".crw", "x"),
+	} {
+		last := trace()
+		writeFile(t, p, "x "+p+"\n")
+		if now := trace(); now.Outside == last.Outside || now.Workspace != last.Workspace {
+			t.Fatalf("writing %s: %+v -> %+v", p, last, now)
+		}
+	}
+}
+
 // CRW-1327: the session host reads the rollout's token_count with its split (CRW-1332's sessionhost.Usage) and hands the engine all of
 // it: the cached input and the reasoning output are kept, not only the input, the output and the total.
 func TestSessionHostTokensKeepTheCachedSplit(t *testing.T) {

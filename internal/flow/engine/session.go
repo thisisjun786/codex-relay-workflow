@@ -448,6 +448,17 @@ func (c *callRun) sessionRecover(ctx context.Context) (res CallResult, stop bool
 		}
 		s.note, s.lastText = st.note, st.prev
 	}
+	if st.kind == stageBound || (st.kind == stagePublished && st.action == StepSendInput) {
+		// the call goes on with its bound subagent or its repair step, so no spawn step places its record again: the record is placed
+		// again here, rooted at the directory as it is now, which may have been recreated since (CRW-1496)
+		if err := c.evidenceRefresh(ctx); err != nil {
+			// the call holds as it is: its input may have been delivered (the bound turn, the task turn a repair is for), and the held
+			// row says so, so a held call that goes on with a delivered input takes it to a new attempt (sessionResumeHeld) and never
+			// sends a repair to the subagent this hold closes; a published repair is the call's one repair (repair_used)
+			c.repairUsed = c.repairUsed || st.repair
+			return c.evidenceRefreshHold(ctx, err), true, 0, ""
+		}
+	}
 	c.firstK = max(st.k, 1)
 	if st.repair {
 		c.firstK = max(st.k-1, 1)
@@ -709,7 +720,7 @@ func (c *callRun) sessionBind(turnCtx, ctx context.Context, k int, op, input str
 			// its step was published with (open, or claimed by the subagent before the restart)
 			if c.evidenceGated() {
 				if err := c.ensureEvidence(turnCtx, marker); err != nil {
-					return nil, c.evidenceHold(err, ""), true, nil
+					return nil, c.evidenceHold(ctx, err, ""), true, nil
 				}
 			}
 			return c.sessionAdopt(turnCtx, ctx, k, op, input, repair, st)
@@ -718,7 +729,7 @@ func (c *callRun) sessionBind(turnCtx, ctx context.Context, k int, op, input str
 	if action == StepSpawn && c.evidenceGated() {
 		// the step's evidence record is written before its step_published row, and a step published again reuses it (CRW-1482)
 		if err := c.ensureEvidence(turnCtx, marker); err != nil {
-			return nil, c.evidenceHold(err, ""), true, nil
+			return nil, c.evidenceHold(ctx, err, ""), true, nil
 		}
 	}
 	packet := c.sessionPacket(k, marker, input, repair, action)
@@ -770,7 +781,7 @@ func (c *callRun) sessionBind(turnCtx, ctx context.Context, k int, op, input str
 		bound = true
 		return nil, CallResult{}, false, nil
 	}
-	if res, held := c.evidenceUnbound(); held {
+	if res, held := c.evidenceUnbound(ctx); held {
 		return nil, res, true, nil
 	}
 	// a step that cannot be written (a full disk) was sent to nobody: it is recorded as not dispatched and written again, and the
@@ -808,7 +819,7 @@ func (c *callRun) sessionBind(turnCtx, ctx context.Context, k int, op, input str
 				bound = true
 				return nil, CallResult{}, false, nil
 			}
-			if res, held := c.evidenceUnbound(); held {
+			if res, held := c.evidenceUnbound(ctx); held {
 				return nil, res, true, nil
 			}
 		case <-find.C:
@@ -816,7 +827,7 @@ func (c *callRun) sessionBind(turnCtx, ctx context.Context, k int, op, input str
 				bound = true
 				return nil, CallResult{}, false, nil
 			}
-			if res, held := c.evidenceUnbound(); held {
+			if res, held := c.evidenceUnbound(ctx); held {
 				return nil, res, true, nil
 			}
 		case <-turnCtx.Done():
@@ -1457,6 +1468,7 @@ func (c *callRun) sessionPacket(k int, marker, input string, repair bool, action
 	}
 	b.WriteString("Never run `git commit`, `git add`, `git branch`, `git reset` or `git checkout`: the run records and commits the work itself.\n")
 	b.WriteString("You are a leaf subagent: never spawn agents.\n\n")
+	b.WriteString(e.cfg.Tools.PacketSection())
 	if text, err := c.roleText(); err == nil && strings.TrimSpace(text) != "" {
 		b.WriteString("## Role instructions\n\n")
 		b.WriteString(strings.TrimSpace(text))

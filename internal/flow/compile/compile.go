@@ -882,8 +882,8 @@ func preview(units []*unit, graph []pair, edges int, keys []string, counts Chang
 				ip.After = append(ip.After, a)
 			}
 		}
-		// over_line with neither a bundle reason nor a split: shown for the planner, never refused
-		if u.size[2] == "over_line" && u.BundleReason == "" && u.size[0] != "split" {
+		// over_line with neither a bundle reason nor a split (a split or a bundle_split): shown for the planner, never refused
+		if u.size[2] == "over_line" && u.BundleReason == "" && u.size[0] != "split" && u.size[0] != "bundle_split" {
 			ip.SizeUnreviewed = true
 			pv.SizeUnreviewed = append(pv.SizeUnreviewed, u.Key)
 		}

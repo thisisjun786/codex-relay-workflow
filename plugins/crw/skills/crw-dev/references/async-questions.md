@@ -16,7 +16,7 @@ recovery guarantee. These hooks neither enable a missing tool nor force a questi
 
 In a run nobody asks the user and no session opens an interview. An open question
 that changes scope or design is a decision request to the session above the project
-session (relay role `parent`, [the level table](../../crw-canon/references/hierarchy.md#the-levels)): lift it with `crw flow report-up` and the evidence file, continue the work it
+session ([the level table](../../crw-canon/references/hierarchy.md#the-levels)): lift it with `crw flow report-up` and the evidence file, continue the work it
 does not block on recorded assumptions, and take the answer when it arrives. A
 milestone or issue that is unclear before it runs goes back to its registration
 ([crw-define](../../crw-define/SKILL.md)). The async questions below are for a main

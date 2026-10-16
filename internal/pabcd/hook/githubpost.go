@@ -103,10 +103,10 @@ func githubPostDenyPayload(site githubPostSite, p map[string]any) string {
 	if site.rule != githubPostRuleUnread {
 		return githubPostDeny(site.rule, site.place)
 	}
-	leaf := p["agent_id"] != nil || p["agent_type"] != nil
+	leaf := p["agent_id"] != nil || p["agent_type"] != nil // any subagent; its spawner's layer is not known (memoryGateHandle)
 	recovery := "Use a direct command with a literal program and absolute file paths; GitHub text must come from a reviewed file. A readable script file must meet the same checks."
 	if leaf {
-		recovery = "Report the blocked command and cause code to your parent."
+		recovery = "Report the blocked command and cause code to the session that spawned you."
 	}
 	reason := "Cannot read the command or its program (unreadable-github-post); GitHub posting has not been established. " + recovery
 	if site.reason != "" {

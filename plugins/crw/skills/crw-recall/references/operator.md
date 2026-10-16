@@ -3,7 +3,7 @@
 ## Parent operator work
 
 Diagnosing the host's memory extraction pipeline is operator work, not recall: it reads and can change the live
-memory database, and no task needs it to answer a past-work question. The parent (repository session, relay role `supervisor`,
+memory database, and no task needs it to answer a past-work question. The parent (repository session,
 [the level table](../../crw-canon/references/hierarchy.md#the-levels)) runs it; any other level
 reports the symptom to the parent and does not run these commands.
 

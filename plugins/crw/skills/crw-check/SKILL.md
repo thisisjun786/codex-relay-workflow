@@ -5,7 +5,7 @@ description: "Check delivered work against the canonical tracking documents and 
 
 # CRW Check
 
-Here the parent (repository session, relay role `supervisor`) and the child (project session, relay role `parent`) are layers of [the level table](../crw-canon/references/hierarchy.md#the-levels).
+Here the parent (repository session) and the child (project session) are layers of [the level table](../crw-canon/references/hierarchy.md#the-levels).
 
 Check delivered work against what was agreed, using the tracking repository as the canonical source of what was agreed, and find the
 claims or behaviors that cannot both hold. The check is read-only until an existing execution workflow authorizes
@@ -120,7 +120,7 @@ Use a separate audit document only when prior authorization or an explicit recor
 
 ## In-workflow auditor
 
-For a completion check in an established execution workflow, send evidence-backed in-scope corrections to the existing responsible task through [crw-run](../crw-run/SKILL.md#return-corrections-to-the-existing-task). Include the violated criterion, reviewed revision, reproducible evidence, required outcome and recheck. Do not make Jun relay the packet or ask again whether to send it. A finding is returned by the caller's own level to the level below it, per [scope of each level](../crw-canon/references/hierarchy.md#scope-of-each-level): the parent carries a project's finding in the [coordination message](../crw-run/references/task-packet.md#coordination-message) to that project's child and never to its issue children, a standalone issue keeps its existing owner, and a check never sends a correction into another project's issue children.
+For a completion check in an established execution workflow, send evidence-backed in-scope corrections to the existing responsible task through [crw-run](../crw-run/SKILL.md#return-corrections-to-the-existing-task). Include the violated criterion, reviewed revision, reproducible evidence, required outcome and recheck. Do not make Jun relay the packet or ask again whether to send it. A finding is returned by the caller's own level to the level below it, per [scope of each level](../crw-canon/references/hierarchy.md#scope-of-each-level): the parent carries a project's finding in the [coordination message](../crw-run/references/task-packet.md#coordination-message) to that project's child and never to its `child` sessions (a code id, not a layer), a standalone issue keeps its existing owner, and a check never sends a correction into another project's `child` sessions.
 
 Recheck the corrected revision against the original criteria and the reproduced failure. Missing evidence calls for a scoped verification request, not an invented defect or a speculative fix. Reuse valid evidence and keep the same correction scope until verified or a concrete blocker requires a decision. Lead the report with the verification result and the action actually taken: correction sent, awaiting delivery, recheck passed, integrated, or blocked.
 

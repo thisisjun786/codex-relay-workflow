@@ -22,7 +22,7 @@ live Codex hook or Desktop compatibility.
 | [crw-define](plugins/crw/skills/crw-define/SKILL.md) | Settle a milestone and its issues before they are registered: purpose, desired change, success evidence, scope and open decisions, and whether a question is really needed |
 | [crw-plan](plugins/crw/skills/crw-plan/SKILL.md) | Decompose an agreed goal into projects, milestones, and one-delivery issues |
 | [crw-add-issue](plugins/crw/skills/crw-add-issue/SKILL.md) | Turn one short request into one ready issue: criteria, edit regions, decided answer, tests to write first and done condition, with an open design question held as design first |
-| [crw-run](plugins/crw/skills/crw-run/SKILL.md) | Bind the child (project session, relay role `parent`) and execute one project's agreed scope, including parallel issue delivery and successors, without a goal unless goal mode is explicitly requested; and the work of the parent (repository session, relay role `supervisor`): project order, decisions, reports and the midpoint check |
+| [crw-run](plugins/crw/skills/crw-run/SKILL.md) | Bind the child (project session) and execute one project's agreed scope, including parallel issue delivery and successors, without a goal unless goal mode is explicitly requested; and the work of the parent (repository session): project order, decisions, reports and the midpoint check |
 | [crw-status](plugins/crw/skills/crw-status/SKILL.md) | Read-only report of where work stands by level, with progress against the agreed schedule, and the one next action when asked |
 | [crw-check](plugins/crw/skills/crw-check/SKILL.md) | Verify delivery, find contradictions with minimal counterexamples, judge the schedule, and return in-scope corrections to managed tasks |
 | [crw-refactor](plugins/crw/skills/crw-refactor/SKILL.md) | Diagnose post-cycle structural debt, read-only, and recommend bounded, behavior-preserving repairs; a chosen repair becomes a Linear issue through crw-add-issue |
@@ -243,7 +243,7 @@ $crw-refactor 추천한 1번을 crw-add-issue로 Linear 이슈로 만들어줘. 
 These are invocation examples, not requests to execute while reading this file.
 
 A submitted `$crw-run <Linear project link>` executes one project's agreed scope:
-restore the fixed parent, reuse/create independent issue children, verify/integrate
+restore the fixed parent, reuse/create independent `child` sessions, verify/integrate
 their deliveries and start newly ready successors as capacity opens. Run creates no
 parent goal; the first ready batch is not its finish boundary. An explicit issue,
 milestone or batch request narrows the assignment. Status-only requests remain read-only.
@@ -266,8 +266,8 @@ An explicit no-goal limit prevents goal mode; goal-free Run remains a separately
 authorized option. Keep narrower scope, pause and delivery limits in either mode.
 
 `crw-run` keeps implementation in the responsible independent child task for
-one issue, including that issue’s worktree and PR repairs. Each child (project session,
-relay role `parent`) runs one project and each issue child (relay role `child`) one issue. The coordinator selects scope,
+one issue, including that issue’s worktree and PR repairs. Each child (project session)
+runs one project and each `child` session one issue. The coordinator selects scope,
 reviews results, checks CI, and performs authorized integration. Internal
 subagents assist within those tasks and do not replace the independent child.
 
@@ -308,7 +308,7 @@ Designating the management task alone does not start project execution;
 an accompanying execution request continues within its authorized scope.
 
 `crw-define` settles a milestone and its issues before they are registered: the
-top session (today Sion) or [the parent](plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels) (repository session, relay role `supervisor`) organizes purpose,
+top session (today Sion) or [the parent](plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels) (repository session) organizes purpose,
 desired change, success evidence, scope and open decisions, and asks one question
 at a time only when one is really needed. `crw-plan` then decomposes the agreed goal into projects, useful
 milestones, and executable issues in one operation. A request for both chains

@@ -6,7 +6,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 )
 
-// The issue-child path is retired (CRW-1415): the lane installs no crw.releaseChild operation, so no script can start a child. The op
+// The `child` session path is retired (CRW-1415): the lane installs no crw.releaseChild operation, so no script can start a child. The op
 // name stays an old run's recording call that is read only: a journal whose completed crw.releaseChild row an old run wrote is still
 // a recorded call, and a resume does not send it again.
 func TestLaneOperationsHaveNoReleaseChild(t *testing.T) {

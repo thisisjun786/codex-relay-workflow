@@ -27,7 +27,7 @@ func TestBuiltinWorkflowsLoad(t *testing.T) {
 	}
 }
 
-// The issue-lane workflow of an issue child is retired (CRW-1415): a node sized for a child escalates as a size split from the
+// The issue-lane workflow of a `child` session is retired (CRW-1415): a node sized for a child escalates as a size split from the
 // project lane, so no built-in workflow is named issue-lane and none loads under that name.
 func TestBuiltinWorkflowsHaveNoIssueLane(t *testing.T) {
 	if names := Names(); slices.Contains(names, "issue-lane") {

@@ -148,7 +148,7 @@ func (StoreProber) Facts(ctx context.Context, req PreflightRequest) []Fact {
 	errSet := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM authorized_settings WHERE task_id = ?`, req.Thread).Scan(&settings)
 	switch {
 	case errors.Is(errLife, sql.ErrNoRows) && errSet == nil:
-		add(FactReachable, LevelWarn, "no record yet: the delivery service reads a thread after the first delivery or supervisor send to it, so a new thread's first run has no lifecycle reading", "the delivery service has not read thread %s; %d authorized setting row(s)", req.Thread, settings)
+		add(FactReachable, LevelWarn, "no record yet: the delivery service reads a thread after the first delivery or 부모 send (--role supervisor) to it, so a new thread's first run has no lifecycle reading", "the delivery service has not read thread %s; %d authorized setting row(s)", req.Thread, settings)
 	case (errLife != nil && !errors.Is(errLife, sql.ErrNoRows)) || errSet != nil:
 		add(FactReachable, LevelFail, "the store cannot be read", "the thread cannot be read: %v", errors.Join(errLife, errSet))
 	default:

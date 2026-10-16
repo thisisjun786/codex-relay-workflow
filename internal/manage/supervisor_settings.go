@@ -28,7 +28,7 @@ func supervisorSettingsAt(ctx context.Context, state, task string) (coreSettings
 			return err
 		}
 		if bindings == 0 {
-			return fmt.Errorf("task %s holds no live supervisor binding", task)
+			return fmt.Errorf("task %s holds no live 부모 binding", task)
 		}
 		var raw string
 		if err := q.QueryRowContext(ctx, `SELECT settings FROM authorized_settings WHERE task_id = ?`, task).Scan(&raw); err != nil {

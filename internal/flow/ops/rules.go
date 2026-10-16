@@ -13,7 +13,7 @@ const (
 	RuleRev2   = "SP-REV-2"   // the candidate batch of low-tier nodes (CRW-1225)
 	RuleArch1  = "SP-ARCH-1"  // the architect, once per milestone
 	RuleRevF1  = "SP-REVF-1"  // reviewer-final at the milestone close (F13)
-	RuleChild1 = "SP-CHILD-1" // an issue child, released instead of an executor
+	RuleChild1 = "SP-CHILD-1" // a `child` session, released instead of an executor
 	RuleQA1    = "SP-QA-1"    // the QA capture call of the final gate (F13)
 	RuleQA2    = "SP-QA-2"    // the two oracle passes of the final gate (F13)
 
@@ -23,7 +23,7 @@ const (
 	RuleExpl3  = "SP-EXPL-3"  // an explorer for the evidence_question of a reviewer defect
 	RuleTier1  = "SP-TIER-1"  // independent failure evidence on a tier: the step to executor-t1
 	RuleTier2  = "SP-TIER-2"  // the tier step is exhausted: the node escalates
-	RuleChild2 = "SP-CHILD-2" // size_fit child: the node is released as an issue child
+	RuleChild2 = "SP-CHILD-2" // size_fit child: the node is released as a `child` session
 	RuleArch2  = "SP-ARCH-2"  // a re-plan (F09)
 	RuleArch3  = "SP-ARCH-3"  // the architect's reflection at the milestone close (F09)
 	RuleNat1   = "SP-NAT-1"   // a native spawn of a flow-bound thread that is no step: an engine call's explorer, or a helper of the child

@@ -1,10 +1,37 @@
 package report
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/supervisor"
 )
+
+// crw.releasedPlans reads no delivery row (CRW-1437): the released plan the critic of a re-plan is given names a bundle split's
+// escalation by its id and carries no member about what became of the notice the upward hook wrote of it, or who it went to, since
+// its result is replayed on a resume and the delivery of a notice changes after that.
+func TestTheDeliveryRowsReleasedPlansReadAreTheOnesWritten(t *testing.T) {
+	b, err := json.Marshal(ops.ReleasedPlan{Node: "n", Kind: "bundle_split", EscalationID: "esc-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["escalation_id"] != "esc-1" {
+		t.Errorf("the released plan of a bundle split %s does not name its escalation id", b)
+	}
+	for k := range got {
+		switch k {
+		case "node", "kind", "revision", "design_digest", "plan", "decisions", "escalation_id":
+		default:
+			t.Errorf("the released plan has member %q; it names no delivery of a notice (%s, %s rows) nor a recipient", k, KindEscalationNotice, supervisor.FlowMessageDeliveryKind)
+		}
+	}
+}
 
 // A row a command writes into a run that is alive takes its number from the foreign range, so the run's own journal goes on writing
 // without meeting it, and a reader finds both in the order they were written.

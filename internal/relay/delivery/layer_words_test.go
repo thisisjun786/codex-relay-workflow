@@ -124,7 +124,7 @@ func TestRenderedTextNamesLayersNotRoleIds(t *testing.T) {
 
 // CRW-1443 (PR #890 review): the lost-send detail says the delivery is "held for the 자식" for every
 // kind. The words name the session that owns the decision to recover the held send, not its
-// addressee: a completion is addressed to the 자식 and a revision request to the issue child, and for
+// addressee: a completion is addressed to the 자식 and a revision request to the `child` session, and for
 // both the reconciler names the relay parent (the 자식) as the recovery actor
 // (parent_recovers_unknown_send_lost, parent_recovers_held_correction). This pins the detail of both
 // kinds to that actor.
@@ -188,11 +188,11 @@ func TestLostSendDetailNamesTheLayerThatRecovers(t *testing.T) {
 		check(t, reading, outcome, unknownSendHeldAction)
 	})
 
-	t.Run("revision request, addressed to the issue child", func(t *testing.T) {
+	t.Run("revision request, addressed to the `child` session", func(t *testing.T) {
 		h := harness(t)
 		_, correction := h.correctionAfterNeedsChanges()
 		if got := h.row(correction).S("recipient_task_id"); got != child {
-			t.Fatalf("the revision request is addressed to %q, want the issue child %q", got, child)
+			t.Fatalf("the revision request is addressed to %q, want the `child` session %q", got, child)
 		}
 		h.host.startTurn(child, "turn-earlier", "completed", "")
 		h.clock.Advance(300)

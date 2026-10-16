@@ -2,6 +2,7 @@ package ops
 
 import (
 	"encoding/json"
+	"slices"
 	"sort"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
@@ -51,6 +52,27 @@ func (r rows) last(keep func(engine.Event) bool) (engine.Event, bool) {
 		}
 	}
 	return engine.Event{}, false
+}
+
+// rangeCalls are the executor calls the commits of node in the range base..head were made from, oldest first, each once: the chain of
+// the node's crw.commit rows from the one of head back by their parent, up to base or to a commit no row of the node made.
+func (r rows) rangeCalls(node, base, head string) []string {
+	commits := r.opRows(OpCommit).where(func(ev engine.Event) bool { return dataStr(ev, "node") == node })
+	var calls []string
+	seen := map[string]bool{}
+	for at := head; at != "" && at != base && !seen[at]; {
+		seen[at] = true
+		row, ok := commits.last(func(ev engine.Event) bool { return dataStr(ev, "commit") == at })
+		if !ok {
+			break
+		}
+		if c := dataStr(row, "call"); c != "" && !slices.Contains(calls, c) {
+			calls = append(calls, c)
+		}
+		at = dataStr(row, "parent")
+	}
+	slices.Reverse(calls)
+	return calls
 }
 
 // prepared returns the prepared row of every agent call, in journal order.
@@ -148,6 +170,32 @@ func (r rows) worktreeOf(node string) string {
 		}
 	}
 	return path
+}
+
+// attemptHead is the commit the worktree of the node's current attempt is at for an executor call that has not committed: the node's
+// last commit recorded since the attempt's worktree was placed (fresh or restored), else the commit the placement started it at; ""
+// when the journal records neither. An executor that commits its own work moves HEAD off it.
+func (r rows) attemptHead(node string) string {
+	head, seq := "", 0
+	for _, ev := range r {
+		switch {
+		case ev.Kind == engine.KindCall && ev.Event == engine.EvPrepared && str(ev.Data, "node") == node:
+			if m, ok := ev.Data["allocation"].(map[string]any); ok && str(m, "path") != "" && (str(m, "kind") == engine.PlaceFresh || str(m, "kind") == engine.PlaceRestore) && ev.Seq > seq {
+				head, seq = str(m, "start_commit"), ev.Seq
+			}
+		case ev.Kind == engine.KindFlow && ev.Event == engine.EvWorktreeRestored && str(ev.Data, "node") == node && ev.Seq > seq:
+			head, seq = str(ev.Data, "C"), ev.Seq
+		}
+	}
+	if seq == 0 {
+		return ""
+	}
+	for _, ev := range r {
+		if ev.Kind == engine.KindCall && ev.Op == OpCommit && ev.Event == engine.EvCompleted && str(ev.Data, "node") == node && ev.Seq > seq && str(ev.Data, "commit") != "" {
+			head = str(ev.Data, "commit")
+		}
+	}
+	return head
 }
 
 // resultOf is the JSON the op of a completed row answered.

@@ -132,7 +132,7 @@ func RunAudit(ctx context.Context, args []string, stdout, stderr io.Writer) (cod
 	case *noRecord:
 		why = "--no-record"
 	case engine.LegacyIssueChild(events, setup.RunID) != "":
-		// a legacy issue-child run is read only (CRW-1415): its acceptances are audited and the result is not recorded in its journal
+		// a legacy `child` session run is read only (CRW-1415): its acceptances are audited and the result is not recorded in its journal
 		why = RefusedLegacyRun + ": " + engine.LegacyIssueChild(events, setup.RunID)
 	case !setup.Finished:
 		why = "the run has not finished: it owns its journal"

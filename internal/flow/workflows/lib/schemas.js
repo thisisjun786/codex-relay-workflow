@@ -78,7 +78,9 @@ export const DESIGN = obj({
   issues: list(obj({
     issue: text,
     node: text,
-    size_fit: { type: 'string', enum: ['executor', 'child', 'split'] },
+    // size_fit: an executor, a split (2 to 4 sub-tasks on the node's executor thread) or a bundle split (the parent splits the
+    // bundle); the `child` session path is retired (CRW-1415, CRW-1435)
+    size_fit: { type: 'string', enum: ['executor', 'split', 'bundle_split'] },
     size_reason: text,
     issue_size_decision: { type: 'string', enum: ['ok', 'over_line', 'over_line_accepted'] },
     edit_regions: texts,
@@ -88,6 +90,21 @@ export const DESIGN = obj({
     decision_refs: texts,
     order_after: texts,
     group: maybeText,
+    // sub_tasks: the parts of a split node, in their order (each id unique, its edit regions within the node's, `after` the ids
+    // of earlier sub-tasks or null); null for an executor or a bundle_split node
+    // (at most 4; the id form and a region for each are in the schema, the rest is the design audit's: 2 to 4 for a split node, unique
+    // ids, regions within the node's, `after` naming earlier sub-tasks)
+    sub_tasks: {
+      type: ['array', 'null'],
+      maxItems: 4,
+      items: obj({
+        id: { type: 'string', pattern: '^[a-z0-9][a-z0-9-]{0,31}$' },
+        summary: text,
+        edit_regions: { type: 'array', items: text, minItems: 1 },
+        done_condition: text,
+        after: { type: ['array', 'null'], items: text },
+      }),
+    },
   })),
   open_questions: list(obj({ id: text, question: text, scope: text, files_needed: texts })),
   risks: texts,

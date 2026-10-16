@@ -219,7 +219,7 @@ func Deliver(ctx context.Context, e *Env, cfg *Config, m Message) (Outcome, erro
 	if known {
 		// The record is unsettled: read the bridge's own receipt before anything is sent, so an
 		// attempt that may already have gone out is never duplicated under a fresh id.
-		verdict, receipt := deliverReconcileReceipt(ctx, bridge, record)
+		verdict, receipt, unrecorded := deliverReconcileReceipt(ctx, bridge, record)
 		switch verdict {
 		case deliverReconcileAccepted:
 			record.State, record.Received, record.Applied = deliverStateAccepted, true, false
@@ -233,7 +233,14 @@ func Deliver(ctx context.Context, e *Env, cfg *Config, m Message) (Outcome, erro
 			return deliverSettled(cfg, record, Outcome{Class: deliverClassRefused, RequestID: record.RequestID})
 		case deliverReconcileResendSame, deliverReconcileResendNew:
 			excerpt := "get_operation: nothing was sent; resending under the same request id"
-			if verdict == deliverReconcileResendNew || m.SteerOnly {
+			switch {
+			case unrecorded && m.SendUnrecordedAtCap && retries >= deliverRetryLimit:
+				// CRW-1548: the id was minted and saved and the process stopped before the send. The bridge holds
+				// nothing under it, so sending under it duplicates no attempt; no retry is spent and no id is minted.
+				// The record is saved below before the send (a steer-only one in its dispatch), so a second stop
+				// resumes the same way, and the live answer under the id settles it as any send does.
+				excerpt = "get_operation: the bridge never recorded this id; sending under it"
+			case verdict == deliverReconcileResendNew || m.SteerOnly:
 				if retries >= deliverRetryLimit {
 					record.State = deliverStateRefused
 					record.Attempts = append(record.Attempts, deliverAttempt{At: deliverNow(e), Class: deliverClassRefused, ReceiptExcerpt: "get_operation: nothing was sent; the retry cap is spent"})
@@ -464,10 +471,12 @@ func deliverReconcile(ctx context.Context, b *deliverBridge, record deliverRecor
 	return verdict
 }
 
-// deliverReconcileReceipt is deliverReconcile with the receipt the bridge answered (nil when it answered none).
-func deliverReconcileReceipt(ctx context.Context, b *deliverBridge, record deliverRecord) (deliverReconcileVerdict, map[string]any) {
+// deliverReconcileReceipt is deliverReconcile with the receipt the bridge answered (nil when it answered none), and whether the
+// bridge answered that it never recorded the request id (CRW-1548), which a ResendNew verdict alone does not tell from a
+// not_delivered receipt.
+func deliverReconcileReceipt(ctx context.Context, b *deliverBridge, record deliverRecord) (deliverReconcileVerdict, map[string]any, bool) {
 	verdict, reply := deliverReconcileReply(ctx, b, record)
-	return verdict, reply.Payload
+	return verdict, reply.Payload, deliverUnknownRequestIDReply(reply)
 }
 
 // deliverReconcileReply is deliverReconcile with the bridge's answer, so a caller can tell a receipt

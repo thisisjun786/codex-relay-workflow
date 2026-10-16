@@ -129,7 +129,10 @@ func (o *designAuditOp) Run(_ context.Context, req engine.OpRequest) (engine.OpR
 	if err := args(req.Args, &ms, &round, &cand, &arch, &call); err != nil {
 		return engine.OpResult{}, fmt.Errorf("crw.designAudit(milestone, round, candidate, architect, call): %w", err)
 	}
-	if _, err := DecodeDesign(cand.Design); err != nil {
+	// a candidate that breaks a design rule its schema cannot express (CRW-1435) is a DESIGN to fix, not an op error: the rule is a
+	// finding of the audit, which needs changes whatever the critic ruled, so the lane sends the DESIGN back to the architect
+	var broken *DesignRuleError
+	if _, err := DecodeDesign(cand.Design); err != nil && !errors.As(err, &broken) {
 		return engine.OpResult{}, fmt.Errorf("crw.designAudit: the candidate is no DESIGN: %w", err)
 	}
 	res := AuditResult{Round: round, CandidateDigest: cand.digest(), Findings: []AuditFinding{}, Reviewer: call.brief(), Architect: arch.brief()}
@@ -160,10 +163,16 @@ func (o *designAuditOp) Run(_ context.Context, req engine.OpRequest) (engine.OpR
 	default:
 		res.State, res.Reason = StateSuperseded, call.Reason
 	}
-	return engine.OpResult{Result: result(res), Data: map[string]any{
+	data := map[string]any{
 		"milestone": ms, "round": round, "candidate_digest": res.CandidateDigest, "state": res.State, "reason": res.Reason,
 		"reviewer_call": call.CallID, "architect_call": arch.CallID, "reviewer_model": call.Meta.ConfiguredPair.Model, "architect_model": arch.Meta.ConfiguredPair.Model,
-	}}, nil
+	}
+	if broken != nil && (res.State == AuditApproved || res.State == AuditNeedsChanges) {
+		res.State = AuditNeedsChanges
+		res.Findings = append(res.Findings, AuditFinding{Ref: broken.Node, Severity: "P1", Finding: broken.Msg + " (a design rule the DESIGN schema cannot express)", Evidence: []string{}})
+		data["state"], data["design_rule"] = res.State, broken.Msg
+	}
+	return engine.OpResult{Result: result(res), Data: data}, nil
 }
 
 func (o *designAuditOp) Proven(ctx context.Context, ev []engine.Event, row engine.Event) (bool, string, error) {
@@ -277,6 +286,14 @@ func (o *designLedgerOp) Run(ctx context.Context, req engine.OpRequest) (engine.
 		}
 		sl, mileDigest = liveSlices(mile), digestOf(mile)
 	}
+	// a revision after the first keeps what the started nodes stand on and plans every node the run still needs (CRW-1472): the
+	// plans the critic of the re-plan was given (crw.releasedPlans) are the ones it is held to, and the plan of the revision is the
+	// one its slices are taken from
+	if hasPrev {
+		if err := revisionKeepsStarted(r, ms, design, sl); err != nil {
+			return engine.OpResult{}, fmt.Errorf("crw.designLedger: revision %s: %w", e.Revision, err)
+		}
+	}
 	// the head the DESIGN ran at: for a revision after the first the head H the re-plan pinned, for the first the commit the
 	// architect's checkout was made at, as its prepared row records it - never the integration target sampled now, after the audit,
 	// which a lane that landed while the DESIGN was audited has moved past it
@@ -349,9 +366,11 @@ func ledgerOf(r rows, ms, revision string) (engine.Event, bool) {
 
 // releaseOp is crw.release(plan, node, milestone, opts): the release of an issue node to an executor of the run, under the milestone's
 // ledger revision. It refuses to release a node whose DESIGN has no approved audit - the structural guarantee that no executor
-// starts before the audit passed - and a node whose issue the architect sized for a child or a split is not released to an
-// executor at all (the lane releases the child or escalates). The row it writes names the revision and the digest: the packet of
-// the lane is built from them, and the input snapshot of every call of the node carries them.
+// starts before the audit passed. A node whose issue the architect sized for a split with sub-tasks is released to one executor like
+// any node (CRW-1459: the executor carries its sub-tasks in their order); a node sized for a bundle split, and one a DESIGN recorded
+// before S-1 sized for a child or for a split with no sub-tasks, is not released to an executor at all (the lane escalates it as
+// size_split). The row it writes names the revision and the digest: the packet of the lane is built from them, and the input
+// snapshot of every call of the node carries them.
 //
 // With opts.pinned (crw.dag passes it on every release of a lane, CRW-1202) the release checks the plan the audited DESIGN stands on
 // (pinnedPlan): the plan the relay has now is compared with it in the flow, before the relay is asked and before the node's size is
@@ -536,7 +555,7 @@ func (o *releaseOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpRes
 		}
 		return *now, nil
 	}
-	// The release of a lane (crw:lib/lane, crw.dag) is the only release path of a node to an executor, a child or a split, and it always
+	// The release of a lane (crw:lib/lane, crw.dag) is the only release path of a node, whatever it is sized for, and it always
 	// passes pinned: this comparison is therefore the one check every release goes through (the workflows' call sites are held to it by
 	// TestEveryWorkflowReleasePassesPinned). It happens here, in the flow, before Relay.Release below, and the relay's release commit
 	// compares the node's slice of this plan again (CRW-1288), so a plan change between this comparison and that commit releases nothing.
@@ -560,19 +579,17 @@ func (o *releaseOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpRes
 		return engine.OpResult{}, &Refusal{"accepted_node_changed", fmt.Sprintf("node %s was accepted under revision %s, which a resume superseded, and its slice of the plan is not the one revision %s was made against: record a plan revision with update_node (the acceptance becomes stale) and run again, or correct an oversized child with dag-correct", node, dataStr(old, "revision"), out.Revision)}
 	}
 	data["revision"], data["design_digest"] = out.Revision, out.DesignDigest
-	switch entry.SizeFit {
-	case "child":
-		// the child start carries the node's slice of the plan compared here, which the relay's managed release compares again (CRW-1382),
-		// as the release of an executor carries it below
-		m, err := readNow()
-		if err != nil {
-			return engine.OpResult{}, err
-		}
-		data["slice_digest"] = liveSlices(m)[node]
+	// A split with sub-tasks takes the executor path below and its row is an ordinary executor release (CRW-1459). The sized nodes that
+	// no executor takes share one unreleased row (CRW-1464): kind is the size, and no slice is recorded, since nothing is released and no
+	// relay compares one. A bundle split is the parent's to make (CRW-1437), and the lane escalates it with bundle_split_request; a split a
+	// DESIGN recorded before S-1 (CRW-1435) gave no sub-tasks, and a node such a DESIGN sized for a child, are escalated by the lane as
+	// size_split. The child row keeps its reason size_fit_child, the one the rows of old journals carry; no `child` session is started.
+	switch {
+	case entry.SizeFit == "child":
 		out.Kind, out.Reason = "child", "size_fit_child"
 		return finish()
-	case "split":
-		out.Kind, out.Reason = "split", "size_split"
+	case entry.SizeFit == "bundle_split", entry.SizeFit == "split" && len(entry.SubTasks) == 0:
+		out.Kind, out.Reason = entry.SizeFit, "size_split"
 		return finish()
 	}
 	// the criteria are those of the plan the run read; the slice is the node's slice of the plan as it is when the node is released,
@@ -715,10 +732,11 @@ func standingHold(r rows, call string) (engine.Event, bool) {
 // later one of the lane); one that was accepted is refused by Run.
 func (o *releaseOp) Proven(ctx context.Context, ev []engine.Event, row engine.Event) (bool, string, error) {
 	if !dataBool(row, "released") {
-		// a node the architect sized for a child or a split was not released to an executor on purpose: the row is the decision
-		// of the ledger revision it names, which does not change, and the child's start has a row of its own (crw.releaseChild).
-		// Asking again would start the child again.
-		if k := dataStr(row, "kind"); k == "child" || k == "split" {
+		// a node the architect sized for a bundle split, or that a DESIGN recorded before S-1 sized for a child or for a split with no
+		// sub-tasks, was not released to an executor on purpose: the row is the decision of the ledger revision it names, which does not
+		// change. A child row stays proven for the rows an old or in-flight journal holds (CRW-1464). Asking again would release the
+		// node to an executor now.
+		if k := dataStr(row, "kind"); k == "child" || k == "split" || k == "bundle_split" {
 			return true, "", nil
 		}
 		// a pinned release whose plan was not the one the audited DESIGN stood on is the decision of that moment: the lane read the

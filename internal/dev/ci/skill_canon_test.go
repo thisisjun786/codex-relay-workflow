@@ -474,44 +474,57 @@ var (
 )
 
 // TestHierarchyTableRoleIds: the one level table of hierarchy.md (CRW-1352, design-1316 section 18.1) names the four layers
-// in order with the relay role ids the store records: none for the top session and the subagents, `supervisor` for the parent
-// and `parent` for the child. The ids are not renamed, and the table says that the relay's `parent` is the child.
+// in order, in four columns, and carries no role id. The relay role ids the store records (`supervisor` for the parent, `parent`
+// for the child, `child` for no layer, none for the top session and the subagents) are in the table of the section
+// "Names used only in code" (CRW-1428). The ids are not renamed, and that section says that the relay's `parent` is the child.
 func TestHierarchyTableRoleIds(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(repoRoot(), canonRefDir, "hierarchy.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := string(data)
-	rows := tableRows(text, "Korean")
-	want := []struct{ korean, english, relay string }{
-		{"총괄", "top session", ""},
-		{"부모", "parent (repository session)", "`supervisor`"},
-		{"자식", "child (project session)", "`parent`"},
-		{"서브에이전트", "subagents (architect, executor, reviewer, explorer)", ""},
+	rows := tableRows(headingSection(text, "## The levels"), "Korean")
+	want := []struct{ korean, english string }{
+		{"총괄", "top session"},
+		{"부모", "parent (repository session)"},
+		{"자식", "child (project session)"},
+		{"서브에이전트", "subagents (architect, executor, reviewer, explorer)"},
 	}
 	if len(rows) != len(want) {
 		t.Fatalf("level table has %d rows, want %d: %v", len(rows), len(want), rows)
 	}
 	for i, w := range want {
 		row := rows[i]
-		if len(row) < 5 {
-			t.Fatalf("row %d has %d cells: %v", i+1, len(row), row)
+		if len(row) != 4 {
+			t.Fatalf("row %d has %d cells, want Korean, English, Duty, Calls: %v", i+1, len(row), row)
 		}
 		if row[0] != w.korean || row[1] != w.english {
 			t.Errorf("row %d = %q / %q, want %q / %q", i+1, row[0], row[1], w.korean, w.english)
 		}
-		if w.relay == "" {
-			if relayRoleID.MatchString(row[2]) {
-				t.Errorf("%s row names a relay role id: %q", w.english, row[2])
-			}
-		} else if !strings.HasPrefix(row[2], w.relay) {
-			t.Errorf("%s relay role id = %q, want %q", w.english, row[2], w.relay)
+		if relayRoleID.MatchString(row[2]) || relayRoleID.MatchString(row[3]) {
+			t.Errorf("%s row names a relay role id: %q", w.english, row)
+		}
+	}
+	code := headingSection(text, "## Names used only in code")
+	ids := tableRows(code, "Relay role id")
+	wantIDs := []struct{ id, names string }{
+		{"`supervisor`", "the parent (repository session)"},
+		{"`parent`", "the child (project session)"},
+		{"`child`", "no layer"},
+		{"none", "the top session and the subagents"},
+	}
+	if len(ids) != len(wantIDs) {
+		t.Fatalf("role id table has %d rows, want %d: %v", len(ids), len(wantIDs), ids)
+	}
+	for i, w := range wantIDs {
+		if len(ids[i]) != 3 || ids[i][0] != w.id || ids[i][1] != w.names {
+			t.Errorf("role id row %d = %q, want %q / %q", i+1, ids[i], w.id, w.names)
 		}
 	}
 	if !junTalks.MatchString(normalized(text)) {
 		t.Errorf("hierarchy.md does not say that the top session talks with Jun")
 	}
-	if !strings.Contains(normalized(text), "The relay role id `parent` names the child, not the parent") {
+	if !strings.Contains(normalized(code), "The relay role id `parent` names the child, not the parent") {
 		t.Errorf("hierarchy.md does not warn that the relay's `parent` is the child")
 	}
 	if n := utf8.RuneCountInString(text); n < 2000 {

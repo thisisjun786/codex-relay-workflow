@@ -1,13 +1,13 @@
 # Preparing and starting a live trial
 
-Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels).
+The sessions in this document are named by [the level table](../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels): the child is the project session, and a `child` session (a code id, not a layer) is no layer. The start record keeps the relay's role ids for its two participants, `parent` for the child and `child` for the `child` session, as [Names used only in code](../plugins/crw/skills/crw-canon/references/hierarchy.md#names-used-only-in-code) lists them.
 
-A live trial drives the installed runtime through a real completion, a real delivery to a parent,
+A live trial drives the installed runtime through a real completion, a real delivery to a child,
 a real verdict and a real correction round trip, on the shared store that ordinary work uses. The
 automatic legs of one have closed with no operator inside the window. What went wrong on the way
 there was the preparation, three times, and each failure produced a result that looked like a
-runtime problem until it was read: a supervisor that stopped polling, a parent the relay refused to
-deliver to, and a child that emitted against a relationship that had already been archived.
+runtime problem until it was read: a supervisor that stopped polling, a child the relay refused to
+deliver to, and a `child` session that emitted against a relationship that had already been archived.
 
 This document fixes what is confirmed before a trial starts, in what order the parts are built, and
 how the interventions during preparation are kept apart from the ones inside the window that
@@ -30,7 +30,7 @@ todo 44. That name is not reused here.
 | -- | -- | -- |
 | A supervisor launched with `nohup` did not survive the tool shell that started it, so emissions sat staged with nothing polling | a delivery that never arrived | the `processPersistence` reading, which requires the supervisor to be outside the caller's session and to have advanced its own witness between two observations |
 | Participants created without a turn could not be looked up at all, and the relay withheld delivery with `lifecycle_unknown` rather than sending to a recipient whose lifecycle it could not read | a recipient that never woke | the `parentLifecycle` reading, and the standby turn that the order now puts before registration |
-| A child read its assignment file before the new relationship id had been written into it, emitted against the archived relationship, and was refused with `relationship_not_active` | a child that failed for a reason it had not caused | the order gate, which compares the file, the store and the message about to be sent, before the message is sent |
+| A `child` session read its assignment file before the new relationship id had been written into it, emitted against the archived relationship, and was refused with `relationship_not_active` | a `child` session that failed for a reason it had not caused | the order gate, which compares the file, the store and the message about to be sent, before the message is sent |
 
 None of the three was a defect in the runtime. All three were preparation, and the relay refused
 each of them correctly. That is the reason this document is about preparation and says nothing
@@ -41,7 +41,7 @@ about the runtime's own guarantees.
 Six things are confirmed before the first dispatch. Four of them the checker reads itself. The
 other two it cannot: no read-only relay command performs a lifecycle read, and none returns what a
 creation receipt echoed, so those two arrive as captures the operator recorded elsewhere. The
-lifecycle capture is per participant rather than per parent: a child created without a standby turn
+lifecycle capture is per participant rather than per child: a `child` session created without a standby turn
 cannot be looked up either, and a correction is delivered to it. A capture
 is the caller's claim about a read this process did not make, it carries the time it was taken, and
 it is stale past the record's own bound, which may not exceed fifteen minutes. Every capture is
@@ -54,15 +54,15 @@ after it are being taken and readiness is published after all of them.
 | `lifecycle` | a captured host response per participant | the capture names that task, carries no error, and resolves a thread status. That is all it establishes: whether the recipient is archived, paused, usage-limited or able to accept input is what the relay reads for itself at delivery, and this reading does not stand in for it. The host answers that status as a structured object rather than a word, so either shape resolves it: a word, or that object carrying its state at `type`, which is where the relay's own adapter reads it. No particular state is required, only that one is there | a creation receipt. `thread not found`, `missing source rollout` and `no rollout found` are the three answers that fail it by name, read from the fields a host puts a refusal in rather than from anywhere in the payload, so a goal or a title describing one of them is not one. A null goal is not one of them: a healthy task without a goal has one. A `status` no state can be read from is unreadable rather than resolved, and the start is refused. JSON `false`, `0`, a null and a list are not statuses at all, and `str()` turns the first two into nonempty words; an object with keys but no state at `type`, such as `{"unexpected": true}`, is not one either. Reading any of them as an answer resolves a participant the host never resolved, which is the missing-rollout condition this reading exists to catch |
 | `capability` | the captured creation receipt, `settings-show` for the same task, and `settings-show` again for every participant immediately before the gate | each payload names the task it is about, which the creation receipt does at `threadId`, because that is where the bridge writes the thread it created and it writes no `taskId` anywhere, while the relay's own word for that same participant is `taskId` and either spelling names it, the receipt's `settings.requested` carries every requestable setting the record declares with the value it declares, its `settings.verified` is the list that request builds, so a receipt verifying something it never asked for is not one the bridge wrote, the receipt's `settings.actual` equals every setting the record declares, its `findings` are empty, every requestable setting the record declares is named among the ones the receipt says it `verified` -- a setting the creation never asked for cannot produce a finding, so empty findings would say nothing about it while `settings.actual` reported whatever the thread inherited, and the approval policy is not one of those because the contract decides it first and alone on every receipt -- and the store's own settings record is usable, complete and carries the same values, including the workspace the record states for that participant, which the store holds per task and delivery reads. The receipt and the store are also compared to each other on the access a delivery actually runs with — `cwd`, `runtimeWorkspaceRoots` and `environments`, the rest of the relay's settings contract — because a record can be usable, complete and agree on all four declared settings while those say the trial will run somewhere else. A permission profile is answered from both sides: the store's row is what a resume is compared against, so an expectation there that the creation response never named is unreadable rather than inapplicable, and only a creation and a row that both name none leaves nothing for a resume to be checked against. The receipt carries the environment selection on the created thread rather than under `settings.actual`, which is where the bridge's observable list leaves it. And every row is read again immediately before the gate: delivery reloads the current row when it sends, so a row replaced while the readings ran would be the one used | that a provider served that model. A matching echo says the host recorded the request. `usable` alone is completeness, not agreement |
 | `storeIdentity` | `doctor` with `--expect-store`, `--expect-inode`, `--expect-log` and `--expect-nonce`, and each peer's captured `doctor` | `doctor` reaches the App Server socket, the relay's own `sameStore` reports `proven` here, and every declared participant has a captured `doctor` of its own reporting `proven` about this trial's challenge, with its own store identity AND its own log location agreeing with the record. A verdict speaks only for the nonce it was given, so a peer asked about an older challenge is not this trial's proof. A participant with no capture is unknown, never absent from the count | an equal path string, or an agreeing store id and inode. The relay grades those as `unproven` on their own: proof takes a nonce another participant wrote, found beside an agreeing device and inode and an agreeing log location - the directory entry the write-ahead log is written under, which is the part a name count cannot see because a file bind mount adds a pathname without changing it |
-| `boundaries` | the record's declaration, each boundary's captured registration receipt, `git rev-parse --show-toplevel` in each declared directory, and `git rev-parse --git-common-dir` in each declared root | there are at least two boundaries whose issue key, scope reference, resolved repository root and participants are all pairwise distinct, because two boundaries sharing a participant are not two parents, no two of them are in one repository, which `--git-common-dir` settles because it resolves to a single directory for every linked worktree of one repository, each receipt names that boundary's issue, an active status, its scope reference, both endpoints' tasks and workspaces, and both endpoints among the recipients it authorises, and for the assignment being dispatched its relationship and generation as well, and each directory is the repository it was declared to be | a display name, a title or a working directory, none of which identifies anything ([OPS-7.2](../plugins/crw/skills/crw-run/references/operations.md)). Distinct roots are not distinct repositories, and neither are distinct `--show-toplevel` answers: linked worktrees of one repository have both. Run the two boundaries as worktrees of one checkout and a reading of the roots calls one repository two, which is the ordinary arrangement on a host that keeps its work in linked worktrees rather than an edge of it |
-| `assignmentState` | `assignment-find --issue` and `criteria-show`, each run once before the readings and once again immediately before the gate | the responsible relationship is the one the record names, its entry carries the same parent task, child task and execution generation with status `active`, its state is `requested` and what it waits for is `child_emits` -- the state whose generation carries no head revision, which is what a first dispatch goes into, because every later state means a head or a verdict is already there and dispatching reuses one or opens a competitor, and the criteria set matches by digest, source reference and count. The parent is compared because a relationship under another parent delivers to that parent, whatever the trial intended | a relationship id written in a file. A non-empty criteria set is not the intended one. Neither read is established by the other: the first is separated from the gate by the witness delay and every probe between them, and a relationship archived or a criteria set replaced in those seconds would otherwise be graded from an answer already stale |
+| `boundaries` | the record's declaration, each boundary's captured registration receipt, `git rev-parse --show-toplevel` in each declared directory, and `git rev-parse --git-common-dir` in each declared root | there are at least two boundaries whose issue key, scope reference, resolved repository root and participants are all pairwise distinct, because two boundaries sharing a participant are not two child (project) sessions, no two of them are in one repository, which `--git-common-dir` settles because it resolves to a single directory for every linked worktree of one repository, each receipt names that boundary's issue, an active status, its scope reference, both endpoints' tasks and workspaces, and both endpoints among the recipients it authorises, and for the assignment being dispatched its relationship and generation as well, and each directory is the repository it was declared to be | a display name, a title or a working directory, none of which identifies anything ([OPS-7.2](../plugins/crw/skills/crw-run/references/operations.md)). Distinct roots are not distinct repositories, and neither are distinct `--show-toplevel` answers: linked worktrees of one repository have both. Run the two boundaries as worktrees of one checkout and a reading of the roots calls one repository two, which is the ordinary arrangement on a host that keeps its work in linked worktrees rather than an edge of it |
+| `assignmentState` | `assignment-find --issue` and `criteria-show`, each run once before the readings and once again immediately before the gate | the responsible relationship is the one the record names, its entry carries the same `parentTaskId`, `childTaskId` and execution generation with status `active`, its state is `requested` and what it waits for is `child_emits` -- the state whose generation carries no head revision, which is what a first dispatch goes into, because every later state means a head or a verdict is already there and dispatching reuses one or opens a competitor, and the criteria set matches by digest, source reference and count. The child is compared because a relationship under another child delivers to that child, whatever the trial intended | a relationship id written in a file. A non-empty criteria set is not the intended one. Neither read is established by the other: the first is separated from the gate by the witness delay and every probe between them, and a relationship archived or a criteria set replaced in those seconds would otherwise be graded from an answer already stale |
 
 Every fact a reading later compares a payload against is required in the record itself, before any
 command runs. Two absent values compare equal to each other, so a record that stated nothing would
 have agreed with a payload that carried nothing, and the run would have reported a precondition
 nobody established.
 
-Every boundary declares exactly one parent and exactly one child, the one being dispatched and the others alike. The assignment being dispatched belongs to one of the declared boundaries, and its parent and child are that boundary's own; otherwise the readings would cover one set of tasks while the dispatch went to another. A captured registration is compared as a whole registration, because one agreeing on a scope and two task names while carrying another issue, relationship, generation or an archived status is a stale registration whose authorised roots belong to something else.
+Every boundary declares exactly one child and exactly one `child` session, the one being dispatched and the others alike. The assignment being dispatched belongs to one of the declared boundaries, and its child and `child` session are that boundary's own; otherwise the readings would cover one set of tasks while the dispatch went to another. A captured registration is compared as a whole registration, because one agreeing on a scope and two task names while carrying another issue, relationship, generation or an archived status is a stale registration whose authorised roots belong to something else.
 
 A reading that could not be taken answers `unknown` and refuses the start. It never answers false,
 and it never takes the value of the reading beside it. The distinction is the whole point: a
@@ -92,14 +92,14 @@ what makes the `parentLifecycle` reading answerable at all.
 is the first mutating step, it mints the relationship id, and it either replays an existing
 relationship or refuses the whole registration without writing anything else. Everything after it
 reads what it returned. An issue that already holds an active or paused assignment cannot acquire a
-second registered child, so two parents on one store need two distinct issues; a trial that binds
+second registered `child` session, so two children on one store need two distinct issues; a trial that binds
 its assignment onto a real backlog issue puts a trial row in the path of real coordination, and the
 genuine project identity travels in the scope reference instead.
 
 **Write the start record from what `register` returned, not from what the previous window left.**
-The assignment file in the child's workspace is the file the third failure read too early. It is
+The assignment file in the `child` session's workspace is the file the third failure read too early. It is
 written after registration, from the returned relationship id, and the dispatch message carries the
-same identity in its own text, so the child's first turn does not depend on reading that file at
+same identity in its own text, so the `child` session's first turn does not depend on reading that file at
 all.
 
 **Preflight last, immediately before the dispatch.** The record declares the window this dispatch opens, and
@@ -153,7 +153,7 @@ observed failures were checks made too early, or not made.
                                                               contains each artifact path
 
 A file written for a previous relationship carries that relationship's id, and that is the
-comparison that catches it. The artifacts compared are the file's own: the file is what the child
+comparison that catches it. The artifacts compared are the file's own: the file is what the `child` session
 reads, so a missing or empty list there is a mismatch rather than an occasion to fall back on what
 the record intended. Every artifact path is absolute and normalised, and its containment in an authorised root is
 decided on the path rather than on the place it resolves to, because that is the contract the
@@ -177,7 +177,7 @@ no read-only command returns them; what actually enforces them is the manifest `
 is where it belongs.
 
 A read-only checker makes this race **refusable, not impossible**. It reads at one moment and the
-child reads at a later one. What makes it impossible is the order: register first, write the file
+`child` session reads at a later one. What makes it impossible is the order: register first, write the file
 from what register returned, carry the same identity in the message, and leave the relay's own
 `relationship_not_active` refusal as the guard it already is. The gate's job is to stop a dispatch
 that would fail, and to say which field disagreed.
@@ -225,8 +225,8 @@ What this accounting cannot see is an intervention nobody wrote down.
 Everything the trial writes for itself lives under one trial root outside every git worktree: the
 start record, the captures, the ledger and the result. The shared state directory the relay probes
 reach is held to the same rule, because operational state never lives inside a repository and the
-first command to open one there would construct it. The assignment file is the one in the owning child's own workspace, because the file under test is
-the file that child reads, and a matching copy anywhere else is a different file. It and the dispatch
+first command to open one there would construct it. The assignment file is the one in the owning `child` session's own workspace, because the file under test is
+the file that `child` session reads, and a matching copy anywhere else is a different file. It and the dispatch
 message sit where that workspace is, outside this repository. Paths are compared after symbolic links are followed, so a
 link out of the trial root is the escape it looks like rather than a spelling that passes, and no
 private record may sit in a repository nested under the root either: the rule is that operational

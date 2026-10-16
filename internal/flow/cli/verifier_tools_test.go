@@ -31,6 +31,8 @@ func TestCILocalIntegrationRunsTheMergedTreesOwnCrwDev(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(tree, "cmd", "crw-dev"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// a caller TMPDIR that leaves ci local room (here none: /tmp) is no note of its own either (CRW-1557)
+	t.Setenv("TMPDIR", "")
 	var notes bytes.Buffer
 	verify := CILocalIntegration(crwconfig.VerifierTools{GoRoot: root}, &notes)
 	env := []string{"CRW_VERIFY_HEAD=h1", "CRW_VERIFY_BASE=b1", "CRW_VERIFY_RECORD=/r/record.json"}

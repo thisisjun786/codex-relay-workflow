@@ -34,7 +34,8 @@ type Bridge struct {
 	Ledger *ledger.Ledger
 	Policy ExecutionPolicy
 	mu     sync.Mutex
-	// waiting, when set by a test, runs as a mutation starts to wait for the mutation lock.
+	// waiting, when set by a test, runs as a call starts to wait for the mutation lock: a mutation, or the retirement of
+	// a create_thread reservation made before prompts were required (retireBeforePrompt).
 	waiting func(requestID string)
 }
 
@@ -126,6 +127,9 @@ type mutation struct {
 	legacy            func() map[string]any
 	// reconcile corrects fields an action wrote in advance, once status and effects exist.
 	reconcile func(ledger.Receipt)
+	// refuseBegin, when set, is asked inside Begin's own transaction before an attempt begins (ledger.BeginUnless), so a
+	// row that changed after the lookup, in another process sharing the ledger, is judged as Begin finds it.
+	refuseBegin func(held ledger.Receipt) error
 }
 
 func (b *Bridge) mutate(ctx context.Context, op mutation) (ledger.Receipt, error) {
@@ -147,7 +151,7 @@ func (b *Bridge) mutate(ctx context.Context, op mutation) (ledger.Receipt, error
 	if err := op.validate(); err != nil {
 		return nil, err
 	}
-	fresh, receipt, err := b.Ledger.Begin(ctx, op.requestID, op.method, op.params, op.legacy)
+	fresh, receipt, err := b.Ledger.BeginUnless(ctx, op.requestID, op.method, op.params, op.legacy, op.refuseBegin)
 	if err != nil {
 		return nil, err
 	}

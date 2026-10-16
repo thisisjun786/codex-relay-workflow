@@ -52,6 +52,132 @@ func TestEndpoint_whenAliasImportsLegacy(t *testing.T) {
 		t.Fatalf("canonical=%s receipt=%v err=%v", canonical, got, err)
 	}
 }
+
+// CRW-1561: an alias row that never dispatched (not_attempted) is imported on the first start through the alias, and
+// canonical's later state of the same request (here its retirement) is no conflict when the next start imports the alias
+// ledger again. Another fingerprint, or an alias row past not_attempted that canonical changed, is still the conflict.
+func TestEndpoint_whenAliasReservationIsRetiredTheNextStartImportsWithoutConflict(t *testing.T) {
+	ctx := context.Background()
+	promptless := map[string]any{"cwd": "/resolved", "prompt": nil}
+	// fixture makes a socket, an alias to it and a state directory, and answers the alias ledger's and the canonical
+	// ledger's file names.
+	fixture := func(t *testing.T) (alias, state, aliasLedger, canonicalLedger string) {
+		t.Helper()
+		dir := t.TempDir()
+		socket := filepath.Join(dir, "socket")
+		if err := os.WriteFile(socket, nil, 0600); err != nil {
+			t.Fatal(err)
+		}
+		alias = filepath.Join(dir, "alias")
+		if err := os.Symlink(socket, alias); err != nil {
+			t.Fatal(err)
+		}
+		state = filepath.Join(dir, "state")
+		name := func(path string) string {
+			abs, err := filepath.Abs(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			hash := sha256.Sum256([]byte(abs))
+			return filepath.Join(state, "operations-"+hex.EncodeToString(hash[:])[:16]+".sqlite3")
+		}
+		return alias, state, name(alias), name(socket)
+	}
+	open := func(t *testing.T, path string) *Ledger {
+		t.Helper()
+		l, err := Open(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return l
+	}
+	conflict := func(aliasLedger string) string {
+		return `Conflicting retained request "id" in legacy socket ledger ` + aliasLedger + "; no requests will be dispatched. Preserve both ledgers."
+	}
+
+	t.Run("a retired not_attempted reservation imports again without conflict", func(t *testing.T) {
+		alias, state, aliasLedger, _ := fixture(t)
+		legacy := open(t, aliasLedger)
+		seed(t, legacy, "id", promptless, "not_attempted", false)
+		legacy.Close()
+		_, l, err := Endpoint(alias, state)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, err := l.Get(ctx, "id"); err != nil || got["status"] != "not_attempted" {
+			t.Fatalf("first import: %v %v", got, err)
+		}
+		retired, _, err := l.Retire(ctx, "id", "create_thread", promptless, nil, "retired before a prompt was required")
+		if err != nil || !retired {
+			t.Fatalf("retire: %v %v", retired, err)
+		}
+		settled := raw(t, l, "id")
+		l.Close()
+		_, l, err = Endpoint(alias, state)
+		if err != nil {
+			t.Fatalf("the next start refused the retired reservation: %v", err)
+		}
+		defer l.Close()
+		if now := raw(t, l, "id"); now != settled {
+			t.Fatalf("the retired receipt was replaced:\n got: %s\nwant: %s", now, settled)
+		}
+	})
+
+	t.Run("another fingerprint is still the conflict", func(t *testing.T) {
+		alias, state, aliasLedger, canonicalLedger := fixture(t)
+		legacy := open(t, aliasLedger)
+		seed(t, legacy, "id", promptless, "not_attempted", false)
+		legacy.Close()
+		canonical := open(t, canonicalLedger)
+		seed(t, canonical, "id", map[string]any{"cwd": "/other", "prompt": nil}, "not_attempted", false)
+		before := raw(t, canonical, "id")
+		canonical.Close()
+		_, l, err := Endpoint(alias, state)
+		if err == nil {
+			l.Close()
+			t.Fatal("another fingerprint imported without conflict")
+		}
+		if err.Error() != conflict(aliasLedger) {
+			t.Fatalf("refusal\n got: %v\nwant: %s", err, conflict(aliasLedger))
+		}
+		canonical = open(t, canonicalLedger)
+		defer canonical.Close()
+		if now := raw(t, canonical, "id"); now != before {
+			t.Fatalf("the canonical receipt changed:\n got: %s\nwant: %s", now, before)
+		}
+	})
+
+	// The scope of CRW-1561 item 2: a row that had progressed past not_attempted in the alias ledger and was then changed
+	// in canonical is still the conflict (follow-up F1 changes this assertion when it lands).
+	t.Run("an alias row saved started and then accepted in canonical is still the conflict", func(t *testing.T) {
+		alias, state, aliasLedger, _ := fixture(t)
+		legacy := open(t, aliasLedger)
+		seed(t, legacy, "id", promptless, "started", false)
+		legacy.Close()
+		_, l, err := Endpoint(alias, state)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := l.Get(ctx, "id")
+		if err != nil || got["status"] != "started" {
+			t.Fatalf("first import: %v %v", got, err)
+		}
+		got["status"] = "accepted"
+		if _, err := l.Save(ctx, got); err != nil {
+			t.Fatal(err)
+		}
+		l.Close()
+		_, l, err = Endpoint(alias, state)
+		if err == nil {
+			l.Close()
+			t.Fatal("a changed started row imported without conflict")
+		}
+		if err.Error() != conflict(aliasLedger) {
+			t.Fatalf("refusal\n got: %v\nwant: %s", err, conflict(aliasLedger))
+		}
+	})
+}
+
 func TestEndpoint_whenDanglingAliasResolvesTarget(t *testing.T) {
 	// Given: an alias pointing to a socket that does not exist yet.
 	dir := t.TempDir()

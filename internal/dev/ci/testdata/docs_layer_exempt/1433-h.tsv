@@ -1,0 +1,4 @@
+# CRW-1433 unit 1433-h: bare "supervisor" that names a process, not a layer.
+docs/relay/contention-regression.md	drives the supervisor past four	the service supervisor process that FourHourBoundary in tests/test_service.py drives past four hours of scripted time
+docs/relay/contention-regression.md	shows the supervisor preserving records	the same service supervisor process that keeps records across worker replacements
+docs/relay/contention-regression.md	shows the supervisor carrying that row	the same service supervisor process that carries the owed coordination row across replacements

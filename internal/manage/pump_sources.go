@@ -64,11 +64,11 @@ func (pumpRolloutSource) Name() string { return "rollout" }
 // none. The thread names one path component; a thread carrying a separator or a glob character is
 // refused rather than allowed to widen the pattern.
 func pumpRolloutPath(e *Env, thread string) (string, error) {
-	if err := deliverPathComponentLimit(thread, "parent thread", deliverThreadLimit); err != nil {
+	if err := deliverPathComponentLimit(thread, "자식 thread", deliverThreadLimit); err != nil {
 		return "", err
 	}
 	if strings.ContainsAny(thread, "*?[]") {
-		return "", fmt.Errorf("crw manage pump: parent thread %q carries a glob character", thread)
+		return "", fmt.Errorf("crw manage pump: 자식 thread %q carries a glob character", thread)
 	}
 	matches, err := rootGlob(coreHomeDir(e, "CODEX_HOME", ".codex"), pumpRolloutSessions, "*", "*", "*", "*"+thread+".jsonl")
 	if err != nil {

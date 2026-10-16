@@ -44,13 +44,19 @@ const (
 // CRW-1275) restricts the delivery to steering the thread's active turn: it never starts a turn, a
 // request id reaches the outbox only right before steer_thread is called with it, and a retry steers
 // the turn the call observed.
+//
+// SendUnrecordedAtCap (CRW-1548) is a call parameter, never written to the outbox. With it, an unsettled record whose request id
+// the bridge never recorded and whose retry cap is spent is sent under that same id: the id was minted and saved, and the process
+// stopped before the send. Nothing is keyed to the id at the bridge, so the send cannot duplicate an attempt, and no new id is minted
+// and no retry is spent. Without it such a record settles refused. Only send-parent sets it, for a summary notice (summary-<id>).
 type Message struct {
-	LogicalID string
-	Thread    string
-	Text      string
-	Role      string
-	Settings  coreSettings
-	SteerOnly bool
+	LogicalID           string
+	Thread              string
+	Text                string
+	Role                string
+	Settings            coreSettings
+	SteerOnly           bool
+	SendUnrecordedAtCap bool
 }
 
 // Outcome is what a delivery settled on: its class, the request id it stands under, and the

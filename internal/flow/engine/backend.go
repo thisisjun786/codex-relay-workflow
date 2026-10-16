@@ -72,6 +72,9 @@ type ThreadSpec struct {
 	Send int
 	// QA is set on the thread of a QA capture call: the backend gives it the QA overlay and no native helper.
 	QA bool
+	// Tools are the run's repository tools (Config.Tools): the backend sets them in the thread's shell and names them in its
+	// prompt. Nil sets and names nothing.
+	Tools *RepositoryTools
 }
 
 // ThreadInfo is what the backend reads back about a created thread: its id and the pair it is configured with.
@@ -101,6 +104,9 @@ type TurnSpec struct {
 	Repair bool
 	// QA is set on a turn of a QA capture call's thread (the capture turn and the turns that continue it).
 	QA bool
+	// Tools are the run's repository tools for this turn (nil: none). A backend that loads the turn's thread again (a cold
+	// thread/resume after an App Server restart) gives them to its shell there, as the thread's creation did (CRW-1559).
+	Tools *RepositoryTools
 	// Started is called once the host has accepted the turn and named it; the packet counts as delivered from then on.
 	Started func(turnID string)
 }
@@ -335,6 +341,8 @@ type ForkSpec struct {
 	AutoCompactTokenLimit *int64
 	// Send is the send ordinal of the creation request (see ThreadSpec).
 	Send int
+	// Tools are the run's repository tools, as ThreadSpec.Tools.
+	Tools *RepositoryTools
 }
 
 // Forker is implemented by a backend that can fork a thread at a turn into another directory.

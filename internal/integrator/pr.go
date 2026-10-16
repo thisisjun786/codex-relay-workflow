@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -25,10 +26,12 @@ import (
 // "review not configured" and lands, and a review that gives no verdict is recorded the same way. Only needs_changes refuses.
 
 // PullRequestSource is what the queue reads of a pull request and where it writes the record of its landing: the tracking
-// adapter (tracking.GitHub) in production.
+// adapter (tracking.GitHub) in production. HasComment is how a pass finds a landing comment that already went up before it posts
+// the comment again.
 type PullRequestSource interface {
 	PullRequest(ctx context.Context, ref tracking.Ref) (tracking.PullRequest, error)
 	Comment(ctx context.Context, ref tracking.Ref, header, text string) error
+	HasComment(ctx context.Context, ref tracking.Ref, header string) (bool, error)
 }
 
 var _ PullRequestSource = (*tracking.GitHub)(nil)
@@ -223,40 +226,50 @@ func (r *Runner) firstContaining(ctx context.Context, head string) string {
 }
 
 // pushedRun is the summary of this queue's run that pushed the entry's head (its tag and summary), nil when no run file says so.
-// A run whose summary is still the pushing marker (the signal ended it during the push) counts when its head is in the branch. A
-// git that cannot answer whether a marker's head is in the branch is an error, never "no pushed run": the caller holds the entry
-// and the marker stays for the next pass.
+// The runs are read newest first (by tag; equal tags keep the order of their file names) and the first that names a push wins: a
+// pushed summary, or a pushing marker (the signal ended the run during the push) whose head is in the branch. A marker whose head is
+// not in the branch is passed over for older evidence. A git that cannot answer whether a marker's head is in the branch is an
+// error, never "no pushed run": the caller holds the entry and the marker stays for the next pass. Because the scan stops at the
+// first win, only a marker newer than every valid evidence can hold the entry; an unreadable marker behind a newer pushed summary
+// or a newer marker in the branch is never asked.
 func (r *Runner) pushedRun(ctx context.Context, e Entry) (*Summary, error) {
 	paths, _ := filepath.Glob(filepath.Join(r.Cfg.RunsDir, "*.summary.json"))
-	var found *Summary
+	var runs []Summary
 	for _, p := range paths {
 		data, err := os.ReadFile(p)
 		if err != nil {
 			continue
 		}
 		var s Summary
-		if json.Unmarshal(data, &s) == nil && s.Merged == e.Spec() && headRE.MatchString(s.Head) && (found == nil || s.Tag > found.Tag) {
-			switch s.Result {
-			case "pushed":
-				found = &s
-			case resultPushing:
-				in, err := r.markerInBranch(ctx, s.Head)
-				if err != nil {
-					return nil, fmt.Errorf("whether the pushing marker of run %s (head %s) is in %s could not be read: %w", s.Tag, s.Head, r.Cfg.Branch, err)
-				}
-				if in {
-					found = &s
-				}
+		if json.Unmarshal(data, &s) == nil && s.Merged == e.Spec() && headRE.MatchString(s.Head) {
+			runs = append(runs, s)
+		}
+	}
+	sort.SliceStable(runs, func(i, j int) bool { return runs[i].Tag > runs[j].Tag })
+	for i := range runs {
+		s := runs[i]
+		switch s.Result {
+		case "pushed":
+			return &s, nil
+		case resultPushing:
+			in, err := r.markerInBranch(ctx, s.Head)
+			if err != nil {
+				return nil, fmt.Errorf("whether the pushing marker of run %s (head %s) is in %s could not be read: %w", s.Tag, s.Head, r.Cfg.Branch, err)
+			}
+			if in {
+				return &s, nil
 			}
 		}
 	}
-	return found, nil
+	return nil, nil
 }
 
-// markerInBranch says whether head, the head a pushing marker names, is in the remote branch. A commit the checkout does not have
-// was never pushed (false): "git rev-parse -q --verify head^{commit}" exits 1 for an absent object. A git that fails otherwise (it
-// cannot start, the context ended, or the ancestor check or the probe exits with a status other than the ones above, 128 among
-// them) is an error: a repository that cannot answer is not a commit that was never pushed.
+// markerInBranch says whether head, the head a pushing marker names, is in the remote branch. When the ancestor check cannot answer
+// (it exits with a status other than 0 and 1, 128 among them), "git cat-file -e head" asks whether the checkout has the object at
+// all (the bare sha: a peeled "head^{commit}" would read the object): status 1 means the checkout lacks the commit, which was never
+// pushed (false); status 0 means the object is there, so the failed ancestor check is a repository or object error, an error. Any
+// other status, and a git that cannot start or whose context ended, is an error too: a repository that cannot answer is not a
+// commit that was never pushed. Only exit codes are read, never stderr, so GIT_TRACE cannot change the answer.
 func (r *Runner) markerInBranch(ctx context.Context, head string) (bool, error) {
 	c := r.Cfg
 	rc, err := r.git(ctx, c.Checkout, nil, "merge-base", "--is-ancestor", head, c.remoteRef())
@@ -269,7 +282,7 @@ func (r *Runner) markerInBranch(ctx context.Context, head string) (bool, error) 
 	case 1:
 		return false, nil
 	}
-	have, err := r.git(ctx, c.Checkout, nil, "rev-parse", "-q", "--verify", head+"^{commit}")
+	have, err := r.git(ctx, c.Checkout, nil, "cat-file", "-e", head)
 	if err != nil {
 		return false, err
 	}
@@ -279,7 +292,7 @@ func (r *Runner) markerInBranch(ctx context.Context, head string) (bool, error) 
 	case 1:
 		return false, nil
 	}
-	return false, fmt.Errorf("git merge-base --is-ancestor exited %d and git rev-parse --verify exited %d", rc, have)
+	return false, fmt.Errorf("git merge-base --is-ancestor exited %d and git cat-file -e exited %d", rc, have)
 }
 
 // recoverLanding writes the one landing record of a pull request entry whose head is in the branch with no record (result
@@ -575,7 +588,7 @@ func (r *Runner) publishLanding(ctx context.Context, l *Landing) error {
 // it became. A signal that ends the pass does not cancel the call (the push already happened).
 func (r *Runner) postLandingComment(ctx context.Context, l *Landing) {
 	ref := tracking.Ref{Repo: r.Cfg.PullRequestRepo, Number: l.Number}
-	if err := r.PullRequests.Comment(context.WithoutCancel(ctx), ref, "[dev queue · "+l.Tag+"]", landingText(l)); err != nil {
+	if err := r.PullRequests.Comment(context.WithoutCancel(ctx), ref, landingHeader(l.Tag), landingText(l)); err != nil {
 		l.Comment = commentRefused + err.Error()
 		r.logf("%s: the landing record could not be written on the pull request: %v", ref, err)
 	} else {
@@ -584,15 +597,16 @@ func (r *Runner) postLandingComment(ctx context.Context, l *Landing) {
 }
 
 // repostLandingComment posts the comment of the landing record of e that an earlier pass left "not written yet" (it ended between
-// the record and the comment call) and writes the record again. A record whose comment is written or was refused, and an entry with
-// no record (its done/ file alone), are left as they are. It answers why the entry is held, "" when it is not: a queue with no
-// tracking adapter cannot post the comment, so the entry waits in pending with the record as it is; a record that cannot be written
-// after the comment went up holds the entry too, since done/ must not stand over a record that still says "not written yet". posted is
-// true when the comment went up and the record says so: that is work the pass did. A comment the host refused is recorded and its
-// entry is done, but posted stays false. It is
-// called only by a pass, never by --enqueue-pr or --dry-run. One window stays: a pass that ends between the comment call and the
-// second write, or whose second write fails, leaves "not written yet" for a comment that exists, and the next pass posts it a second
-// time.
+// the record and the comment call, or between the comment call and the second write of the record) and writes the record again.
+// Before it posts, it looks for the comment on the pull request by its header [dev queue · <tag>]: a comment that is there is not
+// posted a second time, the record just learns it is written. A lookup that fails holds the entry, since posting without knowing
+// could double the comment. A record whose comment is written or was refused, and an entry with no record (its done/ file alone),
+// are left as they are. It answers why the entry is held, "" when it is not: a queue with no tracking adapter cannot post the
+// comment, so the entry waits in pending with the record as it is; a record that cannot be written after the comment went up (or
+// was found) holds the entry too, since done/ must not stand over a record that still says "not written yet". posted is true when
+// the comment went up in this pass and the record says so: that is work the pass did. A comment found on the pull request and a
+// comment the host refused are recorded and their entry is done, but posted stays false. It is called only by a pass, never by
+// --enqueue-pr or --dry-run.
 func (r *Runner) repostLandingComment(ctx context.Context, e Entry) (held string, posted bool) {
 	path := r.findLanding(e.PR, e.Head)
 	if path == "" {
@@ -609,6 +623,23 @@ func (r *Runner) repostLandingComment(ctx context.Context, e Entry) (held string
 	if r.PullRequests == nil {
 		return "the landing comment of " + l.Tag + " cannot be posted, it stays pending: the queue has no tracking adapter", false
 	}
+	ref := tracking.Ref{Repo: r.Cfg.PullRequestRepo, Number: l.Number}
+	found, err := r.PullRequests.HasComment(ctx, ref, landingHeader(l.Tag))
+	if err != nil {
+		held = "the landing comment of " + l.Tag + " could not be looked up on the pull request, it stays pending: " + err.Error()
+		r.logf("%s %s: %s", e.Key, e.Head, held)
+		return held, false
+	}
+	if found {
+		l.Comment = commentWritten
+		if err := r.writeLanding(&l); err != nil {
+			held = "the landing comment of " + l.Tag + " is on the pull request but its record could not be written, it stays pending: " + err.Error()
+			r.logf("%s %s: %s", e.Key, e.Head, held)
+			return held, false
+		}
+		r.logf("%s %s: the landing comment of %s was found on the pull request", e.Key, e.Head, l.Tag)
+		return "", false
+	}
 	r.postLandingComment(ctx, &l)
 	if err := r.writeLanding(&l); err != nil {
 		held = "the landing comment of " + l.Tag + " was posted (" + l.Comment + ") but its record could not be written, it stays pending: " + err.Error()
@@ -618,6 +649,9 @@ func (r *Runner) repostLandingComment(ctx context.Context, e Entry) (held string
 	r.logf("%s %s: the landing comment of %s was posted (%s)", e.Key, e.Head, l.Tag, l.Comment)
 	return "", l.Comment == commentWritten
 }
+
+// landingHeader is the first line of the comment of the landing record tagged tag.
+func landingHeader(tag string) string { return "[dev queue · " + tag + "]" }
 
 // writeLanding writes <tag>.pr.json through <tag>.pr.json.new and answers why it could not.
 func (r *Runner) writeLanding(l *Landing) error {

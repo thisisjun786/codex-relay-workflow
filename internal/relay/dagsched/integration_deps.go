@@ -21,6 +21,12 @@ import (
 // with the batch's CRW_VERIFY_* variables added to the inherited environment. A non-zero exit is a failing run; a command that cannot
 // start is an IntegrationVerifierHostError.
 func CommandVerifier(argv []string) IntegrationBatchVerifier {
+	return CommandVerifierEnv(argv, os.Environ)
+}
+
+// CommandVerifierEnv is CommandVerifier over the environment base gives instead of the inherited one (CRW-1463): the command runs with
+// base's variables minus GIT_*, then the batch's. A caller that must not pass its own environment to the command builds base itself.
+func CommandVerifierEnv(argv []string, base func() []string) IntegrationBatchVerifier {
 	return func(ctx context.Context, dir string, env []string) error {
 		if len(argv) == 0 || argv[0] == "" {
 			return &IntegrationVerifierHostError{Detail: "the verification command names no program"}
@@ -28,7 +34,8 @@ func CommandVerifier(argv []string) IntegrationBatchVerifier {
 		cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 		cmd.Dir = dir
 		// inherited GIT_* variables would redirect the command's git reads to another repository, so they are dropped
-		for _, kv := range os.Environ() {
+		cmd.Env = []string{}
+		for _, kv := range base() {
 			if !strings.HasPrefix(kv, "GIT_") {
 				cmd.Env = append(cmd.Env, kv)
 			}

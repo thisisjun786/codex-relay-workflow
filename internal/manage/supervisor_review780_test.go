@@ -234,7 +234,8 @@ func TestSupervisorReview780HelpPipeEpipeExitsOne(t *testing.T) {
 var supervisorReview780ExpectedUsage = map[string]string{
 	"supervisor --help": "usage: crw manage supervisor {register,show} ...\n" +
 		"  register\tbind the calling management thread (--task, else CODEX_THREAD_ID, else the configured one) as its own management seat and record its pair\n" +
-		"  show\t\tprint the recorded binding and the recorded settings\n",
+		"  show\t\tprint the recorded binding and the recorded settings\n" +
+		"supervisor (부모): the repository session's management seat\n",
 	"supervisor register --help": "usage: crw manage supervisor register [--task THREAD] [--host HOST]\n",
 }
 

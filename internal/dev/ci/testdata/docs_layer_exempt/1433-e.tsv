@@ -1,0 +1,19 @@
+# CRW-1433 unit 1433-e: bare "supervisor" in docs/relay/operations.md that names the service supervisor process (the daemon's lock-holding parent process of the workers), not a session layer.
+# Format: path<TAB>phrase<TAB>reason. Every layer use of the word was rewritten; what is left is this process.
+docs/relay/operations.md	**supervisor** owns the locks	the defining use of the service supervisor process
+docs/relay/operations.md	The supervisor passes	the service supervisor passes the monotonic deadline to its worker
+docs/relay/operations.md	the supervisor it launches	`service start --deadline` bounds the supervisor process it launches
+docs/relay/operations.md	its supervisor reads	a worker's supervisor process reads the exit code 5
+docs/relay/operations.md	supervisor and worker	`service stop` confirms both processes of the service exited
+docs/relay/operations.md	the foreground supervisor	`service run` is the foreground supervisor process
+docs/relay/operations.md	is the supervisor: it holds	`service run` is the supervisor process that holds the locks
+docs/relay/operations.md	by the supervisor and inherited	the supervisor process holds both locks
+docs/relay/operations.md	dead supervisor with	a dead supervisor process with a live worker
+docs/relay/operations.md	The supervisor acquires both locks	the supervisor process acquires the locks
+docs/relay/operations.md	if the supervisor has already gone	the worker checks that its supervisor process is alive
+docs/relay/operations.md	a supervisor mid-start	a supervisor process that is starting
+docs/relay/operations.md	its supervisor recorded	the storeId the supervisor process recorded
+docs/relay/operations.md	leaves the supervisor untouched	a refused stop leaves the supervisor process alone
+docs/relay/operations.md	A single supervisor and a single store	one service supervisor process serves every assignment
+docs/relay/operations.md	only the supervisor's own bound	the supervisor process's own bound ends the service
+docs/relay/operations.md	The supervisor runs recovery	the service supervisor process runs recovery before its first worker

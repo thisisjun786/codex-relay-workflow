@@ -23,7 +23,7 @@ import (
 
 const firstTurnModel, firstTurnEffort = "anthropic/claude-opus-5-5", "xhigh"
 
-// bridgeRowAtFirstTurn runs a real bridge's create_thread for an issue child with the given title against a fake host and
+// bridgeRowAtFirstTurn runs a real bridge's create_thread for a `child` session with the given title against a fake host and
 // returns the row its ledger holds at the moment turn/start reaches the host: what a process killed right after sending
 // turn/start leaves.
 func bridgeRowAtFirstTurn(t *testing.T, title string, refuseName bool) map[string]any {

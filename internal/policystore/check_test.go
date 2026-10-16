@@ -8,6 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
+	"github.com/thisisjun786/codex-relay-workflow/internal/layername"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/scope"
 )
@@ -280,5 +283,33 @@ func TestCheckAcceptsOneAliasSpellingOnItsOwn(t *testing.T) {
 		if result := Check([]byte(presenceOnly), digestOf(presenceOnly), change); !result.Valid {
 			t.Fatalf("a single alias spelling was refused: %s -> %+v", raw, result)
 		}
+	}
+}
+
+// TestPolicyRoleErrorNamesTheLayers is CRW-1478: the editor's role refusals name the layer of each
+// relay role id they show. An unknown role lists the supported ids as the execution policy does,
+// and the supervisor refusal quotes the id with its layer name. Neither carries a bare role word.
+func TestPolicyRoleErrorNamesTheLayers(t *testing.T) {
+	rows := []struct {
+		name, role, want string
+	}{
+		{"unknown role", "bogus", "\"bogus\" is not a role; supported are [\"child\", \"parent\", \"supervisor\"] (`child` session, 자식, 부모)"},
+		{"supervisor pairs", execution.Supervisor, "role 'supervisor' (부모) cannot declare a model or a pair: its model and effort are the user's own selection, so its expectation is the recorded authorization"},
+	}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			// Given: a pair change for the role. When: it is applied. Then: the refusal names the layers.
+			change := Change{Kind: KindSetRolePairs, Role: row.role, Pairs: []Pair{{Model: "m", Effort: "high"}}}
+			_, _, err := apply(pyjson.Object{}, change)
+			if err == nil {
+				t.Fatalf("role %q: change applied", row.role)
+			}
+			if got := err.Error(); got != row.want {
+				t.Fatalf("got  %q\nwant %q", got, row.want)
+			}
+			if hits := layername.Find(err.Error()); len(hits) > 0 {
+				t.Fatalf("%q carries bare role words %v", err.Error(), hits)
+			}
+		})
 	}
 }

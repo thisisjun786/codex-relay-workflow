@@ -225,3 +225,26 @@ func TestAgentReadsTheDeclaredFamilyOfAUnitCheckCanonically(t *testing.T) {
 		t.Fatalf("dag_agent_acceptances holds %d rows after the refusals, want none", n)
 	}
 }
+
+// CRW-1459: a split node's sub-tasks are committed with no unit check between them, and the node's acceptance rests on the one check of
+// its whole change, the committed check that names the head: with no such check the node is refused reviewer_missing (its checkpoint
+// commits were never checked), and the verified check of the whole change on the head accepts it.
+func TestAgentTakesTheCheckOfTheWholeChangeAsTheBasis(t *testing.T) {
+	t.Parallel()
+	one := func(n string) agentSpec { return agentSpec{name: n, files: map[string]string{n + ".txt": n + "\n"}} }
+	k := newAgentKit(t, one("unchecked"), one("whole"))
+	criteria := releaseCriteriaDigest()
+
+	k.author("unchecked", authorModel)
+	_, err := k.accept("unchecked")
+	wantAgentRefusal(t, "a split node with no check of its whole change", err, contract.RefusalDispositionConflict, ReviewerMissing)
+
+	k.author("whole", authorModel)
+	call := k.unitCheck(unitCheckCall{node: "whole", res: passingUnitCheck(), commit: k.heads["whole"], tree: k.treeOf(k.heads["whole"]), criteria: criteria})
+	if _, err := k.accept("whole"); err != nil {
+		t.Fatalf("accept on the check of the whole change: %v", err)
+	}
+	if a := k.currentAcceptance("whole").Agent; a.ReviewerCallID != call {
+		t.Fatalf("the acceptance stands on %s, want the check of the whole change %s", a.ReviewerCallID, call)
+	}
+}

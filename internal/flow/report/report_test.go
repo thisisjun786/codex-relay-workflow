@@ -378,3 +378,35 @@ func TestJunDecisionReportFindsTheManagerAfterItRegistersItsManagementSeat(t *te
 		t.Fatalf("recipient %+v, want the manager through its management seat", res.Recipient)
 	}
 }
+
+// TestReporterWritesTheCrosscheckAndReflectionOfAClose (CRW-1473): the body of a milestone report says the crosscheck the close rests on,
+// on one line, and the reflection of the close; a close that has neither says none for each.
+func TestReporterWritesTheCrosscheckAndReflectionOfAClose(t *testing.T) {
+	v := []byte(`{"verdict": "verified",  "guide_rev": "crw-crosscheck/1", "head": "t1"}`)
+	rep := ops.Report{Plan: testPlan, Milestone: "M1", Range: ops.CloseRange{Base: "b1", Tip: "t1"},
+		Close: ops.CloseOutcome{Gate: []byte(`{"ok": true}`), Final: []byte(`null`), Audit: []byte(`{"summary": {"ok": 1}}`), Crosscheck: v, Reflection: "ALIGNED"}}
+	body := string(MilestoneBody(rep))
+	for _, want := range []string{`Final gate: {"ok": true}` + "\nCrosscheck: " + `{"verdict": "verified", "guide_rev": "crw-crosscheck/1", "head": "t1"}` + "\nReflection: ALIGNED\n",
+		"Final review: none", `Audit: {"summary": {"ok": 1}}`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the body lacks %q:\n%s", want, body)
+		}
+	}
+	rep.Close.Crosscheck, rep.Close.Reflection = nil, ""
+	body = string(MilestoneBody(rep))
+	for _, want := range []string{"Crosscheck: none\n", "Reflection: none\n"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the body lacks %q:\n%s", want, body)
+		}
+	}
+	// the stored body is the same text
+	w := newWorld(t)
+	w.supervise(testLead)
+	rep.Close.Crosscheck, rep.Close.Reflection = v, "ALIGNED"
+	if _, err := (Reporter{W: w.writer(), Run: testRun}).ReportUp(ctx, rep); err != nil {
+		t.Fatal(err)
+	}
+	if got := readBody(t, w.rows(KindReport)[0].Str("body_path")); got != string(MilestoneBody(rep)) {
+		t.Errorf("the stored body is not MilestoneBody:\n%s", got)
+	}
+}

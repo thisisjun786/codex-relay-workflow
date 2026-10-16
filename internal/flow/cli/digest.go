@@ -107,18 +107,26 @@ func BuildDigest(in DigestInput) BatchDigest {
 	for _, n := range detail.Nodes {
 		nodes[n.Node] = n
 	}
-	// the questions that wait and the escalations that left a node to the orchestrator
-	waiting := map[string][]Question{}
+	// the questions that wait (by the rule ps, show and next read them by, Question.Waits), the requests to send up with crw flow
+	// report-up that stand (a bundle split request: no question the run waits for, CRW-1437), and the escalations that left a node to
+	// the orchestrator (asking: those that are no request to send up)
+	waiting, sendUp := map[string][]Question{}, map[string][]Question{}
 	for _, q := range detail.Questions {
-		if q.Current && q.Applied == "" {
+		switch {
+		case q.Waits():
 			waiting[q.Node] = append(waiting[q.Node], q)
+		case q.SendsUp():
+			sendUp[q.Node] = append(sendUp[q.Node], q)
 		}
 	}
-	escalated := map[string][]string{}
+	escalated, asking := map[string][]string{}, map[string][]string{}
 	for _, e := range in.Events {
 		if e.Kind == engine.KindFlow && e.Event == engine.EvEscalation {
 			if node := str(e.Data, "node"); node != "" {
 				escalated[node] = append(escalated[node], str(e.Data, "reason"))
+				if !reportUpAsks[str(e.Data, "ask")] {
+					asking[node] = append(asking[node], str(e.Data, "reason"))
+				}
 			}
 		}
 	}
@@ -154,12 +162,27 @@ func BuildDigest(in DigestInput) BatchDigest {
 			item.Evidence = fmt.Sprintf("run %s node %s: commit %s, acceptance %s, integrated %s", in.Run.RunID, node, shortList(n.Commits), cell(n.Accepted), short(n.Integrated))
 		case node != "" && (len(waiting[node]) > 0 || (len(escalated[node]) > 0 && heldReason[node] == "")):
 			item.Outcome = OutcomeDecision
-			reasons := escalated[node]
+			reasons := asking[node]
 			if len(waiting[node]) > 0 {
 				reasons = append([]string{waiting[node][0].Reason}, reasons...)
 			}
-			item.Reason = "the lane stopped and asks the orchestrator: " + strings.Join(dedupe(reasons), ", ")
-			item.Evidence = fmt.Sprintf("run %s node %s: %d question(s) wait for an answer (crw flow show %s)", in.Run.RunID, node, len(waiting[node]), in.Run.RunID)
+			var stopped, asks []string
+			for _, q := range sendUp[node] {
+				stopped, asks = append(stopped, q.Reason), append(asks, q.Ask)
+			}
+			switch {
+			case len(reasons) > 0:
+				item.Reason = "the lane stopped and asks the orchestrator: " + strings.Join(dedupe(reasons), ", ")
+			case len(asks) > 0:
+				item.Reason = "the lane stopped on " + strings.Join(dedupe(stopped), ", ") + " with a request to send up with crw flow report-up (" + strings.Join(dedupe(asks), ", ") + "); the run waits for no answer"
+			default:
+				item.Reason = "the lane stopped and asks the orchestrator: " + strings.Join(dedupe(escalated[node]), ", ")
+			}
+			item.Evidence = fmt.Sprintf("run %s node %s: %d question(s) wait for an answer", in.Run.RunID, node, len(waiting[node]))
+			if len(asks) > 0 {
+				item.Evidence += fmt.Sprintf("; %d request(s) to send up with crw flow report-up (%s)", len(asks), strings.Join(dedupe(asks), ", "))
+			}
+			item.Evidence += fmt.Sprintf(" (crw flow show %s)", in.Run.RunID)
 		case info.State == StateCancelled:
 			item.Outcome = OutcomeCancelled
 			item.Reason = "the run was cancelled before the issue was integrated"
