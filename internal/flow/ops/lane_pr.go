@@ -32,22 +32,22 @@ const (
 
 // The values of the review argument's bots member.
 const (
-	reviewBotsConnected    = "connected"
 	reviewBotsNotConnected = "not_connected"
 )
 
-// mergeRequestOp is crw.mergeRequest(milestone, {pr: "OWNER/NAME#N", review: {bots: "connected"|"not_connected", unresolved: N}}): the
+// mergeRequestOp is crw.mergeRequest(milestone, {pr: "OWNER/NAME#N", review: {record: PATH}}): the
 // run asks the parent to merge the pull request of a closed milestone. It judges, in order, whether the pull request is open, whether the
 // crosscheck accepted its head, whether the head's checks are green and whether review comments are unresolved; a request that fails one
-// is answered {state: "refused", reason, pr, head} and writes a row of its own (not a Go error: the script decides). The unresolved count
-// is the script's argument: the tracking adapter reads no resolved flag. A request that passes goes to the Reporter once per head.
+// is answered {state: "refused", reason, pr, head} and writes a row of its own (not a Go error: the script decides). The dispositions come
+// from the crw-pr-review/1 record review.record names — the two-round file crw flow pr comments writes — bound to this pull request and
+// head; a missing, malformed or stale record, or a legacy {bots, unresolved} argument, is a Go error, never an approval. A request that
+// passes goes to the Reporter once per head.
 type mergeRequestOp struct{ l *Lane }
 
 type mergeRequestArg struct {
 	PR     string `json:"pr"`
 	Review *struct {
-		Bots       string `json:"bots"`
-		Unresolved *int   `json:"unresolved"`
+		Record string `json:"record"`
 	} `json:"review"`
 }
 
@@ -61,21 +61,8 @@ func (o *mergeRequestOp) Run(ctx context.Context, req engine.OpRequest) (engine.
 	if err != nil {
 		return engine.OpResult{}, fmt.Errorf("crw.mergeRequest: the pull request: %w", err)
 	}
-	if arg.Review == nil {
-		return engine.OpResult{}, fmt.Errorf("crw.mergeRequest: the review argument ({bots, unresolved}) is required: a request does not skip the comments by default")
-	}
-	if arg.Review.Bots != reviewBotsConnected && arg.Review.Bots != reviewBotsNotConnected {
-		return engine.OpResult{}, fmt.Errorf("crw.mergeRequest: review.bots is %q, want %q or %q", arg.Review.Bots, reviewBotsConnected, reviewBotsNotConnected)
-	}
-	// connected bots: the count must be given (an absent or null one is not a zero); not_connected: there is nothing to count
-	unresolved := 0
-	if arg.Review.Unresolved != nil {
-		unresolved = *arg.Review.Unresolved
-	} else if arg.Review.Bots == reviewBotsConnected {
-		return engine.OpResult{}, fmt.Errorf("crw.mergeRequest: review.unresolved is required when the review bots are connected")
-	}
-	if unresolved < 0 {
-		return engine.OpResult{}, fmt.Errorf("crw.mergeRequest: review.unresolved is %d", unresolved)
+	if arg.Review == nil || arg.Review.Record == "" {
+		return engine.OpResult{}, fmt.Errorf("crw.mergeRequest: the review argument ({record}) is required: a request does not skip the comments by default")
 	}
 	if o.l.d.PullRequests == nil {
 		return engine.OpResult{}, fmt.Errorf("crw.mergeRequest: no pull request reader is wired")
@@ -84,7 +71,6 @@ func (o *mergeRequestOp) Run(ctx context.Context, req engine.OpRequest) (engine.
 	if !ok || requester == nil {
 		return engine.OpResult{}, fmt.Errorf("crw.mergeRequest: no merge requester is wired (the reporter cannot take a merge request)")
 	}
-	botsOff := arg.Review.Bots == reviewBotsNotConnected
 	r := rows(req.Journal.Events())
 	plan := planOf(r, ms)
 	pr, err := o.l.d.PullRequests.PullRequest(ctx, ref)
@@ -92,6 +78,16 @@ func (o *mergeRequestOp) Run(ctx context.Context, req engine.OpRequest) (engine.
 		return engine.OpResult{}, fmt.Errorf("crw.mergeRequest: read %s: %w", ref, err)
 	}
 	head := pr.HeadSHA
+	// the dispositions come from the persisted record of this pull request at this head, never from the arguments
+	review, err := tracking.ReadPRReviewRecord(arg.Review.Record, ref, head)
+	if err != nil {
+		return engine.OpResult{}, fmt.Errorf("crw.mergeRequest: the review record of %s: %w", ref, err)
+	}
+	unresolved, err := review.Unresolved()
+	if err != nil {
+		return engine.OpResult{}, fmt.Errorf("crw.mergeRequest: the review record of %s: %w", ref, err)
+	}
+	botsOff := review.Bots == reviewBotsNotConnected
 
 	// once per head: a request that was sent for this pull request (by its name in any case) at this head is answered again, and nothing is sent
 	if prior, found := r.opRows(OpMergeRequest).last(func(ev engine.Event) bool {

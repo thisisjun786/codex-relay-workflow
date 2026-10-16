@@ -342,7 +342,7 @@ type MergeRequest struct {
 	// Checks is the state of the head's checks (success: the only state that is requested).
 	Checks     string
 	Crosscheck MergeCrosscheck
-	// Unresolved is the count of unresolved review comments the script supplied; BotsNotConnected says the review bots are not connected,
+	// Unresolved is the count from the PR head's persisted review dispositions; BotsNotConnected says the review bots are not connected,
 	// so there was nothing to resolve.
 	Unresolved       int
 	BotsNotConnected bool

@@ -17,8 +17,10 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/gitprobe"
+	"github.com/thisisjun786/codex-relay-workflow/internal/integrator"
 	"github.com/thisisjun786/codex-relay-workflow/internal/publication"
 	"github.com/thisisjun786/codex-relay-workflow/internal/publishpolicy"
 	"github.com/thisisjun786/codex-relay-workflow/internal/tracking"
@@ -31,13 +33,27 @@ const Command = "pr"
 const Usage = `usage: crw flow pr open --repo OWNER/NAME --head BRANCH [--base BRANCH] --title T [--body TEXT | --body-file PATH] --issue REF... [--draft] [--push DIR [--remote NAME]]
        crw flow pr open --repo OWNER/NAME --head BRANCH [--base BRANCH] --title T --run RUN --push DIR [--remote NAME] [--issue REF...] [--draft] [--state DIR] [--socket PATH]
        crw flow pr show --pr OWNER/NAME#N [--checks]
-       crw flow pr branch --checkout DIR --milestone M [--base BRANCH] [--name BRANCH]`
+       crw flow pr branch --checkout DIR --milestone M [--base BRANCH] [--name BRANCH]
+       crw flow pr decide --pr OWNER/NAME#N --head SHA --release-impact TEXT [--record PATH] [--update-base]
+       crw flow pr comments --pr OWNER/NAME#N --head SHA --record PATH --bots connected|not_connected --round 1|2 [--dispositions FILE]`
 
 const usageHelp = Usage + `
 
 The project session's pull request of a milestone (PR-unit landing): the run lands the milestone's nodes on the milestone integration
 branch (the plan's target base_ref), and this command opens one pull request from that branch toward dev and reads it back. The dev
-merge is done by the dev queue (crw manage integrate --enqueue-pr REF, then its pass), never by this command.
+merge is done by the dev queue (crw manage integrate --enqueue-pr REF --head SHA --release-impact TEXT, then its pass), never by this command.
+
+  decide the parent's merge decision for the pull request of the queue's pull_request_repo (the manage.integrate section):
+         head match, base tip, checks, queue order and the release impact — never the diff's content. The answer is the
+         crw-pr-decision/1 record on stdout and in --record (default <runs_dir>/decisions/pr-N-<head>.json): enqueued or
+         needs_ci is exit 0; refused, needs_base and hold_order are exit 2. --update-base merges a moved base tip into the
+         head with a no-ff merge, pushes it without force and asks for CI (needs_ci).
+
+  comments collects the known review bots' comments of the pull request, deduplicates them into items and writes the
+         crw-pr-review/1 record --record of --round (1 or 2). --dispositions FILE is a JSON array of
+         {"key","disposition","reason"} naming the record's item keys, applied or rejected with a nonblank reason. The
+         record answers on stdout: complete or not_connected is exit 0; pending, round_limit and bad input are exit 2;
+         transport and file failures are exit 1.
 
   open   opens the pull request in OWNER/NAME from --head onto --base (default dev). Its body is --body (or the file) followed by one
          line "Carries: REF, REF" naming the issues it carries (--issue, repeated or comma-separated, OWNER/NAME#N, at least one).
@@ -77,13 +93,30 @@ type Deps struct {
 	// PublicationPolicy reads the repository's publication policy (CRW-1549); nil loads it through
 	// the configuration file.
 	PublicationPolicy func(repo string) (publishpolicy.Policy, error)
+	// IntegrateConfig loads the queue's resolved integrate section (manage.integrate) for `decide`; nil: decide cannot run.
+	IntegrateConfig func() (integrator.Config, error)
 }
 
 // Default is the production dependencies.
 func Default() *Deps {
 	return &Deps{NewPullRequests: func(repo string) (tracking.PullRequests, error) {
 		return publication.NewGitHub(repo)
-	}, Journal: readJournal}
+	}, Journal: readJournal, IntegrateConfig: defaultIntegrateConfig}
+}
+
+// defaultIntegrateConfig reads the manage.integrate section of the crw configuration file, resolved.
+func defaultIntegrateConfig() (integrator.Config, error) {
+	file, err := crwconfig.Load(os.Getenv, "")
+	if err != nil {
+		return integrator.Config{}, err
+	}
+	var section struct {
+		Integrate integrator.Config `json:"integrate"`
+	}
+	if err := file.Section("manage", &section); err != nil {
+		return integrator.Config{}, fmt.Errorf("the manage section of the configuration: %w", err)
+	}
+	return section.Integrate.Resolved()
 }
 
 // pubContext is the local scrub context (CRW-1549): the host defaults, with a test's hostname and
@@ -215,7 +248,7 @@ func RunWith(ctx context.Context, d *Deps, args []string, stdout, stderr io.Writ
 	fs := flag.NewFlagSet("crw flow pr "+sub, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
-	emit := func(a Answer) int {
+	emit := func(a any) int {
 		data, err := json.Marshal(a)
 		if err == nil {
 			_, err = fmt.Fprintf(stdout, "%s\n", data)
@@ -239,6 +272,110 @@ func RunWith(ctx context.Context, d *Deps, args []string, stdout, stderr io.Writ
 		return true, 0
 	}
 	switch sub {
+	case "decide":
+		pr := fs.String("pr", "", "the pull request OWNER/NAME#N of the queue's pull_request_repo")
+		head := fs.String("head", "", "the pinned head: the full commit the pull request must carry")
+		impact := fs.String("release-impact", "", "the release impact line (\"none\" for none)")
+		record := fs.String("record", "", "the decision file (default <runs_dir>/decisions/pr-N-<head>.json)")
+		updateBase := fs.Bool("update-base", false, "merge a moved base tip into the head (no-ff, never forced) and answer needs_ci")
+		if ok, code := parse(); !ok {
+			return code
+		}
+		if *pr == "" || *head == "" || strings.TrimSpace(*impact) == "" {
+			return usage("--pr, --head and --release-impact are required")
+		}
+		if d.IntegrateConfig == nil {
+			return failed("the manage.integrate section is not wired")
+		}
+		cfg, err := d.IntegrateConfig()
+		if err != nil {
+			return failed("%v", err)
+		}
+		var src integrator.PullRequestSource
+		if cfg.PullRequestRepo != "" {
+			prs, err := d.NewPullRequests(cfg.PullRequestRepo)
+			if err != nil {
+				return failed("%v", err)
+			}
+			s, ok := prs.(integrator.PullRequestSource)
+			if !ok {
+				return failed("the pull request adapter of %s cannot read comments", cfg.PullRequestRepo)
+			}
+			src = s
+		}
+		runner := integrator.NewRunner(cfg)
+		runner.Env = d.Env
+		runner.PullRequests = src
+		dec, err := Decide(ctx, runner, DecideInput{PR: *pr, Head: *head, ReleaseImpact: *impact, Record: *record, UpdateBase: *updateBase})
+		if err != nil {
+			if errors.Is(err, ErrDecideInput) {
+				return usage("%v", err)
+			}
+			return failed("%v", err)
+		}
+		if code := emit(dec); code != 0 {
+			return code
+		}
+		switch dec.State {
+		case DecisionEnqueued, DecisionNeedsCI:
+			return 0
+		}
+		return 2
+	case "comments":
+		pr := fs.String("pr", "", "the pull request OWNER/NAME#N")
+		head := fs.String("head", "", "the full commit the pull request must carry")
+		record := fs.String("record", "", "the crw-pr-review/1 record file this round reads and writes")
+		bots := fs.String("bots", "", "connected or not_connected")
+		round := fs.Int("round", 0, "the review round, 1 or 2")
+		dispositionsFile := fs.String("dispositions", "", "a JSON array file of {\"key\",\"disposition\",\"reason\"}")
+		if ok, code := parse(); !ok {
+			return code
+		}
+		ref, rerr := tracking.ParseRef(*pr)
+		if *pr == "" || rerr != nil || *head == "" || *record == "" || *bots == "" || *round == 0 {
+			return usage("--pr OWNER/NAME#N, --head, --record, --bots and --round are required")
+		}
+		var dispositions []CommentDisposition
+		if *dispositionsFile != "" {
+			data, err := os.ReadFile(*dispositionsFile)
+			if err != nil {
+				return failed("read %s: %v", *dispositionsFile, err)
+			}
+			dec := json.NewDecoder(bytes.NewReader(data))
+			if err := dec.Decode(&dispositions); err != nil {
+				return usage("the dispositions file %s: %v", *dispositionsFile, err)
+			}
+			var extra json.RawMessage
+			if err := dec.Decode(&extra); err != io.EOF {
+				return usage("the dispositions file %s has data after the array", *dispositionsFile)
+			}
+		}
+		prs, err := d.NewPullRequests(ref.Repo)
+		if err != nil {
+			return failed("%v", err)
+		}
+		source, ok := prs.(interface {
+			PullRequest(context.Context, tracking.Ref) (tracking.PullRequest, error)
+			ReviewComments(context.Context, tracking.Ref) ([]tracking.PRReviewComment, error)
+		})
+		if !ok {
+			return failed("the pull request adapter of %s cannot read review comments", ref.Repo)
+		}
+		rec, err := Comments(ctx, source, CommentsInput{PR: *pr, Head: *head, Record: *record, Bots: *bots, Round: *round, Dispositions: dispositions})
+		if err != nil {
+			if errors.Is(err, ErrDecideInput) {
+				return usage("%v", err)
+			}
+			return failed("%v", err)
+		}
+		if code := emit(rec); code != 0 {
+			return code
+		}
+		switch rec.State {
+		case tracking.ReviewStateComplete, tracking.ReviewStateNotConnected:
+			return 0
+		}
+		return 2
 	case "open":
 		repo := fs.String("repo", "", "the repository OWNER/NAME")
 		head := fs.String("head", "", "the milestone integration branch")

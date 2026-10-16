@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -95,8 +97,33 @@ func (p *prWorld) open(head string) {
 	p.prs.checks = tracking.Checks{PullRequest: p.prs.pr.Ref, Head: head, State: tracking.CheckSuccess}
 }
 
-func review(bots string, unresolved int) map[string]any {
-	return map[string]any{"bots": bots, "unresolved": unresolved}
+// review writes the crw-pr-review/1 record the op reads ({record: path}) for the pull request at head: bots connected with
+// unresolved open items (state pending) or none (complete), or a not_connected record when bots is not_connected.
+func (p *prWorld) review(head, bots string, unresolved int) map[string]any {
+	p.t.Helper()
+	rec := tracking.PRReviewRecord{Schema: tracking.PRReviewSchema, PR: prRef, Head: head, Bots: bots, Round: 1, Items: []tracking.PRReviewItem{}}
+	switch {
+	case bots == "not_connected":
+		rec.State = "not_connected"
+		rec.Note = "리뷰 봇 미연결"
+	case unresolved > 0:
+		rec.State = "pending"
+		for i := 0; i < unresolved; i++ {
+			rec.Items = append(rec.Items, tracking.PRReviewItem{Key: "k" + strconv.Itoa(i),
+				Comments: []tracking.PRReviewComment{{ID: "issue:" + strconv.Itoa(i+1), Bot: "devin", Body: "remark"}}})
+		}
+	default:
+		rec.State = "complete"
+	}
+	data, err := json.Marshal(rec)
+	if err != nil {
+		p.t.Fatal(err)
+	}
+	path := filepath.Join(p.t.TempDir(), "review.json")
+	if err := os.WriteFile(path, append(data, '\n'), 0o600); err != nil {
+		p.t.Fatal(err)
+	}
+	return map[string]any{"record": path}
 }
 
 // request runs crw.mergeRequest and decodes the answer.
@@ -142,7 +169,7 @@ func TestMergeRequestRefusesRedChecks(t *testing.T) {
 			p := newPRWorld(t)
 			p.open(prHeadA)
 			p.prs.checks.State = tc.state
-			out := p.mustRequest("M1", map[string]any{"pr": prRef, "review": review("connected", 0)})
+			out := p.mustRequest("M1", map[string]any{"pr": prRef, "review": p.review(prHeadA, "connected", 0)})
 			wantRefused(t, out, tc.reason)
 			if out["pr"] != prRef || out["head"] != prHeadA {
 				t.Errorf("the refusal names the pull request and the head: %v", out)
@@ -155,7 +182,7 @@ func TestMergeRequestRefusesRedChecks(t *testing.T) {
 	t.Run("green", func(t *testing.T) {
 		p := newPRWorld(t)
 		p.open(prHeadA)
-		out := p.mustRequest("M1", map[string]any{"pr": prRef, "review": review("connected", 0)})
+		out := p.mustRequest("M1", map[string]any{"pr": prRef, "review": p.review(prHeadA, "connected", 0)})
 		if out["state"] != "requested" || len(p.rep.sent) != 1 {
 			t.Fatalf("green checks at the crosschecked head are requested: %v, sent %d", out, len(p.rep.sent))
 		}
@@ -171,9 +198,9 @@ func TestMergeRequestRefusesRedChecks(t *testing.T) {
 		p := newPRWorld(t)
 		p.open(prHeadA)
 		p.prs.pr.State = tracking.StateClosed
-		wantRefused(t, p.mustRequest("M1", map[string]any{"pr": prRef, "review": review("connected", 0)}), "pr_not_open")
+		wantRefused(t, p.mustRequest("M1", map[string]any{"pr": prRef, "review": p.review(prHeadA, "connected", 0)}), "pr_not_open")
 		p.prs.pr.State, p.prs.pr.Merged = tracking.StateOpen, true
-		wantRefused(t, p.mustRequest("M1", map[string]any{"pr": prRef, "review": review("connected", 0)}), "pr_not_open")
+		wantRefused(t, p.mustRequest("M1", map[string]any{"pr": prRef, "review": p.review(prHeadA, "connected", 0)}), "pr_not_open")
 		if len(p.rep.sent) != 0 {
 			t.Error("a pull request that is not open was requested")
 		}
@@ -181,10 +208,10 @@ func TestMergeRequestRefusesRedChecks(t *testing.T) {
 }
 
 func TestMergeRequestRefusesAHeadThatMovedFromTheCrosscheckedOne(t *testing.T) {
-	arg := map[string]any{"pr": prRef, "review": review("connected", 0)}
 	t.Run("pull request head is not the crosschecked one", func(t *testing.T) {
 		p := newPRWorld(t)
 		p.open(prHeadB) // M1 is verified at A, the pull request is at B, green
+		arg := map[string]any{"pr": prRef, "review": p.review(prHeadB, "connected", 0)}
 		wantRefused(t, p.mustRequest("M1", arg), "head_moved")
 		if len(p.rep.sent) != 0 {
 			t.Error("sent")
@@ -194,6 +221,7 @@ func TestMergeRequestRefusesAHeadThatMovedFromTheCrosscheckedOne(t *testing.T) {
 		p := newPRWorld(t)
 		p.open(prHeadA)
 		p.prs.checks.Head = prHeadB
+		arg := map[string]any{"pr": prRef, "review": p.review(prHeadA, "connected", 0)}
 		wantRefused(t, p.mustRequest("M1", arg), "head_moved")
 		if len(p.rep.sent) != 0 {
 			t.Error("sent")
@@ -202,23 +230,28 @@ func TestMergeRequestRefusesAHeadThatMovedFromTheCrosscheckedOne(t *testing.T) {
 	t.Run("a verified row of the head the verdict names elsewhere", func(t *testing.T) {
 		p := newPRWorld(t)
 		p.open(prHeadA) // M4's row is at A, its verdict object names C
+		arg := map[string]any{"pr": prRef, "review": p.review(prHeadA, "connected", 0)}
 		wantRefused(t, p.mustRequest("M4", arg), "crosscheck_not_accepted")
 	})
 	t.Run("needs_changes and evidence are not accepted", func(t *testing.T) {
 		p := newPRWorld(t)
 		p.open("dddddddddddddddddddddddddddddddddddddddd")
+		arg := map[string]any{"pr": prRef, "review": p.review("dddddddddddddddddddddddddddddddddddddddd", "connected", 0)}
 		wantRefused(t, p.mustRequest("M2", arg), "crosscheck_not_accepted")
 		p.open(prHeadA)
+		arg = map[string]any{"pr": prRef, "review": p.review(prHeadA, "connected", 0)}
 		wantRefused(t, p.mustRequest("M5", arg), "crosscheck_not_accepted") // held: no verdict object
 	})
 	t.Run("a milestone with no row", func(t *testing.T) {
 		p := newPRWorld(t)
 		p.open(prHeadA)
+		arg := map[string]any{"pr": prRef, "review": p.review(prHeadA, "connected", 0)}
 		wantRefused(t, p.mustRequest("M9", arg), "crosscheck_missing")
 	})
 	t.Run("the verified round after an evidence round is accepted", func(t *testing.T) {
 		p := newPRWorld(t)
 		p.open(prHeadA)
+		arg := map[string]any{"pr": prRef, "review": p.review(prHeadA, "connected", 0)}
 		if out := p.mustRequest("M6", arg); out["state"] != "requested" {
 			t.Fatalf("M6: %v", out)
 		}
@@ -228,12 +261,12 @@ func TestMergeRequestRefusesAHeadThatMovedFromTheCrosscheckedOne(t *testing.T) {
 func TestMergeRequestRefusesUnresolvedComments(t *testing.T) {
 	p := newPRWorld(t)
 	p.open(prHeadA)
-	wantRefused(t, p.mustRequest("M1", map[string]any{"pr": prRef, "review": review("connected", 2)}), "comments_unresolved")
+	wantRefused(t, p.mustRequest("M1", map[string]any{"pr": prRef, "review": p.review(prHeadA, "connected", 2)}), "comments_unresolved")
 	if len(p.rep.sent) != 0 {
 		t.Fatal("unresolved comments were requested")
 	}
 	// the bots are not connected: there is nothing to resolve, the request goes out and says so
-	out := p.mustRequest("M1", map[string]any{"pr": prRef, "review": review("not_connected", 0)})
+	out := p.mustRequest("M1", map[string]any{"pr": prRef, "review": p.review(prHeadA, "not_connected", 0)})
 	if out["state"] != "requested" || out["bots_not_connected"] != true || len(p.rep.sent) != 1 || !p.rep.sent[0].BotsNotConnected {
 		t.Fatalf("not_connected: %v, sent %+v", out, p.rep.sent)
 	}
@@ -247,8 +280,29 @@ func TestMergeRequestRefusesUnresolvedComments(t *testing.T) {
 	if _, err := p2.request("M1", map[string]any{"pr": prRef}); err == nil {
 		t.Error("a request with no review argument was not an error")
 	}
-	if _, err := p2.request("M1", map[string]any{"pr": prRef, "review": review("sometimes", 0)}); err == nil {
-		t.Error("a review with an unknown bots value was not an error")
+	if _, err := p2.request("M1", map[string]any{"pr": prRef, "review": map[string]any{"bots": "sometimes"}}); err == nil {
+		t.Error("a review argument without a record was not an error")
+	}
+	// a record the pull request has moved past is an error, and a missing or malformed one too
+	if _, err := p2.request("M1", map[string]any{"pr": prRef, "review": map[string]any{"record": filepath.Join(t.TempDir(), "none.json")}}); err == nil {
+		t.Error("a missing record was not an error")
+	}
+	bad := filepath.Join(t.TempDir(), "bad.json")
+	if err := os.WriteFile(bad, []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p2.request("M1", map[string]any{"pr": prRef, "review": map[string]any{"record": bad}}); err == nil {
+		t.Error("a malformed record was not an error")
+	}
+	// a record written for another head is stale, never trusted
+	if _, err := p2.request("M1", map[string]any{"pr": prRef, "review": p2.review(prHeadB, "connected", 0)}); err == nil {
+		t.Error("a record of another head was not an error")
+	}
+	// legacy scalar fields never approve: the record says one item is unresolved, the scalars claim zero and bots off — the
+	// record wins and the request is refused
+	out2 := p2.mustRequest("M1", map[string]any{"pr": prRef, "review": map[string]any{"record": p2.review(prHeadA, "connected", 1)["record"], "bots": "not_connected", "unresolved": 0}})
+	if out2["state"] != "refused" || out2["reason"] != "comments_unresolved" {
+		t.Errorf("stale scalars approved a record that holds unresolved comments: %v", out2)
 	}
 	// connected bots with no count (absent or null) is not a zero
 	for _, rv := range []map[string]any{{"bots": "connected"}, {"bots": "connected", "unresolved": nil}} {
@@ -264,7 +318,7 @@ func TestMergeRequestRefusesUnresolvedComments(t *testing.T) {
 func TestMergeRequestIsIdempotentPerHead(t *testing.T) {
 	p := newPRWorld(t)
 	p.open(prHeadA)
-	arg := map[string]any{"pr": prRef, "review": review("connected", 0)}
+	arg := map[string]any{"pr": prRef, "review": p.review(prHeadA, "connected", 0)}
 	// a refused row does not block a later request
 	p.prs.checks.State = tracking.CheckPending
 	wantRefused(t, p.mustRequest("M1", arg), "checks_pending")
@@ -278,12 +332,13 @@ func TestMergeRequestIsIdempotentPerHead(t *testing.T) {
 		t.Fatalf("second: %v, sent %d", second, len(p.rep.sent))
 	}
 	// the same pull request named in another case is the same pull request
-	upper := p.mustRequest("M1", map[string]any{"pr": "O/R#7", "review": review("connected", 0)})
+	upper := p.mustRequest("M1", map[string]any{"pr": "O/R#7", "review": p.review(prHeadA, "connected", 0)})
 	if upper["state"] != "requested" || upper["repeated"] != true || len(p.rep.sent) != 1 {
 		t.Fatalf("another case: %v, sent %d", upper, len(p.rep.sent))
 	}
-	// the head moved to B, and B has a verified row of M3: a second send
+	// the head moved to B, and B has a verified row of M3: a second send (the record is of the new head)
 	p.open(prHeadB)
+	arg = map[string]any{"pr": prRef, "review": p.review(prHeadB, "connected", 0)}
 	wantRefused(t, p.mustRequest("M1", arg), "head_moved")
 	third := p.mustRequest("M3", arg)
 	if third["state"] != "requested" || third["repeated"] == true || len(p.rep.sent) != 2 {
@@ -299,7 +354,7 @@ func TestMergeRequestIsIdempotentPerHead(t *testing.T) {
 	}
 	p.world.lane.d.PullRequests = p.prs
 	p.world.lane.d.Reporter = nil
-	if _, err := p.request("M3", map[string]any{"pr": "o/r#8", "review": review("connected", 0)}); err == nil {
+	if _, err := p.request("M3", map[string]any{"pr": "o/r#8", "review": p.review(prHeadB, "connected", 0)}); err == nil {
 		t.Error("no reporter was not an error")
 	}
 	// a send that fails is the op's error and writes no requested row
@@ -309,7 +364,7 @@ func TestMergeRequestFailedSendIsAnErrorAndRecordsNothing(t *testing.T) {
 	p := newPRWorld(t)
 	p.open(prHeadA)
 	p.world.lane.d.Reporter = &stubMergeReporter{err: errors.New("down")}
-	if _, err := p.request("M1", map[string]any{"pr": prRef, "review": review("connected", 0)}); err == nil {
+	if _, err := p.request("M1", map[string]any{"pr": prRef, "review": p.review(prHeadA, "connected", 0)}); err == nil {
 		t.Fatal("a failed send was not an error")
 	}
 	if got := rows(p.j.Events()).opRows(OpMergeRequest); len(got) != 0 {

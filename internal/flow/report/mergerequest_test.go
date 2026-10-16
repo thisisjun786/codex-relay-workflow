@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -47,7 +48,14 @@ func (w *world) seedCrosscheck() {
 // mergeRequest runs crw.mergeRequest as the engine would, and writes its completed row (the engine writes it, not Run).
 func (w *world) mergeRequest(lane *ops.Lane, call int, pr string) map[string]any {
 	w.t.Helper()
-	raw, err := json.Marshal([]any{"M1", map[string]any{"pr": pr, "review": map[string]any{"bots": "connected", "unresolved": 0}}})
+	// the review argument is the crw-pr-review/1 record of the pull request's head (CRW-1460)
+	rec := tracking.PRReviewRecord{Schema: tracking.PRReviewSchema, PR: pr, Head: mergeHeadA, Bots: "connected", Round: 1, State: "complete", Items: []tracking.PRReviewItem{}}
+	recData, _ := json.Marshal(rec)
+	recPath := filepath.Join(w.t.TempDir(), "review.json")
+	if err := os.WriteFile(recPath, append(recData, '\n'), 0o600); err != nil {
+		w.t.Fatal(err)
+	}
+	raw, err := json.Marshal([]any{"M1", map[string]any{"pr": pr, "review": map[string]any{"record": recPath}}})
 	if err != nil {
 		w.t.Fatal(err)
 	}

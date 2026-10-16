@@ -2,10 +2,13 @@ package tracking
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -322,4 +325,307 @@ func getPages[T any](ctx context.Context, g *GitHub, op, first string, each func
 		}
 	}
 	return nil
+}
+
+// ---- review comment records and collection (CRW-1460) ----
+
+// PRReviewSchema names the record `crw flow pr comments` writes: the known review bots' comments of a pull request,
+// deduplicated into items, each decided applied or rejected with its reason, over at most two rounds.
+const PRReviewSchema = "crw-pr-review/1"
+
+// The values of a record's Bots and the bot names an item's comment carries.
+const (
+	ReviewBotsConnected    = "connected"
+	ReviewBotsNotConnected = "not_connected"
+	ReviewBotDevin         = "devin"
+	ReviewBotCodex         = "codex"
+)
+
+// The states a record's State carries.
+const (
+	ReviewStatePending      = "pending"
+	ReviewStateComplete     = "complete"
+	ReviewStateNotConnected = "not_connected"
+	ReviewStateRoundLimit   = "round_limit"
+)
+
+// The dispositions an item's Disposition carries.
+const (
+	DispositionApplied  = "applied"
+	DispositionRejected = "rejected"
+)
+
+// maxReviewRecord bounds the record file ReadPRReviewRecord accepts.
+const maxReviewRecord = 16 << 20
+
+// PRReviewComment is one comment a known review bot left on the pull request.
+type PRReviewComment struct {
+	// ID is the source kind and the numeric ID of the comment: "issue:<n>", "review:<n>" or "inline:<n>".
+	ID   string `json:"id"`
+	Bot  string `json:"bot"` // devin or codex
+	Body string `json:"body"`
+	Path string `json:"path,omitempty"`
+	Line int    `json:"line,omitempty"`
+	URL  string `json:"url,omitempty"`
+}
+
+// PRReviewItem is one deduplicated finding: every bot comment that observed it, and its disposition once decided.
+type PRReviewItem struct {
+	Key      string            `json:"key"`
+	Comments []PRReviewComment `json:"comments"`
+	// Disposition is applied or rejected once decided, empty while the item is unresolved.
+	Disposition string `json:"disposition,omitempty"`
+	Reason      string `json:"reason,omitempty"`
+}
+
+// PRReviewRecord is the persisted state of the bot review of one pull request head.
+type PRReviewRecord struct {
+	Schema string `json:"schema"`
+	PR     string `json:"pr"`
+	Head   string `json:"head"`
+	// Bots is connected or not_connected.
+	Bots  string `json:"bots"`
+	Round int    `json:"round"`
+	// State is pending, complete, not_connected or round_limit.
+	State string         `json:"state"`
+	Note  string         `json:"note,omitempty"`
+	Items []PRReviewItem `json:"items"`
+}
+
+// validate is the record check every reader runs: schema, pull request ref, head, round 1..2, bots and state consistent,
+// unique nonempty keys, nonempty comments per item, only dispositions applied/rejected or empty with a nonblank reason on
+// either, and no items on a not_connected record.
+func (r PRReviewRecord) validate() error {
+	if r.Schema != PRReviewSchema {
+		return fmt.Errorf("tracking: review record schema %q is not %q", r.Schema, PRReviewSchema)
+	}
+	if _, err := ParseRef(r.PR); err != nil {
+		return fmt.Errorf("tracking: review record pr %q: %w", r.PR, err)
+	}
+	if !headSHA.MatchString(r.Head) {
+		return fmt.Errorf("tracking: review record head %q is not a full commit id", r.Head)
+	}
+	if r.Round < 1 || r.Round > 2 {
+		return fmt.Errorf("tracking: review record round %d is not 1 or 2", r.Round)
+	}
+	if r.Bots != ReviewBotsConnected && r.Bots != ReviewBotsNotConnected {
+		return fmt.Errorf("tracking: review record bots %q is not %q or %q", r.Bots, ReviewBotsConnected, ReviewBotsNotConnected)
+	}
+	switch r.State {
+	case ReviewStateNotConnected:
+		if r.Bots != ReviewBotsNotConnected {
+			return fmt.Errorf("tracking: review record state %q with bots %q", r.State, r.Bots)
+		}
+	case ReviewStatePending, ReviewStateComplete, ReviewStateRoundLimit:
+		if r.Bots != ReviewBotsConnected {
+			return fmt.Errorf("tracking: review record state %q with bots %q", r.State, r.Bots)
+		}
+	default:
+		return fmt.Errorf("tracking: review record state %q", r.State)
+	}
+	if r.Bots == ReviewBotsNotConnected && len(r.Items) != 0 {
+		return errors.New("tracking: a not_connected review record carries items")
+	}
+	seen := map[string]bool{}
+	sources := map[string]bool{}
+	unresolved := 0
+	for _, it := range r.Items {
+		if it.Key == "" {
+			return errors.New("tracking: review record item with an empty key")
+		}
+		if seen[it.Key] {
+			return fmt.Errorf("tracking: review record item key %q twice", it.Key)
+		}
+		seen[it.Key] = true
+		if len(it.Comments) == 0 {
+			return fmt.Errorf("tracking: review record item %s names no comment", it.Key)
+		}
+		for _, c := range it.Comments {
+			if c.ID == "" {
+				return fmt.Errorf("tracking: review record item %s names a comment with no id", it.Key)
+			}
+			if sources[c.ID] {
+				return fmt.Errorf("tracking: review record names the comment %s twice", c.ID)
+			}
+			sources[c.ID] = true
+			if c.Bot != ReviewBotDevin && c.Bot != ReviewBotCodex {
+				return fmt.Errorf("tracking: review record comment %s bot %q is not devin or codex", c.ID, c.Bot)
+			}
+			if strings.TrimSpace(c.Body) == "" {
+				return fmt.Errorf("tracking: review record comment %s has an empty body", c.ID)
+			}
+			if c.Line < 0 {
+				return fmt.Errorf("tracking: review record comment %s line %d", c.ID, c.Line)
+			}
+		}
+		switch it.Disposition {
+		case "":
+			unresolved++
+			if strings.TrimSpace(it.Reason) != "" {
+				return fmt.Errorf("tracking: review record item %s has a reason but no disposition", it.Key)
+			}
+		case DispositionApplied, DispositionRejected:
+			if strings.TrimSpace(it.Reason) == "" {
+				return fmt.Errorf("tracking: review record item %s is %s without a reason", it.Key, it.Disposition)
+			}
+		default:
+			return fmt.Errorf("tracking: review record item %s disposition %q is not applied or rejected", it.Key, it.Disposition)
+		}
+	}
+	// the state says the same thing the items do
+	switch r.State {
+	case ReviewStateComplete:
+		if unresolved != 0 {
+			return fmt.Errorf("tracking: review record state complete with %d unresolved item(s)", unresolved)
+		}
+	case ReviewStatePending:
+		if unresolved == 0 || r.Round != 1 {
+			return errors.New("tracking: review record state pending is round 1 with unresolved items")
+		}
+	case ReviewStateRoundLimit:
+		if unresolved == 0 || r.Round != 2 {
+			return errors.New("tracking: review record state round_limit is round 2 with unresolved items")
+		}
+	case ReviewStateNotConnected:
+		if r.Note != "리뷰 봇 미연결" {
+			return errors.New("tracking: a not_connected review record lacks the note")
+		}
+	}
+	return nil
+}
+
+// Unresolved counts the items with no disposition yet. The whole record is validated first: a record that does not pass is
+// an error, never a count.
+func (r PRReviewRecord) Unresolved() (int, error) {
+	if err := r.validate(); err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, it := range r.Items {
+		if it.Disposition == "" {
+			n++
+		}
+	}
+	return n, nil
+}
+
+// ReadPRReviewHistory reads the crw-pr-review/1 record at path for the pull request ref (without regard to case), whatever
+// head it is of: the previous record a `crw flow pr comments` round continues. A missing, malformed, oversized or
+// trailing-garbage file, a record that fails validation, or one of another pull request is an error.
+func ReadPRReviewHistory(path string, ref Ref) (PRReviewRecord, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return PRReviewRecord{}, fmt.Errorf("tracking: review record %s: %w", path, err)
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, maxReviewRecord+1))
+	if err != nil {
+		return PRReviewRecord{}, fmt.Errorf("tracking: review record %s: %w", path, err)
+	}
+	if len(data) > maxReviewRecord {
+		return PRReviewRecord{}, fmt.Errorf("tracking: review record %s is over %d bytes", path, maxReviewRecord)
+	}
+	var rec PRReviewRecord
+	dec := json.NewDecoder(strings.NewReader(string(data)))
+	if err := dec.Decode(&rec); err != nil {
+		return PRReviewRecord{}, fmt.Errorf("tracking: review record %s: %w", path, err)
+	}
+	var extra json.RawMessage
+	if err := dec.Decode(&extra); err != io.EOF {
+		return PRReviewRecord{}, fmt.Errorf("tracking: review record %s has data after the object", path)
+	}
+	if !strings.EqualFold(rec.PR, ref.String()) {
+		return PRReviewRecord{}, fmt.Errorf("tracking: review record %s is of %s, not %s", path, rec.PR, ref)
+	}
+	if err := rec.validate(); err != nil {
+		return PRReviewRecord{}, fmt.Errorf("tracking: review record %s: %w", path, err)
+	}
+	return rec, nil
+}
+
+// ReadPRReviewRecord reads the record at path and binds it to the pull request ref (without regard to case) and exactly to
+// head — never a trusted count of another head.
+func ReadPRReviewRecord(path string, ref Ref, head string) (PRReviewRecord, error) {
+	rec, err := ReadPRReviewHistory(path, ref)
+	if err != nil {
+		return PRReviewRecord{}, err
+	}
+	if rec.Head != head {
+		return PRReviewRecord{}, fmt.Errorf("tracking: review record %s is of head %s, not %s", path, rec.Head, head)
+	}
+	return rec, nil
+}
+
+// reviewBot is the bot name a login belongs to: devin or codex, "" for a login that is not a known review bot.
+func reviewBot(login string) string {
+	switch strings.ToLower(login) {
+	case "devin-ai-integration[bot]", "devin[bot]":
+		return ReviewBotDevin
+	case "chatgpt-codex-connector[bot]", "codex[bot]":
+		return ReviewBotCodex
+	}
+	return ""
+}
+
+// apiReviewComment is the part of a GitHub issue comment, inline review comment or review the adapter reads.
+type apiReviewComment struct {
+	ID           int64  `json:"id"`
+	Body         string `json:"body"`
+	HTMLURL      string `json:"html_url"`
+	Path         string `json:"path"`
+	Line         int    `json:"line"`
+	OriginalLine int    `json:"original_line"`
+	User         struct {
+		Login string `json:"login"`
+	} `json:"user"`
+}
+
+// ReviewComments collects the known review bots' comments of the pull request: every page of the issue comments
+// (/issues/N/comments), the inline review comments (/pulls/N/comments) and the reviews (/pulls/N/reviews). Only comments of
+// devin-ai-integration[bot], devin[bot], chatgpt-codex-connector[bot] and codex[bot] are kept, and only ones with a nonempty
+// body; an error of any of the three reads is an error of the collection, never a partial list. No diff hunk or patch is
+// ever read.
+func (g *GitHub) ReviewComments(ctx context.Context, ref Ref) ([]PRReviewComment, error) {
+	if err := g.checkRef(ref); err != nil {
+		return nil, err
+	}
+	n := strconv.Itoa(ref.Number)
+	query := url.Values{"per_page": {pageSize}}
+	var out []PRReviewComment
+	keep := func(kind string, c apiReviewComment) {
+		bot := reviewBot(c.User.Login)
+		if bot == "" || strings.TrimSpace(c.Body) == "" {
+			return
+		}
+		cm := PRReviewComment{ID: kind + ":" + strconv.FormatInt(c.ID, 10), Bot: bot, Body: c.Body, URL: c.HTMLURL}
+		if kind == "inline" {
+			cm.Path = c.Path
+			if cm.Line = c.Line; cm.Line == 0 {
+				cm.Line = c.OriginalLine
+			}
+		}
+		out = append(out, cm)
+	}
+	var issue []apiReviewComment
+	if err := getAll(ctx, g, "tracking: list issue comments of "+ref.String(), g.repoURL("/issues/"+n+"/comments", query), &issue); err != nil {
+		return nil, err
+	}
+	for _, c := range issue {
+		keep("issue", c)
+	}
+	var inline []apiReviewComment
+	if err := getAll(ctx, g, "tracking: list review comments of "+ref.String(), g.repoURL("/pulls/"+n+"/comments", query), &inline); err != nil {
+		return nil, err
+	}
+	for _, c := range inline {
+		keep("inline", c)
+	}
+	var reviews []apiReviewComment
+	if err := getAll(ctx, g, "tracking: list reviews of "+ref.String(), g.repoURL("/pulls/"+n+"/reviews", query), &reviews); err != nil {
+		return nil, err
+	}
+	for _, c := range reviews {
+		keep("review", c)
+	}
+	return out, nil
 }

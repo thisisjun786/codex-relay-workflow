@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -340,5 +341,187 @@ func TestPublicPullRequestPreservesCarriedReferences(t *testing.T) {
 				t.Errorf("%d requests; want 1", n)
 			}
 		})
+	}
+}
+
+// ---- review comment records (CRW-1460) ----
+
+// commentJSON is a comment of a review surface as GitHub answers it.
+func commentJSON(id int, login, body string, extra map[string]any) map[string]any {
+	m := map[string]any{"id": id, "body": body, "user": map[string]any{"login": login}, "html_url": "https://c/" + itoa(id)}
+	for k, v := range extra {
+		m[k] = v
+	}
+	return m
+}
+
+func TestReviewCommentsCollectsTheBotCommentsOfAllThreeSurfaces(t *testing.T) {
+	f := newFake(t)
+	f.handle("GET /repos/o/r/issues/7/comments", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, 200, []any{
+			commentJSON(1, "devin[bot]", "issue note", nil),
+			commentJSON(2, "Devin-AI-Integration[bot]", "second note", nil),
+			commentJSON(3, "jun", "a human note", nil),
+			commentJSON(4, "devin[bot]", "", nil),
+		})
+	})
+	f.handle("GET /repos/o/r/pulls/7/comments", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("page") == "" {
+			w.Header().Set("Link", `<`+f.srv.URL+`/repos/o/r/pulls/7/comments?per_page=100&page=2>; rel="next"`)
+			writeJSON(w, 200, []any{commentJSON(9, "chatgpt-codex-connector[bot]", "rename this", map[string]any{"path": "a.go", "line": nil, "original_line": 3})})
+			return
+		}
+		writeJSON(w, 200, []any{commentJSON(10, "codex[bot]", "and this", map[string]any{"path": "b.go", "line": 12})})
+	})
+	f.reply("GET /repos/o/r/pulls/7/reviews", 200, []any{
+		commentJSON(5, "devin-ai-integration[bot]", "overall note", nil),
+		commentJSON(6, "codex[bot]", "   ", nil),
+		commentJSON(7, "jun", "reviewed", nil),
+	})
+	got, err := newClient(t, f).ReviewComments(bg, Ref{Repo: "o/r", Number: 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []PRReviewComment{
+		{ID: "issue:1", Bot: "devin", Body: "issue note", URL: "https://c/1"},
+		{ID: "issue:2", Bot: "devin", Body: "second note", URL: "https://c/2"},
+		{ID: "inline:9", Bot: "codex", Body: "rename this", Path: "a.go", Line: 3, URL: "https://c/9"},
+		{ID: "inline:10", Bot: "codex", Body: "and this", Path: "b.go", Line: 12, URL: "https://c/10"},
+		{ID: "review:5", Bot: "devin", Body: "overall note", URL: "https://c/5"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ReviewComments = %+v\nwant %+v", got, want)
+	}
+	// a surface that errors is an error of the whole read, never a partial list
+	f2 := newFake(t)
+	f2.reply("GET /repos/o/r/issues/7/comments", 200, []any{})
+	f2.reply("GET /repos/o/r/pulls/7/comments", 500, map[string]any{"message": "down"})
+	f2.reply("GET /repos/o/r/pulls/7/reviews", 200, []any{})
+	if _, err := newClient(t, f2).ReviewComments(bg, Ref{Repo: "o/r", Number: 7}); err == nil {
+		t.Error("a surface error was not an error")
+	}
+}
+
+func TestReadPRReviewRecordValidatesWhatItReads(t *testing.T) {
+	head := strings.Repeat("a", 40)
+	ref := Ref{Repo: "o/r", Number: 7}
+	write := func(t *testing.T, v any) string {
+		t.Helper()
+		var data []byte
+		var err error
+		switch doc := v.(type) {
+		case string:
+			data = []byte(doc)
+		default:
+			data, err = json.Marshal(v)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data = append(data, '\n')
+		}
+		path := filepath.Join(t.TempDir(), "r.json")
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	item := func(key, dis, reason string) PRReviewItem {
+		return PRReviewItem{Key: key, Disposition: dis, Reason: reason,
+			Comments: []PRReviewComment{{ID: "issue:1-" + key, Bot: ReviewBotDevin, Body: "nit"}}}
+	}
+	valid := PRReviewRecord{Schema: PRReviewSchema, PR: "o/r#7", Head: head, Bots: ReviewBotsConnected, Round: 1, State: ReviewStatePending,
+		Items: []PRReviewItem{item("k", "", "")}}
+	got, err := ReadPRReviewRecord(write(t, valid), ref, head)
+	if err != nil || got.Round != 1 || len(got.Items) != 1 {
+		t.Fatalf("valid record: %+v %v", got, err)
+	}
+	if n, err := got.Unresolved(); err != nil || n != 1 {
+		t.Fatalf("unresolved %d %v", n, err)
+	}
+	// the pull request binds without regard to case, the head exactly
+	cased := valid
+	cased.PR = "O/R#7"
+	if _, err := ReadPRReviewRecord(write(t, cased), ref, head); err != nil {
+		t.Errorf("a same pull request in another case: %v", err)
+	}
+	// applied items with a reason count as resolved; a decided record's state is complete
+	applied := valid
+	applied.State = ReviewStateComplete
+	applied.Items = []PRReviewItem{item("k", DispositionApplied, "fixed")}
+	if rec, err := ReadPRReviewRecord(write(t, applied), ref, head); err != nil {
+		t.Fatal(err)
+	} else if n, err := rec.Unresolved(); err != nil || n != 0 {
+		t.Errorf("applied: unresolved %d %v", n, err)
+	}
+	// one invalid field per case
+	for name, mutate := range map[string]func(*PRReviewRecord){
+		"wrong schema":            func(r *PRReviewRecord) { r.Schema = "other/1" },
+		"other pr":                func(r *PRReviewRecord) { r.PR = "o/r#8" },
+		"not a ref":               func(r *PRReviewRecord) { r.PR = "x" },
+		"stale head":              func(r *PRReviewRecord) { r.Head = strings.Repeat("b", 40) },
+		"short head":              func(r *PRReviewRecord) { r.Head = "abc" },
+		"round 0":                 func(r *PRReviewRecord) { r.Round = 0 },
+		"round 3":                 func(r *PRReviewRecord) { r.Round = 3 },
+		"unknown bots":            func(r *PRReviewRecord) { r.Bots = "sometimes" },
+		"unknown state":           func(r *PRReviewRecord) { r.State = "sideways" },
+		"complete but unresolved": func(r *PRReviewRecord) { r.State = ReviewStateComplete },
+		"pending at round 2":      func(r *PRReviewRecord) { r.Round = 2 },
+		"duplicate keys":          func(r *PRReviewRecord) { r.Items = append(r.Items, item("k", "", "")) },
+		"empty comments":          func(r *PRReviewRecord) { r.Items[0].Comments = nil },
+		"empty comment id":        func(r *PRReviewRecord) { r.Items[0].Comments[0].ID = "" },
+		"duplicate comment id": func(r *PRReviewRecord) {
+			r.Items = append(r.Items, item("k2", "", ""))
+			r.Items[1].Comments[0].ID = r.Items[0].Comments[0].ID
+		},
+		"unknown bot":       func(r *PRReviewRecord) { r.Items[0].Comments[0].Bot = "jun" },
+		"empty body":        func(r *PRReviewRecord) { r.Items[0].Comments[0].Body = "  " },
+		"bad disposition":   func(r *PRReviewRecord) { r.Items[0].Disposition = "maybe"; r.Items[0].Reason = "r" },
+		"no reason":         func(r *PRReviewRecord) { r.Items[0].Disposition = DispositionApplied },
+		"reason no verdict": func(r *PRReviewRecord) { r.Items[0].Reason = "r" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := valid
+			rec.Items = []PRReviewItem{item("k", "", "")}
+			mutate(&rec)
+			if _, err := ReadPRReviewRecord(write(t, rec), ref, head); err == nil {
+				t.Errorf("%s was accepted", name)
+			}
+		})
+	}
+	// raw file problems
+	for name, doc := range map[string]string{
+		"malformed": "{",
+		"trailing":  `{"schema":"crw-pr-review/1","pr":"o/r#7","head":"` + head + `","bots":"connected","round":1,"state":"complete","items":[]} {}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := ReadPRReviewRecord(write(t, doc), ref, head); err == nil {
+				t.Errorf("%s was accepted", name)
+			}
+		})
+	}
+	if _, err := ReadPRReviewRecord(filepath.Join(t.TempDir(), "none.json"), ref, head); err == nil {
+		t.Error("a missing record was accepted")
+	}
+	// oversized data is refused
+	if _, err := ReadPRReviewRecord(write(t, `{"x":`+strings.Repeat(" ", 16<<20)+`}`), ref, head); err == nil {
+		t.Error("an oversized record was accepted")
+	}
+	// not_connected records carry the exact note and no items
+	nc := PRReviewRecord{Schema: PRReviewSchema, PR: "o/r#7", Head: head, Bots: ReviewBotsNotConnected, Round: 1,
+		State: ReviewStateNotConnected, Note: "리뷰 봇 미연결", Items: []PRReviewItem{}}
+	if rec, err := ReadPRReviewRecord(write(t, nc), ref, head); err != nil {
+		t.Fatalf("not_connected: %v", err)
+	} else if n, _ := rec.Unresolved(); n != 0 {
+		t.Errorf("not_connected unresolved %d", n)
+	}
+	badNC := nc
+	badNC.Items = []PRReviewItem{item("k", "", "")}
+	if _, err := ReadPRReviewRecord(write(t, badNC), ref, head); err == nil {
+		t.Error("a not_connected record with items was accepted")
+	}
+	badNC2 := nc
+	badNC2.Note = "something else"
+	if _, err := ReadPRReviewRecord(write(t, badNC2), ref, head); err == nil {
+		t.Error("a not_connected record without the note was accepted")
 	}
 }
