@@ -32,7 +32,7 @@ func (t *RepositoryTools) PacketSection() string {
 	for _, f := range t.Facts {
 		b.WriteString("- " + f + "\n")
 	}
-	if t.sets("TMPDIR") {
+	if t.sets(runTempEnv) {
 		b.WriteString("\nYour shell may not have them: put `" + t.Prefix + "` in front of every command you run (TMPDIR concerns every command " +
 			"that makes a temporary file, not only go build, go test, go vet and gofmt), and write every command of a plan, a check or a " +
 			"receipt that way.\n\n")
@@ -42,6 +42,10 @@ func (t *RepositoryTools) PacketSection() string {
 		"go vet, gofmt), and write every such command of a plan, a check or a receipt that way.\n\n")
 	return b.String()
 }
+
+// runTempEnv is the variable of the run's temporary location among the tools' Env (CRW-1570); it only names the entry, and the
+// location itself is tmploc's.
+const runTempEnv = "TMPDIR"
 
 // sets says whether Env has an entry for the variable name.
 func (t *RepositoryTools) sets(name string) bool {
