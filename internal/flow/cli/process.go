@@ -12,10 +12,12 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/script"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/fdsweep"
 )
 
@@ -231,6 +233,9 @@ func (c *command) execute(spec Spec, state string, resume bool, sigs <-chan os.S
 		if why := notTheRuns(world.Journal, spec.RunID, src.Program.Digest, args); why != "" {
 			return c.fail("%s", why)
 		}
+		if why := nestedNotTheRuns(world.Journal, spec.RunID, src.Workflows); why != "" {
+			return c.fail("%s", why)
+		}
 		// the budget is the run's: what its earlier processes spent counts, and a run with nothing left is not resumed (CRW-1278)
 		spent = engine.RunSpent(world.Journal.Events(), spec.RunID).Total
 		if budget, err = runBudget(spec, spent, spec.TokenBudget); err != nil {
@@ -381,6 +386,41 @@ func notTheRuns(j engine.Journal, run, scriptDigest string, args json.RawMessage
 		return ""
 	}
 	return fmt.Sprintf("the store holds no run %s", run)
+}
+
+// nestedNotTheRuns says why the workflows the run opened with workflow() are not those it ran ("" when they are): each workflow_opened
+// row of the run records the digest of the script it opened, and the script the run's registry gives for it now is another. A resume
+// compares the run's own script with its started row (notTheRuns); a nested workflow (the project lane a night batch runs) is compared
+// the same way, before anything is written, since the engine would run the calls of a changed nested workflow live again (the
+// architect and the critic of a project lane whose DESIGN schema changed) before a later op refuses the run. A workflow the registry
+// cannot load now is not the one the run ran either.
+func nestedNotTheRuns(j engine.Journal, run string, workflows func(name, scriptPath string) (*script.Program, error)) string {
+	for _, ev := range j.Events() {
+		if ev.Kind != engine.KindFlow || ev.RunID != run || ev.Op != "workflow" || ev.Event != "workflow_opened" {
+			continue
+		}
+		recorded := str(ev.Data, "script_digest")
+		ref, ok := strings.CutPrefix(ev.Label, "workflow:")
+		if !ok || ref == "" || recorded == "" {
+			continue
+		}
+		if workflows == nil {
+			return fmt.Sprintf("run %s opened the %s workflow (digest %s) and this run process has no workflow registry to resume it with", run, ref, recorded)
+		}
+		// the label is workflow:<name> or workflow:<scriptPath>, and does not say which: the name form (<name>.js) decides when it
+		// loads, as a workflow(name) of the run read it; a reference that loads only as a path (a script path that is no <name>.js)
+		// is read as that path
+		prog, err := workflows(ref, "")
+		if err != nil {
+			if prog, err = workflows("", ref); err != nil {
+				return fmt.Sprintf("the %s workflow run %s opened (digest %s) cannot be loaded now: %v", ref, run, recorded, err)
+			}
+		}
+		if prog.Digest != recorded {
+			return fmt.Sprintf("the %s workflow is not the one run %s ran (digest %s, the run's %s): a run is resumed only under the scripts it ran", ref, run, prog.Digest, recorded)
+		}
+	}
+	return ""
 }
 
 // argsDigest is the digest the engine records for a run's arguments.
