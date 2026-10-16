@@ -12,12 +12,13 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // statusDocument is the `status` run with `document: true`: the settings document the
 // installer writes, built by the Go install's own builder, printed as the scenario's stdout.
 func statusDocument(s Scenario) (map[string]any, error) {
-	home, err := os.MkdirTemp("", "crw-hc-doc-")
+	home, err := tmploc.MkdirTemp("crw-hc-doc-")
 	if err != nil {
 		return nil, err
 	}

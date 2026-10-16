@@ -12,7 +12,7 @@
 // back to ${ROOT} before the two answers are compared. A generated command is never executed.
 import { createInterface } from "node:readline";
 
-const oracleRoot = process.env.ORACLE_ROOT || "/var/tmp/cxc-v0.2.40/plugins/codexclaw/components";
+const oracleRoot = process.env.ORACLE_ROOT; if (!oracleRoot) throw new Error("ORACLE_ROOT is unset; the harness sets it from the target's Oracle.Root");
 const { shellWriteDestinations } = await import(oracleRoot + "/pabcd-state/dist/shell-write-destinations.js");
 
 // run puts the homes the case declared under its own root, so a shim never reads a real one.

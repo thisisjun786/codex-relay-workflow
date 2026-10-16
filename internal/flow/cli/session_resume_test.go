@@ -27,12 +27,12 @@ func deadSessionRun(t *testing.T) (k *sessionE2E, run, script string) {
 	if err := os.WriteFile(filepath.Join(codex, "config.toml"), []byte("[agents]\nmax_threads = 2\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	k.td.Getenv = func(key string) (string, bool) {
+	k.td.Getenv = k.td.w.withTemp(func(key string) (string, bool) {
 		if key == "CODEX_HOME" {
 			return codex, true
 		}
 		return "", false
-	}
+	})
 	script = filepath.Join(t.TempDir(), "fan.js")
 	if err := os.WriteFile(script, []byte(`export const meta = { name: 'fan', phases: ['one'] }
 phase('one')

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/journal"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/fdsweep"
 )
 
@@ -40,7 +41,9 @@ type SpawnRequest struct {
 
 // DetachedCommand is the command SpawnDetached starts: the same executable, in a session of its own with no descriptor of the
 // caller's, no input, and its output in <state>/flow/<run>/process.log. It is exported so that the way a run is detached is a
-// thing a test reads.
+// thing a test reads. A spec that records an environment (env, CRW-1570) gives the process the caller's with the recorded variables
+// in place (runEnviron), so the run's TMPDIR is the one its start recorded whatever shell relaunches it; a spec without one (a run
+// started before the record) leaves the environment the caller's, as before.
 func DetachedCommand(self string, req SpawnRequest, log *os.File) *exec.Cmd {
 	args := []string{"flow", ProcessCommand, "--state", req.State}
 	if req.Resume {
@@ -52,6 +55,9 @@ func DetachedCommand(self string, req SpawnRequest, log *os.File) *exec.Cmd {
 	cmd.Stdin = nil
 	cmd.Stdout, cmd.Stderr = log, log
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if len(req.Spec.Env) > 0 {
+		cmd.Env = runEnviron(os.Environ(), req.Spec.Env)
+	}
 	return cmd
 }
 
@@ -64,8 +70,12 @@ var executable = os.Executable
 var markInherited = fdsweep.MarkInherited
 
 // SpawnDetached starts the process of a run and lets go of it. The caller's descriptors are marked close-on-exec first; when that
-// cannot be done the run is not started.
+// cannot be done the run is not started. A run whose recorded TMPDIR cannot be used is not started either (checkRunEnv): the commands
+// that relaunch a run ask it before they change anything, and this is the last guard for any other caller.
 func SpawnDetached(ctx context.Context, req SpawnRequest) (int, error) {
+	if err := checkRunEnv(req.Spec); err != nil {
+		return 0, err
+	}
 	self, err := executable()
 	if err != nil {
 		return 0, err
@@ -173,6 +183,17 @@ func (c *command) process(args []string) int {
 
 // execute runs a spec as this process: the lock, the world, the engine, the result. sigs delivers the signals the process answers.
 func (c *command) execute(spec Spec, state string, resume bool, sigs <-chan os.Signal) int {
+	// the run works below the TMPDIR its start recorded, whatever shell started this process (CRW-1570): a recorded directory that is
+	// gone refuses the run before any lock or row, and the recorded env is this process's until the run is done (the land-head ci local
+	// and the integration batch's own TMPDIR read it)
+	if err := checkRunEnv(spec); err != nil {
+		return c.fail("run %s: %v", spec.RunID, err)
+	}
+	restoreEnv, err := c.applyEnv(spec)
+	if err != nil {
+		return c.fail("run %s: %v", spec.RunID, err)
+	}
+	defer restoreEnv()
 	// a session run's process holds its process lock from before the run lock until after it (its started row names the token)
 	process := c.processLock(state, spec)
 	defer process.Release()
@@ -273,8 +294,8 @@ func (c *command) execute(spec Spec, state string, resume bool, sigs <-chan os.S
 		RunID: spec.RunID, Backend: world.Backend, Policy: table, Journal: world.Journal, Args: args, Pool: spec.Pool, TokenBudget: budget, SpentBefore: spent,
 		Ops: world.Ops, Prover: world.Prover, InputSnapshot: world.InputSnapshot, Workflows: src.Workflows, Control: ctl, OmitSeq: true,
 		Upward: world.Upward, Session: world.Session,
-		// the go the verifier runs reaches every agent call the run starts (CRW-1488)
-		Tools: repositoryTools(c.getenv),
+		// the run's recorded TMPDIR (CRW-1570) and the go the verifier runs (CRW-1488) reach every agent call the run starts
+		Tools: repositoryTools(c.getenv, spec.Env),
 	}
 	if resume {
 		cfg.Resume = &engine.ResumeOptions{}
@@ -303,11 +324,53 @@ func (c *command) execute(spec Spec, state string, resume bool, sigs <-chan os.S
 	if err := writeResult(state, spec.RunID, res, c.now()); err != nil {
 		fmt.Fprintf(c.stderr, "crw flow %s: error: the result of run %s could not be written: %v\n", c.name, spec.RunID, err)
 	}
+	// a run that ended cancelled gives up its executions here, under the run lock this process still holds (CRW-1573)
+	if res.ErrorKind == engine.ErrKindCancelled {
+		c.settleOwnCancel(state, spec)
+	}
 	// a run the operator paused ended as asked (CRW-1487): a resume goes on with it
 	if res.Status != engine.RunCompleted && res.Status != engine.RunPaused {
 		return 1
 	}
 	return 0
+}
+
+// settleOwnCancel gives up the executions of the run this process ended cancelled (CRW-1573): after its world closed, under the run
+// lock the process still holds, from the rows of the run's journal, as the cancel CLI does once the lock goes (settleEndedRun, which
+// then finds nothing: the settlement is replay-safe). Every cancelled end passes here: a cancel whose wait expired, a cancel that was
+// killed, a plain SIGTERM. A failure is told and changes no exit status (a later `crw flow cancel` of the ended run gives them up). A
+// process whose own context ended - it is being ended itself, not its run - gives nothing up.
+func (c *command) settleOwnCancel(state string, spec Spec) {
+	if c.ctx.Err() != nil {
+		return
+	}
+	failed := func(err error) {
+		fmt.Fprintf(c.stderr, "crw flow %s: error: the executions of cancelled run %s could not be given up: %v (crw flow cancel %s gives them up)\n", c.name, spec.RunID, err, spec.RunID)
+	}
+	write := c.Writer
+	if write == nil {
+		write = OpenWriter
+	}
+	st, _, err := write(c.ctx, state, spec.Socket)
+	if err != nil {
+		failed(err)
+		return
+	}
+	defer st.Close()
+	events, _, err := journal.Load(c.ctx, st, spec.RunID)
+	if err != nil {
+		failed(err)
+		return
+	}
+	settled, err := c.settle(st, spec.RunID, events)
+	if err != nil {
+		failed(err)
+		return
+	}
+	c.saySettled(spec.RunID, settled)
+	if err := c.releaseCancelledBinding(st, state, spec.RunID); err != nil {
+		failed(err)
+	}
 }
 
 // compactJSON is a JSON value without insignificant white space, "" and "null" for no value: the form the run's arguments are

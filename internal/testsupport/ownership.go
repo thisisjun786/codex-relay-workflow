@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // Ownership fixtures.
@@ -728,7 +729,7 @@ func validate(path string, r ownership.Record, s ownership.Stamp) error {
 // the POSIX locks of a live connection this process holds on the file, so a fixture must not fence a store
 // it has open: Create closes its own connection before it fences.
 func snapshotStore(path string) (string, func() error, error) {
-	dir, err := os.MkdirTemp("", "crw-testsupport-snapshot-")
+	dir, err := tmploc.MkdirTemp("crw-testsupport-snapshot-")
 	if err != nil {
 		return "", nil, err
 	}

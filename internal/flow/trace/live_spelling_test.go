@@ -9,6 +9,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/trace"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/trace/tracetest"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc/tmploctest"
 )
 
 // TestRefuseLiveReadsTheRawSpelling (CRW-1208 after the evaluation, d1): a relay_state spelled through a symbolic link and
@@ -22,13 +23,9 @@ func TestRefuseLiveReadsTheRawSpelling(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// a short directory: a store socket below the configured root must fit a unix socket path
-	dir, err := os.MkdirTemp("", "ls")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	base, err := filepath.EvalSymlinks(dir)
+	// a socket directory (never below TMPDIR): a store socket below the configured root must fit a unix
+	// socket path whatever TMPDIR is (CRW-1568)
+	base, err := filepath.EvalSymlinks(tmploctest.SocketDir(t, "ls"))
 	if err != nil {
 		t.Fatal(err)
 	}

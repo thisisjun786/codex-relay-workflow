@@ -34,6 +34,20 @@ saw. A row is never updated.
   told.
   A run no process holds whose last end row after its last `started` row is `run/paused` reads `paused`, not `dead`; its resume
   writes a new `started` row. A deadline, a token budget or a quota pause ends with `finished`.
+- A process whose run ends cancelled (`error_kind` `cancelled`: a SIGTERM, `crw flow cancel` of a run it holds) while registered
+  ops (`crw.<name>`) are still running writes one `cancel_waiting` flow row before it waits for them: `calls`, one
+  `{call_id, op, node}` per op in flight (`node` is the op's first argument when that is a string, or its `node` member when it
+  is an object, else `""`), sorted by call id. Each op it names writes its own terminal row after it, and the `finished` row
+  comes last. No op in flight, or another end (a script error, a pause, a deadline or budget stop), writes no such row. A cancelled run does not resume,
+  so no replay reads it.
+- A run process whose run ends cancelled gives up the run's executions itself (CRW-1573): after its world is closed, still under
+  its run lock, it settles the releases the run's rows show it did not end, as the cancel of an ended run does, and prints
+  `N execution(s) of run R given up, M slot(s) returned`; a failed settle is told and changes no exit status. So one cancel is
+  enough, whether the cancel's wait ran out, the cancel was killed, or a plain SIGTERM ended the run; the settle of the cancel that
+  sees the lock go finds nothing more (it is replay-safe). A `crw flow cancel` whose `--wait` ends while the process still holds
+  the run reads the run's rows again and names what the run is ending - the ops of its latest `cancel_waiting` row as
+  `<op> (call <id>, node <n>)` and the agent calls whose last row is a start row as `<label> (call <id>)`, or "no call in flight
+  is known" - says that the run gives up its executions itself when they end (no second cancel), and exits 1.
 - A run no process holds is ended by `crw flow cancel` itself: under the run lock it appends one `finished` row (`status`
   `script_error`, `error_kind` `cancelled`, `by` `operator`, `executions_closed`, `slots_returned`), and `dead: true` only when
   the rows it reads under the lock show a `started` row with no end row after it (a run whose last end is `run/paused`, or a held
@@ -187,8 +201,10 @@ as such:
 record) is asked again on a resume. The base it names is the merge-base of the head and the integration tip, the commit the node's
 work grew from, which the acceptance of the head uses too. A failed verification's row and result carry `failed_tests`, one entry
 for each step of its record that failed and gives a reason (not a step skipped after an earlier failure): `job`, `step`, the `tests` (`--- FAIL: <Test>`) and `packages` (`FAIL\t<pkg>`)
-its reason names and `tail`, the last 20 lines of the reason (at most 2048 bytes); a reason with no such line has no test and no
-package, only the tail. The member is additive (a row without it names no failed test), and the executor's fix packet and a fresh
+its reason names and `tail`, at most 20 lines and 2048 bytes of the reason: a reason that fits is its own tail; one that leads with
+crw-dev ci local's marked block (the failing lines of the output before its last lines, each `--- FAIL` line with its indented
+message lines, then a `...` line) keeps the block's first 10 lines (at most 1024 bytes), then `...`, then the reason's last lines
+(CRW-1569); any other keeps its last lines. A reason with no test or package line has no test and no package, only the tail. The member is additive (a row without it names no failed test), and the executor's fix packet and a fresh
 thread's packet render it (CRW-1469). A node sized for a child, a bundle split or a split with no sub-tasks keeps its unreleased release row (`crw.release`); a split with sub-tasks is released as an executor node is (CRW-1459). Review: a record of the same head and
 criteria digest (`crw.review`). Accept: the recorded acceptance is active, not stale, of the same head (the relay says which).
 Integrate: the recorded batch commit is an ancestor of the integration ref; the target moving on keeps it an ancestor. Gate: a

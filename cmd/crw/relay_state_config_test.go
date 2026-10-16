@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc/tmploctest"
 )
 
 // storageDoctorSelection runs `crw relay --socket <socket> doctor` and returns the state selection it
@@ -40,12 +41,8 @@ func TestRun_a_configured_relay_state_is_chosen_by_every_relay_start(t *testing.
 	t.Setenv("XDG_CONFIG_HOME", "")
 	t.Setenv("CODEX_HOME", filepath.Join(home, "codex"))
 	t.Setenv("CODEX_SESSION_RELAY_STATE", "")
-	short, err := os.MkdirTemp("", "rs")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.RemoveAll(short) })
-	root := filepath.Join(short, "relay") // short: the store socket below it stays under the bind limit
+	// a socket directory (never below TMPDIR): the store socket below the root stays under the bind limit whatever TMPDIR is (CRW-1568)
+	root := filepath.Join(tmploctest.SocketDir(t, "rs"), "relay")
 	file := filepath.Join(home, "crw.json")
 	if err := os.WriteFile(file, []byte(`{"paths":{"relay_state":"`+root+`"}}`), 0o600); err != nil {
 		t.Fatal(err)

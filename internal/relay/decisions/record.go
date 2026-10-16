@@ -174,6 +174,7 @@ type Record struct {
 	AnsweredBy        string          `json:"answered_by,omitempty"`
 	AnsweredVia       string          `json:"answered_via,omitempty"`
 	AnswerText        string          `json:"answer_text,omitempty"`
+	AnswerNote        string          `json:"answer_note,omitempty"`
 	AppliedAt         string          `json:"applied_at,omitempty"`
 	AppliedEvent      string          `json:"applied_event,omitempty"`
 	AppliedGeneration int64           `json:"applied_generation,omitempty"`
@@ -500,6 +501,7 @@ func checkControlCharacters(record Record) error {
 		{"answered_by", record.AnsweredBy},
 		{"answered_via", record.AnsweredVia},
 		{"answer_text", record.AnswerText},
+		{"answer_note", record.AnswerNote},
 		{"applied_at", record.AppliedAt},
 		{"applied_event", record.AppliedEvent},
 		{"withdrawn_reason", record.WithdrawnReason},
@@ -520,6 +522,7 @@ func sameAnswer(first, second Record) bool {
 		first.AnsweredBy == second.AnsweredBy &&
 		first.AnsweredVia == second.AnsweredVia &&
 		first.AnswerText == second.AnswerText &&
+		first.AnswerNote == second.AnswerNote &&
 		first.AppliedAt == second.AppliedAt &&
 		first.AppliedEvent == second.AppliedEvent &&
 		first.AppliedGeneration == second.AppliedGeneration &&
@@ -528,7 +531,7 @@ func sameAnswer(first, second Record) bool {
 }
 
 // Merge folds a second statement of the same question into the first. The two must name the same
-// question (the same fingerprint) and carry the same answer: the ten answer fields are compared one
+// question (the same fingerprint) and carry the same answer: the answer fields, the note among them, are compared one
 // by one, and a differing answer is ErrMergeConflict. Everything else the fingerprint does not
 // cover — kind, options, recommendation, origin, source, authority and the raise fields — is not
 // compared, so the stored statement survives and the merged record keeps the first record's values

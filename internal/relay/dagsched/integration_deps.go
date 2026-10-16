@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/execgroup"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 )
 
@@ -43,7 +44,13 @@ func CommandVerifierEnv(argv []string, base func() []string) IntegrationBatchVer
 		cmd.Env = append(cmd.Env, env...)
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
+		// the command leads its own group, so a cancel ends everything it started (CRW-1573), not only its first process
+		execgroup.Bind(cmd, execgroup.KillGrace)
 		if err := cmd.Run(); err != nil {
+			if errors.Is(err, exec.ErrWaitDelay) && cmd.ProcessState != nil && cmd.ProcessState.Success() {
+				// the command passed and a child it left holds stderr past the grace: the exit is the result
+				return nil
+			}
 			var exitErr *exec.ExitError
 			if !errors.As(err, &exitErr) {
 				// the command never ran: a host failure, not a verification result

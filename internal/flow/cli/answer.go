@@ -39,6 +39,11 @@ type AnswerReply struct {
 // ask (an older crw) goes on, and is paused with `crw flow pause RUN` before the answer.
 const RefusedRunDraining = "run_draining"
 
+// RefusedRunEnv is the refusal of an answer that would resume a run whose recorded TMPDIR (run.json env, CRW-1570) cannot be used: it
+// is refused before the drain, the lock and the decision_applied row, so the same answer, run again once the directory is made again,
+// applies once and resumes the run. An answer with --no-resume starts nothing and is not asked.
+const RefusedRunEnv = "run_env_unusable"
+
 // answer is `crw flow answer`: it compares the manager's answer record with the run's journal, appends the one `decision_applied`
 // row that resumes the wait, and resumes that wait. The record is the only input: what the caller names (the run, the node, the
 // question and its revision) is a claim that has to be the record's and the journal's too. A run a process holds is asked to stop
@@ -100,7 +105,14 @@ func (c *command) answer(args []string) int {
 		return c.fail("%v", err)
 	}
 	defer st.Close()
-	reply, code := c.applyAnswer(st, state, Claim{Decision: *decision, Run: *runID, Node: *node, Question: *question, Revision: *revision, By: by, Answers: parts}, time.Duration(*wait)*time.Second)
+	// an answer that resumes the run asks first whether the run's recorded TMPDIR can still be used (CRW-1570): a refusal is made
+	// before the drain, the lock and the row, so nothing of the run changes and the same answer applies once the directory is back
+	var reply AnswerReply
+	if refusal := c.runEnvRefusal(state, *runID, *noResume); refusal != nil {
+		reply, code = AnswerReply{Run: *runID, Refusal: refusal}, 1
+	} else {
+		reply, code = c.applyAnswer(st, state, Claim{Decision: *decision, Run: *runID, Node: *node, Question: *question, Revision: *revision, By: by, Answers: parts}, time.Duration(*wait)*time.Second)
+	}
 	for _, w := range rowWarnings(reply.Row) {
 		fmt.Fprintf(c.stderr, "crw flow answer: warning: %s\n", w)
 	}
@@ -129,6 +141,22 @@ func (c *command) answer(args []string) int {
 		fmt.Fprintln(c.stdout)
 	}
 	return code
+}
+
+// runEnvRefusal is the refusal of an answer that would resume a run whose recorded TMPDIR cannot be used (RefusedRunEnv); nil for an
+// answer with --no-resume, which starts nothing, and for a run whose spec does not read (the resume says why, as before).
+func (c *command) runEnvRefusal(state, run string, noResume bool) *Refusal {
+	if noResume {
+		return nil
+	}
+	spec, err := ReadSpec(state, run)
+	if err != nil {
+		return nil
+	}
+	if err := checkRunEnv(spec); err != nil {
+		return &Refusal{Code: RefusedRunEnv, Detail: err.Error()}
+	}
+	return nil
 }
 
 // rowWarnings are the warnings of a decision_applied row (CRW-1381).
@@ -486,7 +514,8 @@ func (c *command) control(args []string, verb string) int {
 		deadline := time.Now().Add(time.Duration(*wait) * time.Second)
 		for LockHeld(state, run) {
 			if time.Now().After(deadline) {
-				fmt.Fprintf(c.stderr, "crw flow cancel: process %d still holds run %s after %ds\n", info.PID, run, *wait)
+				fmt.Fprintf(c.stderr, "crw flow cancel: process %d still holds run %s after %ds: %s; when they end the run gives up its executions itself (no second cancel)\n",
+					info.PID, run, *wait, c.endingCalls(cm, run))
 				return 1
 			}
 			time.Sleep(50 * time.Millisecond)
@@ -495,6 +524,25 @@ func (c *command) control(args []string, verb string) int {
 		return c.settleEnded(state, cm, rec)
 	}
 	return 0
+}
+
+// endingCalls says what a run whose process still holds it after a cancel's wait is ending (CRW-1573): the run's journal is read
+// again, since the run process wrote its cancel_waiting row after the signal, and inflightCalls names the calls in it.
+func (c *command) endingCalls(cm *common, run string) string {
+	r, err := c.reader(cm)
+	if err != nil {
+		return fmt.Sprintf("no call in flight is known (the run's journal cannot be read: %v)", err)
+	}
+	events, _, err := loadLeanJournal(c.ctx, r.St, run)
+	_ = r.Close()
+	if err != nil {
+		return fmt.Sprintf("no call in flight is known (the run's journal cannot be read: %v)", err)
+	}
+	calls := inflightCalls(events)
+	if len(calls) == 0 {
+		return "no call in flight is known"
+	}
+	return "it is ending " + strings.Join(calls, ", ")
 }
 
 // settleEnded gives up the executions of a cancelled run whose process has ended: under the run lock, so no process works on the
@@ -532,6 +580,11 @@ func (c *command) settleEndedRun(state string, cm *common, rec RunRecord) (Settl
 		return Settlement{}, c.fail("%v", err)
 	}
 	c.saySettled(rec.RunID, settled)
+	if Summarize(rec, events, false, 0).State == StateCancelled {
+		if err := c.releaseCancelledBinding(st, state, rec.RunID); err != nil {
+			return settled, c.fail("the run ended but its binding could not be released: %v", err)
+		}
+	}
 	return settled, 0
 }
 
@@ -615,6 +668,9 @@ func (c *command) cancelDead(state string, cm *common, rec RunRecord) int {
 	j.Append(engine.Event{RunID: rec.RunID, Kind: engine.KindRun, Event: "finished", Data: row})
 	if err := j.Close(); err != nil || j.Err() != nil {
 		return c.fail("the row could not be stored: %v", errors.Join(err, j.Err()))
+	}
+	if err := c.releaseCancelledBinding(st, state, rec.RunID); err != nil {
+		return c.fail("the run ended but its binding could not be released: %v", err)
 	}
 	fmt.Fprintf(c.stdout, "run %s had no process; it is cancelled (%d execution(s) given up, %d slot(s) returned)\n", rec.RunID, settled.Closed, settled.SlotsReturned)
 	return 0

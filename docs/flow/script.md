@@ -314,8 +314,15 @@ explorer (`crw.explore('background', ...)`, CRW-1466): the question names the no
 node's declared regions (none declared: not named), and `crw.exploreRoute` spawns it (`spawned_background`) or reuses an answer of the same
 digest the run has, never inline, never to the owner thread and outside the open questions' cap of the milestone; the explorer calls are
 labelled `explore-bg:<milestone>:<digest12>` (an `explore:` reader never takes one for its own), their route rows carry `inputs.kind`
-`background`, a background explorer that did not complete halts the milestone (`crw.milestoneHalt`, source `explorer`), and a re-plan has
-no such phase; then, in the phase `design`, the architect answers `DESIGN` once for the milestone (SP-ARCH-1) over a packet that carries the
+`background`, and a re-plan has no such phase. In every kind of `crw.explore` (background, open questions, research, evidence;
+CRW-1571) an explorer whose answer is `null_model` is asked once more on a fresh thread, with the same packet, schema, node and head,
+labelled with `:retry` in a join of its own after its wave (no second route row, no spawn decision, no cost to the open questions' cap;
+its tokens count into the design loop's); a question whose explorer is `null_model` twice is missing: its answer stays empty with no call
+in the `crw.exploreRecord` row, as before, and the answer `crw.explore` returns names both calls (`missing`, a member the record is never
+given), so the call goes on without it; the call has failed only when every explorer it spawned is missing (its failure is the last
+retry), and any other status that did not complete (held, unknown, superseded, refused, a thrown call) is not asked again and is the
+failure, as before. A background call that failed halts the milestone (`crw.milestoneHalt`, source `explorer`), and a
+missing background exploration is named in the architect's packet under `MISSING EXPLORATIONS`, never among the findings; then, in the phase `design`, the architect answers `DESIGN` once for the milestone (SP-ARCH-1) over a packet that carries the
 background answers as `BACKGROUND FINDINGS`, each by its id, question, answer and the explorer's findings and never by its route (the packet is the
 one it was before CRW-1466 when none is given); the open questions of the DESIGN go to
 explorers (SP-EXPL-1), and the ones whose scope carries an out-of-authority notation, or beyond the explorer cap, to the owner thread
@@ -342,6 +349,10 @@ reused), the answers go back to the architect on its own thread before the criti
 packet renders each answered question by its id, question, answer and findings, never by its route, and the architect answers with the DESIGN again,
 dispositions null; that DESIGN is the one the critic audits and the one a design-fix and the ledger resume, and a question the architect raises in it
 reaches the critic with no answer, which is a P1 finding, and is routed in the next round (a round whose questions got no answer has no such turn);
+an open question whose explorer is missing is no answer: design-answers names it under `NOT ANSWERED` after the answers, the critic's
+answers give it the route line `an explorer was asked twice and did not answer` with both calls, and the round halts the milestone
+(source `explorer`) only when its call failed as above (every explorer it spawned missing, or one that did not complete otherwise), a
+question asked of the owner thread being no exploration;
 the critic (`agentType: 'critic'`, a role of its own, of another model family than the architect;
 the `AUDIT` spawn decision names it) audits the DESIGN (`DESIGN_AUDIT`, recorded by `crw.designAudit`, which judges the independence by the model
 families of the two calls' pairs, never by the role), and `needs_changes` returns the DESIGN to the architect on its own thread: the design-fix packet
@@ -430,7 +441,7 @@ with the relay's reason, and the release goes on as for an undeclared node.
 | --- | --- |
 | `ready` | unit check, commit, verify, land (the unit check below judges the call's uncommitted work before the commit) |
 | `self_failed` (the executor reports `failed` or `budget_exhausted`) | as `ready`: the run runs the unit check of the worktree anyway, then commits and verifies it; the report is no evidence |
-| `research` | `crw.explore` answers the question (SP-EXPL-2: an answer of the run is reused, at most two research continuations on a tier), and the same executor thread goes on with the answer; never a tier step |
+| `research` | `crw.explore` answers the question (SP-EXPL-2: an answer of the run is reused, at most two research continuations on a tier), and the same executor thread goes on with the answer; never a tier step. A `null_model` explorer is asked once more on a fresh thread (CRW-1571); when that one is `null_model` too, or the explorer did not complete otherwise, `crw.hold` holds the node (source `explorer`) |
 | `scope` | `crw.escalate` with `blocked_scope`: the relay closes the node's execution and takes its slot back (R07) |
 | `null_model` | the first one: a fresh thread of the same tier in a new attempt worktree at the node's last commit; the second in a row is tier evidence |
 | `host_held` | `crw.hold`: the node is held and the call goes on in place when `crw flow resume` runs after the cause is gone; never a new thread, never tier evidence |
@@ -562,7 +573,7 @@ inline (SP-INL-1), reuse an answer (SP-INL-2), skip, refuse or hand a question t
 The composites (`crw:lib/lane` and `crw:lib/close`, made members of `crw` by `install(crw)`; they take no position of their own): `crw.dag`,
 `crw.explore`, `crw.land`, `crw.tierStep`, `crw.evidence`, `crw.skip`, `crw.closeMilestone` and `crw.milestoneHalt`; the close's
 `auditAcceptances` and `reportClose` are functions `crw:lib/close` exports. `crw.dag` takes an `onSignal` function (below). The seams the operations are built on - `Relay` (the scheduler: milestone, release, agent
-acceptance and integration, the close of an execution), `Verifier` (`CILocalVerifier` runs `crw-dev ci local` through the verifier's tools of the configuration, [the verifier's tools](../runtime-install.md#the-verifiers-tools)), `Decisions`
+acceptance and integration, the close of an execution), `Verifier` (`CILocalVerifier` runs `crw-dev ci local` through the verifier's tools of the configuration, [the verifier's tools](../runtime-install.md#the-verifiers-tools); the command leads its own process group, and a cancel kills the whole group, so a cancelled `crw.verify` and a cancelled integration batch end within `execgroup.KillGrace`, 5 s, CRW-1573), `Decisions`
 (`StoreDecisions` writes the relay store), `Threads` (the host the audit reads an old review's reviewer thread from, and the one
 `crw.archive` archives on) and
 `Reporter` (F11) - are interfaces in `internal/flow/ops/seams.go`; the dagsched-backed `Relay` belongs to the run process.
@@ -628,7 +639,9 @@ call and fixes nothing. Its steps:
   to the land: `crw.release` answers `land_node_held` with that run and its execution, before the run claims the plan's coordinator
   epoch, and no gate runs. The answer names what settles it: `crw flow resume` of a run that has not ended, and `crw flow cancel` of
   one that has (the row records `held_run_state` and the warning `land_node_held_by_ended_run`), whose cancel gives up the executions
-  the run still holds - the ones its rows show, and the ones the relay records under its run id that its rows do not name.
+  the run still holds - the ones its rows show, and the ones the relay records under its run id that its rows do not name. A run that
+  ended cancelled no longer holds its node: its run process gave its executions up at its cancelled end (CRW-1573), so a land after
+  a cancel during the verification is released, not `land_node_held`.
 - A land-head run is a run of the plan: its release claims the plan's coordinator epoch like any run's, so a run of the same plan that
   is still going stops `epoch_lost` at its next fenced write (one run orchestrates one plan). A head made outside a run is landed when
   no other run of its plan is going: `crw flow start land-head` warns of one with the preflight fact `plan_live_run`, which names the
@@ -725,6 +738,11 @@ worktree before it asks, the run's buffered rows are stored first, and the run's
 node's calls and the reviewer's input criteria digest on the reviewer's completed row, which the acceptance reads. `integrate` names the node's current acceptance and the head it accepted (anything else is refused before the batch, `acceptance_not_current` or `head_not_accepted`) and is one
 `IntegrateBatch` of the node with the wiring of `crw relay dag-integrate` (`dagsched.IntegrationDeps`: `crw-dev ci local` over the
 merged tree, the merged tree's own crw-dev when the configuration names a Go root, git's compare-and-swap of the branch) onto the plan's target branch, followed by the observation of the landing there;
+the batch's crw-dev gets a HOME and TMPDIR of its own, a fresh `crw-<8 hex>` directory (mode 0700, removed after) directly below the
+run process's TMPDIR resolved, which is the TMPDIR the run's start recorded (below), so it and the node's land-head `crw.verify`
+(whose crw-dev inherits the run process's environment) both work below the run's directory whatever shell relaunched the run and
+however long the directory is; there is no length rule and no other parent, and a directory that cannot be used is a host error
+naming it;
 `close` is `AgentClose`. A node sized `child` is released to no one: it goes up as a `size_split` escalation with detail
 `child_retired` (the evidence carries the plan's `size_reason`), and no child is started.
 
@@ -1228,9 +1246,13 @@ any row is written. `crw flow shadow` replays either from the trace and names th
 
   A `send_input` message is the marker line and the turn's input. The packet is self-contained: where the subagent works (only
   under the absolute path P; a role that writes nothing changes nothing; nobody runs `git commit`, `add`, `branch`, `reset` or
-  `checkout`), the repository tools when the configuration names them (CRW-1488: a `Repository tools` section with the go of
+  `checkout`), the repository tools when the run has them (CRW-1488: a `Repository tools` section with the go of
   `verifier.go_root`, the file that sets it, and the prefix `PATH=<go_root>/bin:"$PATH" GOROOT=<go_root> GOTOOLCHAIN=local` that
-  every command running go takes, because the subagent's shell is the owner session's and spawn_agent takes no environment), the
+  every command running go takes, because the subagent's shell is the owner session's and spawn_agent takes no environment;
+  CRW-1570: the run's recorded TMPDIR, `env.TMPDIR` of its run.json and never the TMPDIR of the shell that relaunched the run, is
+  a tool of its own, first: a fact that names the directory and run.json, `TMPDIR=<dir>` first in the prefix, which then goes in
+  front of every command the subagent runs, and `TMPDIR=<dir>` first in the entries; a configuration with no go gives the TMPDIR
+  alone, a spec without env the tools of before; on the session backend the packet is its only carrier), the
   role's overlay of `internal/flow/roles` without its native-spawn section, the earlier attempts, for a continuation the packet of
   the call it continues and a file with that call's answer, the task, and the output contract (the schema the final message
   satisfies). An App Server call's turn text ends with the same section (after the task; the journaled input is the script's), and
@@ -1370,8 +1392,13 @@ A session run is started, stepped and resumed from its owner thread with the com
 run's directory `<state>/flow/<run>/` and none writes the journal, which only the run process writes.
 
 - `crw flow start WORKFLOW [--backend session|app-server]` starts a session run by default; `--backend app-server` opens a thread
-  per call, for the tests and shadow runs. The spec records the `backend`. A session run's pool is `min(pool, agents.max_threads - 1)`
-  (the owner keeps a slot for a helper of its own; `agents.max_threads` is read from `<CODEX_HOME>/config.toml`, default 6), the
+  per call, for the tests and shadow runs. The spec records the `backend`, and the run's temporary location: `env.TMPDIR` in
+  `run.json` (`crw-flow-run/1`; an optional member, absent from a spec written before it, which reads as before) is what the one temp
+  function (`internal/tmploc`, `DirFrom`) answers for the starting environment, as written, also when that is its default. It is asked
+  once, at the start, and no other variable of the caller's environment is recorded (no `PATH`, `GOFLAGS` or `GOTOOLCHAIN`); a TMPDIR
+  that is not absolute, or a directory that is missing, not a directory or not writable, stops the start (exit 1, with tmploc's
+  reason) before the spec is written and before any process starts or owner is bound. A session run's pool is
+  `min(pool, agents.max_threads - 1)` (the owner keeps a slot for a helper of its own; `agents.max_threads` is read from `<CODEX_HOME>/config.toml`, default 6), the
   preview lists the spawn format of each of the six roles (`spawn_agent(agent_type, message, model, reasoning_effort,
   fork_context=false)`) and the six session facts below, and the answer names the command the steps are taken with
   (`next`). Before the process starts the owner thread is bound (below).
@@ -1415,6 +1442,20 @@ run's directory `<state>/flow/<run>/` and none writes the journal, which only th
   (exit 2); a run whose first process stored no started row goes on with its spec's. Every one of them holds a session run alike
   (the foreground command through `engine.ResumeHold`): at most `agents.max_threads - 1` calls in flight whatever `--pool` says,
   and the owner thread bound to the run while the resume runs and its line closed when the run ends.
+- Every detached launch of the run's process (the start, `crw flow answer`, `crw flow resume RUN --detach` and the resume `next`
+  starts) gives the process the caller's environment with the variables the spec records in place (`env`, today `TMPDIR`; exactly
+  one entry each), so a run relaunched from a shell with another TMPDIR, or none, runs below the TMPDIR its start recorded; a spec
+  written before the record leaves the environment the caller's, as before. A recorded TMPDIR that is missing, not a directory or not
+  writable is refused before anything of the run changes: `crw flow answer` (without `--no-resume`) refuses with `run_env_unusable`
+  (exit 1, nothing appended, nothing drained, no process started), and the same answer applies once and resumes the run once the
+  directory is made again; `crw flow resume RUN --detach` exits 1 naming the directory; `next` resumes nothing and warns "its resume
+  did not start" with the reason. `--no-resume` starts nothing and is not asked; the later relaunch refuses. The spec is never
+  rewritten: the directory is made again.
+- A run that works in the process that reads its spec (the run process `crw flow _run`, the foreground `crw flow resume RUN` and
+  the engine's `crw flow resume RUN SCRIPT`) puts the env its spec records into that process's environment before it takes a lock
+  and puts back what was there when the run is done, so everything the run reads from its own environment (the land-head ci local,
+  the integration batch's TMPDIR, the temporary files of its operations) is below the recorded TMPDIR. A recorded TMPDIR that is
+  missing, not a directory or not writable refuses that process (exit 2, the reason naming the directory) before any lock or row.
 - The owner thread is bound to a session run by the `orchestrator` line of its flow-bound file (`internal/flow/bound`
   `BindOrchestrator`: `kind: orchestrator`, `run_id`, the `policyDigest` of the role table and the `helperPairs` of the six roles
   architect, executor, executor-t1, reviewer, explorer, critic; `Line.Validate` takes no orchestrator line without the first five;
@@ -1495,7 +1536,9 @@ its own for each call, is the backend of tests and shadow runs and of a run star
   unreadable, not empty: the call stays with the reconcile pass.
 - An executor turn never carries a `cwd`: a turn `cwd` moves the thread's working directory for that turn and every later one, so
   an executor's directory is fixed by `thread/start` or `thread/fork` alone. An architect turn carries its call's directory.
-- If a run pauses, the turns in flight are interrupted with `turn/interrupt`; the same request is sent for a cancelled run.
+- If a run pauses, the turns in flight are interrupted with `turn/interrupt`; the same request is sent for a cancelled run. The
+  command an op of a cancelled run started (the `crw-dev ci local` of `crw.verify`, the integration batch) is killed with its whole
+  process group, so the run's wait for its ops ends within `execgroup.KillGrace` (CRW-1573).
 - The backend is the host side of reconcile (`engine.ReconHost`): it lists threads by cwd and `appServer` source to the end of the
   cursor, reads turns in full, archives an orphan, and says what is known about a creation request
   (`CreationState`). For every `thread/start` and `thread/fork` it records the connection the frame went out on before it is

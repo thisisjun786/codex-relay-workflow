@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
@@ -125,9 +126,6 @@ func githubPostNested(n int, program string) string {
 func TestGitHubPostGuardJudgements(t *testing.T) {
 	githubPostTempHome(t)
 	cwd := t.TempDir()
-	// The closed rule reads a body file only under a temporary root, so the payload's working directory is
-	// the test's own TMPDIR: a body file the cases name relative to cwd lies under a root the guard trusts.
-	t.Setenv("TMPDIR", cwd)
 	githubPostWrite(t, cwd, "clean.md", "a clean body\nsecond line\n")
 	githubPostWrite(t, cwd, "dump.md", "A=1\nB=2\nC=3\n")
 	githubPostWrite(t, cwd, "prefix.md", "token: "+githubPostFake("ghp_", 20)+"\n")
@@ -145,7 +143,7 @@ func TestGitHubPostGuardJudgements(t *testing.T) {
 		{"incident", "gh api repos/o/r/pulls/1/comments -f body=" + strconv.Quote("the reply shows `local` here"), githubPostRuleExpand, githubPostWhereCommand},
 		// The generation-5 closed rule: a command that is not one simple command of literal words in the
 		// one allowed form is refused when it names a post; an allow-listed program's output is a shell
-		// program, a gh alias may expand to a post, and a body file must lie under a temporary root.
+		// program, and a gh alias may expand to a post.
 		{"allow-listed program piped to a shell", "printf 'gh pr comment 1 -b plain' | bash", githubPostRuleInline, githubPostWhereCommand},
 		{"allow-listed program piped to sh", "echo gh pr comment 1 -b plain | sh", githubPostRuleInline, githubPostWhereCommand},
 		{"gh alias", "gh c 1 --body plain", githubPostRuleUnread, githubPostWhereCommand},
@@ -442,8 +440,9 @@ func TestGitHubPostGuardJudgements(t *testing.T) {
 	}
 }
 
-// TestGitHubPostGuardReadsAHomeRelativeFile: a body file outside the temporary roots is refused, because
-// the closed rule reads only a literal path under TMPDIR, /tmp or /var/tmp.
+// TestGitHubPostGuardReadsAHomeRelativeFile: a body file named through ~ is refused at the command. The guard does not
+// know the HOME the shell expands ~ with, so the command reader gives the word no value (a tilde expansion) and the post names
+// a file the guard cannot read; where the file lies decides nothing (CRW-1578), and a clean file at that place is still refused.
 func TestGitHubPostGuardReadsAHomeRelativeFile(t *testing.T) {
 	githubPostTempHome(t)
 	if err := os.WriteFile(filepath.Join(os.Getenv("HOME"), "notes.md"), []byte("a clean body\n"), 0o600); err != nil {
@@ -475,31 +474,130 @@ func TestGitHubPostGuardLeavesOtherToolsAndEvents(t *testing.T) {
 	}
 }
 
-// TestGitHubPostGuardReadsAnArgvCommand: an argv array is already split, so its words carry no shell text.
-// TestGitHubPostGuardRefusesABodyFileOutsideTheRoots: the closed rule reads only a literal path under
-// TMPDIR, /tmp or /var/tmp, so a body file in the payload's own working directory is refused when that
-// directory is not a temporary root.
-func TestGitHubPostGuardRefusesABodyFileOutsideTheRoots(t *testing.T) {
-	githubPostTempHome(t)
-	// A readable regular file outside TMPDIR, /tmp and /var/tmp: a post that names it is refused, because the closed rule reads
-	// only a path under a temporary root. The checkout's own go.mod is that file unless the checkout itself lies under a trusted
-	// root (a lane checkout under /tmp or /var/tmp, CRW-1183), where the guard reads it by design; /etc/hosts is the fixture then.
-	t.Setenv("TMPDIR", t.TempDir())
-	repo, err := filepath.Abs(filepath.Join("..", "..", ".."))
+// githubPostCleanBody is the committed clean body, by its absolute path: a regular readable file in the checkout, wherever the
+// checkout lies (CRW-1578: the guard does not judge where a body file lies).
+func githubPostCleanBody(t *testing.T) string {
+	t.Helper()
+	path, err := filepath.Abs(filepath.Join("testdata", "body", "clean.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	dir, name := repo, "go.mod"
-	if resolved, err := filepath.EvalSymlinks(repo); err != nil || githubPostUnderRoots(repo) || githubPostUnderRoots(resolved) {
-		dir, name = "/etc", "hosts"
+	if fi, err := os.Lstat(path); err != nil || !fi.Mode().IsRegular() {
+		t.Fatalf("the committed body %s is not a regular file: %v", path, err)
 	}
-	if fi, err := os.Stat(filepath.Join(dir, name)); err != nil || !fi.Mode().IsRegular() || githubPostUnderRoots(dir) {
-		t.Skipf("no readable regular file outside the temporary roots at %s/%s: %v", dir, name, err)
-	}
-	command := "gh pr comment 1 --body-file " + name
-	githubPostWant(t, githubPostShell(t, dir, command), command, githubPostRuleUnread, name)
+	return path
 }
 
+// TestGitHubPostGuardAcceptsAReadableRegularBodyAnywhere: a clean body file is allowed by its content, not by where it lies. The
+// committed body is read by its absolute path under every TMPDIR: /tmp, unset, and a directory of the test's own.
+func TestGitHubPostGuardAcceptsAReadableRegularBodyAnywhere(t *testing.T) {
+	githubPostTempHome(t)
+	body := githubPostCleanBody(t)
+	cwd := t.TempDir()
+	for _, tmp := range []struct{ name, value string }{{"TMPDIR=/tmp", "/tmp"}, {"TMPDIR unset", ""}, {"TMPDIR=t.TempDir()", t.TempDir()}} {
+		t.Run(tmp.name, func(t *testing.T) {
+			t.Setenv("TMPDIR", tmp.value)
+			if tmp.value == "" {
+				if err := os.Unsetenv("TMPDIR"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, command := range []string{
+				"gh issue comment 1 --body-file " + body,
+				"gh pr create --title Plain --body-file " + body,
+				"gh api repos/o/r/issues/1/comments -F body=@" + body,
+			} {
+				githubPostWant(t, githubPostShell(t, cwd, command), command, "", "")
+			}
+		})
+	}
+}
+
+// TestGitHubPostGuardRefusesABodyByKind: a body that is not a regular readable file of at most 1 MiB is refused as
+// unreadable-github-post at the file, whatever its place (a directory, a named pipe, a file over the bound, a /proc file whose
+// size is not its content, a file it cannot read).
+func TestGitHubPostGuardRefusesABodyByKind(t *testing.T) {
+	githubPostTempHome(t)
+	dir := t.TempDir()
+	// The test's own TMPDIR holds the files, so the base's location rule (removed by CRW-1578) admitted them too: the rows judge
+	// the file's kind alone, before and after.
+	t.Setenv("TMPDIR", dir)
+	if err := os.Mkdir(filepath.Join(dir, "adir"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(filepath.Join(dir, "fifo.md"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	githubPostWrite(t, dir, "large.md", strings.Repeat("a", githubPostMaxFileBytes+1))
+	rows := []string{"adir", "fifo.md", "large.md"}
+	// A regular file by its mode whose text is made for its reader: gh would read its own environment there.
+	const proc = "/proc/self/environ"
+	if _, err := os.Stat(proc); err == nil {
+		rows = append(rows, proc)
+	}
+	if os.Geteuid() != 0 {
+		githubPostWrite(t, dir, "closed.md", "a clean body\n")
+		if err := os.Chmod(filepath.Join(dir, "closed.md"), 0); err != nil {
+			t.Fatal(err)
+		}
+		rows = append(rows, "closed.md")
+	}
+	for _, name := range rows {
+		path := name
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(dir, name)
+		}
+		command := "gh issue comment 1 --body-file " + path
+		githubPostWant(t, githubPostShell(t, dir, command), command, githubPostRuleUnread, path)
+	}
+}
+
+// TestGitHubPostGuardRefusesAFinalLinkBody_andFollowsADirectoryLink: only the directory part of a body name is resolved, so a body
+// name that is itself a symbolic link is refused (its cause names the final link), while a regular file reached through a linked
+// directory is read. Every body-file form the closed rule reads is checked through the whole guard.
+func TestGitHubPostGuardRefusesAFinalLinkBody_andFollowsADirectoryLink(t *testing.T) {
+	githubPostTempHome(t)
+	dir := t.TempDir()
+	// The test's own TMPDIR holds the files, so the base's location rule (removed by CRW-1578) admitted them too: the rows judge
+	// the file's kind alone, before and after.
+	t.Setenv("TMPDIR", dir)
+	realDir := filepath.Join(dir, "real")
+	if err := os.Mkdir(realDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	githubPostWrite(t, realDir, "body.md", "a clean body\n")
+	githubPostWrite(t, realDir, "input.json", "{\"body\": \"a clean body\"}\n")
+	for link, target := range map[string]string{"link.md": "real/body.md", "link.json": "real/input.json", "linkdir": "real"} {
+		if err := os.Symlink(target, filepath.Join(dir, link)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	forms := []struct {
+		name string
+		post func(path string) string
+		file string
+	}{
+		{"--body-file", func(p string) string { return "gh issue comment 1 --body-file " + p }, "md"},
+		{"-F body=@file", func(p string) string { return "gh api repos/o/r/issues/1/comments -F body=@" + p }, "md"},
+		{"--input", func(p string) string { return "gh api repos/o/r/issues/1/comments --input " + p }, "json"},
+	}
+	for _, form := range forms {
+		t.Run(form.name, func(t *testing.T) {
+			final := filepath.Join(dir, "link."+form.file)
+			command := form.post(final)
+			githubPostWant(t, githubPostShell(t, dir, command), command, githubPostRuleUnread, final)
+			reason := githubPostReason(t, githubPostShell(t, dir, command))
+			if !strings.Contains(reason, "unreadable-body-file") || !strings.Contains(reason, "final link") {
+				t.Errorf("a final link body is refused without its cause: %q", reason)
+			}
+			through := filepath.Join(dir, "linkdir", map[string]string{"md": "body.md", "json": "input.json"}[form.file])
+			command = form.post(through)
+			githubPostWant(t, githubPostShell(t, dir, command), command, "", "")
+		})
+	}
+}
+
+// TestGitHubPostGuardReadsAnArgvCommand: an argv array is already split, so its words carry no shell text.
 func TestGitHubPostGuardReadsAnArgvCommand(t *testing.T) {
 	githubPostTempHome(t)
 	cwd := t.TempDir()

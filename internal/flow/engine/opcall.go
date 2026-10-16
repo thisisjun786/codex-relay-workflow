@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 
@@ -168,6 +169,7 @@ func (s *scriptVM) opCall(name string, call goja.FunctionCall) goja.Value {
 	e.markLive(path, position)
 	requestID := e.opRequestID(id, label, digest)
 	e.inflight.Add(1)
+	e.opStarted(id, label, opNode(args))
 	go func() {
 		defer e.inflight.Done()
 		res, err := op.Run(e.ctx, OpRequest{RunID: e.runID, CallID: id, RequestID: requestID, Args: argsJSON, Journal: e.j})
@@ -178,6 +180,7 @@ func (s *scriptVM) opCall(name string, call goja.FunctionCall) goja.Value {
 		for k, v := range res.Data {
 			data[k] = v
 		}
+		e.opEnding(id)
 		var row Event
 		if err != nil {
 			data["reason"], data["detail"] = "op_failed", err.Error()
@@ -206,6 +209,72 @@ func (s *scriptVM) opCall(name string, call goja.FunctionCall) goja.Value {
 		})
 	}()
 	return s.vm.ToValue(promise)
+}
+
+// liveOp is a registered op in flight in this process: its call id, its op name (crw.<name>) and its node.
+type liveOp struct{ callID, op, node string }
+
+// opNode is the node an op call names: its first argument when that is a string (crw.verify(node, head)), or the node member of
+// its first argument when that is an object with a string node; else "".
+func opNode(args []json.RawMessage) string {
+	if len(args) == 0 {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(args[0], &s) == nil {
+		return s
+	}
+	var obj struct {
+		Node *string `json:"node"`
+	}
+	if json.Unmarshal(args[0], &obj) == nil && obj.Node != nil {
+		return *obj.Node
+	}
+	return ""
+}
+
+// opStarted adds an op call to the ops in flight.
+func (e *Engine) opStarted(callID, op, node string) {
+	e.liveOpsM.Lock()
+	defer e.liveOpsM.Unlock()
+	if e.liveOps == nil {
+		e.liveOps = map[string]liveOp{}
+	}
+	e.liveOps[callID] = liveOp{callID: callID, op: op, node: node}
+}
+
+// opEnding takes an op call out of the ops in flight; it is called before the call's terminal row is written, so a
+// cancel_waiting row that names the call precedes that row.
+func (e *Engine) opEnding(callID string) {
+	e.liveOpsM.Lock()
+	defer e.liveOpsM.Unlock()
+	delete(e.liveOps, callID)
+}
+
+// noteCancelWaiting writes the cancel_waiting row of a run that ends cancelled while ops are in flight: one flow row naming each
+// of them as {call_id, op, node}, sorted by call id. Nothing is written when no op is in flight, so such a run keeps the rows it
+// had before the row existed.
+func (e *Engine) noteCancelWaiting() {
+	e.liveOpsM.Lock()
+	defer e.liveOpsM.Unlock()
+	if len(e.liveOps) == 0 {
+		return
+	}
+	ids := make([]string, 0, len(e.liveOps))
+	for id := range e.liveOps {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	calls := make([]any, 0, len(ids))
+	for _, id := range ids {
+		o := e.liveOps[id]
+		calls = append(calls, map[string]any{"call_id": o.callID, "op": o.op, "node": o.node})
+	}
+	e.j.Append(Event{RunID: e.runID, Kind: KindFlow, Event: EvCancelWaiting, Data: map[string]any{"calls": calls}})
+	// the row is stored now, not with the next terminal row: the cancel that waits for the run reads it while the ops still run
+	if err := journalFlush(e.j); err != nil {
+		e.journalFailed(err)
+	}
 }
 
 // observeSettled tells an op that observes its settled positions (SettleObserver, a test seam) of one.

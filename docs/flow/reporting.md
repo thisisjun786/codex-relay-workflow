@@ -168,11 +168,18 @@ close (the final gate, the crosscheck's verdict and the reflection's alignment, 
 The project's orchestrator lifts a project-level blocker or a decision request the initiative decides:
 
 ```
-crw flow report-up --kind project_blocked|project_decision_request|jun_decision_request --run RUN --evidence FILE [--subject TEXT] [--milestone M]
+crw flow report-up --kind project_blocked|project_decision_request|jun_decision_request --run RUN --evidence FILE [--subject TEXT] [--milestone M] [--question ESC]
 ```
 
 What an agent node cannot do or decide is not reported by the node: its RECEIPT is classified by the run, the run escalates, the
 escalation reaches the child's thread, and the child reports up.
+
+A `project_decision_request` that lifts a question the run asked names it with `--question <escalation id>` (CRW-1574). The command
+reads the run's questions as `crw flow show` lists them and refuses, with exit 1 and nothing written, a question the run does not wait
+on: an id the run never asked, a revision a later ask of the same node and ask replaced, a question a decision already answered, and a
+request to send up (`bundle_split_request`). The report row then carries `question`, `revision` (its revision among the asks of its node
+and ask) and `node` (`""` for a milestone's ask), so the parent's decision record whose source is that report binds the question;
+the three members take no part in the report id. `--question` with any other kind is a usage error.
 
 **A merge request** is a report of its own kind, `merge_request`, not a milestone report: a bundle that lands its milestone through one
 pull request ([script.md](script.md), "The bundle's pull request") asks the parent to merge it with the `crw.mergeRequest` op. The op
@@ -290,7 +297,7 @@ All of these are rows of `flow_events` (`kind` is the first column of the table,
 
 | kind | members |
 | --- | --- |
-| `report` | `report_id`, `report_kind`, `run`, `milestone`, `subject`, `plan`, `body_digest`, `body_path`, `logical_id`, `recipient_state` (`management`, `initiative`, `store`, `unregistered_scope`, `unreadable`), `recipient_thread`, `recipient_initiative`, `recipient_project`, `recipient_reason`, `recipient_detail` |
+| `report` | `report_id`, `report_kind`, `run`, `milestone`, `subject`, `plan`, `body_digest`, `body_path`, `logical_id`, `recipient_state` (`management`, `initiative`, `store`, `unregistered_scope`, `unreadable`), `recipient_thread`, `recipient_initiative`, `recipient_project`, `recipient_reason`, `recipient_detail`, and for a `project_decision_request` made with `--question` `question`, `revision`, `node` |
 | `report_delivery` | `report_id`, `result`, `request_id`, `observation`, `reason`, `logical_id`; written by the daemon (its settle, the recovery of a stranded send, a verified readback): `report_id`, `result` (`accepted`, `refused`, `unknown`), `request_id`, `message_id`, `turn_id`, `kind`, `subject`, `observation` (the message's state), `reason` (the hold, `readback`); the row's `subject` column and `_label` are the message's subject |
 | `message_delivery` | `message_id`, `kind`, `subject`, `result` (`accepted`, `refused`, `unknown`), `request_id`, `turn_id`, `observation`, `reason`, and `wake_id` for a step wake (written by the daemon as a `report_delivery` row is); the row's `node_id` is the escalation's node for an escalation |
 | `report_read` | `report_id`, `turn` |
@@ -310,7 +317,7 @@ that writes it, across runs.
 ## Commands
 
 ```
-crw flow report-up --kind K --run RUN --evidence FILE [--subject TEXT] [--milestone M] [--state DIR] [--socket PATH]
+crw flow report-up --kind K --run RUN --evidence FILE [--subject TEXT] [--milestone M] [--question ESC] [--state DIR] [--socket PATH]
 crw flow reports [--initiative I] [--unread] [--json] [--project P] [--state DIR] [--socket PATH]
 crw flow report-ack REPORT --turn T [--state DIR] [--socket PATH]
 crw flow report-delivered --report ID --result accepted|queued|refused|unknown --request-id R [--observation O] [--state DIR] [--socket PATH]

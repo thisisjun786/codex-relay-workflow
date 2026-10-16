@@ -12,6 +12,8 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 type gitRepo struct {
@@ -54,7 +56,7 @@ func (g gitRepo) objectView() (gitRepo, func(), error) {
 	if err != nil {
 		return g, nil, err
 	}
-	dir, err := os.MkdirTemp("", "crw-bundle-")
+	dir, err := tmploc.MkdirTemp("crw-bundle-")
 	if err != nil {
 		return g, nil, err
 	}

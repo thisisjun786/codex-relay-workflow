@@ -83,15 +83,9 @@ func gitRepo(t *testing.T, scenario Scenario, root string) (string, string) {
 
 func runGit(t *testing.T, scenario Scenario) (map[string]any, error) {
 	t.Helper()
-	root, err := os.MkdirTemp("/dev/shm", "crw-git-contract-")
-	if err != nil {
-		return nil, err
-	}
-	t.Cleanup(func() {
-		if err := testsupport.RemoveTempTree(root); err != nil {
-			t.Error(err)
-		}
-	})
+	// Below tmploc.Dir(), judged by its physical path: a .git above it is a failure that names the reason
+	// (the worktree guard refuses a destination inside a repository), not a reason to move elsewhere.
+	root := testsupport.MkdirTempOutsideRepositories(t, "crw-git-contract-")
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
 	t.Setenv("GIT_AUTHOR_NAME", "Fixture")

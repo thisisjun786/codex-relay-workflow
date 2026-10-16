@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // InsideRepository reports whether dir or one of its ancestors holds what the worktree destination guard (internal/bridge/worktrees, Validate) reads as a repository: a ".git" entry of any
@@ -24,9 +26,6 @@ func InsideRepository(dir string) bool {
 		}
 	}
 }
-
-// fallbackTempParents are the places looked at, after TMPDIR, for a root outside every repository. They are system temporary locations a test may use; none of them is created.
-var fallbackTempParents = []string{"/var/tmp", "/dev/shm"}
 
 // cleanTempParents answers, in order, each of candidates that resolves (symlinks followed, as the destination guard reads the physical path) to an existing directory with no repository above it
 // (InsideRepository). An empty candidate is skipped; the paths answered are the resolved ones.
@@ -61,25 +60,35 @@ func TempParentOutsideRepositories(candidates []string) (string, bool) {
 	return "", false
 }
 
-// MkdirTempOutsideRepositories makes the temporary directory of a test that creates a Git worktree, which the destination guard refuses below any repository. It is os.MkdirTemp(TMPDIR) when
-// nothing above TMPDIR is a repository, so the usual place and the isolation root keep serving. Otherwise (a host whose /tmp holds an empty .git, TMPDIR unset) it takes the first of
-// /var/tmp and /dev/shm in which a directory can be made and that is clean, and when there is none the test is skipped with that reason: the guard is not weakened, and the test is not reported as a
-// defect of the code under test. Candidates are judged by their physical path and the directory answered is that path, which is what the guard validates. The directory is removed when the test ends.
+// MkdirTempOutsideRepositories makes the temporary directory of a test that creates a Git worktree, which the destination guard refuses below any repository. It is os.MkdirTemp below
+// tmploc.Dir() (TMPDIR, else /tmp), judged by its physical path, which is what the guard validates, and the directory answered lies below that path. There is no other place: when TMPDIR is
+// relative, missing, unwritable or has a .git (or a bare repository's HEAD and objects) among its physical ancestors, the test fails with that reason ("set TMPDIR to a directory with no .git
+// above"); it neither moves to another location nor skips, so the guard is not weakened and the host is told what to fix. The directory is removed when the test ends.
 func MkdirTempOutsideRepositories(t testing.TB, pattern string) string {
 	t.Helper()
-	candidates := append([]string{os.TempDir()}, fallbackTempParents...)
-	for _, parent := range cleanTempParents(candidates) {
-		dir, err := os.MkdirTemp(parent, pattern)
-		if err != nil {
-			continue // a clean location the test cannot write to: the next one is tried
-		}
-		t.Cleanup(func() {
-			if err := RemoveTempTree(dir); err != nil {
-				t.Error(err)
-			}
-		})
-		return dir
+	tmp, err := tmploc.Dir()
+	if err != nil {
+		t.Fatalf("%v", err)
+		return ""
 	}
-	t.Skipf("no temporary location outside every Git repository where a directory can be made: %s and %v are each missing, unwritable or have a .git (or a bare repository's HEAD and objects) among their physical ancestors, which the worktree destination guard refuses", os.TempDir(), fallbackTempParents)
-	return ""
+	physical, err := filepath.EvalSymlinks(tmp)
+	if err != nil {
+		t.Fatalf("temp_dir_unusable: %s: %v; set TMPDIR to an existing directory with no .git above", tmp, err)
+		return ""
+	}
+	if InsideRepository(physical) {
+		t.Fatalf("temp_dir_inside_repository: %s (physical %s) has a .git (or a bare repository's HEAD and objects) among its ancestors, which the worktree destination guard refuses; set TMPDIR to a directory with no .git above", tmp, physical)
+		return ""
+	}
+	dir, err := tmploc.MkdirTempIn(physical, pattern)
+	if err != nil {
+		t.Fatalf("temp_dir_unusable: %s: %v; set TMPDIR to a writable directory with no .git above", tmp, err)
+		return ""
+	}
+	t.Cleanup(func() {
+		if err := RemoveTempTree(dir); err != nil {
+			t.Error(err)
+		}
+	})
+	return dir
 }

@@ -25,7 +25,7 @@ import (
 const githubPostUnknownMark = "\x00unknown"
 
 // githubPostNoDir is the base a relative path resolves from when the working directory is unknown; no
-// path under it lies under a trusted root and no script under it can be opened.
+// body file and no script under it can be opened (a body file named from it is unreadable-body-file).
 const githubPostNoDir = "\x00dir"
 
 // githubPostMaxScriptDepth bounds script files that run script files.

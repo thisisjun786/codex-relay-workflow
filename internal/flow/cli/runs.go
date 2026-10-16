@@ -264,6 +264,58 @@ func lastTerminal(rows []engine.Event) (status, reason string) {
 	return status, reason
 }
 
+// inflightCalls names what a cancelled run is still ending, for a cancel that cannot end it within its wait (CRW-1573): the ops of
+// the run's latest cancel_waiting row as `<op> (call <id>[, node <n>])`, in the row's order, then the agent calls whose last row is a
+// start row (lastTerminal running) as `<label> (call <id>)`, in the order of their first rows. Nothing known answers an empty list.
+func inflightCalls(events []engine.Event) []string {
+	var named []string
+	for i := len(events) - 1; i >= 0; i-- {
+		e := events[i]
+		if e.Kind != engine.KindFlow || e.Event != engine.EvCancelWaiting {
+			continue
+		}
+		var calls []map[string]any
+		switch list := e.Data["calls"].(type) {
+		case []any:
+			for _, v := range list {
+				if m, ok := v.(map[string]any); ok {
+					calls = append(calls, m)
+				}
+			}
+		case []map[string]any:
+			calls = list
+		}
+		for _, m := range calls {
+			s := fmt.Sprintf("%s (call %s", str(m, "op"), str(m, "call_id"))
+			if node := str(m, "node"); node != "" {
+				s += ", node " + node
+			}
+			named = append(named, s+")")
+		}
+		break
+	}
+	order, rows := callRows(events)
+	for _, id := range order {
+		if !isAgentCall(rows[id]) {
+			continue
+		}
+		if status, _ := lastTerminal(rows[id]); status != "running" {
+			continue
+		}
+		label := ""
+		for _, r := range rows[id] {
+			if r.Label != "" {
+				label = r.Label
+			}
+		}
+		if label == "" {
+			label = "agent"
+		}
+		named = append(named, fmt.Sprintf("%s (call %s)", label, id))
+	}
+	return named
+}
+
 // reportUpAsks are the asks that are a request to send up through `crw flow report-up`, not a decision the run waits for: the lane that
 // raised one ended without waiting for an answer (CRW-1437).
 var reportUpAsks = map[string]bool{"bundle_split_request": true}

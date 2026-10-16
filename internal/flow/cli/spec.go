@@ -18,6 +18,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/compile"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/script"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/workflows"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 )
 
 // SpecSchema names the run spec.
@@ -27,9 +28,11 @@ const SpecSchema = "crw-flow-run/1"
 // and the host. `crw flow start` writes it before it starts the process, so a run that died is resumed from its journal and this
 // file, with nothing the first caller held in its head. It holds no secret.
 type Spec struct {
-	Schema   string `json:"schema"`
-	RunID    string `json:"run_id"`
-	Workflow string `json:"workflow"`
+	// Binding is the project tenure observed at start; a cancel never guesses one.
+	Binding  *registry.ProjectBinding `json:"binding,omitempty"`
+	Schema   string                   `json:"schema"`
+	RunID    string                   `json:"run_id"`
+	Workflow string                   `json:"workflow"`
 	// Script is the absolute path of the workflow file; empty for a built-in workflow.
 	Script      string          `json:"script,omitempty"`
 	Args        json.RawMessage `json:"args"`
@@ -49,7 +52,11 @@ type Spec struct {
 	// Preflight is the preflight facts that did not pass (warn or fail) when the run started, as they were read: a fact never
 	// stops the start, so the run's record is where its warnings stay.
 	Preflight []Fact `json:"preflight,omitempty"`
-	CreatedAt string `json:"created_at"`
+	// Env is the environment the run's processes are given, recorded once by `crw flow start`: TMPDIR, the temporary location the
+	// one temp function (tmploc) answered for the starting environment, as written. Nothing else of the caller's environment is
+	// recorded (no PATH, GOFLAGS or GOTOOLCHAIN). Nil, and absent from run.json, in a spec written before the field.
+	Env       map[string]string `json:"env,omitempty"`
+	CreatedAt string            `json:"created_at"`
 }
 
 // NewRunID makes the id of a new run: "run-" and twelve hex digits.

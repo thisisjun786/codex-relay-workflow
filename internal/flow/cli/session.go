@@ -12,6 +12,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/bound"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/crwcmd"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 )
 
@@ -364,10 +365,12 @@ func roleSpawns(table *engine.Policy) []RoleSpawn {
 }
 
 // sessionLoop is the guidance the commands print for the owner's loop over a session run's steps (CRW-1316 §3.2), with the live
-// tool argument names of 0.154/0.155 (send_input and close_agent take target, wait_agent targets and timeout_ms).
+// tool argument names of 0.154/0.155 (send_input and close_agent take target, wait_agent targets and timeout_ms). Its commands start
+// with the crw that runs (CRW-1572).
 func sessionLoop(run string) string {
-	return "take the steps of `crw flow next " + run + " --json`: a spawn step is spawn_agent(agent_type, message, model, reasoning_effort, fork_context=false) with the step's values, " +
-		"then at once `crw flow dispatched " + run + " <call> --agent <the id spawn_agent returned> --k <k> --attempt <attempt>`; a send_input step is send_input(target=<agent_id>, message=<message>), " +
-		"then `crw flow dispatched`; a close step is close_agent(target=<agent_id>). While subagents work, alternate wait_agent(targets=[<open agents>], timeout_ms=600000) with " +
-		"`crw flow next " + run + " --wait 600 --json`. Never copy a subagent's answer: the run reads it from the host"
+	crw := crwcmd.Word()
+	return "take the steps of `" + crw + " flow next " + run + " --json`: a spawn step is spawn_agent(agent_type, message, model, reasoning_effort, fork_context=false) with the step's values, " +
+		"then at once `" + crw + " flow dispatched " + run + " <call> --agent <the id spawn_agent returned> --k <k> --attempt <attempt>`; a send_input step is send_input(target=<agent_id>, message=<message>), " +
+		"then `" + crw + " flow dispatched`; a close step is close_agent(target=<agent_id>). While subagents work, alternate wait_agent(targets=[<open agents>], timeout_ms=600000) with " +
+		"`" + crw + " flow next " + run + " --wait 600 --json`. Never copy a subagent's answer: the run reads it from the host"
 }

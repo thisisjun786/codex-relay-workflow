@@ -334,13 +334,11 @@ func runDecisionList(ctx context.Context, services dispatch.Services, args dispa
 func runDecisionAnswer(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
 	decisionID := strings.TrimSpace(args.Text("decision"))
 	option, text := strings.TrimSpace(args.Text("option")), args.Text("text")
-	// An option chooses one of the offered replies and free text states the answer in prose: one
-	// stored answer cannot carry both, and keeping the text while dropping the choice would lose
-	// the reply the apply matches. What is refused is naming both on the line, so the flags are
-	// read as given rather than by their value: --text with an empty value beside --option is
-	// still the caller asking for both.
-	if args.Given("option") && args.Given("text") {
-		return nil, decisionBadInvocation("--option and --text answer a decision one way or the other: --option chooses one of the offered replies and --text states the answer in prose; give one of them")
+	// An option chooses one of the offered replies, and the prose beside it is the note the decision
+	// keeps with that choice. Blank prose beside an option names no note, so the flag is read as given
+	// rather than by its value: a --text with an empty value beside --option is refused.
+	if args.Given("option") && args.Given("text") && strings.TrimSpace(text) == "" {
+		return nil, decisionBadInvocation("--text is blank beside --option: give the prose the answer states, or drop --text")
 	}
 	// A blank answer names nothing, whichever flag carried it.
 	if option == "" && strings.TrimSpace(text) == "" && (args.Given("option") || args.Given("text")) {
@@ -944,6 +942,7 @@ func decisionRecordObject(record decisions.Record) contract.OrderedObject {
 		contract.Field{Key: "answered_by", Value: nullableText(record.AnsweredBy)},
 		contract.Field{Key: "answered_via", Value: nullableText(record.AnsweredVia)},
 		contract.Field{Key: "answer_text", Value: nullableText(record.AnswerText)},
+		contract.Field{Key: "answer_note", Value: nullableText(record.AnswerNote)},
 		contract.Field{Key: "applied_at", Value: nullableText(record.AppliedAt)},
 		contract.Field{Key: "applied_event", Value: nullableText(record.AppliedEvent)},
 		contract.Field{Key: "applied_generation", Value: record.AppliedGeneration},
