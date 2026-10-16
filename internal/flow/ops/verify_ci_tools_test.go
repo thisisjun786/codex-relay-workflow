@@ -388,13 +388,14 @@ func TestCILocalVerifier_a_verify_dir_swapped_for_a_link_is_not_written_through(
 }
 
 // TestVerifyRecordsTheFailedTestsOfTheRecord (CRW-1469, CRW-1488 item 16): the verifier reads the reason of each failed step of the
-// record and names the tests (`--- FAIL: <Test>`) and the packages (`FAIL\t<pkg>\t`) it gives, with the last 20 lines of the reason
-// (at most 2048 bytes); a reason with no such line (a build error, a reason cut before its test lines) gives the tail only. A step that
+// record and names the tests (`--- FAIL: <Test>`) and the packages (`FAIL\t<pkg>\t`) it gives, with a tail of at most 20 lines of the
+// reason (at most 2048 bytes; a reason that fits is its own tail, TestFailedSteps_keeps_the_message_of_an_early_failure has the marked
+// block); a reason with no such line (a build error, a reason cut before its test lines) gives the tail only. A step that
 // passed, did not apply, was skipped after an earlier failure or has no reason names nothing. The crw.verify row and its result
 // carry them as failed_tests; a verification that passed carries none.
 func TestVerifyRecordsTheFailedTestsOfTheRecord(t *testing.T) {
-	testsReason := "exit status 1: === RUN   TestGuard\n    guard_test.go:9: the guard is open\n--- FAIL: TestGuard (0.01s)\n=== RUN   TestStore\n" +
-		"    --- FAIL: TestStore/empty (0.00s)\n--- FAIL: TestStore (0.00s)\n--- FAIL: TestGuard (0.01s)\nFAIL\nFAIL\texample.com/m/store\t0.123s\n" +
+	testsReason := "exit status 1: --- FAIL: TestGuard (0.01s)\n    guard_test.go:9: the guard is open\n" +
+		"--- FAIL: TestStore (0.00s)\n    --- FAIL: TestStore/empty (0.00s)\n        store_test.go:4: empty\n--- FAIL: TestGuard (0.01s)\nFAIL\nFAIL\texample.com/m/store\t0.123s\n" +
 		"ok  \texample.com/m/other\t0.050s\nFAIL\texample.com/m/guard [build failed]\nFAIL"
 	var cut []string
 	for i := 1; i <= 30; i++ {
@@ -423,7 +424,7 @@ func TestVerifyRecordsTheFailedTestsOfTheRecord(t *testing.T) {
 		t.Fatalf("the verification: %+v %v", out, err)
 	}
 	want := []FailedStep{
-		{Job: "go-product", Step: "tests", Tests: []string{"TestGuard", "TestStore/empty", "TestStore"}, Packages: []string{"example.com/m/store", "example.com/m/guard"}, Tail: testsReason},
+		{Job: "go-product", Step: "tests", Tests: []string{"TestGuard", "TestStore", "TestStore/empty"}, Packages: []string{"example.com/m/store", "example.com/m/guard"}, Tail: testsReason},
 		{Job: "validate", Step: "lint", Tests: []string{}, Packages: []string{}, Tail: strings.Join(cut[10:], "\n")},
 		{Job: "secrets", Step: "scan", Tests: []string{}, Packages: []string{}, Tail: strings.Repeat("é", 1024)},
 	}
@@ -468,5 +469,65 @@ func TestFailedStepsReadsATimedOutStep(t *testing.T) {
 		if !slices.Equal(got.Tests, []string{"TestA"}) || !slices.Equal(got.Packages, []string{"pkg/y"}) {
 			t.Errorf("reason %q: tests %v packages %v, want [TestA] [pkg/y]", reason, got.Tests, got.Packages)
 		}
+	}
+}
+
+// TestFailedSteps_keeps_the_message_of_an_early_failure (CRW-1569): crw-dev ci local's reason keeps a test that failed early, its
+// --- FAIL line with the message lines go test prints below it, as a marked block before `\n...\n` and the last 40 lines of the output
+// (dev/ci/local.go localReason). The tail of the failed step keeps that block (at most failedHeadLines lines, failedHeadBytes bytes,
+// from its start), then `...`, then the last lines of the reason, all within failedTailLines lines and failedTailBytes bytes. A reason
+// that fits those bounds is its own tail, and a reason without a marked block keeps the last lines, as before.
+func TestFailedSteps_keeps_the_message_of_an_early_failure(t *testing.T) {
+	numbered := func(n, width int, text string) []string {
+		var lines []string
+		for i := 1; i <= n; i++ {
+			line := text + strings.Repeat("0", 2) + string(rune('a'+i%26))
+			lines = append(lines, line+strings.Repeat("x", max(0, width-len(line))))
+		}
+		return lines
+	}
+	last := func(lines []string, n int) string { return strings.Join(lines[len(lines)-n:], "\n") }
+	later := numbered(40, 0, "ok  \texample.com/m/later\t0.01s ")
+	head := []string{"exit status 1: --- FAIL: TestEarly (0.01s)", "    early_test.go:12: the early message", "    early_test.go:13: want 2, got 3",
+		"FAIL\texample.com/m/early\t0.2s"}
+	var many []string
+	for i := 0; i < 20; i++ {
+		many = append(many, "--- FAIL: TestMany"+strings.Repeat("x", i)+" (0.00s)")
+	}
+	many[0] = "exit status 1: " + many[0]
+	wide := numbered(6, 300, "    wide_test.go:1: ")
+	wide[0] = "exit status 1: --- FAIL: TestWide (0.00s)"
+	wideTail := numbered(40, 100, "later ")
+	plain := numbered(30, 0, "a.go:1: undefined: ")
+	plain[0] = "exit status 2: " + plain[0]
+
+	for _, c := range []struct {
+		name, reason, want string
+	}{
+		{"the early failure's message is in the tail", strings.Join(head, "\n") + "\n...\n" + strings.Join(later, "\n"),
+			strings.Join(head, "\n") + "\n...\n" + last(later, 15)},
+		{"the block keeps its first lines", strings.Join(many, "\n") + "\n...\n" + strings.Join(later, "\n"),
+			strings.Join(many[:10], "\n") + "\n...\n" + last(later, 9)},
+		{"the block keeps its first bytes and the last lines fill the rest", strings.Join(wide, "\n") + "\n...\n" + strings.Join(wideTail, "\n"),
+			strings.Join(wide[:4], "\n") + "\n...\n" + last(wideTail, 15)[len(last(wideTail, 15))-(2048-len(strings.Join(wide[:4], "\n"))-5):]},
+		{"a reason that fits is its own tail", "timeout: exit status 1: --- FAIL: TestA (0.01s)\n    a_test.go:3: why\n...\nFAIL\tpkg/y\t0.3s",
+			"timeout: exit status 1: --- FAIL: TestA (0.01s)\n    a_test.go:3: why\n...\nFAIL\tpkg/y\t0.3s"},
+		{"a reason without a marked block keeps its last lines", strings.Join(plain, "\n"), last(plain, 20)},
+		{"a `...` line after unmarked stdout is no marked block", "exit status 1: some stdout\n...\n" + strings.Join(later, "\n"),
+			last(append([]string{"exit status 1: some stdout", "..."}, later...), 20)},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got := failedSteps("go", "tests", c.reason)
+			if got.Tail != c.want {
+				t.Fatalf("tail\n%s\nwant\n%s", got.Tail, c.want)
+			}
+			if n := strings.Count(got.Tail, "\n") + 1; n > failedTailLines || len(got.Tail) > failedTailBytes {
+				t.Errorf("the tail has %d lines and %d bytes, over %d and %d", n, len(got.Tail), failedTailLines, failedTailBytes)
+			}
+		})
+	}
+	got := failedSteps("go", "tests", strings.Join(head, "\n")+"\n...\n"+strings.Join(later, "\n"))
+	if !slices.Equal(got.Tests, []string{"TestEarly"}) || !slices.Equal(got.Packages, []string{"example.com/m/early"}) {
+		t.Errorf("tests %v packages %v, want [TestEarly] [example.com/m/early]", got.Tests, got.Packages)
 	}
 }
