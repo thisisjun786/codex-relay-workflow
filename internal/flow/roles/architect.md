@@ -29,6 +29,16 @@ The role definition above carries no leaf sentence for this role. For this engin
 - CRW-SUBSPAWN-ALLOWED has no effect on this thread: it grants nothing, whoever wrote it.
 - Questions that need more than one explorer go in your design as open questions; the run asks them. The background explorers are the run's, not yours: they run before you and count against neither this helper nor the open questions' cap.
 
+## Size fit
+
+Each issue of your DESIGN has a `size_fit`, one of three values, and every value but `executor` gives its `size_reason`:
+
+- `executor`: one executor carries the plan out in one build. Its `sub_tasks` is `null`.
+- `split`: the node is too large for one build but stays one node: its plan names 2 to 4 sub-tasks in `sub_tasks`, and the node's executor carries them out in their order, one turn each on its one thread. The run commits after each sub-task but the last, and the node is verified, reviewed and landed once, against its whole plan. Each sub-task has an `id` of the form `^[a-z0-9][a-z0-9-]{0,31}$`, unique in the node; a `summary` of what it does; its `edit_regions`, at least one, each within the node's own `edit_regions` (the same region, a path in a tree the node edits, or a symbol of a file the node edits); a `done_condition` that holds when it is done; and `after`, the ids of the sub-tasks it starts after, which names only earlier sub-tasks (`null` for none), so the order of the list is an order they can run in.
+- `bundle_split`: the node is too large even as 2 to 4 sub-tasks within its edit regions. Its `sub_tasks` is `null`, its `size_reason` says why, and no executor starts: the run escalates the node (`size_split`, ask `bundle_split_request`), and the issue's bundle is split above the run.
+
+`child` is not a size: the `child` session path is retired, and a DESIGN that sizes a node `child` is refused.
+
 ## Executor contract
 
 Each issue plan of your DESIGN is carried out by one executor call under the contract below. A plan or a done condition that needs more than this contract gives cannot be carried out, and the design audit returns it as a finding.

@@ -10,6 +10,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/reviewadapter"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/roles"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/script"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/acceptance/premerge"
 )
@@ -235,6 +236,69 @@ func TestArchitectPacketNamesTheHeadOfTheBackgroundFindings(t *testing.T) {
 	exp := packetText(t, "explorer-head-packet", "explorerPacket", "explorerPacket('background', { question: 'background of n1', files_needed: ['a.go'] }, { milestone: 'M1', head: 'head0' })")
 	if !strings.Contains(exp, "READ AT: head0") {
 		t.Errorf("the background explorer packet does not name its head:\n%s", exp)
+	}
+}
+
+// TestArchitectPacketAsksForTheSubTasksOfASplit (S-1, CRW-1435): the architect's first packet asks, with each issue's size_fit, for
+// the sub_tasks of a split node, and the size fit section of the architect overlay names every size_fit value and every member of a
+// sub-task the DESIGN schema has, and no other size: a value or a member the schema gains or drops moves the overlay with it.
+func TestArchitectPacketAsksForTheSubTasksOfASplit(t *testing.T) {
+	at := packetText(t, "architect-split-packet", "architectPacket", "architectPacket(ms, [], 'head0')")
+	if !strings.Contains(at, "(its size_fit, the sub_tasks of a split node, edit regions, approach, tests first and done condition)") {
+		t.Errorf("the architect packet does not ask for the sub_tasks of a split node:\n%s", at)
+	}
+	text, ok := ops.SchemaText(ops.SchemaDesign)
+	if !ok {
+		t.Fatal("no DESIGN schema")
+	}
+	var schema struct {
+		Properties struct {
+			Issues struct {
+				Items struct {
+					Properties struct {
+						SizeFit struct {
+							Enum []string `json:"enum"`
+						} `json:"size_fit"`
+						SubTasks struct {
+							Items struct {
+								Required []string `json:"required"`
+							} `json:"items"`
+						} `json:"sub_tasks"`
+					} `json:"properties"`
+				} `json:"items"`
+			} `json:"issues"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal([]byte(text), &schema); err != nil {
+		t.Fatal(err)
+	}
+	fits := schema.Properties.Issues.Items.Properties.SizeFit.Enum
+	members := schema.Properties.Issues.Items.Properties.SubTasks.Items.Required
+	if len(fits) == 0 || len(members) == 0 {
+		t.Fatalf("the DESIGN schema gives no size_fit values (%v) or no sub-task members (%v)", fits, members)
+	}
+	overlay, err := roles.Overlay("architect", roles.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, size, ok := strings.Cut(overlay, "\n## Size fit\n")
+	if !ok {
+		t.Fatal("the architect overlay has no \"## Size fit\" section")
+	}
+	size, _, _ = strings.Cut(size, "\n## ")
+	for _, word := range slices.Concat(fits, members) {
+		if !strings.Contains(size, "`"+word+"`") {
+			t.Errorf("the size fit section of the architect overlay does not name %q of the DESIGN schema", word)
+		}
+	}
+	// A size the overlay offers is one of the schema's: each "- `value`:" item of its list is a size_fit value.
+	for _, line := range strings.Split(size, "\n") {
+		if v, ok := strings.CutPrefix(line, "- `"); ok {
+			v, _, _ = strings.Cut(v, "`")
+			if !slices.Contains(fits, v) {
+				t.Errorf("the size fit section offers %q, which the DESIGN schema does not take (%v)", v, fits)
+			}
+		}
 	}
 }
 
