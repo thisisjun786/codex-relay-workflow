@@ -20,6 +20,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc/tmploctest"
 )
 
 // review is one run of review_parity.py's group against the native hook: the native hook runs
@@ -155,6 +156,7 @@ func (r *review) peer(path string, response Object) (stop func()) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
+	tmploctest.CheckSocket(t, socketRootOf(t, path), path)
 	listener, err := net.Listen("unix", path)
 	if err != nil {
 		t.Fatal(err)

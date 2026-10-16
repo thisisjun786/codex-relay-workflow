@@ -15,6 +15,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc/tmploctest"
 )
 
 type reviewSelectionFixture struct {
@@ -56,6 +57,7 @@ func Test33ReviewD6(t *testing.T) {
 			if err := os.MkdirAll(f.State, 0700); err != nil {
 				t.Fatal(err)
 			}
+			tmploctest.CheckSocket(t, socketRootOf(t, filepath.Join(f.State, "control.sock")), filepath.Join(f.State, "control.sock"))
 			listener, err := net.Listen("unix", filepath.Join(f.State, "control.sock"))
 			if err != nil {
 				t.Fatal(err)
@@ -181,6 +183,7 @@ func Test33ReviewD8(t *testing.T) {
 			if err := os.MkdirAll(path, 0700); err != nil {
 				t.Fatal(err)
 			}
+			tmploctest.CheckSocket(t, socketRootOf(t, filepath.Join(path, "control.sock")), filepath.Join(path, "control.sock"))
 			listener, err := net.Listen("unix", filepath.Join(path, "control.sock"))
 			if err != nil {
 				t.Fatal(err)

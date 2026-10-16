@@ -14,6 +14,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -160,6 +161,11 @@ func TestLandHeadAfterACancelDuringVerifyReleases(t *testing.T) {
 	run1, code, _, _ := startCancelledLand(t, l, author)
 	if code != 1 {
 		t.Errorf("the cancelled land exits %d, want 1", code)
+	}
+	// Cancellation now also releases the project tenure (CRW-1325). Starting
+	// new work requires an explicit binding; the returned execution slot stays free.
+	if _, err := (&registry.Registry{Store: l.w.st}).BindScope(ctx, "parent", "P", registry.Endpoint{TaskID: l.owner, HostID: "host"}); err != nil {
+		t.Fatal(err)
 	}
 	run2 := l.start("start", "land-head", "--args", landArgs(l, "A-1", "outside-a1", author), "--handoff", l.file)
 	res := l.runToEnd(run2.RunID)

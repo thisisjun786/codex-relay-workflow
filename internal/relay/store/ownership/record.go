@@ -24,6 +24,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 const Protocol = 1
@@ -528,7 +529,7 @@ func openStoreFile(path string) (file *os.File, held bool, err error) {
 // The sources are read with ReadAt from the handles this process holds (openStoreFile), never
 // closed here: CRW-846.
 func CopySnapshot(path string) (dst string, cleanup func() error, err error) {
-	dir, err := os.MkdirTemp("", "crw-ownership-")
+	dir, err := tmploc.MkdirTemp("crw-ownership-")
 	if err != nil {
 		return "", nil, err
 	}

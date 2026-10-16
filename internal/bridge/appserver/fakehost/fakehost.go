@@ -16,7 +16,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -24,6 +23,8 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc/tmploctest"
 )
 
 // MaxFrameBytes is the largest frame either side of the real transport accepts (rpc.py:31).
@@ -176,47 +177,23 @@ func Start(tb testing.TB) *Server {
 	return s
 }
 
-// socketPathBound is the longest unix socket path every platform the tests run on can bind or
-// dial: darwin refuses a path of 104 bytes or more and Linux one of 108 (Go rejects a path that
-// fills the sockaddr field), so the shared bound is 103 bytes.
-const socketPathBound = 103
+// socketPattern names the directory SocketPath makes below tmploc.SocketRoot.
+const socketPattern = "crw-fakehost-"
 
-// shortSocketRoot is where a socket goes when TMPDIR leaves no room for one. /tmp exists on Linux
-// and darwin alike (/dev/shm does not exist on darwin).
-const shortSocketRoot = "/tmp"
-
-// SocketPath returns the path of a unix socket named base in a fresh directory that is removed
-// when the test ends. Not tb.TempDir: its path carries the test's name, and a long name or a long
-// TMPDIR would push the socket path past the bound a unix socket can be bound or dialled at
-// (socketPathBound), which fails with "invalid argument" and no hint that the length is the
-// cause. The directory is made under TMPDIR, so the tests' isolation root still collects it,
-// unless the socket's path would pass the bound; then it is made under /tmp and the reason is
-// logged. A path that fits nowhere fails the test with both lengths.
+// SocketPath returns the path of a unix socket named base in a fresh directory below
+// tmploc.SocketRoot that is removed when the test ends (tmploctest.SocketDir). The directory is
+// never below TMPDIR, whatever its length: a socket's place does not depend on the run's TMPDIR
+// (CRW-1568). The path is measured by tmploctest.CheckSocket, so a name longer than
+// tmploc.SocketTailMax fails the test with its length.
 func SocketPath(tb testing.TB, base string) string {
 	tb.Helper()
-	if base == "" || strings.ContainsRune(base, filepath.Separator) {
+	if base == "" || base == "." || base == ".." || strings.ContainsRune(base, filepath.Separator) {
 		tb.Fatalf("fakehost: socket name %q is not a file name", base)
 	}
-	dir, err := os.MkdirTemp("", "crw-fakehost-")
-	if err != nil {
-		tb.Fatalf("fakehost: temp dir: %v", err)
-	}
-	if len(filepath.Join(dir, base)) > socketPathBound {
-		long := filepath.Join(dir, base)
-		_ = os.RemoveAll(dir)
-		if dir, err = os.MkdirTemp(shortSocketRoot, "crw-fakehost-"); err != nil {
-			tb.Fatalf("fakehost: a socket under TMPDIR would be %d bytes, over the %d-byte bound of a unix socket path, and %s has no directory for it: %v", len(long), socketPathBound, shortSocketRoot, err)
-		}
-		tb.Cleanup(func() { _ = os.RemoveAll(dir) })
-		path := filepath.Join(dir, base)
-		if len(path) > socketPathBound {
-			tb.Fatalf("fakehost: socket %s is %d bytes, over the %d-byte bound of a unix socket path, even under %s", path, len(path), socketPathBound, shortSocketRoot)
-		}
-		tb.Logf("fakehost: TMPDIR is too long for a unix socket (%s would be %d bytes, bound %d); the socket is %s", long, len(long), socketPathBound, path)
-		return path
-	}
-	tb.Cleanup(func() { _ = os.RemoveAll(dir) })
-	return filepath.Join(dir, base)
+	dir := tmploctest.SocketDir(tb, socketPattern)
+	path := filepath.Join(dir, base)
+	tmploctest.CheckSocket(tb, dir, path)
+	return path
 }
 
 // Close stops the listener, drops every connection and waits for their handlers.

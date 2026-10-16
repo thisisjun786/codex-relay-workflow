@@ -30,6 +30,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/acceptance"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // TrainExpectedJobs is the set of ci.yml job names a bundle's run must hold, each a success, before
@@ -1736,7 +1737,7 @@ func openTrainGit(ctx context.Context, checkout, gitBin string) (*trainGit, erro
 	if format != "sha1" && format != "sha256" {
 		return nil, fmt.Errorf("git answered %q to --show-object-format", format)
 	}
-	dir, err := os.MkdirTemp("", "crw-train-")
+	dir, err := tmploc.MkdirTemp("crw-train-")
 	if err != nil {
 		return nil, err
 	}

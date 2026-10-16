@@ -18,9 +18,11 @@ type RepositoryTools struct {
 	Facts []string
 }
 
-// PacketSection is the "Repository tools" section of a call's packet: the tools and the prefix every command that runs one takes;
-// "" without tools. The prefix holds wherever the call runs: a session subagent's shell is the owner session's, and an App Server
-// thread loaded again after a host restart is rebuilt from the host's configuration plus what its resume carries.
+// PacketSection is the "Repository tools" section of a call's packet: the tools and the prefix the commands take; "" without
+// tools. The prefix holds wherever the call runs: a session subagent's shell is the owner session's, and an App Server thread
+// loaded again after a host restart is rebuilt from the host's configuration plus what its resume carries. With the run's TMPDIR
+// among the tools (CRW-1570) the prefix goes in front of every command the subagent runs, since every command that makes a temporary
+// file takes TMPDIR; with the go alone, in front of every command that runs it.
 func (t *RepositoryTools) PacketSection() string {
 	if t == nil || len(t.Facts) == 0 {
 		return ""
@@ -30,9 +32,29 @@ func (t *RepositoryTools) PacketSection() string {
 	for _, f := range t.Facts {
 		b.WriteString("- " + f + "\n")
 	}
+	if t.sets(runTempEnv) {
+		b.WriteString("\nYour shell may not have them: put `" + t.Prefix + "` in front of every command you run (TMPDIR concerns every command " +
+			"that makes a temporary file, not only go build, go test, go vet and gofmt), and write every command of a plan, a check or a " +
+			"receipt that way.\n\n")
+		return b.String()
+	}
 	b.WriteString("\nYour shell may not have them: put `" + t.Prefix + "` in front of every command that runs one of them (go build, go test, " +
 		"go vet, gofmt), and write every such command of a plan, a check or a receipt that way.\n\n")
 	return b.String()
+}
+
+// runTempEnv is the variable of the run's temporary location among the tools' Env (CRW-1570); it only names the entry, and the
+// location itself is tmploc's.
+const runTempEnv = "TMPDIR"
+
+// sets says whether Env has an entry for the variable name.
+func (t *RepositoryTools) sets(name string) bool {
+	for _, kv := range t.Env {
+		if k, _, _ := strings.Cut(kv, "="); k == name {
+			return true
+		}
+	}
+	return false
 }
 
 // ShellOverrides are Env as the config overrides of a thread/start, thread/fork or thread/resume: one leaf key

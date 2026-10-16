@@ -197,7 +197,7 @@
     },
     {
       "file": "scripts/scaffold-audit.sh",
-      "reason": "CRW-1221 correction: .env is judged ignored by Git's answer for the .gitignore, not by the literal spelling",
+      "reason": "CRW-1221 correction: .env is judged ignored by Git's answer for the .gitignore, not by the literal spelling; CRW-1579: the scratch directory follows the one TMPDIR rule (an unset or empty TMPDIR is /tmp, a relative TMPDIR stops with tmpdir_not_absolute and exit status 2 before any directory is made)",
       "hunks": [
         {
           "line": 5,
@@ -208,6 +208,16 @@
             "# Checks whether a project follows the structural scaffold rules in this skill: feature-based\n",
             "# layout, colocation, public boundary exports, source-of-truth docs, .env safety, file length and\n",
             "# agent/context instructions. crw-dev-backend links to this script for the same audit.\n"
+          ]
+        },
+        {
+          "line": 8,
+          "new": [
+            "TMPBASE=\"${TMPDIR:-/tmp}\"\n",
+            "case \"$TMPBASE\" in\n",
+            "  /*) ;;\n",
+            "  *) printf 'tmpdir_not_absolute: TMPDIR=%s; set TMPDIR to an absolute directory\\n' \"$TMPBASE\" >&2; exit 2 ;;\n",
+            "esac\n"
           ]
         },
         {
@@ -225,7 +235,7 @@
             "  [ -f \"$DIR/.gitignore\" ] || return 1\n",
             "  if command -v git >/dev/null 2>&1; then\n",
             "    local scratch result=1\n",
-            "    scratch=$(mktemp -d \"${TMPDIR:-/tmp}/scaffold-audit.XXXXXX\") || return 1\n",
+            "    scratch=$(mktemp -d \"$TMPBASE/scaffold-audit.XXXXXX\") || return 1\n",
             "    if cp \"$DIR/.gitignore\" \"$scratch/.gitignore\" \\\n",
             "      && git -C \"$scratch\" init -q >/dev/null 2>&1 \\\n",
             "      && git -C \"$scratch\" -c core.excludesFile=/dev/null check-ignore -q --no-index .env >/dev/null 2>&1; then\n",

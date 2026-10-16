@@ -63,9 +63,19 @@ func (c *command) resume(args []string) int {
 		signal.Notify(sigs, syscall.SIGUSR1, syscall.SIGUSR2)
 		defer signal.Stop(sigs)
 		defer pauseOnSignal(sigs, ctl.Control)()
-		// a session run's process holds its process lock from before the run lock until after it, as the run process does
+		// a session run's process holds its process lock from before the run lock until after it, as the run process does; the run
+		// works below the TMPDIR its start recorded, as in the run process (execute, CRW-1570): one that is gone refuses the resume
+		// before any lock or row
 		var process *processLock
 		if spec, err := ReadSpec(sel.Path, run); err == nil {
+			if err := checkRunEnv(spec); err != nil {
+				return c.fail("run %s: %v", run, err)
+			}
+			restoreEnv, err := c.applyEnv(spec)
+			if err != nil {
+				return c.fail("run %s: %v", run, err)
+			}
+			defer restoreEnv()
 			process = c.processLock(sel.Path, spec)
 			defer process.Release()
 		}
@@ -116,6 +126,12 @@ func (c *command) resume(args []string) int {
 		_ = r.Close()
 		if err != nil {
 			return c.fail("%v", err)
+		}
+		// the process starts with the run's recorded TMPDIR (DetachedCommand): one that cannot be used is refused before it starts,
+		// exit 1 as a start refuses it (CRW-1570)
+		if err := checkRunEnv(spec); err != nil {
+			fmt.Fprintf(c.stderr, "crw flow resume: the run is not resumed: %v\n", err)
+			return 1
 		}
 		dir, _ := os.Getwd()
 		spawned := c.now()
@@ -331,12 +347,15 @@ func (c *command) resumeHold(state, run string) engine.ResumeHold {
 			}
 		}
 	}}
-	// the resumed run's calls get the go the verifier runs, as the run process's do (CRW-1488)
-	hold.Tools = repositoryTools(c.getenv)
+	// the resumed run's calls get the run's recorded TMPDIR (CRW-1570) and the go the verifier runs (CRW-1488), as the run process's
+	// do; a run without a spec records no env
+	var rec map[string]string
 	if spec, err := ReadSpec(state, run); err == nil {
+		rec = spec.Env
 		hold.Backend = spec.Backend
 		hold.Budget = func(spent, asked int64) (int64, error) { return runBudget(spec, spent, asked) }
 	}
+	hold.Tools = repositoryTools(c.getenv, rec)
 	return hold
 }
 

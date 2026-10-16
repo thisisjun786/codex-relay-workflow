@@ -141,7 +141,7 @@ func runOracle(command string, args []string, stdout, stderr io.Writer) int {
 	oracle := set.String("oracle", "", "the extracted CXC v0.2.40 tree (git archive v0.2.40)")
 	node := set.String("node", "", "node executable (default: node on PATH)")
 	git := set.String("git", "", "git executable (default: git on PATH)")
-	scratch := set.String("scratch", "/var/tmp", "parent directory of every case root")
+	scratch := set.String("scratch", RecordedScratch, "parent directory of every case root")
 	only := set.String("only", "", "record only scenarios whose id matches this regular expression")
 	keep := set.Bool("keep", false, "keep case roots for inspection")
 	once := set.Bool("once", false, "record each scenario once (skips the determinism proof)")

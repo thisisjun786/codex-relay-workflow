@@ -102,6 +102,7 @@ var zoneInventory = map[string][]string{
 	"dag_agent_integration_stages": {"stage_id", "batch_id", "plan_id", "node_id", "acceptance_id", "execution_id", "stage", "head", "detail", "recorded_by", "recorded_at"},
 	// CRW-1304 (appended statements): the integration target record, the remote branch an integration ref is pushed to and the heads read there.
 	"dag_integration_targets": {"target_id", "kind", "checkout", "integration_ref", "remote", "remote_ref", "plan_id", "observed_head", "source", "recorded_by", "recorded_at"},
+	"dag_user_decision_notes": {"decision_id", "answer_note"},
 }
 
 // rawDB opens path without any of the store's open rules, as an operator's sqlite3 would.

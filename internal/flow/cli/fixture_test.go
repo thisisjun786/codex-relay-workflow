@@ -3,8 +3,11 @@ package cli
 import (
 	"bytes"
 	"context"
+	"maps"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -16,17 +19,18 @@ import (
 
 var ctx = context.Background()
 
-// world is a relay state directory with a store in it.
+// world is a relay state directory with a store in it, and the temporary location its starts record (TMPDIR).
 type world struct {
 	t     *testing.T
 	state string
+	tmp   string
 	db    string
 	st    *store.Store
 }
 
 func newWorld(t *testing.T) *world {
 	t.Helper()
-	w := &world{t: t, state: t.TempDir()}
+	w := &world{t: t, state: t.TempDir(), tmp: t.TempDir()}
 	w.db = filepath.Join(w.state, "relay.sqlite3")
 	w.open()
 	t.Cleanup(w.close)
@@ -128,6 +132,42 @@ type testDeps struct {
 	spawned []SpawnRequest
 	order   *bytes.Buffer
 	facts   []Fact
+	// envs records the ApplyEnv calls of the commands the test runs (applied, and restored once the run is done with them): the
+	// process environment is left as it is, since tests run the body of a run in this process and in parallel (CRW-1570)
+	envs envRecord
+}
+
+// envRecord is what the recording ApplyEnv of the fixture saw.
+type envRecord struct {
+	mu       sync.Mutex
+	applied  []map[string]string
+	restored int
+}
+
+// apply records rec and returns the restore that records it was called.
+func (r *envRecord) apply(rec map[string]string) (func(), error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.applied = append(r.applied, maps.Clone(rec))
+	return func() {
+		r.mu.Lock()
+		r.restored++
+		r.mu.Unlock()
+	}, nil
+}
+
+// counts are the ApplyEnv calls applied and restored so far, and the maps applied.
+func (r *envRecord) counts() (applied []map[string]string, restored int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return slices.Clone(r.applied), r.restored
+}
+
+// reset forgets what was recorded.
+func (r *envRecord) reset() {
+	r.mu.Lock()
+	r.applied, r.restored = nil, 0
+	r.mu.Unlock()
 }
 
 func (w *world) deps() *testDeps {
@@ -138,7 +178,7 @@ func (w *world) deps() *testDeps {
 	now := time.Date(2026, 10, 12, 9, 0, 0, 0, time.UTC)
 	td.Deps = &Deps{
 		Now:    func() time.Time { return now },
-		Getenv: func(k string) (string, bool) { return "", false },
+		Getenv: w.withTemp(func(k string) (string, bool) { return "", false }),
 		Reader: func(ctx context.Context, state, socket string) (*Reader, error) {
 			return OpenReader(ctx, w.state, socket)
 		},
@@ -155,7 +195,19 @@ func (w *world) deps() *testDeps {
 		Probe:  ProberFunc(func(ctx context.Context, req PreflightRequest) []Fact { return td.facts }),
 		Signal: func(pid int, sig syscall.Signal) error { return nil },
 	}
+	td.ApplyEnv = td.envs.apply
 	return td
+}
+
+// withTemp is getenv with TMPDIR answered by the world's temporary location (CRW-1570): a start records it, and so a test's run never
+// depends on where or how long the TMPDIR of the test process is.
+func (w *world) withTemp(getenv func(string) (string, bool)) func(string) (string, bool) {
+	return func(k string) (string, bool) {
+		if k == "TMPDIR" {
+			return w.tmp, true
+		}
+		return getenv(k)
+	}
 }
 
 // do runs a command line and returns its exit status and output.

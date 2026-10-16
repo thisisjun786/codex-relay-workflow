@@ -1,0 +1,52 @@
+=== RUN   TestConfiguredRelayStateRefusesASplitKeyAlone
+--- PASS: TestConfiguredRelayStateRefusesASplitKeyAlone (0.01s)
+=== RUN   TestConfiguredRelayState
+    toolenv_test.go:262: configured: "", relay_state: socket_path_too_long: a store socket would be 118 bytes (/scratch/lt/rtfix-a-r2tmp/t/ci0a1b2c3d/TestConfiguredRelayState3536407913/001/disk/relay plus /<scope>/control.sock), but a Unix socket path must be under 108
+--- FAIL: TestConfiguredRelayState (0.00s)
+FAIL
+FAIL	github.com/thisisjun786/codex-relay-workflow/internal/crwconfig	0.015s
+FAIL
+ok  	github.com/thisisjun786/codex-relay-workflow/internal/affordance	0.097s
+ok  	github.com/thisisjun786/codex-relay-workflow/internal/bridge	0.908s
+ok  	github.com/thisisjun786/codex-relay-workflow/internal/contract	0.223s
+ok  	github.com/thisisjun786/codex-relay-workflow/internal/contracttest	0.783s
+ok  	github.com/thisisjun786/codex-relay-workflow/internal/dev/ci	0.506s
+ok  	github.com/thisisjun786/codex-relay-workflow/internal/flow/ops	0.726s
+ok  	github.com/thisisjun786/codex-relay-workflow/internal/flow/cli	0.642s
+ok  	github.com/thisisjun786/codex-relay-workflow/internal/gitprobe	0.870s
+ok  	github.com/thisisjun786/codex-relay-workflow/internal/gui	0.878s
+ok  	github.com/thisisjun786/codex-relay-workflow/internal/guidancerecord	0.611s
+ok  	github.com/thisisjun786/codex-relay-workflow/internal/harness	0.798s
+ok  	github.com/thisisjun786/codex-relay-workflow/internal/hookswitch	0.096s
+ok  	github.com/thisisjun786/codex-relay-workflow/internal/integrator	0.256s
+ok  	github.com/thisisjun786/codex-relay-workflow/internal/jsnode	0.609s
+ok  	github.com/thisisjun786/codex-relay-workflow/internal/layername	0.162s
+ok  	github.com/thisisjun786/codex-relay-workflow/internal/manage	0.273s
+ok  	github.com/thisisjun786/codex-relay-workflow/internal/pabcd	0.431s
+ok  	github.com/thisisjun786/codex-relay-workflow/internal/pluginversion	0.700s
+ok  	github.com/thisisjun786/codex-relay-workflow/internal/pluginwiring	0.869s
+ok  	github.com/thisisjun786/codex-relay-workflow/internal/policystore	0.681s
+ok  	github.com/thisisjun786/codex-relay-workflow/internal/provider	0.090s
+ok  	github.com/thisisjun786/codex-relay-workflow/internal/publishpolicy	0.286s
+ok  	github.com/thisisjun786/codex-relay-workflow/internal/pyjson	0.852s
+ok  	github.com/thisisjun786/codex-relay-workflow/internal/pyvalue	0.574s
+ok  	github.com/thisisjun786/codex-relay-workflow/internal/quote	0.571s
+ok  	github.com/thisisjun786/codex-relay-workflow/internal/recall	0.367s
+ok  	github.com/thisisjun786/codex-relay-workflow/internal/relay	0.011s
+ok  	github.com/thisisjun786/codex-relay-workflow/internal/review	0.420s
+ok  	github.com/thisisjun786/codex-relay-workflow/internal/risktier	0.040s
+ok  	github.com/thisisjun786/codex-relay-workflow/internal/role/spawn	0.149s
+ok  	github.com/thisisjun786/codex-relay-workflow/internal/runtime	0.546s
+ok  	github.com/thisisjun786/codex-relay-workflow/internal/sandboxroot	0.127s
+ok  	github.com/thisisjun786/codex-relay-workflow/internal/skill	0.147s
+ok  	github.com/thisisjun786/codex-relay-workflow/internal/testsupport	0.759s
+ok  	github.com/thisisjun786/codex-relay-workflow/internal/tmploc	0.532s
+ok  	github.com/thisisjun786/codex-relay-workflow/internal/tomledit	0.644s
+ok  	github.com/thisisjun786/codex-relay-workflow/internal/tools	0.207s
+ok  	github.com/thisisjun786/codex-relay-workflow/internal/tracking	0.264s
+ok  	github.com/thisisjun786/codex-relay-workflow/internal/flow/scenario	0.236s
+ok  	github.com/thisisjun786/codex-relay-workflow/internal/flow/workflows	0.176s
+ok  	github.com/thisisjun786/codex-relay-workflow/internal/runtime/integration	0.498s
+ok  	github.com/thisisjun786/codex-relay-workflow/internal/relay/store	0.656s
+FAIL
+make: *** [Makefile:88: test] Error 1

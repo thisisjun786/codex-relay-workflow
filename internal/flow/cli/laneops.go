@@ -26,6 +26,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/buildinfo"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // The operations of the project lane as the shipped binary installs them (CRW-1277 h): cmd/crw/main.go assigns SchedulerLane to OpsFor,
@@ -316,8 +317,8 @@ func laneVerifierTools(getenv func(string) (string, bool)) (crwconfig.VerifierTo
 // The command is the one the verifier's tools name (crwconfig.VerifierTools.Command): with a Go root configured it is the merged tree's
 // own crw-dev, so the merged tree verifies itself. A command that comes from PATH because nothing configured it writes its note to notes,
 // and one that cannot start is a host error that names the setting. The command does not get the caller's environment (CRW-1463): it
-// runs under integrationEnv with a HOME and TMPDIR of its own, made for the verification and removed after it, then the tools' env,
-// then the batch's CRW_VERIFY_*.
+// runs under integrationEnv with a HOME and TMPDIR of its own, made for the verification directly below this process's TMPDIR
+// (integrationTempDir) and removed after it, then the tools' env, then the batch's CRW_VERIFY_*.
 func CILocalIntegration(tools crwconfig.VerifierTools, notes io.Writer) dagsched.IntegrationBatchVerifier {
 	return func(ctx context.Context, dir string, env []string) error {
 		vars := map[string]string{}
@@ -333,13 +334,10 @@ func CILocalIntegration(tools crwconfig.VerifierTools, notes io.Writer) dagsched
 		if command.Note != "" && notes != nil {
 			fmt.Fprintf(notes, "[crw note] integration verification: %s\n", command.Note)
 		}
-		// the fresh TMPDIR is chosen by the length ci local nests below it (integrationTempDir), and HOME is below it
-		tmp, skipped, err := integrationTempDir(os.TempDir())
+		// the fresh TMPDIR is directly below the run's (integrationTempDir), and HOME is below it
+		tmp, err := integrationTempDir()
 		if err != nil {
 			return &dagsched.IntegrationVerifierHostError{Detail: fmt.Sprintf("the verification's own HOME and TMPDIR could not be made: %v", err)}
-		}
-		if skipped != "" && notes != nil {
-			fmt.Fprintf(notes, "[crw note] integration verification: its TMPDIR is %s, not below the caller's: %s\n", tmp, skipped)
 		}
 		defer func() {
 			if err := removeTree(tmp); err != nil && notes != nil {
@@ -364,60 +362,17 @@ func CILocalIntegration(tools crwconfig.VerifierTools, notes io.Writer) dagsched
 // integrationTmpPrefix is the name prefix of an integration verification's own TMPDIR: integrationTmpPrefix and 8 lowercase hex.
 const integrationTmpPrefix = "crw-"
 
-// integrationTmpNameLen is the length of the name integrationTempDir gives the verification's own TMPDIR.
-const integrationTmpNameLen = len(integrationTmpPrefix) + 8
-
-// integrationCiLocalNest is what ci local adds below the TMPDIR it is given before a test's socket name ends (dev/ci/local.go
-// localStepTempDir, its first candidate): the step TMPDIR /ci<8 hex> it makes there (localStepDirLen) and the 67 bytes the longest
-// socket a test binds adds below that (localStepSocketSuffix).
-const integrationCiLocalNest = len("/ci") + 8 + 67
-
-// integrationSocketLimit is the host's Unix socket path limit, as ci local takes it (localSocketLimit): 104 bytes on darwin and 108
-// elsewhere.
-func integrationSocketLimit() int {
-	if runtime.GOOS == "darwin" {
-		return 104
+// integrationTempDir makes the integration verification's own TMPDIR (mode 0700; the caller removes it): <the run's TMPDIR>/crw-<8 hex>.
+// The run's TMPDIR is tmploc's one answer (TMPDIR as the caller has it, or tmploc.DefaultDir when it is unset), resolved and checked
+// usable by tmploc.Check, so the path is the physical one ci local measures. No length is counted: tests bind their sockets below
+// tmploc.SocketDir, never below TMPDIR, so ci local needs no room there (CRW-1568, CRW-1569). A TMPDIR that is not absolute or cannot
+// be used is refused with tmploc's reason, and nothing is made in another place (CRW-1566).
+func integrationTempDir() (string, error) {
+	parent, err := tmploc.Check()
+	if err != nil {
+		return "", err
 	}
-	return 108
-}
-
-// integrationTmpFallback is the short parent integrationTempDir falls back to when the caller's TMPDIR leaves ci local no room.
-const integrationTmpFallback = "/tmp"
-
-// integrationTempDir makes the integration verification's own TMPDIR (mode 0700; the caller removes it): <parent>/crw-<8 hex>, below
-// the first parent whose nesting leaves ci local room. ci local makes each step's TMPDIR below the one it is given and refuses one that
-// leaves no room for a test's Unix socket under the host's path limit; its other candidate, the work root below XDG_STATE_HOME, is
-// refused as well when that is long (the default ~/.local/state/crw-ci-local already gives 112 bytes on a /home/<user> home), and the
-// run then ends temp_dir_unusable (CRW-1557). So the whole nested length is counted before anything is made, of the parent's physical
-// path as ci local measures it (filepath.EvalSymlinks): the parent, the name, ci local's step directory and the socket under the limit.
-// The candidates are the caller's TMPDIR (callerTmp, the verification then keeps the caller's disk) and integrationTmpFallback; a
-// candidate that does not resolve or does not fit is not made, and when none fits the error names each one's reason. skipped names why
-// the caller's TMPDIR was passed over ("" when the directory is below it), for the verification's note: the fallback moves the steps'
-// temporary files to another disk.
-func integrationTempDir(callerTmp string) (dir, skipped string, err error) {
-	limit := integrationSocketLimit()
-	var reasons []string
-	for _, candidate := range []string{callerTmp, integrationTmpFallback} {
-		if !filepath.IsAbs(candidate) {
-			reasons = append(reasons, fmt.Sprintf("%q is not absolute", candidate))
-			continue
-		}
-		parent, err := filepath.EvalSymlinks(candidate)
-		if err != nil {
-			reasons = append(reasons, fmt.Sprintf("%s does not resolve: %v", candidate, err))
-			continue
-		}
-		if length := len(parent) + 1 + integrationTmpNameLen + integrationCiLocalNest; length >= limit {
-			reasons = append(reasons, fmt.Sprintf("%s gives ci local a socket path of %d bytes, not under the limit %d", parent, length, limit))
-			continue
-		}
-		made, err := integrationMkTmp(parent)
-		if err == nil {
-			return made, strings.Join(reasons, "; "), nil
-		}
-		reasons = append(reasons, fmt.Sprintf("%s: %v", parent, err))
-	}
-	return "", "", fmt.Errorf("no TMPDIR leaves ci local room for a test's socket: %s", strings.Join(reasons, "; "))
+	return integrationMkTmp(parent)
 }
 
 // integrationMkTmp makes <parent>/<integrationTmpPrefix><8 lowercase hex> (mode 0700), a name of a fixed width, so its length is known
@@ -455,8 +410,8 @@ var (
 // the caller's effective module cache (callerModuleCache: the go of a tree-mode `go run ./cmd/crw-dev` finds the modules the caller
 // already has instead of fetching them into the fresh HOME, whose go env file is not the caller's), HOME and TMPDIR at home and tmp,
 // and GOTOOLCHAIN=local. Two settings of the caller's homes are named explicitly, as the caller's ci local would find them: XDG_STATE_HOME
-// at the caller's state directory (ci local's default work root is below it, and one below the fresh TMPDIR is refused as
-// work_root_in_tmp) and CRW_CONFIG at the caller's crw configuration file (callerCrwConfig: its tool roots, which ci local applies to
+// at the caller's state directory (ci local's default work root is below it, so the verification uses the caller's work root, not
+// one below the fresh HOME) and CRW_CONFIG at the caller's crw configuration file (callerCrwConfig: its tool roots, which ci local applies to
 // every step). Everything else of the caller, GOPATH, GOFLAGS and XDG_CONFIG_HOME included, stays out.
 func integrationEnv(getenv func(string) (string, bool), home, tmp string) []string {
 	var env []string

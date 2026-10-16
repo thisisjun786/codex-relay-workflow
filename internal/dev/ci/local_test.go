@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // CRW-964: the engine, the verification record, reuse and the failure rule. Every test runs in a
@@ -23,7 +25,7 @@ type localFixture struct {
 }
 
 // localTestWorkRoot is a work root for a test: a directory of its own, which the test owns and removes.
-// The engine tests pass allowTempRoot, so the root may sit under TMPDIR; the refusal itself is tested apart.
+// It sits under TMPDIR, which a work root may (CRW-1569).
 func localTestWorkRoot(t *testing.T) string {
 	t.Helper()
 	return t.TempDir()
@@ -77,23 +79,26 @@ func localFixturePlan(command string) []localJob {
 	}}
 }
 
-// localRunOptions is a run over the fixture, with the given table. The step TMPDIR's socket limit is
-// lifted and the .git walk stops below the TMPDIR in force when it is called, so an ordinary engine
-// test always takes candidate a whatever a long TMPDIR or a stray /tmp/.git on the host would say
-// (CRW-1489). A test that sets TMPDIR calls it after the t.Setenv, and a test of the candidates
-// replaces both fields on the value it returns.
+// localRunOptions is a run over the fixture, with the given table. The .git walk stops below the
+// TMPDIR in force when it is called, so an ordinary engine test runs whatever a stray /tmp/.git on the
+// host would say (CRW-1489). A test that sets TMPDIR calls it after the t.Setenv, and a test of the
+// .git refusal replaces gitCeilings on the value it returns.
 func localRunOptions(repo *localFixture, plan []localJob, record string) localOptions {
 	return localOptions{
-		Root:          repo.root,
-		Commit:        "HEAD",
-		Record:        record,
-		Runner:        "local",
-		Plan:          plan,
-		WorkRoot:      repo.work,
-		allowTempRoot: true,
-		socketLimit:   4096,
-		gitCeilings:   []string{localTempDir(), os.TempDir()},
+		Root:        repo.root,
+		Commit:      "HEAD",
+		Record:      record,
+		Runner:      "local",
+		Plan:        plan,
+		WorkRoot:    repo.work,
+		gitCeilings: []string{localTestTempDir()},
 	}
+}
+
+// localTestTempDir is the temporary directory in force (tmploc.Dir), or "" when TMPDIR is refused.
+func localTestTempDir() string {
+	dir, _ := tmploc.Dir()
+	return dir
 }
 
 // C2: a step that fails fails the whole run, and the record names the step and its reason.

@@ -39,7 +39,7 @@ See the [workflow](../.github/workflows/ci.yml) for the exact job inputs.
 versions, and writes a `verification-record/1`. The record of the integration batch is the evidence, and the hosted run is optional: it runs only when started with
 `workflow_dispatch`.
 
-The run makes a **clean worktree** of the commit being verified under the work root (the XDG state directory, or --work-root; never TMPDIR, /tmp or /var/tmp)
+The run makes a **clean worktree** of the commit being verified under the work root (the XDG state directory, or --work-root)
 (`git worktree add --detach`), with `HOME` and the XDG directories pointed into a
 temporary home and `TZ=UTC`, so uncommitted changes in the caller's checkout and the host's
 caches cannot change the result. The record names the commit and its tree, never the caller's
@@ -111,23 +111,31 @@ of its output (a `--- FAIL`, `FAIL` or `panic:` line, at most 20) and the last 4
 output, at most 4 KB; a Go test that outlived its `-timeout` is named with a `timeout:` prefix,
 so a load timeout reads as a timeout, not as a verdict on the code. The steps inherit `PATH`.
 They do not inherit `TMPDIR`: a run gives its steps a fresh, empty `TMPDIR` of its own (CRW-1489),
-`ci<8 hex>` directly below the caller's `TMPDIR` or, when that does not fit, `t<8 hex>` directly
-below the work root, and removes it after the run (`--keep` keeps and prints it; a run killed before
-its cleanup leaves it, see [Leftover verify trees](#leftover-verify-trees)). A candidate's
-parent is taken at its physical place, resolved from the value as written the way the kernel
-resolves it (links followed before a `..`, not a lexical clean first, so `/a/link/../tmp` is the
-`tmp` beside link's target, not `/a/tmp`); a value that does not resolve is skipped with its
-reason, and the record's `callerTmpDir` keeps the raw value while `tmpDir` names the directory
-made. A candidate does not fit when a `.git` (of any type) is at or above its parent, because the repository's own tests find a checkout by walking up from `TMPDIR` for a
-`.git` (a sandbox's stray `/tmp/.git` made them judge the wrong tree); or when its length plus the
-67 bytes the tests' sockets add below `TMPDIR` (the longest, `internal/manage`) is not under the
-Unix socket limit, 108 bytes on Linux and 104 on macOS. The name has a fixed width, so the fit is
-decided before anything is made. When neither fits, the run is refused before any checkout or step
-with `temp_dir_unusable`, naming each candidate's `.git` or byte count, and writes no record: set a
-short `TMPDIR` with no `.git` above it, or pass a short `--work-root`. The default work root
-(`~/.local/state/crw-ci-local`, 35 bytes for a 9-byte home) leaves 45 + 67 = 112 bytes, so a caller
-`TMPDIR=/tmp` below a stray `/tmp/.git` with the default work root is always refused. Keep `TMPDIR`
-short; `crw config check` warns when `temp_root` leaves no room.
+`ci<8 hex>` directly below the caller's temporary directory, and removes it after the run (`--keep`
+keeps and prints it; a run killed before its cleanup leaves it, see
+[Leftover verify trees](#leftover-verify-trees)). The temporary directory is `TMPDIR`, or `/tmp`
+(source `default`) when `TMPDIR` is unset or empty; it is taken at its physical place, resolved from
+the value as written the way the kernel resolves it (links followed before a `..`, not a lexical
+clean first, so `/a/link/../tmp` is the `tmp` beside link's target, not `/a/tmp`), and the record's
+`callerTmpDir` keeps the raw value while `tmpDir` names the directory made. There is one place and
+no second one (CRW-1569): the steps are never moved below the work root or anywhere else, and the
+length of `TMPDIR` is not judged, because no test socket lies below it (tests bind their sockets
+below a short socket folder under `/tmp`, CRW-1568).
+
+Before any checkout or step, the run checks, in this order, and is refused with the reason and no
+record when one fails:
+
+1. the temporary directory is absolute (`tmpdir_not_absolute`) and not in the account's real home,
+   judged before anything is written there;
+2. it exists, is a directory and is writable (`temp_dir_unusable`, naming the directory and its
+   source);
+3. no `.git` (of any type) is at or above it, because the repository's own tests find a checkout by
+   walking up from `TMPDIR` for a `.git` (a sandbox's stray `/tmp/.git` made them judge the wrong
+   tree): `temp_dir_unusable: <dir> is below <.git>`, set `TMPDIR` to a directory with no `.git` at or
+   above it;
+4. a socket folder made (and removed) below `/tmp` leaves room for the longest socket path a test puts
+   below it within the 103-byte bound of a Unix socket path: `socket_dir_unusable`, naming the folder
+   and, when it does not fit, the bytes needed, the bound and how far over.
 
 A step's result is `passed`, `failed`, `missing_tool`,
 `skipped` or `not_applicable`. The whole result is `pass` only when no step
@@ -151,9 +159,9 @@ gitleaks and staticcheck pins are the ones secrets.sh and go.mod fix, and the st
 or run those pins, so they are recorded at the pin.
 
 The clean worktree is made under a work root: the directory given by --work-root, or the XDG
-state directory of the real user. A root inside TMPDIR, /tmp or /var/tmp is refused with the
-name work_root_in_tmp, because the repository's own checkout tests assert the checkout lies
-outside those directories.
+state directory of the real user. A root must be absolute and outside the account's real home; where
+it lies is not judged, so a root inside TMPDIR, /tmp or /var/tmp is accepted. A `.git` above the
+directory the tests make worktrees in is judged by content, on the steps' `TMPDIR` (above).
 
 ### Reuse validation
 
@@ -176,7 +184,7 @@ A heavy step (a Go build, vet, test, the dist builds, the integration test, `npm
 through the command named by `CRW_CI_HEAVY_GATE` when it is set — `<gate> <command>`
 — and directly when it is unset. The gate is the host's; no host path is written into the
 repository. Temporary files go under the step's own `TMPDIR`, whose root the caller still sets: it is
-made directly below the caller's `TMPDIR`, or below the work root when that does not fit (above).
+made directly below the caller's `TMPDIR` (or `/tmp` when that is unset), and nowhere else (above).
 Only the gate's executable is resolved, once, against the directory the run starts in. Its other
 arguments are not resolved: a relative argument is read in each step's own directory, so give absolute paths.
 
@@ -462,6 +470,61 @@ memory root at load5 18.6 to 16.8. `strace -f -c -e trace=fsync,fdatasync` on th
 production code still syncs; the calls go to memory), with 7.00 s spent in them on the disk and 0.68 s in memory. A stalled disk
 (229 s for one test, 591 s for the package) is the cost the memory root takes out, as the fsyncs no longer wait for it.
 
+## Temporary locations
+
+One package decides every temporary location: `internal/tmploc` (CRW-1566). It holds the one read of
+`TMPDIR` and its default, and nothing else in the program chooses a temporary place.
+
+- The temporary directory is `TMPDIR` as written, or `/tmp` (`tmploc.DefaultDir`, source `default`)
+  when `TMPDIR` is unset or empty. A `TMPDIR` that is not absolute stops with
+  `tmpdir_not_absolute`, and one that cannot be used stops with `temp_dir_unusable`, naming the
+  directory, its source and why. Nothing moves to a second place: no site picks `/var/tmp`,
+  `/dev/shm` or the work root because the first place is long, unusable or below a `.git`. The default
+  `/tmp` is a location only, never a ground for a safety judgement.
+- Code that needs a temporary directory or file takes `tmploc.Dir`, `tmploc.MkdirTemp`,
+  `tmploc.CreateTemp`, or `tmploc.MkdirTempIn(parent, pattern)` when the parent is a variable;
+  `MkdirTempIn` refuses an empty or relative parent (`temp_parent_not_absolute`), so an empty parent
+  never means "`TMPDIR`, decided inside `os`". crwconfig's `temp_root` takes the raw value from
+  `tmploc.Lookup` and keeps its own order (the environment, then `paths.temp_root`, then the strict
+  absolute check) and its own error text.
+- Sockets never lie under `TMPDIR`. A test socket lies below a socket folder made under
+  `tmploc.SocketRoot` (`/tmp`), a fixed root for every run, and its path is measured against
+  `tmploc.SocketTailMax` within the 103-byte bound (`tmploc.SocketBound`); `tmploc.SocketFits` is the
+  one budget calculation. `crw-dev ci local` checks the temporary directory and the socket folder
+  before any step ([The local run](#the-local-run)).
+- A test takes `t.TempDir()`, or `tmploctest.SocketDir`, `tmploctest.SocketPath` and
+  `tmploctest.CheckSocket` for a socket.
+- A shell script of the plugin or of `scripts/` that makes a temporary directory writes the same rule in one
+  form: `TMPBASE="${TMPDIR:-/tmp}"`, then a `case` that stops a relative value with
+  `tmpdir_not_absolute: TMPDIR=<value>; set TMPDIR to an absolute directory` on stderr and exit status 2, before
+  any directory is made (`diagram-to-html.sh`, `scaffold-audit.sh`; their behaviour is pinned by
+  `tmp_shell_sites_test.go`). A document writes the default as `${TMPDIR:-/tmp}`.
+
+`internal/dev/ci/tmp_decisions_test.go` (dev tag) enforces this. It greps every tracked file for the
+direct deciders (`os.TempDir`, a quoted `/tmp`, `/var/tmp` or `/dev/shm` literal, `MkdirTemp` or
+`CreateTemp` with an empty parent, and a direct read of `TMPDIR`), and every hit must be one of these
+exceptions:
+
+- E1 `internal/tmploc` (non-test files): the one place. It holds `DefaultDir`, `SocketRoot` and the
+  read of `TMPDIR`, matched by file and exact line text.
+- E2 `*_test.go` and `web/test`: test code, pending CRW-1580, which removes this entry.
+- E3 `testdata` and `contract/fixtures`: recorded data and the oracle's own programs, not locations
+  this program chooses.
+- E4 the recorded hook payload line in `internal/contracttest/hook.go` (`cwd`, `transcript_path`), the
+  same text as `contract/fixtures/hook`, matched by exact line text.
+- E5 the recorded scratch parent of the cxc replay's 9 `path_length_dependent` fixtures
+  (`cxccorpus.RecordedScratch`), the recorded oracle condition; it is added with that constant.
+- E6 port history prose under `docs/port-cxc` and `docs/port` that quotes code or Python literals, and
+  the visualizer's port record, which quotes the original output-directory line its recorded edit replaces,
+  listed by file.
+
+A second rule judges every non-test `os.MkdirTemp` and `os.CreateTemp` whose parent is a variable: unless the
+parent is `filepath.Dir(...)` or a literal, the call is listed with the reason its parent is never empty or
+relative, or it moves to `tmploc.MkdirTempIn`. A third judges the shell: a `${TMPDIR` or `$TMPDIR` read in a
+`.sh` file under `plugins/` or `scripts/` must be the one `TMPBASE` line, and its file must hold the whole form
+verbatim. An exception or a listed call that no longer matches a line fails the check, so the lists cannot go
+stale. There is no list of sites still to move: `TestNoPendingTempDecisions` fails if one returns.
+
 ## Leftover isolation trees
 
 Nothing removes a `crw-relay-test-*` directory a run leaves: a test binary killed by `go test -timeout` or by
@@ -484,20 +547,18 @@ find -H "${TMPDIR:-/tmp}" -mindepth 1 -maxdepth 1 -type d -name 'crw-relay-test-
 ## Leftover verify trees
 
 A `crw-dev ci local` run removes its trees in a deferred cleanup, so a run killed by SIGKILL or by a timeout
-leaves them, and `--keep` keeps them on purpose (it prints each path). Three kinds can remain:
+leaves them, and `--keep` keeps them on purpose (it prints each path). Two kinds can remain:
 
 - `crw-ci-local-*`, the run's worktree and home, directly in the work root (default `~/.local/state/crw-ci-local`, or the
   `--work-root` you passed);
-- `t<8 hex>`, the steps' `TMPDIR`, directly in the work root, when the caller's `TMPDIR` did not fit;
-- `ci<8 hex>`, the steps' `TMPDIR`, directly in the caller's `TMPDIR` (`/tmp` when it is unset), when that fit. This is
-  the usual one.
+- `ci<8 hex>`, the steps' `TMPDIR`, directly in the caller's `TMPDIR` (`/tmp` when it is unset).
 
-Nothing removes them. In the default work root only this command works, so a `crw-ci-local-*` or `t<8 hex>` name there is
-a run's own. A `--work-root` can name a directory other tools share, and there a name that only looks like these is not
+Nothing removes them. In the default work root only this command works, so a `crw-ci-local-*` name there is a
+run's own. A `--work-root` can name a directory other tools share, and there a name that only looks like these is not
 safe to assume. The `ci<8 hex>` name is short and generic, and the caller's `TMPDIR` is often shared (`/tmp`), so the code
-never deletes by that name: another tool's directory could match. Read the list before you remove anything. The patterns
-match the step trees by their exact names, `t` followed by eight lowercase hex digits, never `t` and any eight characters,
-so a directory such as `toolcache` is not listed. The patterns spell out the eight hex digits as character classes, which
+never deletes by that name: another tool's directory could match. Read the list before you remove anything. The `ci` pattern
+matches the step tree by its exact name, `ci` followed by eight lowercase hex digits, never `ci` and any eight characters,
+so a directory such as `cinema` is not listed. The pattern spells out the eight hex digits as character classes, which
 `find` reads the same everywhere.
 
 Set `root` to the `--work-root` you passed, if any. To see the ones more than a day old (a younger one may belong to a run in
@@ -505,7 +566,7 @@ progress), which removes nothing:
 
 ```sh
 root="${XDG_STATE_HOME:-$HOME/.local/state}/crw-ci-local"  # or the --work-root you passed
-find -H "$root" -mindepth 1 -maxdepth 1 -type d \( -name 'crw-ci-local-*' -o -name 't[0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef]' \) -mtime +0
+find -H "$root" -mindepth 1 -maxdepth 1 -type d -name 'crw-ci-local-*' -mtime +0
 find -H "${TMPDIR:-/tmp}" -mindepth 1 -maxdepth 1 -type d -name 'ci[0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef]' -mtime +0
 ```
 
@@ -517,7 +578,7 @@ repairing permissions first, once you have checked them and no run of yours is s
 
 ```sh
 root="${XDG_STATE_HOME:-$HOME/.local/state}/crw-ci-local"
-find -H "$root" -mindepth 1 -maxdepth 1 -type d \( -name 'crw-ci-local-*' -o -name 't[0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef]' \) -mtime +0 \
+find -H "$root" -mindepth 1 -maxdepth 1 -type d -name 'crw-ci-local-*' -mtime +0 \
   -exec sh -c 'chmod -R u+rwX -- "$@" && rm -rf -- "$@"' sh {} +
 find -H "${TMPDIR:-/tmp}" -mindepth 1 -maxdepth 1 -type d -name 'ci[0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef]' -mtime +0 \
   -exec sh -c 'chmod -R u+rwX -- "$@" && rm -rf -- "$@"' sh {} +

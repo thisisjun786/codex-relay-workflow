@@ -11,12 +11,12 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/homeguard"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // CRW-1186 evaluation d5: the tool-version probes make their directories in TMPDIR while the current
@@ -185,9 +185,10 @@ func localNoEntry(t *testing.T, dir, prefix string) {
 	}
 }
 
-// CRW-1489: the 1209 shape, a caller TMPDIR below a stray .git (the bwrap marker /tmp/.git), is not the
-// step's: candidate a is refused for the .git above it, and the step runs in candidate b, directly below
-// the work root, where no walk up from TMPDIR meets a .git.
+// CRW-1489, CRW-1569: the 1209 shape's stray .git, a caller TMPDIR below a .git (the bwrap marker
+// /tmp/.git), is never the step's: the walk up from it meets the .git, so the run is refused before any
+// step with temp_dir_unusable naming that .git, and no step TMPDIR is made below it. The steps are not
+// moved to another place (TestLocal_never_moves_the_step_TMPDIR).
 func TestLocal_a_callers_TMPDIR_below_a_stray_git_is_not_the_steps(t *testing.T) {
 	w := localShortWorkRoot(t)
 	p := t.TempDir()
@@ -201,110 +202,76 @@ func TestLocal_a_callers_TMPDIR_below_a_stray_git_is_not_the_steps(t *testing.T)
 	marker := filepath.Join(t.TempDir(), "tmpdir")
 	t.Setenv("TMPDIR", callerTmp)
 	repo := newLocalFixture(t)
-	ceilings := []string{filepath.Dir(p), filepath.Dir(w)}
-	checks := fmt.Sprintf(`d="$TMPDIR"
-while :; do
-  case ":$CRW_TEST_CEILINGS:" in *":$d:"*) break ;; esac
-  if [ -e "$d/.git" ] || [ -L "$d/.git" ]; then echo "a .git at $d"; exit 1; fi
-  [ "$d" = / ] && break
-  d=$(dirname "$d")
-done
-case "$TMPDIR" in %q/*) echo "below the stray .git"; exit 1 ;; esac`, p)
-	opts := localRunOptions(repo, localFixturePlan(localMarkerStep(checks, marker)), filepath.Join(t.TempDir(), "record.json"))
-	opts.WorkRoot = w
-	opts.gitCeilings = ceilings
-	opts.socketLimit = localStepDirLen(w, "t") + 67 + 1
-	opts.Env = append(opts.Env, "CRW_TEST_CEILINGS="+strings.Join(ceilings, ":"))
-	made, _, err := localVerify(opts, "", io.Discard)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if made.Result != localPass {
-		t.Fatalf("the run is %q: %#v", made.Result, made.Jobs)
-	}
-	stepTmp := localReadMarker(t, marker)
-	if filepath.Dir(stepTmp) != w || !localStepTmpName("t").MatchString(filepath.Base(stepTmp)) {
-		t.Errorf("the step's TMPDIR is %s, want candidate b: t<8 hex> directly below %s", stepTmp, w)
-	}
-	localNoEntry(t, callerTmp, "ci")
-}
-
-// CRW-1489: a caller TMPDIR too long for the step's sockets (a's length plus the 67 bytes a test adds
-// reaches the limit) falls back to candidate b below a shorter work root, and nothing is made in it.
-func TestLocal_a_long_callers_TMPDIR_falls_back_to_the_work_root(t *testing.T) {
-	w := localShortWorkRoot(t)
-	c := t.TempDir()
-	for len(c) < len(w)+12 {
-		c = filepath.Join(c, "d")
-	}
-	if err := os.MkdirAll(c, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if len(c) < len(w)+2 {
-		t.Fatalf("the caller TMPDIR %s is not longer than the work root %s by 2", c, w)
-	}
-	marker := filepath.Join(t.TempDir(), "tmpdir")
-	t.Setenv("TMPDIR", c)
-	repo := newLocalFixture(t)
-	opts := localRunOptions(repo, localFixturePlan(localMarkerStep("true", marker)), filepath.Join(t.TempDir(), "record.json"))
-	opts.WorkRoot = w
-	opts.gitCeilings = []string{filepath.Dir(c), filepath.Dir(w)}
-	opts.socketLimit = localStepDirLen(c, "ci") + 67
-	made, _, err := localVerify(opts, "", io.Discard)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if made.Result != localPass {
-		t.Fatalf("the run is %q: %#v", made.Result, made.Jobs)
-	}
-	stepTmp := localReadMarker(t, marker)
-	if filepath.Dir(stepTmp) != w || !localStepTmpName("t").MatchString(filepath.Base(stepTmp)) {
-		t.Errorf("the step's TMPDIR is %s, want candidate b: t<8 hex> directly below %s", stepTmp, w)
-	}
-	localNoEntry(t, c, "ci")
-}
-
-// CRW-1489: the 1209 shape with a work root as long as the default one is against its limit: a has a
-// .git above it and b reaches the limit, so the run is refused before any checkout or step, and the
-// refusal names both reasons and the way out.
-func TestLocal_the_1209_shape_is_refused_not_run(t *testing.T) {
-	w := localShortWorkRoot(t)
-	p := t.TempDir()
-	if err := os.Mkdir(filepath.Join(p, ".git"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	callerTmp := filepath.Join(p, "tmp")
-	if err := os.Mkdir(callerTmp, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	marker := filepath.Join(t.TempDir(), "ran")
-	t.Setenv("TMPDIR", callerTmp)
-	repo := newLocalFixture(t)
 	opts := localRunOptions(repo, localFixturePlan(localMarkerStep("true", marker)), filepath.Join(t.TempDir(), "record.json"))
 	opts.WorkRoot = w
 	opts.gitCeilings = []string{filepath.Dir(p), filepath.Dir(w)}
-	limit := localStepDirLen(w, "t") + 67
-	opts.socketLimit = limit
 	_, _, err := localVerify(opts, "", io.Discard)
 	if err == nil {
-		t.Fatal("the run was not refused")
+		t.Fatal("a caller TMPDIR below a stray .git is not refused")
 	}
-	for _, want := range []string{"temp_dir_unusable", filepath.Join(p, ".git"), fmt.Sprint(limit), "--work-root"} {
+	for _, want := range []string{"temp_dir_unusable", filepath.Join(p, ".git")} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the refusal %q does not name %q", err, want)
 		}
 	}
 	if _, err := os.Stat(marker); err == nil {
-		t.Error("a step ran")
+		t.Errorf("a step ran in %s", localReadMarker(t, marker))
 	}
 	localNoEntry(t, callerTmp, "ci")
 	localNoEntry(t, w, "t")
 }
 
+// CRW-1489, CRW-1569: the 1209 shape runs. The trial's caller TMPDIR was 27 bytes, and its step TMPDIR
+// ci<8 hex> 38; the sockets its tests bind no longer lie below either (CRW-1568), so neither length is
+// judged: the run passes with its step TMPDIR directly below the 27-byte TMPDIR. A TMPDIR below a .git is
+// refused by its content (TestLocal_never_moves_the_step_TMPDIR), not by its length.
+func TestLocal_the_1209_shape_runs(t *testing.T) {
+	short, err := os.MkdirTemp("/tmp", "crw1209-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(short) })
+	if len(short) > 25 {
+		t.Fatalf("%s is already %d bytes", short, len(short))
+	}
+	callerTmp := filepath.Join(short, strings.Repeat("t", 27-len(short)-1))
+	if err := os.Mkdir(callerTmp, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if len(callerTmp) != 27 {
+		t.Fatalf("the caller TMPDIR %s is %d bytes, want 27", callerTmp, len(callerTmp))
+	}
+	repo := newLocalFixture(t)
+	marker := filepath.Join(t.TempDir(), "tmpdir")
+	t.Setenv("TMPDIR", callerTmp)
+	opts := localRunOptions(repo, localFixturePlan(localMarkerStep("true", marker)), filepath.Join(t.TempDir(), "record.json"))
+	// The .git walk stops below /tmp, so a stray /tmp/.git on the test host does not decide this run.
+	opts.gitCeilings = []string{"/tmp"}
+	made, _, err := localVerify(opts, "", io.Discard)
+	if err != nil {
+		t.Fatalf("the 1209 shape is refused: %v", err)
+	}
+	if made.Result != localPass {
+		t.Fatalf("the run is %q: %#v", made.Result, made.Jobs)
+	}
+	resolved, err := filepath.EvalSymlinks(callerTmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stepTmp := localReadMarker(t, marker)
+	if filepath.Dir(stepTmp) != resolved || !localStepTmpName("ci").MatchString(filepath.Base(stepTmp)) {
+		t.Errorf("the step's TMPDIR is %s, want ci<8 hex> directly below %s", stepTmp, resolved)
+	}
+	if resolved == callerTmp && len(stepTmp) != 38 {
+		t.Errorf("the step's TMPDIR %s is %d bytes, want 38", stepTmp, len(stepTmp))
+	}
+}
+
 // CRW-1489 (PR ping-pong 2): the caller's TMPDIR is taken where the kernel resolves it, not cleaned lexically first: with link
 // leading to base/x/y, "base/link/../tmp" is base/x/tmp, so the step TMPDIR is made there and nothing in the lexical base/tmp.
 // The record keeps the raw value as callerTmpDir and the directory actually used as tmpDir. A TMPDIR that cannot be resolved
-// ("base/missing/../tmp", whose lexical form exists) is skipped with its reason, and the step runs below the work root.
+// ("base/missing/../tmp", whose lexical form exists) is refused with its reason (CRW-1569: temp_dir_unusable), and nothing is
+// made in the lexical form or below the work root.
 func TestLocal_a_callers_TMPDIR_is_taken_where_the_kernel_resolves_it(t *testing.T) {
 	base := t.TempDir()
 	physical := filepath.Join(base, "x", "tmp")
@@ -332,6 +299,17 @@ func TestLocal_a_callers_TMPDIR_is_taken_where_the_kernel_resolves_it(t *testing
 			opts := localRunOptions(repo, localFixturePlan(localWhereStep(marker)), filepath.Join(t.TempDir(), "record.json"))
 			opts.gitCeilings = []string{base, repo.work}
 			made, _, err := localVerify(opts, "", io.Discard)
+			if c.name == "unresolvable" {
+				if err == nil || !strings.Contains(err.Error(), "temp_dir_unusable") || !strings.Contains(err.Error(), c.raw) {
+					t.Fatalf("an unresolvable TMPDIR is not refused with its reason: %v", err)
+				}
+				if _, err := os.Stat(marker); err == nil {
+					t.Error("a step ran")
+				}
+				localNoEntry(t, lexical, "ci")
+				localNoEntry(t, repo.work, "")
+				return
+			}
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -339,15 +317,8 @@ func TestLocal_a_callers_TMPDIR_is_taken_where_the_kernel_resolves_it(t *testing
 				t.Fatalf("the run is %q: %#v", made.Result, made.Jobs)
 			}
 			stepTmp, _ := localReadWhere(t, marker)
-			wantParent, prefix := wantPhysical, "ci"
-			if c.name == "unresolvable" {
-				if wantParent, err = filepath.EvalSymlinks(repo.work); err != nil {
-					t.Fatal(err)
-				}
-				prefix = "t"
-			}
-			if filepath.Dir(stepTmp) != wantParent || !localStepTmpName(prefix).MatchString(filepath.Base(stepTmp)) {
-				t.Errorf("the step's TMPDIR is %s, want %s<8 hex> directly below %s", stepTmp, prefix, wantParent)
+			if filepath.Dir(stepTmp) != wantPhysical || !localStepTmpName("ci").MatchString(filepath.Base(stepTmp)) {
+				t.Errorf("the step's TMPDIR is %s, want ci<8 hex> directly below %s", stepTmp, wantPhysical)
 			}
 			localNoEntry(t, lexical, "ci")
 			if made.RunEnv == nil || made.RunEnv.CallerTmpDir != c.raw || made.RunEnv.TmpDir != stepTmp {
@@ -396,44 +367,24 @@ func TestLocal_the_steps_TMPDIR_is_removed_after_the_run(t *testing.T) {
 	}
 }
 
-// CRW-1489: the fit is exact, decided from the name's fixed width before the directory exists, and the
-// default XDG work root of this account never fits a step's sockets, on any run.
-func TestLocalStepTmpFits_is_exact_and_pins_the_default_work_root(t *testing.T) {
-	const defaultRoot = "/home/jun/.local/state/crw-ci-local"
-	if got := localStepDirLen(defaultRoot, "t"); got != 45 {
-		t.Errorf("localStepDirLen(%s, t) = %d, want 45", defaultRoot, got)
+// CRW-1489, CRW-1569: the default work root is unchanged: $XDG_STATE_HOME/crw-ci-local, or
+// ~/.local/state/crw-ci-local when XDG_STATE_HOME is unset. Its length is no longer judged (there is no
+// step socket budget), and it is the work root only: the steps' TMPDIR is never made below it.
+func TestLocalWorkRoot_default_is_unchanged(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", state)
+	if got, err := localWorkRoot(localOptions{}); err != nil || got != filepath.Join(state, "crw-ci-local") {
+		t.Errorf("with XDG_STATE_HOME the default work root is %q (%v), want %s", got, err, filepath.Join(state, "crw-ci-local"))
 	}
-	if localStepTmpFits(defaultRoot, "t", 108) {
-		t.Error("the default work root fits at 108: 45 + 67 = 112 must not")
-	}
-	if !localStepTmpFits("/scratch/ci", "t", 108) {
-		t.Error("/scratch/ci does not fit at 108: 21 + 67 = 88 must")
-	}
-	for _, x := range []string{"/scratch/ci", defaultRoot, "/tmp"} {
-		if got := localStepDirLen(x, "ci"); got != len(x)+11 {
-			t.Errorf("localStepDirLen(%s, ci) = %d, want %d", x, got, len(x)+11)
-		}
-	}
-	at := localStepDirLen("/scratch/ci", "t") + 67
-	if localStepTmpFits("/scratch/ci", "t", at) {
-		t.Errorf("a length + 67 equal to the limit %d fits", at)
-	}
-	if !localStepTmpFits("/scratch/ci", "t", at+1) {
-		t.Errorf("a length + 67 one below the limit %d does not fit", at+1)
-	}
-	if localStepSocketSuffix != 67 {
-		t.Errorf("localStepSocketSuffix = %d, want 67", localStepSocketSuffix)
-	}
-	want := 108
-	if runtime.GOOS == "darwin" {
-		want = 104
-	}
-	if got := localSocketLimit(); got != want {
-		t.Errorf("localSocketLimit() = %d on %s, want %d", got, runtime.GOOS, want)
+	home := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", "")
+	t.Setenv("HOME", home)
+	if got, err := localWorkRoot(localOptions{}); err != nil || got != filepath.Join(home, ".local", "state", "crw-ci-local") {
+		t.Errorf("without XDG_STATE_HOME the default work root is %q (%v), want %s", got, err, filepath.Join(home, ".local", "state", "crw-ci-local"))
 	}
 }
 
-// CRW-1489: a step TMPDIR's name has a fixed width, so its length is known before it is made.
+// CRW-1489: a step TMPDIR's name has a fixed width: its prefix and 8 lowercase hex characters.
 func TestLocalMkStepDir_names_have_a_fixed_width(t *testing.T) {
 	parent := t.TempDir()
 	seen := map[string]bool{}
@@ -449,8 +400,8 @@ func TestLocalMkStepDir_names_have_a_fixed_width(t *testing.T) {
 		if filepath.Dir(dir) != parent || !localStepTmpName("t").MatchString(filepath.Base(dir)) {
 			t.Errorf("%s is not t<8 hex> directly below %s", dir, parent)
 		}
-		if len(dir) != localStepDirLen(parent, "t") {
-			t.Errorf("%s is %d bytes, want %d", dir, len(dir), localStepDirLen(parent, "t"))
+		if len(filepath.Base(dir)) != len("t")+8 {
+			t.Errorf("%s has a %d-byte name, want %d", dir, len(filepath.Base(dir)), len("t")+8)
 		}
 		if info, err := os.Stat(dir); err != nil || !info.IsDir() {
 			t.Errorf("%s is not a directory: %v", dir, err)
@@ -722,5 +673,147 @@ func TestLocal_git_above_follows_a_link_to_a_parent_with_a_git(t *testing.T) {
 	}
 	if got := localGitAbove(filepath.Join(base, "plain", "tmp"), ceilings); got != "" {
 		t.Errorf("a directory with no .git above it and no link: want none, got %q", got)
+	}
+}
+
+// CRW-1569: a long TMPDIR is accepted as it is. No test socket lies below TMPDIR (CRW-1568), so its
+// length is no reason to refuse it or to move the steps elsewhere: the step TMPDIR is ci<8 hex>
+// directly below the resolved 120-byte TMPDIR, and the run passes.
+func TestLocal_accepts_a_long_TMPDIR(t *testing.T) {
+	repo := newLocalFixture(t)
+	long := t.TempDir()
+	if len(long) > 118 {
+		t.Fatalf("the test's temporary directory %s is already %d bytes", long, len(long))
+	}
+	long = filepath.Join(long, strings.Repeat("l", 120-len(long)-1))
+	if len(long) != 120 {
+		t.Fatalf("the long TMPDIR %s is %d bytes, want 120", long, len(long))
+	}
+	if err := os.MkdirAll(long, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(t.TempDir(), "tmpdir")
+	t.Setenv("TMPDIR", long)
+	opts := localRunOptions(repo, localFixturePlan(localMarkerStep("true", marker)), filepath.Join(t.TempDir(), "record.json"))
+	made, _, err := localVerify(opts, "", io.Discard)
+	if err != nil {
+		t.Fatalf("a 120-byte TMPDIR is refused: %v", err)
+	}
+	if made.Result != localPass {
+		t.Fatalf("the run is %q: %#v", made.Result, made.Jobs)
+	}
+	resolved, err := filepath.EvalSymlinks(long)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stepTmp := localReadMarker(t, marker)
+	if filepath.Dir(stepTmp) != resolved || !localStepTmpName("ci").MatchString(filepath.Base(stepTmp)) {
+		t.Errorf("the step's TMPDIR is %s, want ci<8 hex> directly below %s", stepTmp, resolved)
+	}
+	localNoEntry(t, repo.work, "t")
+}
+
+// CRW-1569: the step TMPDIR is never moved. A TMPDIR below a .git is refused with temp_dir_unusable
+// naming the .git and the way out (set TMPDIR), before any checkout or step: no step ran, no record was
+// written, no step TMPDIR was made below the TMPDIR, and nothing was made below the work root. The base
+// offered the work root as a second place instead.
+func TestLocal_never_moves_the_step_TMPDIR(t *testing.T) {
+	repo := newLocalFixture(t)
+	p := t.TempDir()
+	if err := os.Mkdir(filepath.Join(p, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	callerTmp := filepath.Join(p, "tmp")
+	if err := os.Mkdir(callerTmp, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(t.TempDir(), "ran")
+	record := filepath.Join(t.TempDir(), "record.json")
+	t.Setenv("TMPDIR", callerTmp)
+	opts := localRunOptions(repo, localFixturePlan(localMarkerStep("true", marker)), record)
+	opts.gitCeilings = []string{filepath.Dir(p), filepath.Dir(repo.work)}
+	made, _, err := localVerify(opts, "", io.Discard)
+	if err == nil {
+		t.Fatalf("a TMPDIR below a .git is not refused: the run is %q", made.Result)
+	}
+	gitDir, err2 := filepath.EvalSymlinks(filepath.Join(p, ".git"))
+	if err2 != nil {
+		t.Fatal(err2)
+	}
+	for _, want := range []string{"temp_dir_unusable", gitDir, "set TMPDIR"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal %q does not name %q", err, want)
+		}
+	}
+	for _, unwanted := range []string{"work root", "--work-root"} {
+		if strings.Contains(err.Error(), unwanted) {
+			t.Errorf("the refusal %q offers %q: the step TMPDIR has no second place", err, unwanted)
+		}
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Error("a step ran")
+	}
+	if _, err := os.Lstat(record); err == nil {
+		t.Error("a record was written")
+	}
+	// The version probes make (and remove) their own directories in TMPDIR, as they do for any run; no
+	// step TMPDIR is made there.
+	localNoEntry(t, callerTmp, "ci")
+	localNoEntry(t, repo.work, "")
+}
+
+// CRW-1569: ci local makes and removes a socket folder below the socket root before any checkout, and
+// a folder that cannot be made, or that leaves no room for the longest socket tail within the bound, is
+// socket_dir_unusable with its reason (for a long root: the bytes needed, the bound and how far over).
+// No step ran, no record was written, and nothing was made below TMPDIR or the work root.
+func TestLocal_refuses_when_the_socket_dir_does_not_fit(t *testing.T) {
+	repo := newLocalFixture(t)
+	base := t.TempDir()
+	file := filepath.Join(base, "file")
+	if err := os.WriteFile(file, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	long := filepath.Join(base, strings.Repeat("s", tmploc.SocketBound))
+	if err := os.MkdirAll(long, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	callerTmp := t.TempDir()
+	t.Setenv("TMPDIR", callerTmp)
+	for _, c := range []struct {
+		name, root string
+		want       []string
+	}{
+		{"a regular file", file, []string{"socket_dir_unusable", file}},
+		{"a missing root", filepath.Join(base, "missing"), []string{"socket_dir_unusable", filepath.Join(base, "missing")}},
+		{"too long", long, []string{"socket_dir_unusable", long, "bytes", fmt.Sprint(tmploc.SocketBound), "over", fmt.Sprint(tmploc.SocketTailMax)}},
+	} {
+		marker := filepath.Join(t.TempDir(), "ran")
+		record := filepath.Join(t.TempDir(), "record.json")
+		opts := localRunOptions(repo, localFixturePlan(localMarkerStep("true", marker)), record)
+		opts.socketRoot = c.root
+		made, _, err := localVerify(opts, "", io.Discard)
+		if err == nil {
+			t.Errorf("%s: the socket root %s is not refused: the run is %q", c.name, c.root, made.Result)
+			continue
+		}
+		for _, want := range c.want {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("%s: the refusal %q does not name %q", c.name, err, want)
+			}
+		}
+		if _, err := os.Stat(marker); err == nil {
+			t.Errorf("%s: a step ran", c.name)
+		}
+		if _, err := os.Lstat(record); err == nil {
+			t.Errorf("%s: a record was written", c.name)
+		}
+		localNoEntry(t, callerTmp, "ci")
+		localNoEntry(t, repo.work, "")
+		localNoEntry(t, long, "")
+	}
+	// the real socket root, as the command takes it, fits
+	opts := localRunOptions(repo, localFixturePlan("true"), filepath.Join(t.TempDir(), "record.json"))
+	if made, _, err := localVerify(opts, "", io.Discard); err != nil || made.Result != localPass {
+		t.Errorf("the socket root %s is refused: %v (%q)", tmploc.SocketRoot, err, made.Result)
 	}
 }
