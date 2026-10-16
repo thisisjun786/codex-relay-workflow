@@ -293,7 +293,7 @@ func TestPolicyRoleErrorNamesTheLayers(t *testing.T) {
 	rows := []struct {
 		name, role, want string
 	}{
-		{"unknown role", "bogus", `"bogus" is not a role; supported are ["child", "parent", "supervisor"] (issue child, 자식, 부모)`},
+		{"unknown role", "bogus", "\"bogus\" is not a role; supported are [\"child\", \"parent\", \"supervisor\"] (`child` session, 자식, 부모)"},
 		{"supervisor pairs", execution.Supervisor, "role 'supervisor' (부모) cannot declare a model or a pair: its model and effort are the user's own selection, so its expectation is the recorded authorization"},
 	}
 	for _, row := range rows {

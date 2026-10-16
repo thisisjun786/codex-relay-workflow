@@ -17,7 +17,7 @@ import (
 // CRW-1313: the session that creates a thread names it right after thread/start with thread/name/set, by the thread
 // title table of crw-canon/references/hierarchy.md ("Thread titles"), so the Codex app never shows the first prompt
 // sentence in its place. A creation of the repository session (relay role supervisor) that names no title takes the
-// table's title from its checkout's origin; a project session (relay role parent) and an issue child (relay role child)
+// table's title from its checkout's origin; a project session (relay role parent) and a `child` session (relay role child)
 // carry the title their creator wrote by the rule the table links (crw-plan's app presentation, the managed start's
 // issue key prefix). A naming failure is warned and recorded in the receipt and never refuses the creation (Jun
 // 10-14: a reversible step warns and records).
@@ -93,7 +93,7 @@ func creationTitle(ctx context.Context, role, title, cwd string) (string, map[st
 	case "parent":
 		return "", titleWarning("title_unset", "a project session was created without a title"+after)
 	case "child":
-		return "", titleWarning("title_unset", "an issue child was created without a title"+after)
+		return "", titleWarning("title_unset", "a `child` session was created without a title"+after)
 	}
 	return "", nil
 }

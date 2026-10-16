@@ -81,7 +81,7 @@ func titleDecide(request any) (map[string]any, error) {
 	}
 	role, _ := rolev.(string)
 	if role != "parent" && role != "supervisor" && role != "child" {
-		return titleResult("invalid", "malformed_role", nil, nil, nil, nil, nil, `role as one of ["parent", "supervisor", "child"] (자식, 부모, issue child)`), nil
+		return titleResult("invalid", "malformed_role", nil, nil, nil, nil, nil, "role as one of [\"parent\", \"supervisor\", \"child\"] (자식, 부모, `child` session)"), nil
 	}
 	if role != "parent" {
 		o, e := titleText(r, "observed_title")

@@ -415,8 +415,8 @@ func (s *Scheduler) routeOf(ctx context.Context, q store.Querier, plan string, s
 	case agentNode:
 		return s.routeAgentNode(ctx, q, plan, snap, n, st)
 	case !found || rel.Superseded || rel.Status == "archived" || rel.Status == "cancelled":
-		return ActionRedefine, fmt.Sprintf("the relationship of %s has ended, so there is no issue child to send a correction to: reworking this output is a redefinition of the node, a new relationship registered with supersedes (contract 5, decision D-08), "+
-			"which the 자식 decides and which makes a new issue child", n.NodeID), nil
+		return ActionRedefine, fmt.Sprintf("the relationship of %s has ended, so there is no `child` session to send a correction to: reworking this output is a redefinition of the node, a new relationship registered with supersedes (contract 5, decision D-08), "+
+			"which the 자식 decides and which makes a new `child` session", n.NodeID), nil
 	case rel.Status != "active":
 		return ActionHold, fmt.Sprintf("relationship %s of %s is %s: resume it (relationship-resume) before a ruling or a correction can reach its child", short(rel.ID), n.NodeID, rel.Status), nil
 	case !ignoreOpen && hasAcc && rel.Generation > standGeneration:

@@ -2,8 +2,9 @@
 // role id written where a person reads a layer. The layers and their names are the table of
 // plugins/crw/skills/crw-canon/references/hierarchy.md "The levels": the relay role id `supervisor`
 // is the 부모 (the repository session), the relay role id `parent` is the 자식 (the project session),
-// and the relay role id `child` is an issue child, no layer. The role ids stay as they are in stored
-// rows, flags, wire fields and refusal codes; the text a person reads names the layer (CRW-1432).
+// and the relay role id `child` is named by its id, a `child` session, which is no layer. The role ids
+// stay as they are in stored rows, flags, wire fields and refusal codes; the text a person reads names
+// the layer (CRW-1432).
 //
 // Name, Gloss, Typed and ListGloss build that text. Find is the matcher the ci ratchet
 // (internal/dev/ci role_words_test.go) and the package tests share, so both count the same words.
@@ -17,7 +18,7 @@ import (
 )
 
 // Name is the layer name a person reads for a relay role id: supervisor is 부모, parent is 자식,
-// child is "issue child". Any other id is returned unchanged.
+// child is "`child` session". Any other id is returned unchanged.
 func Name(roleID string) string {
 	switch roleID {
 	case "supervisor":
@@ -25,7 +26,7 @@ func Name(roleID string) string {
 	case "parent":
 		return "자식"
 	case "child":
-		return "issue child"
+		return "`child` session"
 	}
 	return roleID
 }
@@ -40,11 +41,11 @@ func Gloss(roleID string) string {
 }
 
 // Typed is a role id where a person types or reads it as a value, with its layer name:
-// "supervisor (부모)", "parent (자식)", "child (issue child)".
+// "supervisor (부모)", "parent (자식)", "child (`child` session)".
 func Typed(roleID string) string { return roleID + Gloss(roleID) }
 
 // ListGloss is the layer names of a list of role ids in the given order, written after the list's
-// own spelling: " (issue child, 자식)" for ["child", "parent"]; "" for an empty list.
+// own spelling: " (`child` session, 자식)" for ["child", "parent"]; "" for an empty list.
 func ListGloss(roleIDs []string) string {
 	if len(roleIDs) == 0 {
 		return ""
@@ -79,7 +80,7 @@ var roleWords = []string{"supervisors", "supervisor", "parents", "parent"}
 //
 // Not counted: a typed role id (supervisor (부모), parent (자식)); a quoted role id followed by its
 // layer name ('parent' (자식), "parent" (자식)); a quoted role list followed by its ListGloss
-// (['child', 'parent'] (issue child, 자식), ["child","parent"] (issue child, 자식)); a flag value
+// (['child', 'parent'] (`child` session, 자식), ["child","parent"] (`child` session, 자식)); a flag value
 // (--role supervisor); and the git senses first parent, second parent, parent revision(s), parent
 // commit(s), parent %d and has %d parent(s). A wrong layer name after a role id is a hit. A possessive
 // names a layer's own thing, so it is a hit after a flag and before revision, commit or %d (the

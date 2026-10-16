@@ -7,7 +7,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
 )
 
-// TestChildHostMismatchNamesTheChild (CRW-1478): the one-host refusal names the 자식 (the relay parent) and the issue child, and
+// TestChildHostMismatchNamesTheChild (CRW-1478): the one-host refusal names the 자식 (the relay parent) and the `child` session, and
 // carries no bare role word.
 func TestChildHostMismatchNamesTheChild(t *testing.T) {
 	settings := map[string]any{"model": "m"}
@@ -15,7 +15,7 @@ func TestChildHostMismatchNamesTheChild(t *testing.T) {
 		Parent: dagsched.Endpoint{HostID: "host-a", Settings: settings},
 		Child:  dagsched.Endpoint{HostID: "host-b", Title: "t", Settings: settings}}
 	got := h.Problem()
-	want := "the 자식's host host-a is not the issue child's host-b: a managed start supports one local host"
+	want := "the 자식's host host-a is not the `child` session's host-b: a managed start supports one local host"
 	if got != want {
 		t.Fatalf("Problem() = %q, want %q", got, want)
 	}

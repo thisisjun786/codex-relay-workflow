@@ -460,7 +460,7 @@ func TestRoleWordsInHumanTextNameLayers(t *testing.T) {
 			"is bound as 'supervisor' and",
 			"role 'supervisor' cannot declare",
 			"holds live bindings at ['child', 'parent']; one",
-			"holds live bindings at ['child', 'parent'] (자식, issue child); one",
+			"holds live bindings at ['child', 'parent'] (자식, `child` session); one",
 			"the parent's turn",
 			"two supervisors above",
 			"the parent (부모) is wrong",
@@ -471,6 +471,9 @@ func TestRoleWordsInHumanTextNameLayers(t *testing.T) {
 		} {
 			if n := fixtureRoleWords(t, "var _ = "+strconv.Quote(lit)); n == 0 {
 				t.Errorf("%q: no hit, want the bare role word counted", lit)
+			}
+			if strings.Contains(lit, "`") {
+				continue // a raw literal cannot hold a backtick (the `child` session gloss)
 			}
 			if n := fixtureRoleWords(t, "var _ = `"+lit+"`"); n == 0 {
 				t.Errorf("raw `%s`: no hit, want the bare role word counted", lit)
@@ -487,8 +490,8 @@ func TestRoleWordsInHumanTextNameLayers(t *testing.T) {
 			`var _ = "pass --authority parent=ref"`,
 			`var _ = "write supervisor (부모) here"`,
 			`var _ = "the role 'parent' (자식) is"`,
-			`var _ = "holds live bindings at ['child', 'parent'] (issue child, 자식); one"`,
-			`var _ = "holds live bindings at [\"child\",\"parent\"] (issue child, 자식); one"`,
+			"var _ = \"holds live bindings at ['child', 'parent'] (`child` session, 자식); one\"",
+			"var _ = \"holds live bindings at [\\\"child\\\",\\\"parent\\\"] (`child` session, 자식); one\"",
 			`var _ = "walk first-parent order"`,
 			`var _ = "a two-parent merge"`,
 			`var _ = "a parent-class decision"`,

@@ -21,7 +21,7 @@ var roleNames = [...]string{Supervisor, Parent, Child}
 
 // supportedRoles is the role ids a policy may key, with the layer each names (layername.ListGloss),
 // written as one literal so the role-word ratchet reads the list and its gloss together.
-const supportedRoles = `["child", "parent", "supervisor"] (issue child, 자식, 부모)`
+const supportedRoles = "[\"child\", \"parent\", \"supervisor\"] (`child` session, 자식, 부모)"
 
 // SupportedRoles is supportedRoles for another package's refusal of an unknown role.
 const SupportedRoles = supportedRoles

@@ -223,7 +223,7 @@ func (c *command) execute(spec Spec, state string, resume bool, sigs <-chan os.S
 	args := compactJSON(spec.Args)
 	budget, spent := spec.TokenBudget, int64(0)
 	if resume {
-		// a legacy issue-child run is refused as one before the check of its started row, which the run of an old issue-lane process that
+		// a legacy `child` session run is refused as one before the check of its started row, which the run of an old issue-lane process that
 		// ended before that row does not have (CRW-1415)
 		if why := legacyRun(world.Journal.Events(), spec.RunID, spec.Workflow); why != "" {
 			return c.fail("%s", why)

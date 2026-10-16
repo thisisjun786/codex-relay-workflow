@@ -175,7 +175,7 @@ type CloseResult struct {
 	State        string `json:"state"`
 }
 
-// ChildRequest is the request of a managed child start. The lane no longer releases issue children (CRW-1415); the type is kept for
+// ChildRequest is the request of a managed child start. The lane no longer releases `child` sessions (CRW-1415); the type is kept for
 // schedrelay.go until bundle S.
 type ChildRequest struct {
 	Plan, Node, RunID string

@@ -15,11 +15,11 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/workflows"
 )
 
-// The issue-child path is retired (CRW-1415), and the records an old run left stay read only. A run whose journal holds a crw.releaseChild
-// row started an issue child under the old project lane; the current lane sends a node sized for a child up as a size split at the
+// The `child` session path is retired (CRW-1415), and the records an old run left stay read only. A run whose journal holds a crw.releaseChild
+// row started a `child` session under the old project lane; the current lane sends a node sized for a child up as a size split at the
 // position where the old one decided and started the child, so a resume of that run under the current script would escalate the node
 // live and leave the child it started running. The resume is refused before anything is written, with a reason that names the legacy
-// issue-child path; the rows of the run are what they were.
+// `child` session path; the rows of the run are what they were.
 
 // newChildBranch is the current project lane's handling of a node sized for a child; oldChildBranch is the old lane's (before CRW-1415):
 // it decided the child (SP-CHILD-2) and started it (crw.releaseChild).
@@ -35,7 +35,7 @@ const (
 `
 )
 
-// oldReleaseChild stands in for the old crw.releaseChild: it started the node's issue child and recorded it. afterStart, when set, is
+// oldReleaseChild stands in for the old crw.releaseChild: it started the node's `child` session and recorded it. afterStart, when set, is
 // called once the child is started and before the op returns (the process ends there).
 type oldReleaseChild struct {
 	started    []string
@@ -137,8 +137,8 @@ func TestLegacyIssueChildRunIsNotResumedUnderTheNewLane(t *testing.T) {
 		}
 		t.Fatalf("a run whose journal holds a crw.releaseChild row was resumed under the new lane: escalations written live %v, closes %v, result %s", esc, l.Relay.CloseReasons(), lanes)
 	}
-	if !strings.Contains(err.Error(), "issue-child") || !strings.Contains(err.Error(), ops.OpReleaseChild) {
-		t.Errorf("the refusal %q does not name the legacy issue-child path", err)
+	if !strings.Contains(err.Error(), "`child` session") || !strings.Contains(err.Error(), ops.OpReleaseChild) {
+		t.Errorf("the refusal %q does not name the legacy `child` session path", err)
 	}
 	if len(esc) != 0 || len(l.Events()) != rowsBefore {
 		t.Errorf("the refused resume wrote rows: escalations %v, rows %d -> %d", esc, rowsBefore, len(l.Events()))
@@ -184,7 +184,7 @@ func TestLegacyChildStartWithNoReleaseChildRowIsNotResumed(t *testing.T) {
 	rowsBefore := len(l.Events())
 
 	_, err = legacyNight(l, newLane, nil, true)
-	if err == nil || !strings.Contains(err.Error(), "legacy issue-child run") || !strings.Contains(err.Error(), "node A") {
+	if err == nil || !strings.Contains(err.Error(), "legacy `child` session run") || !strings.Contains(err.Error(), "node A") {
 		t.Fatalf("the resume under the current lane of a run whose child started with no crw.releaseChild row: %v", err)
 	}
 	if n := len(l.FlowRows(engine.EvEscalation)) - escBefore; n != 0 || len(l.Events()) != rowsBefore {

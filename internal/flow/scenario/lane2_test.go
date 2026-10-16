@@ -19,7 +19,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/workflows"
 )
 
-// A node the architect sized for a child goes up as a size split (CRW-1415): the issue-child path is retired, so the lane escalates it
+// A node the architect sized for a child goes up as a size split (CRW-1415): the `child` session path is retired, so the lane escalates it
 // with reason size_split and detail child_retired, starts no child and calls no executor for it, closes its execution so no slot
 // stays held, and the other nodes of the milestone are not held up by it.
 func TestSizeFitChildEscalatesSizeSplitAndStartsNoChild(t *testing.T) {

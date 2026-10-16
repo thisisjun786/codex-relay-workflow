@@ -44,7 +44,7 @@ var managementScopeRoles = map[string]bool{"supervisor": true}
 func bindingScopeKind(role, requested, key string) (string, error) {
 	kind, known := roleScope[role]
 	if !known {
-		return "", refuse(contract.RefusalScopeRoleMismatch, "a role is one of child (issue child), parent (자식), supervisor (부모), not %s", strconv.Quote(role))
+		return "", refuse(contract.RefusalScopeRoleMismatch, "a role is one of child (`child` session), parent (자식), supervisor (부모), not %s", strconv.Quote(role))
 	}
 	if requested == "" {
 		return kind, nil
