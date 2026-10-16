@@ -101,8 +101,8 @@ func TestCodexReviewProfileReadsTheFindingsList(t *testing.T) {
 		wantState(t, res, StateOK)
 		want := []Finding{
 			{Severity: "P1", File: "a/b.go", Line: 12, Text: "Keep the guard — it stops the loop: The guard was dropped. It loops forever."},
-			{Severity: "P3", File: "/elsewhere/c.go", Line: 3, Text: "Name the helper: A nit."},
-			{Severity: "P3", File: "d/e.go", Line: 7, Text: "Relative stays"},
+			{Severity: "P3", Impact: "minor_separable", File: "/elsewhere/c.go", Line: 3, Text: "Name the helper: A nit."},
+			{Severity: "P3", Impact: "minor_separable", File: "d/e.go", Line: 7, Text: "Relative stays"},
 		}
 		for i := range want {
 			want[i].ID = FindingID(want[i].File, want[i].Text)

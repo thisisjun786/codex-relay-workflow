@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // fakeRun is a tool call the test scripts: what it prints, its exit, a start error, and an optional file it writes into the worktree.
@@ -116,7 +117,7 @@ func TestAdapterNormalizesToolOutputToTheSchema(t *testing.T) {
 		want := []Finding{
 			{ID: FindingID("a.go", "first"), Severity: "P1", File: "a.go", Line: 1, Text: "first"},
 			{ID: FindingID("b.go", "second"), Severity: "P2", File: "b.go", Line: 2, Text: "second"},
-			{ID: FindingID("c.go", "third"), Severity: "P3", File: "c.go", Line: 3, Text: "third"},
+			{ID: FindingID("c.go", "third"), Severity: "P3", Impact: "minor_separable", File: "c.go", Line: 3, Text: "third"},
 			{ID: FindingID("d.go", "fourth"), Severity: "P0", File: "d.go", Line: 0, Text: "fourth"},
 		}
 		if !slices.Equal(res.Findings, want) {
@@ -184,7 +185,7 @@ func TestAdapterNormalizesToolOutputToTheSchema(t *testing.T) {
 		res := check(t, BugbotProfile(), fakeRun{stdout: bugbotEnvelope(t, table)})
 		wantState(t, res, StateOK)
 		want := []Finding{
-			{ID: FindingID("internal/quote/quote.go", "The helper name does not say what it returns."), Severity: "P3", File: "internal/quote/quote.go", Line: 12, Text: "The helper name does not say what it returns."},
+			{ID: FindingID("internal/quote/quote.go", "The helper name does not say what it returns."), Severity: "P3", Impact: "minor_separable", File: "internal/quote/quote.go", Line: 12, Text: "The helper name does not say what it returns."},
 			{ID: FindingID("internal/quote/token.go", "The token is written to the debug log."), Severity: "P3", Impact: "safety_or_data", File: "internal/quote/token.go", Line: 30, Text: "The token is written to the debug log."},
 		}
 		if res.Verdict != VerdictNeedsChanges || !slices.Equal(res.Findings, want) {
@@ -197,8 +198,8 @@ func TestAdapterNormalizesToolOutputToTheSchema(t *testing.T) {
 			"| nit | internal/quote/quote.go:12 | The helper name does not say what it returns. |"
 		res := check(t, BugbotProfile(), fakeRun{stdout: bugbotEnvelope(t, table)})
 		wantState(t, res, StateOK)
-		if res.Verdict != VerdictVerified || len(res.Findings) != 1 || res.Findings[0].Impact != "" {
-			t.Fatalf("result = %+v, want verified with one finding without impact", res)
+		if res.Verdict != VerdictVerified || len(res.Findings) != 1 || res.Findings[0].Impact != "minor_separable" {
+			t.Fatalf("result = %+v, want verified with one minor_separable finding", res)
 		}
 	})
 	t.Run("Bugbot found no bugs", func(t *testing.T) {
@@ -680,7 +681,7 @@ func TestBugbotReadsEveryFindingsTable(t *testing.T) {
 	res := check(t, BugbotProfile(), fakeRun{stdout: bugbotEnvelope(t, text)})
 	wantState(t, res, StateOK)
 	want := []Finding{
-		{ID: FindingID("a.go", "The name is unclear."), Severity: "P3", File: "a.go", Line: 3, Text: "The name is unclear."},
+		{ID: FindingID("a.go", "The name is unclear."), Severity: "P3", Impact: "minor_separable", File: "a.go", Line: 3, Text: "The name is unclear."},
 		{ID: FindingID("b.go", "The loop never ends."), Severity: "P1", File: "b.go", Line: 9, Text: "The loop never ends."},
 	}
 	if res.Verdict != VerdictNeedsChanges || !slices.Equal(res.Findings, want) {
@@ -1238,5 +1239,78 @@ func TestAdapterVoidsAPassThatReadNoRepository(t *testing.T) {
 		wantState(t, res, StateWorktreeChanged)
 		res = checkFor(t, meteredProfile(), fakeRun{exit: 1, stderr: "usage limit"}, 20*time.Second)
 		wantState(t, res, StateQuota)
+	})
+}
+
+// TestFirstLineCutsAtARuneBoundary: firstLine keeps at most 200 bytes of the first line and never cuts a rune in two, so the text
+// it puts in a record's detail stays valid UTF-8 whatever the tool printed.
+func TestFirstLineCutsAtARuneBoundary(t *testing.T) {
+	ascii := strings.Repeat("a", 199)
+	for _, c := range []struct {
+		name, in, want string
+	}{
+		{"a short line is kept whole", "the tool failed\nsecond line", "the tool failed"},
+		{"a two-byte rune across the cut is dropped", ascii + "é and more", ascii},
+		{"a three-byte rune across the cut is dropped", strings.Repeat("a", 198) + "한글", strings.Repeat("a", 198)},
+		{"a four-byte rune across the cut is dropped", strings.Repeat("a", 197) + "😀", strings.Repeat("a", 197)},
+		{"a rune that ends at the cut is kept", strings.Repeat("a", 198) + "é tail", strings.Repeat("a", 198) + "é"},
+		{"a line of only multibyte runes", strings.Repeat("한", 100), strings.Repeat("한", 66)},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got := firstLine([]byte(c.in))
+			if got != c.want {
+				t.Fatalf("firstLine = %q (%d bytes), want %q (%d bytes)", got, len(got), c.want, len(c.want))
+			}
+			if !utf8.ValidString(got) || len(got) > 200 {
+				t.Fatalf("firstLine = %q: valid UTF-8 %v, %d bytes", got, utf8.ValidString(got), len(got))
+			}
+		})
+	}
+}
+
+// TestNormalizeRecordsAnImpactlessP3AsMinorSeparable: a P3 finding of a new answer that names no impact is recorded
+// minor_separable, after the security rule (a security P3 stays safety_or_data) and after the duplicate collapse (the collapsed
+// grade decides); a P0-P2 finding without impact keeps an empty impact and still blocks a verified verdict.
+func TestNormalizeRecordsAnImpactlessP3AsMinorSeparable(t *testing.T) {
+	for _, c := range []struct {
+		name, verdict, findings string
+		state                   State
+		severity, impact        string
+	}{
+		{"needs_changes over an impactless P3", VerdictNeedsChanges, `{"severity":"low","file":"a.go","line":1,"text":"leak"}`, StateOK, "P3", "minor_separable"},
+		{"verified over an impactless P3", VerdictVerified, `{"severity":"low","file":"a.go","line":1,"text":"leak"}`, StateOK, "P3", "minor_separable"},
+		{"an impactless P2 stays empty", VerdictNeedsChanges, `{"severity":"medium","file":"a.go","line":1,"text":"leak"}`, StateOK, "P2", ""},
+		{"an impactless P2 still blocks verified", VerdictVerified, `{"severity":"medium","file":"a.go","line":1,"text":"leak"}`, StateInvalid, "", ""},
+		{"a P3 with an impact keeps it", VerdictNeedsChanges, `{"severity":"low","impact":"core_function","file":"a.go","line":1,"text":"leak"}`, StateOK, "P3", "core_function"},
+		{"a security P3 stays safety_or_data", VerdictNeedsChanges, `{"severity":"low security","file":"a.go","line":1,"text":"leak"}`, StateOK, "P3", "safety_or_data"},
+		{"an impactless P3 collapsed into a P2 copy stays empty", VerdictNeedsChanges, `{"severity":"low","file":"a.go","line":1,"text":"leak"},
+			{"severity":"medium","file":"a.go","line":9,"text":"leak"}`, StateOK, "P2", ""},
+		{"an impactless P3 collapsed with a core_function copy takes it", VerdictNeedsChanges, `{"severity":"low","file":"a.go","line":1,"text":"leak"},
+			{"severity":"low","impact":"core_function","file":"a.go","line":9,"text":"leak"}`, StateOK, "P3", "core_function"},
+		{"an impactless P3 collapsed with a security copy is safety_or_data", VerdictNeedsChanges, `{"severity":"low","file":"a.go","line":1,"text":"leak"},
+			{"severity":"low vuln","file":"a.go","line":9,"text":"leak"}`, StateOK, "P3", "safety_or_data"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			res := check(t, jsonProfile(), fakeRun{stdout: `{"verdict":"` + c.verdict + `","findings":[` + c.findings + `]}`})
+			wantState(t, res, c.state)
+			if c.state != StateOK {
+				return
+			}
+			if len(res.Findings) != 1 || res.Findings[0].Severity != c.severity || res.Findings[0].Impact != c.impact {
+				t.Fatalf("findings = %+v, want one %s finding of impact %q", res.Findings, c.severity, c.impact)
+			}
+		})
+	}
+	t.Run("the rule is in normalize, so every profile that normalizes gets it", func(t *testing.T) {
+		got, err := normalize(VerdictNeedsChanges, []Finding{
+			{ID: "p3", Severity: "P3", File: "a.go", Line: 1, Text: "naming"},
+			{ID: "p1", Severity: "P1", File: "a.go", Line: 2, Text: "crash"},
+		}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 2 || got[0].Impact != "minor_separable" || got[1].Impact != "" {
+			t.Fatalf("normalized = %+v, want the P3 minor_separable and the P1 without impact", got)
+		}
 	})
 }
