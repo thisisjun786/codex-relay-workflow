@@ -74,6 +74,29 @@ type ReleasedPlan struct {
 	DesignDigest string      `json:"design_digest"`
 	Plan         DesignIssue `json:"plan"`
 	Decisions    []Decision  `json:"decisions"`
+	// Asked is, for a node sized for a bundle split, whether its request went up (CRW-1437): the escalation_notice row of the
+	// bundle_split_request escalation its lane wrote is recorded. A send that failed writes no such row, and a failed upward hook does
+	// not stop the run, so the escalation alone does not say the request reached the level above. Absent for any other kind.
+	Asked bool `json:"asked,omitempty"`
+}
+
+// EvEscalationNotice is the flow row that records that an escalation of the run was told to the level above (report.KindEscalationNotice,
+// written by the run's upward hook once the channel accepted or queued the notice): its escalation_id names the escalation.
+const EvEscalationNotice = "escalation_notice"
+
+// askBundleSplit is the ask of the escalation a node sized for a bundle split goes up with (project-lane.js, CRW-1437).
+const askBundleSplit = "bundle_split_request"
+
+// bundleSplitAsked tells whether the bundle split request of node went up: the last escalation of the node that asks
+// bundle_split_request has its escalation_notice row.
+func bundleSplitAsked(r rows, node string) bool {
+	esc, ok := r.flow(engine.EvEscalation).last(func(ev engine.Event) bool { return dataStr(ev, "node") == node && dataStr(ev, "ask") == askBundleSplit })
+	if !ok {
+		return false
+	}
+	id := dataStr(esc, "escalation_id")
+	_, told := r.flow(EvEscalationNotice).last(func(ev engine.Event) bool { return id != "" && dataStr(ev, "escalation_id") == id })
+	return told
 }
 
 func (o *releasedPlansOp) Run(_ context.Context, req engine.OpRequest) (engine.OpResult, error) {

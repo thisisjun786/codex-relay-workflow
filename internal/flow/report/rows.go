@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -36,7 +37,7 @@ const (
 	// KindSummaryDocument records the document a run keeps the plan summary in (crw flow run --summary-document).
 	KindSummaryDocument = "summary_document"
 	// KindEscalationNotice records that an escalation row of the run was told to the orchestrator thread.
-	KindEscalationNotice = "escalation_notice"
+	KindEscalationNotice = ops.EvEscalationNotice
 	// KindCompletionNotice records the completion digest told to the orchestrator thread: notice_key, status (the engine status), result
 	// and request_id, and, when the run's finished row carries an outcome (engine.Outcome, CRW-1487), its state, its reason and the lanes
 	// that did not land (node:state/reason).

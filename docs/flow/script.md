@@ -624,7 +624,8 @@ and the head each node landed with.
 (the re-plan's DESIGN goes through the same audit rounds as the first DESIGN, `needs_changes` returning it to the architect on the same thread; the critic's packet
 carries `RELEASED PLANS`, the plan each started node was released with as `crw.releasedPlans` reads it from the revision of its release - the whole issue, every field, and the whole
 decisions its `decision_refs` name; a node whose issue was sized for a child, a bundle split or a split with no sub-tasks started too (its lane recorded the design row and escalated it), is
-listed with that plan and is no unstarted node of the re-plan - and a started node whose issue differs from it in any field, or a decision such a plan names that the DESIGN drops or changes
+listed with that plan and is no unstarted node of the re-plan; a bundle split is listed as asked of the 부모 only when the `escalation_notice` row of its
+`bundle_split_request` escalation is recorded (`asked`), and otherwise as a request not delivered yet, since a failed send writes no such row and does not stop the run - and a started node whose issue differs from it in any field, or a decision such a plan names that the DESIGN drops or changes
 in any field, is a P1 finding). `crw.designLedger` holds the revision to the same rule and refuses it otherwise: a started node (the one predicate of
 `crw.releasedPlans`) has no issue, its issue differs in any field from its released plan (an absent list reads as an empty one), or a decision that plan
 names is missing or differs in any field from the decision of the revision the node started under; it refuses a revision that drops a decision of the

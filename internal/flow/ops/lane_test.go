@@ -498,6 +498,59 @@ func TestReleasedPlansListTheNodesSizedForASplitOrAChild(t *testing.T) {
 	}
 }
 
+// CRW-1437: a node sized for a bundle split is listed with whether its request went up: its lane escalated it as size_split with ask
+// bundle_split_request, and the request reached the 부모 only when the escalation_notice row of that escalation is recorded (a send that
+// failed writes none, and a hook failure does not stop the run). Before the notice the plan says asked false (the key is absent);
+// with it, asked true. A notice of another escalation of the run does not count.
+func TestReleasedPlansSayWhetherABundleSplitRequestWentUp(t *testing.T) {
+	w := newWorld(t)
+	w.relay.plan = planOfNodes(map[string]string{"A": "sa", "B": "sb"}, "A", "B")
+	d := designOf("A", "B")
+	d.Issues[1].SizeFit, d.Issues[1].SizeReason, d.Issues[1].IssueSizeDecision = "bundle_split", "regions_gt3", "over_line"
+	w.ledgered(true, d)
+	w.release("A")
+	w.must("release", "plan-1", "B", "M")
+	asked := func() (any, bool) {
+		var got []map[string]any
+		_ = json.Unmarshal(w.must("releasedPlans", "M"), &got)
+		for _, p := range got {
+			if p["node"] == "B" {
+				if p["kind"] != "bundle_split" {
+					t.Fatalf("the released plan of B %v, want kind bundle_split", p)
+				}
+				v, ok := p["asked"]
+				return v, ok
+			}
+		}
+		t.Fatalf("no released plan of B in %v", got)
+		return nil, false
+	}
+	other := w.must("escalate", "A", EscalateInfo{Reason: "blocked_scope"})
+	esc := w.must("escalate", "B", EscalateInfo{Reason: "size_split", Ask: "bundle_split_request", Detail: "regions_gt3"})
+	var otherOut, escOut EscalateOutcome
+	_ = json.Unmarshal(other, &otherOut)
+	_ = json.Unmarshal(esc, &escOut)
+	notice := func(id string) {
+		w.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindFlow, Event: EvEscalationNotice, Data: map[string]any{"escalation_id": id, "result": "queued", "request_id": "rq", "thread": "th"}})
+	}
+	notice(otherOut.ID)
+	if v, ok := asked(); ok {
+		t.Errorf("asked %v before the notice of B's escalation, want no asked key", v)
+	}
+	notice(escOut.ID)
+	if v, ok := asked(); !ok || v != true {
+		t.Errorf("asked %v, %v after the notice of B's escalation, want true", v, ok)
+	}
+	if v, ok := func() (any, bool) {
+		var got []map[string]any
+		_ = json.Unmarshal(w.must("releasedPlans", "M"), &got)
+		v, ok := got[0]["asked"]
+		return v, ok
+	}(); ok {
+		t.Errorf("the released plan of A has asked %v; only a bundle split names it", v)
+	}
+}
+
 // A node whose audited issue is sized for a child has started: its lane recorded a release row (released false, kind child,
 // size_fit_child) before it escalated the node. Both readers of the one started predicate count it so: the signal path (lanes, which
 // crw.signalBind records as started) does not leave it unstarted for a due signal to re-plan, and crw.releasedPlans lists it with

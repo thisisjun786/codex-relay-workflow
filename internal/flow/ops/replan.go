@@ -521,6 +521,9 @@ func releasedPlans(r rows, ms string) ([]ReleasedPlan, error) {
 		}
 		is.EditRegions, is.TestsFirst, is.DecisionRefs, is.OrderAfter = nonNil(is.EditRegions), nonNil(is.TestsFirst), nonNil(is.DecisionRefs), nonNil(is.OrderAfter)
 		p := ReleasedPlan{Node: node, Kind: kind, Revision: revision, DesignDigest: dataStr(rel, "design_digest"), Plan: is, Decisions: []Decision{}}
+		if kind == "bundle_split" {
+			p.Asked = bundleSplitAsked(r, node)
+		}
 		design, err := ledgerDesign(led)
 		if err != nil {
 			return nil, fmt.Errorf("node %s: %w", node, err)

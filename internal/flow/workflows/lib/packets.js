@@ -210,14 +210,18 @@ export function designAuditPacket(ms, cand, round, prior, context) {
 // released under, its whole issue plan (every field) and the whole decisions its decision_refs name, so the critic sees any drift.
 // An entry with no plan member (the flat form an earlier lane binary recorded) is rendered from its own fields. A node sized for a
 // split without sub-tasks (the legacy row of a DESIGN recorded before S-1), a child or a bundle split (kind) is listed with that: it
-// started, its lane escalated it, and no executor started. A split with sub-tasks is released to an executor (CRW-1459) and is listed
-// as released, as an executor node is.
+// started, its lane escalated it, and no executor started. A bundle split says the 부모 was asked only when its request went up (asked:
+// the escalation_notice row of its escalation is recorded); otherwise the request is not delivered yet. A split with sub-tasks is
+// released to an executor (CRW-1459) and is listed as released, as an executor node is.
 function releasedSection(released) {
   // how a started node started: released, or sized for a node its lane escalated as size_split with no executor
   const how = (p) => {
     if (p.kind === 'split') return 'sized for a split under ' + p.revision + ' with no sub-tasks (a legacy split row: no executor started; its lane escalated it as size_split)'
     if (p.kind === 'child') return 'sized for a child under ' + p.revision + ' (no executor started; its lane escalated it as size_split)'
-    if (p.kind === 'bundle_split') return 'sized for a bundle split under ' + p.revision + ' (no executor started; the parent was asked: bundle_split_request)'
+    if (p.kind === 'bundle_split') {
+      return 'sized for a bundle split under ' + p.revision + (p.asked === true ? ' (no executor started; the 부모 was asked: bundle_split_request)'
+        : ' (no executor started; the request to the 부모 is not delivered yet: bundle_split_request)')
+    }
     return 'released under ' + p.revision
   }
   return section('RELEASED PLANS (the started nodes, each with the whole issue plan of the revision it was released under and the decisions it names)', released.length === 0 ? ['- none'] : released.map((p) => {
