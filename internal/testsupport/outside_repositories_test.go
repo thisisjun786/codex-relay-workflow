@@ -1,8 +1,11 @@
 package testsupport_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
@@ -130,5 +133,83 @@ func TestMkdirTempOutsideRepositoriesAnswersAPhysicalPathWhenTMPDIRIsASymlink(t 
 	dir := testsupport.MkdirTempOutsideRepositories(t, "crw-outside-")
 	if resolved, err := filepath.EvalSymlinks(dir); err != nil || resolved != dir {
 		t.Fatalf("%s is not a physical path (%q, %v)", dir, resolved, err)
+	}
+}
+
+// recordingTB is a testing.TB whose Fatalf and Skipf end the calling goroutine and keep the message, so a test can observe
+// the failure of a helper that is handed a testing.TB. Run it in its own goroutine through failureOf.
+type recordingTB struct {
+	testing.TB
+	message  string
+	skipped  bool
+	cleanups []func()
+}
+
+func (r *recordingTB) Helper()          {}
+func (r *recordingTB) Cleanup(f func()) { r.cleanups = append(r.cleanups, f) }
+func (r *recordingTB) Fatalf(format string, args ...any) {
+	r.message = fmt.Sprintf(format, args...)
+	runtime.Goexit()
+}
+func (r *recordingTB) Skipf(format string, args ...any) {
+	r.message, r.skipped = fmt.Sprintf(format, args...), true
+	runtime.Goexit()
+}
+func (r *recordingTB) Errorf(format string, args ...any) { r.message = fmt.Sprintf(format, args...) }
+
+// failureOf runs fn against a recordingTB and answers what it recorded; its cleanups run before it returns.
+func failureOf(t *testing.T, fn func(testing.TB)) *recordingTB {
+	t.Helper()
+	r := &recordingTB{TB: t}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		fn(r)
+	}()
+	<-done
+	for i := len(r.cleanups) - 1; i >= 0; i-- {
+		r.cleanups[i]()
+	}
+	return r
+}
+
+// CRW-1579 (R1-3): TMPDIR below a repository marker is a failure with its reason, not a move to /var/tmp or /dev/shm and not
+// a skip: the host sets TMPDIR to a directory with no .git above.
+func TestMkdirTempOutsideRepositories_failsWithTheReasonInsideARepository(t *testing.T) {
+	base := t.TempDir()
+	if err := os.Mkdir(filepath.Join(base, ".git"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	tmp := filepath.Join(base, "tmp")
+	if err := os.Mkdir(tmp, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", tmp)
+	var made string
+	r := failureOf(t, func(tb testing.TB) { made = testsupport.MkdirTempOutsideRepositories(tb, "crw-outside-") })
+	if r.skipped {
+		t.Fatalf("the test was skipped (%s); a TMPDIR inside a repository is a failure", r.message)
+	}
+	if made != "" {
+		t.Fatalf("a directory was made (%s) although TMPDIR=%s is inside a repository", made, tmp)
+	}
+	if !strings.Contains(r.message, "set TMPDIR to a directory with no .git above") || !strings.Contains(r.message, tmp) {
+		t.Fatalf("the failure %q does not name TMPDIR %s and say to set TMPDIR to a directory with no .git above", r.message, tmp)
+	}
+}
+
+// A relative TMPDIR is tmploc's refusal, not a directory made below the working directory.
+func TestMkdirTempOutsideRepositories_failsOnARelativeTMPDIR(t *testing.T) {
+	t.Chdir(t.TempDir())
+	if err := os.Mkdir("rel", 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", "rel")
+	r := failureOf(t, func(tb testing.TB) { testsupport.MkdirTempOutsideRepositories(tb, "crw-outside-") })
+	if !strings.Contains(r.message, "tmpdir_not_absolute") {
+		t.Fatalf("the failure %q is not tmploc's tmpdir_not_absolute", r.message)
+	}
+	if entries, _ := os.ReadDir("rel"); len(entries) != 0 {
+		t.Fatalf("a directory was made below the relative TMPDIR: %v", entries)
 	}
 }

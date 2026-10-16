@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // RefuseLiveStateEnv is the variable under which the Go store refuses a database below a live
@@ -205,12 +206,16 @@ func isolate() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	tempDir, err := tmploc.Dir()
+	if err != nil {
+		return "", err
+	}
 	top, nested := inheritedRoot()
 	var root string
 	if nested {
 		root, err = os.MkdirTemp(top, "h-")
 	} else {
-		root, err = os.MkdirTemp("", rootPrefix)
+		root, err = tmploc.MkdirTemp(rootPrefix)
 		top = root
 	}
 	if err != nil {
@@ -244,7 +249,7 @@ func isolate() (string, error) {
 	}
 	// CRW-1265: the isolated crw configuration names the temporary directory as the sandbox root (sandboxconfig.go).
 	config := filepath.Join(env["XDG_CONFIG_HOME"], "crw", "config.json")
-	if err := WriteSandboxConfig(config, os.TempDir()); err != nil {
+	if err := WriteSandboxConfig(config, tempDir); err != nil {
 		return "", errors.Join(err, RemoveTempTree(root))
 	}
 	sandboxConfigFile = config

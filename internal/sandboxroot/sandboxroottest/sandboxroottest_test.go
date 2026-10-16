@@ -1,9 +1,11 @@
 package sandboxroottest
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -124,5 +126,89 @@ func TestAHelperThatEndsWithoutItsCleanupLeavesNothingInTMPDIR(t *testing.T) {
 	}
 	if entries, err := os.ReadDir(tmp); err != nil || len(entries) != 0 {
 		t.Errorf("TMPDIR holds %d entries after the cleanup (%v)", len(entries), err)
+	}
+}
+
+// CRW-1579 (R1-7): a relative TMPDIR is tmploc's refusal at install, for InstallTemp and for Install(base) alike. Before, the
+// fakes were made by os.MkdirTemp("", ...) below the relative directory, that is below the working directory.
+func TestInstall_refusesARelativeTMPDIR(t *testing.T) {
+	t.Chdir(t.TempDir())
+	if err := os.Mkdir("rel", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", "rel")
+	t.Setenv(testsupport.IsolationRootEnv, "")
+	t.Setenv(parentEnv, "")
+	for name, install := range map[string]func() (func() error, error){
+		"InstallTemp": InstallTemp,
+		"Install":     func() (func() error, error) { return Install("rel") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			cleanup, err := install()
+			if err == nil {
+				_ = cleanup()
+				t.Fatal("a relative TMPDIR was accepted")
+			}
+			if !strings.Contains(err.Error(), "tmpdir_not_absolute") {
+				t.Errorf("error %q is not tmploc's tmpdir_not_absolute", err)
+			}
+			if entries, _ := os.ReadDir("rel"); len(entries) != 0 {
+				t.Errorf("fakes were made below the relative TMPDIR: %v", entries)
+			}
+		})
+	}
+}
+
+// CRW-1579 (R1-7): the directory of the fakes is exported to helper processes only when Install chose it (TMPDIR); a
+// directory the process tree named (the isolation root) is theirs already.
+func TestInstall_exportsItsParentOnlyWhenItChoseIt(t *testing.T) {
+	for name, c := range map[string]struct {
+		isolationRoot bool
+		exported      bool
+	}{"no isolation root": {false, true}, "isolation root": {true, false}} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("TMPDIR", t.TempDir())
+			t.Setenv(parentEnv, "")
+			root := ""
+			if c.isolationRoot {
+				root = t.TempDir()
+			}
+			t.Setenv(testsupport.IsolationRootEnv, root)
+			cleanup, err := Install(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = cleanup() })
+			dir := fakesDir(t)
+			got := os.Getenv(parentEnv)
+			if c.exported && got != dir {
+				t.Errorf("%s = %q, want the fakes %s", parentEnv, got, dir)
+			}
+			if !c.exported && got != "" {
+				t.Errorf("%s = %q, want none: the parent was named, not chosen", parentEnv, got)
+			}
+		})
+	}
+}
+
+// CRW-1579 (D7): the installed crw configuration names the sandbox base only: no project roots, no socket root.
+func TestInstall_documentIsTheBaseOnly(t *testing.T) {
+	base := t.TempDir()
+	cleanup, err := Install(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cleanup() })
+	data, err := os.ReadFile(os.Getenv("CRW_CONFIG"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	real, _ := filepath.EvalSymlinks(base)
+	if want := map[string]any{"paths": map[string]any{"sandbox_root": real}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("document = %v, want exactly %v", got, want)
 	}
 }
