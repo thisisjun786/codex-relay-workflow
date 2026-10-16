@@ -813,7 +813,10 @@ and the given values, and nothing is written. The
 message goes in the lead's name, and a caller is not refused for not being the lead: a calling
 thread that is not the initiative's lead is named at the top of the message text, recorded on the
 row (`reporterIsLead: false`) and warned in the answer (`warning`); a caller with no
-`CODEX_THREAD_ID` is recorded without a reporter and warned.
+`CODEX_THREAD_ID` is recorded without a reporter and warned. That attribution line is the channel's,
+not the reporter's words: the packet records it as `origin.preface`, so who reported a report does
+not make it another statement, and a report the management seat acknowledged stays parked when
+another thread or the lead reports it again unchanged.
 
 ## The surface
 
