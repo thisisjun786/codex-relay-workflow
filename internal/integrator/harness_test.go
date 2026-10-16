@@ -78,7 +78,7 @@ const verifyScript = `#!/bin/sh
 n=$(cat "$CTL_DIR/verify-n" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "$CTL_DIR/verify-n"
 echo "$CRW_VERIFY_HEAD $CRW_VERIFY_BASE $CRW_VERIFY_RECORD $(pwd)" >> "$CTL_DIR/verify-calls"
 [ -f "$CTL_DIR/during-verify.sh" ] && sh "$CTL_DIR/during-verify.sh"
-want="v-$(ls plugins/crw/skills | wc -l | tr -d ' ')"
+want="0.4.0"
 have=$(grep -o '"version": "[^"]*"' plugins/crw/.codex-plugin/plugin.json | cut -d'"' -f4)
 if [ "$want" != "$have" ]; then echo "version drift $have != $want"; exit 9; fi
 rc=$(sed -n "${n}p" "$CTL_DIR/verify-rc" 2>/dev/null)
@@ -114,7 +114,7 @@ func newWorld(t *testing.T) *world {
 	w.git(w.other, "checkout", "-q", "-b", "dev")
 	w.write(filepath.Join(w.other, "README.md"), "base\n")
 	w.write(filepath.Join(w.other, "shared.txt"), "line1\nline2\nline3\n")
-	w.write(filepath.Join(w.other, manifestPath), manifest("v-1"))
+	w.write(filepath.Join(w.other, manifestPath), manifest("0.4.0"))
 	w.write(filepath.Join(w.other, "plugins/crw/skills/s0.txt"), "s0\n")
 	w.git(w.other, "add", "-A")
 	w.git(w.other, "commit", "-q", "-m", "base")

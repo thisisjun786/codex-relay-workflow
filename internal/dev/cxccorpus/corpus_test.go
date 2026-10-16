@@ -81,6 +81,13 @@ func TestNormalise_paths_longest_first_and_rules_then_aliases(t *testing.T) {
 		{"evidence-unrecordable/s-a-1767225600003.json", "evidence-unrecordable/s-a-<MS>.json"},
 		{`{"pid": 4242}`, `{"pid": "<PID>"}`},
 		{"0.2.40+codex.20260929183231", "<VERSION>"},
+		{"0.4.0", "<VERSION>"},
+		{"0.4.0+c13fee56c2af", "<VERSION>"},
+		{`{"pluginVersion":"0.4.0"}`, `{"pluginVersion":"<VERSION>"}`},
+		{`{"pluginVersion":"0.4.0+c13fee56c2af"}`, `{"pluginVersion":"<VERSION>"}`},
+		{"10.4.0", "10.4.0"},
+		{"0.4.01", "0.4.01"},
+		{"0.5.0", "0.5.0"},
 		{"c-20260101000000-a1b2c3 then c-20260101000000-a1b2c3 and e-20260101000000-ffffff", "<NONCE_1> then <NONCE_1> and <NONCE_2>"},
 	} {
 		if got := s.Text(row.in); got != row.want {

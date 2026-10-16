@@ -76,10 +76,21 @@ Python runtime, so every Stop would be released without a record and the bridge 
 not start. The cutover's Python half (the fence release and its installer) left the
 repository in todo 44, so such a host runs it from a revision before that.
 
+The committed manifest names a fixed release; the version an installation knows carries the
+payload's digest and is stamped into a generated local marketplace (CRW-1582). A direct Git or
+source clone has no build step, so it cannot carry that identity - the generated marketplace is
+the supported content-addressed install path.
+
 ```sh
-codex plugin marketplace add thisisjun786/codex-relay-workflow --ref dev
+# From a checkout of the revision to package; destination must not exist.
+go run -tags dev ./cmd/crw-dev ci plugin --stage /path/outside-checkout/crw-marketplace --revision HEAD
+go run -tags dev ./cmd/crw-dev ci plugin --payload /path/outside-checkout/crw-marketplace/plugins/crw
+codex plugin marketplace add /path/outside-checkout/crw-marketplace
 codex plugin add crw@crw
 ```
+
+Codex copies the stamped payload into a versioned cache directory, so updates and rollbacks
+stage a fresh marketplace of their revision; no version suffix is committed to the source.
 
 A plugin installation offers the skills as `crw:crw-run`, `crw:crw-plan`, and so on,
 while a linked installation offers them unprefixed. Both read the same source. See
@@ -186,7 +197,7 @@ readlink "$skills_dest/crw-run"
 go run -tags dev ./cmd/crw-dev skills link --dest "$skills_dest" --check
 ```
 
-The first line is the revision this checkout holds. `readlink` gives the checkout an installed skill actually resolves to, which is not always the one you just edited. `--check` reports whether the links belong to the checkout you run it from and prints `CONFLICT` when they point elsewhere; it does not print targets, so read the link itself when the answer matters, and point both commands at the destination you installed with. A plugin installation has no link to read: the cache holds one published version per plugin, and an edit here reaches it only after the manifest version is recorded again and the plugin is installed. That version carries the digest of the packaged bytes, so the version `codex plugin list` shows names the payload and not only the release.
+The first line is the revision this checkout holds. `readlink` gives the checkout an installed skill actually resolves to, which is not always the one you just edited. `--check` reports whether the links belong to the checkout you run it from and prints `CONFLICT` when they point elsewhere; it does not print targets, so read the link itself when the answer matters, and point both commands at the destination you installed with. A plugin installation has no link to read: the cache holds one published version per plugin, and an edit here reaches it only after a marketplace is staged from the revision and the plugin is installed. That version carries the digest of the packaged bytes, so the version `codex plugin list` shows names the payload and not only the release.
 
 None of that is the same as using the change. A conversation that already read a skill keeps the text it read, so the shortest confirmation is to start a fresh task, invoke the skill on a real request, and compare what it does with the behavior the change describes. The skills apply the same rule when they report their own delivery; see [Delivery reach and current usability](plugins/crw/skills/crw-canon/references/delivery.md#delivery-reach-and-current-usability).
 

@@ -65,12 +65,25 @@ specific to the bytes underneath. Under this rule the two revisions above read
 `0.4.0+344a3a6949c7` and `0.4.0+4bbc00f85a6e`.
 
 The suffix is the first twelve hex characters of the digest of the payload, and it is derived
-rather than maintained. `crw-dev ci plugin --record-version` writes it into the
-working-tree manifest; `crw-dev ci plugin` re-derives it and refuses a version that
-names other bytes, naming the value that should have been recorded. That refusal covers the
-release payload, the working tree and an installed cache directory alike, so `--payload <dir>`
-answers which bytes the directory in front of you holds rather than which name it was filed
-under.
+rather than maintained (CRW-1582). The committed manifest keeps the fixed release, and
+`crw-dev ci plugin --stage <new-directory>` writes a local marketplace whose `plugins/crw`
+manifest names the derived version - the installation artifacts are stamped, the source is
+never rewritten. `crw-dev ci plugin` re-derives the version and requires the fixed release in
+the manifest; `--payload <dir>` checks an installed or staged directory's own stamped version
+against its bytes, answering which bytes the directory in front of you holds rather than
+which name it was filed under. Install, update and roll back by staging the revision:
+
+```sh
+# From a checkout of the revision to package; destination must not exist.
+go run -tags dev ./cmd/crw-dev ci plugin --stage /path/outside-checkout/crw-marketplace --revision HEAD
+go run -tags dev ./cmd/crw-dev ci plugin --payload /path/outside-checkout/crw-marketplace/plugins/crw
+codex plugin marketplace add /path/outside-checkout/crw-marketplace
+codex plugin add crw@crw
+```
+
+The generated marketplace is build and distribution input: Codex copies the stamped payload
+into its versioned cache. A direct Git or source clone has no build step and carries no such
+identity, so the generated marketplace is the supported content-addressed install path.
 
 It reads the manifest in that directory and not the directory's own name. An install derives
 both from one manifest, so they agree by construction; a cache renamed or assembled by hand
@@ -442,13 +455,12 @@ names as a positive control, so a new skill belongs in that list too. Keep relat
 links between skills pointing at siblings under the same parent; the cache preserves
 that layout.
 
-Bump `version` in the manifest when the change should reach installations, run
-`crw-dev ci plugin --record-version` so the suffix names the new payload, and
-install the plugin again: a cached version changes only on installation, and a turn already
-running keeps the skills directory it was given, which is the one the next install removes, until
-that turn ends ([the cache lifetime](#the-cache-lifetime)). Adding a skill changes the payload, so
-the suffix moves even when the release version does not, and the check refuses the commit
-that leaves the old one in place.
+Commit the payload change with the fixed release version unchanged, then build a fresh
+marketplace with `--stage` and install from it. A release version changes only when its owner
+chooses a new release. Adding a skill changes the generated artifact's suffix even when that
+release value stays the same. A cached version changes only on installation, and a turn already
+running keeps the skills directory it was given until it ends
+([the cache lifetime](#the-cache-lifetime)).
 
 
 ## The cache lifetime
@@ -870,8 +882,10 @@ a guarantee that the next update will be survivable.
 The cache keeps one version per plugin, and installing a new version replaces the
 previous directory instead of keeping both. Rolling back therefore means making
 the source offer the earlier revision again and reinstalling it, not selecting an
-older copy from the cache. Bump `version` in the manifest for a release and record the
-payload suffix under it; a new
+older copy from the cache. For a revision with a fixed source version, stage a fresh marketplace
+from that revision. Historical revisions whose manifests already contain a valid payload suffix
+use their existing marketplace after a `--payload` check; `--stage` rejects a suffixed source
+manifest. A new
 task picks up the new package when its session starts. A task already running meets it piece by
 piece: the host may start its bridge again or leave it running from the removed directory, a thread
 that resumes gets one from the new directory, a turn in progress keeps the skills directory it was
@@ -936,9 +950,14 @@ prints that payload digest, and `--payload <dir>` applies the same rules to an
 installed cache directory, which is how an installed tree is compared against its
 source.
 
-`--record-version` is the one command here that writes: it puts the derived suffix into the
-working-tree manifest and stops without validating anything. Commit what it wrote, because the
-release payload is read from a revision and not from that tree.
+`ci plugin` reads a source Git revision and requires the manifest's fixed release version;
+its JSON names that as `sourceVersion` beside the derived `version`. `--stage <new-directory>`
+copies that pinned revision into a generated marketplace, checks the staged artifact as an
+installed payload, refuses a destination that exists, and requires a parent outside the
+checkout. `--payload <dir>` checks stamped bytes, and `--record-version` is retired - it refuses
+and writes nothing. Revisions that already carry a valid suffixed payload can be checked with
+`--payload` and installed from their existing marketplace; `--stage` needs a fixed source
+release and refuses their suffixed manifests.
 
 A passing check is evidence about this source. It is not evidence that a plugin
 installed, that a skill loaded on any host, or that a running workflow changed.
