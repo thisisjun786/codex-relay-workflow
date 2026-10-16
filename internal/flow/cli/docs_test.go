@@ -13,6 +13,7 @@ const (
 	flowRef      = "../../../plugins/crw/skills/crw-canon/references/flow.md"
 	spawnRef     = "../../../plugins/crw/skills/crw-canon/references/spawn-policy.md"
 	deliveryRef  = "../../../plugins/crw/skills/crw-canon/references/delivery.md"
+	scriptDoc    = "../../../docs/flow/script.md"
 )
 
 // tableRows are the rows of the markdown table that follows the line `marker`, with the header and the separator left out.
@@ -368,10 +369,10 @@ func retiredReviewWordsIn(text string) []string {
 	return hits
 }
 
-// TestFlowCanonDocsHaveNoRetiredReviewWords (CRW-1455): the canon's pages of the flow describe the current lane and close in their own
-// words, with no word of the retired review paths.
+// TestFlowCanonDocsHaveNoRetiredReviewWords (CRW-1455): the canon's pages of the flow and the script reference describe the current lane
+// and close in their own words, with no word of the retired review paths.
 func TestFlowCanonDocsHaveNoRetiredReviewWords(t *testing.T) {
-	for _, path := range []string{flowRef, spawnRef, deliveryRef} {
+	for _, path := range []string{flowRef, spawnRef, deliveryRef, scriptDoc} {
 		text, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatal(err)
