@@ -252,6 +252,61 @@ func TestIntegrationBatchIntegratesAndMarksEveryCandidate(t *testing.T) {
 	}
 }
 
+func TestIntegrationBatchSuppliesSameTreeRecordHint(t *testing.T) {
+	for _, changed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("changedTree%t", changed), func(t *testing.T) {
+			k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}})
+			k.acceptByCommit("a")
+			k.repo.git("checkout", "-q", "-b", "dev-int", "dev")
+			if changed {
+				k.repo.write("existing.txt", "already integrated\n")
+				k.repo.git("add", "existing.txt")
+				k.repo.git("commit", "-q", "-m", "existing work")
+			}
+			calls := 0
+			verify := stubVerifier(writeStubVerifier(t))
+			check := func(ctx context.Context, dir string, env []string) error {
+				calls++
+				hint := ""
+				for _, kv := range env {
+					if strings.HasPrefix(kv, "CRW_VERIFY_REUSE=") {
+						hint = strings.TrimPrefix(kv, "CRW_VERIFY_REUSE=")
+					}
+				}
+				if changed {
+					if hint != "" {
+						t.Error("different merged tree received a node record hint")
+					}
+				} else {
+					if hint == "" {
+						t.Fatal("same-tree single-node integration has no record hint")
+					}
+					raw, err := os.ReadFile(hint)
+					if err != nil {
+						t.Fatal(err)
+					}
+					record, err := DecodeVerificationRecord(raw)
+					if err != nil || record.HeadCommit != k.heads["a"] || record.TreeHash != k.treeOf(k.heads["a"]) {
+						t.Fatalf("wrong node record: %+v %v", record, err)
+					}
+					var stored string
+					found, err := queryOne(ctx, k.sched.Store.Q(ctx),
+						"SELECT record_json FROM dag_acceptance_verifications WHERE head_commit = ? AND tree_sha = ? LIMIT 1",
+						[]any{k.heads["a"], record.TreeHash}, &stored)
+					if err != nil || !found || string(raw) != stored {
+						t.Fatalf("hint altered the stored source: found=%t err=%v", found, err)
+					}
+				}
+				return verify(ctx, dir, env)
+			}
+			out, err := k.sched.IntegrateBatch(context.Background(), k.batchIn(), IntegrationBatchDeps{Verify: check, Update: updateIntegrationRef})
+			if err != nil || len(out.Merged) != 1 || calls != 1 {
+				t.Fatalf("integration merged=%d calls=%d err=%v", len(out.Merged), calls, err)
+			}
+		})
+	}
+}
+
 // c2: one failing candidate among several is isolated and the others integrate. The stub fails the merged tree that
 // holds bad.txt, so the batch bisects to bad and leaves only it out.
 func TestIntegrationBatchIsolatesTheFailingCandidate(t *testing.T) {

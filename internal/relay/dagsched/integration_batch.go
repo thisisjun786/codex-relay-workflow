@@ -571,6 +571,24 @@ type integrationWorktree struct {
 // integrationIdentity is the author and committer of the merge commits a batch makes.
 var integrationIdentity = []string{"GIT_AUTHOR_NAME=crw-relay", "GIT_AUTHOR_EMAIL=crw-relay@invalid", "GIT_COMMITTER_NAME=crw-relay", "GIT_COMMITTER_EMAIL=crw-relay@invalid"}
 
+// reuseRecord is the latest accepted same-tree node record the store holds for this plan, as the
+// raw JSON it was recorded with (CRW-1590). It is immutable acceptance evidence; the verifier
+// judges whether it answers, this helper never does.
+func (w *integrationWorktree) reuseRecord(ctx context.Context, tree string) (string, bool, error) {
+	var raw string
+	found, err := queryOne(ctx, w.s.Store.Q(ctx), `
+SELECT record_json FROM (
+ SELECT v.record_json, v.recorded_at AS at, v.acceptance_id
+ FROM dag_acceptance_verifications v JOIN dag_acceptances a ON a.acceptance_id=v.acceptance_id
+ WHERE a.plan_id=? AND v.tree_sha=?
+ UNION ALL
+ SELECT verification_json AS record_json, accepted_at AS at, acceptance_id
+ FROM dag_agent_acceptances WHERE plan_id=? AND tree_sha=? AND verification_json<>''
+) ORDER BY at DESC, acceptance_id DESC LIMIT 1`,
+		[]any{w.in.Plan, tree, w.in.Plan, tree}, &raw)
+	return raw, found, err
+}
+
 // reset moves the worktree to a commit.
 func (w *integrationWorktree) reset(ctx context.Context, commit string) error {
 	_, err := runGit(ctx, w.dir, nil, "reset", "--hard", "-q", commit)
@@ -639,6 +657,23 @@ func (w *integrationWorktree) verify(ctx context.Context) (VerificationRecord, s
 	}
 	recordPath := filepath.Join(dir, "verification-record.json")
 	env := []string{"CRW_VERIFY_RECORD=" + recordPath, "CRW_VERIFY_BASE=" + w.baseTip, "CRW_VERIFY_HEAD=" + commit}
+	// CRW-1590: a node record for the same tree lets the verifier take its full steps instead of
+	// running them again. This is record transport only: the verifier alone decides the reuse.
+	tree, err := runGit(ctx, w.dir, nil, "rev-parse", commit+"^{tree}")
+	if err != nil {
+		return VerificationRecord{}, "", false, err
+	}
+	hintRecord, found, err := w.reuseRecord(ctx, strings.TrimSpace(tree))
+	if err != nil {
+		return VerificationRecord{}, "", false, fmt.Errorf("read same-tree verification record: %w", err)
+	}
+	if found {
+		hint := filepath.Join(dir, "reuse.json")
+		if err := os.WriteFile(hint, []byte(hintRecord), 0o600); err != nil {
+			return VerificationRecord{}, "", false, fmt.Errorf("write same-tree verification record: %w", err)
+		}
+		env = append(env, "CRW_VERIFY_REUSE="+hint)
+	}
 	if err := w.deps.Verify(ctx, w.dir, env); err != nil {
 		var host *IntegrationVerifierHostError
 		if errors.As(err, &host) {

@@ -59,10 +59,12 @@ func localExecuteTask(opts localOptions, task localTask, worktree string, env []
 	var res localTaskResult
 	res.job.Name = task.name
 	failed := false
+	lastFresh := localLastFreshStep(task)
 	for _, step := range task.job.steps {
 		if step.legs != nil && !localContains(step.legs, task.leg) {
 			continue
 		}
+		index := len(res.job.Steps)
 		entry := recordStep{Job: task.name, Name: step.name, Command: step.command, Scope: step.scope}
 		if entry.Name == "" {
 			entry.Name = localStepLabel(step)
@@ -79,6 +81,9 @@ func localExecuteTask(opts localOptions, task localTask, worktree string, env []
 			// GitHub stops a job's later steps once one fails; the local run does the same
 			// and records the rest as skipped, which is itself a failure (answer 5).
 			entry.Result, entry.Reason = localSkipped, "an earlier step of this job did not pass"
+		case opts.reuse != nil && index > lastFresh && step.scope == "full" && step.action != localAggregate:
+			// CRW-1590: a full step past the fresh prefix answers from the validated source record.
+			entry = localMarkReused(opts.reuse.record.Jobs[task.index].Steps[index], opts.reuse, task.name, index)
 		default:
 			var tests localTests
 			entry.Result, entry.Reason, tests = localRunStep(opts, step, worktree, task.leg, env, done)
@@ -90,8 +95,10 @@ func localExecuteTask(opts localOptions, task localTask, worktree string, env []
 				failed = true
 			}
 		}
-		entry.Decision = localDecisionSince(opts.output, offset)
-		entry.Seconds = time.Since(start).Seconds()
+		if entry.ReusedFrom == nil {
+			entry.Decision = localDecisionSince(opts.output, offset)
+			entry.Seconds = time.Since(start).Seconds()
+		}
 		res.job.Steps = append(res.job.Steps, entry)
 		fmt.Fprintf(&res.output, "local: %-26s %-44s %s\n", task.name, entry.Name, entry.Result)
 	}
