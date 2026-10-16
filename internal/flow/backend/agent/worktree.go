@@ -193,12 +193,21 @@ func currentAllocation(restores, prepared []allocation) *allocation {
 	return cur
 }
 
-// lastCommit is the result commit of the last crw.commit recorded for the node.
+// lastCommit is the node's last recorded checkpoint in journal order: the result commit of its last completed crw.commit, or the
+// head of a completed land release, which is the start a land-head fix executor's worktree is made at (CRW-1490).
 func lastCommit(events []engine.Event, node string) string {
 	var commit string
 	for _, ev := range events {
-		if ev.Kind == engine.KindCall && ev.Op == OpCommit && ev.Event == engine.EvCompleted && strOf(ev.Data, "node") == node {
+		if ev.Kind != engine.KindCall || ev.Event != engine.EvCompleted || strOf(ev.Data, "node") != node {
+			continue
+		}
+		switch {
+		case ev.Op == OpCommit:
 			if c := strOf(ev.Data, "commit"); c != "" {
+				commit = c
+			}
+		case ev.Op == "crw.release" && strOf(ev.Data, "kind") == "land" && ev.Data["released"] == true:
+			if c := strOf(ev.Data, "head"); c != "" {
 				commit = c
 			}
 		}

@@ -797,7 +797,10 @@ type labCheck struct {
 	Verdict               string
 	Findings              []reviewadapter.Finding
 	Family, Model, Effort string
-	Err                   error
+	// OmitPrompt makes the check answer as a profile that was not given the prompt (PromptSent false), as a Codex review is
+	// not (CRW-1490).
+	OmitPrompt bool
+	Err        error
 }
 
 // labCheckCall is one request the lab's unit checker was given.
@@ -901,7 +904,7 @@ func (u *labUnitChecker) Check(ctx context.Context, req reviewadapter.Request) (
 	}
 	sum := sha256.Sum256([]byte(req.Prompt))
 	return reviewadapter.Result{State: c.State, Verdict: verdict, Findings: findings, EngineFamily: c.Family, Model: c.Model, Effort: c.Effort, GuideRev: req.GuideRev,
-		PromptDigest: hex.EncodeToString(sum[:]), FingerprintBefore: fp, FingerprintAfter: fp, ElapsedMS: 1}, nil
+		PromptDigest: hex.EncodeToString(sum[:]), PromptSent: !c.OmitPrompt, FingerprintBefore: fp, FingerprintAfter: fp, ElapsedMS: 1}, nil
 }
 
 // UnitChecks scripts the next unit checks of a node (its id or its issue key) in a mode.

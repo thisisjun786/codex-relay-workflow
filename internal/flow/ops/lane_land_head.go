@@ -2,6 +2,7 @@ package ops
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -275,6 +276,27 @@ func (o *releaseOp) landRelease(ctx context.Context, req engine.OpRequest, plan,
 	out.Land = &head
 	data["worktree"], data["tree"], data["base"], data["out_of_scope"], data["warnings"] = wt, head.Tree, head.Base, head.OutOfScope, head.Warnings
 	return finish()
+}
+
+// landAuthorsObserved reports whether every author thread a land release named was read back: the authors list of a completed
+// crw.release row of the kind land (rel.Data["authors"], []LandAuthor). A land that names no author, or one whose pair was not
+// observed, is not observed: an in-run fix adds an executor call the run did read, but that call cannot establish the authorship of
+// the original head, so the independence gate keeps the land unproven (CRW-1490).
+func landAuthorsObserved(rel engine.Event) bool {
+	raw, err := json.Marshal(rel.Data["authors"])
+	if err != nil {
+		return false
+	}
+	var authors []LandAuthor
+	if json.Unmarshal(raw, &authors) != nil || len(authors) == 0 {
+		return false
+	}
+	for _, a := range authors {
+		if !a.Observed || strings.TrimSpace(a.Model) == "" {
+			return false
+		}
+	}
+	return true
 }
 
 // landWorktree is the run's worktree of a landed head: a detached checkout of the commit under LandRoot, made once; a resume finds it at

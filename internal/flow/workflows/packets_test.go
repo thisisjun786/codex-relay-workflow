@@ -489,26 +489,30 @@ func TestCrosscheckFixPacketNamesTheRouteOfTheFix(t *testing.T) {
 	}
 }
 
-// TestLandFixPacketNamesTheFindingsTheRangeAndTheNextRound (CRW-1490): the fix packet of a land-head run whose unit check needs changes
-// names every finding of the check by its severity, id, file, line and text, the range of the land as a git diff command, the
-// criteria of the node, and the route of the fix: a new executor subagent fixes the head, and a new land-head run of the node lands it
-// with the next fix round, its args written out with the authors of the head, placeholders for the fixed head and the fixer's thread,
-// and the handoff a start of land-head needs.
-func TestLandFixPacketNamesTheFindingsTheRangeAndTheNextRound(t *testing.T) {
-	const n = "{ id: 'n1', issue: 'CRW-1', title: 'first', criteria: ['the store keeps every row'] }"
+// TestLandFixPacketNamesTheFindingsRangeAndInRunRepair (CRW-1490): the fix packet of a land-head run whose unit check needs changes
+// is the executor's turn in the run's repair: it names every finding of the check by its severity, id, file, line and text, the range
+// of the land as a git diff command, the node's edit regions and criteria, and the receipt of the executor's last turn; and it says
+// the run commits, verifies and checks again - the executor commits nothing and starts no land of its own.
+func TestLandFixPacketNamesTheFindingsRangeAndInRunRepair(t *testing.T) {
+	const n = "{ id: 'n1', issue: 'CRW-1', title: 'first', criteria: ['the store keeps every row'], regions: ['a.go'] }"
 	const findings = "[{ id: 'f1', severity: 'high', file: 'a.go', line: 3, text: 'the store loses a row' }, { id: 'f2', severity: 'low', file: 'b.go', line: 1, text: 'a nit' }]"
-	packet := packetText(t, "land-fix-packet", "landFixPacket", "landFixPacket("+n+", "+findings+", { commit: 'h9', base: 'b0' }, { plan: 'P', milestone: 'M1', fix_round: 2, authors: ['t-author'] })")
+	packet := packetText(t, "land-fix-packet", "landFixPacket", "landFixPacket("+n+", "+findings+", { commit: 'h9', base: 'b0' }, { summary: 'previous fix' })")
 	for _, want := range []string{
 		"LAND FIX of node n1 (CRW-1: first)", "at h9 needs changes",
 		"- [high] f1 a.go:3 the store loses a row", "- [low] f2 b.go:1 a nit",
 		"RANGE: git diff b0..h9",
+		"EDIT REGIONS:\n- a.go",
 		"CRITERIA OF THE NODE:\n- c1: the store keeps every row",
-		"a new executor subagent fixes this head",
-		"`crw flow start land-head --args '" + `{"plan":"P","milestone":"M1","issue":"CRW-1","head":"<the fixed head>","authors":["t-author","<the fixer subagent thread>"],"fix_round":2}` +
-			"' --handoff <the plan's handoff file>`",
+		"previous fix",
+		"Do not commit or start another land run",
 	} {
 		if !strings.Contains(packet, want) {
 			t.Errorf("the land fix packet lacks %q:\n%s", want, packet)
+		}
+	}
+	for _, gone := range []string{"crw flow start land-head", "a new executor subagent", "the fixer subagent thread", "--handoff"} {
+		if strings.Contains(packet, gone) {
+			t.Errorf("the in-run fix packet names the old route %q:\n%s", gone, packet)
 		}
 	}
 }

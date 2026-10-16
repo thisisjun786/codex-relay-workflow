@@ -61,7 +61,7 @@ func astraStream(last ...string) string {
 }
 
 // astraAnswerText is the structured answer astra writes under the strict schema: every property present, an absent impact null.
-const astraAnswerText = "{\n  \"verdict\": \"needs_changes\",\n  \"findings\": [\n    {\"severity\": \"P1\", \"impact\": null, \"file\": \"a.go\", \"line\": 12, \"text\": \"the loop never ends\"},\n    {\"severity\": \"P3\", \"impact\": \"minor_separable\", \"file\": \"b.go\", \"line\": 0, \"text\": \"naming\"}\n  ]\n}"
+const astraAnswerText = "{\n  \"verdict\": \"needs_changes\",\n  \"findings\": [\n    {\"severity\": \"P1\", \"impact\": null, \"file\": \"a.go\", \"line\": 12, \"text\": \"the loop never ends\", \"kind\": null, \"evidence_question\": null},\n    {\"severity\": \"P3\", \"impact\": \"minor_separable\", \"file\": \"b.go\", \"line\": 0, \"text\": \"naming\", \"kind\": null, \"evidence_question\": null}\n  ]\n}"
 
 // TestGrokProfileReadsTheStructuredOutput: GrokProfile runs grok-4.7 with the answer schema and no web search, the prompt the last
 // argv word after -p; its reader takes the envelope's structuredOutput as the answer (not the prose text), an envelope without one
@@ -198,7 +198,7 @@ func TestStrictSchemaMakesEveryPropertyRequired(t *testing.T) {
 		t.Fatalf("the strict schema: %v", err)
 	}
 	items := doc.Properties.Findings.Items
-	if !slices.Equal(doc.Required, []string{"findings", "verdict"}) || !slices.Equal(items.Required, []string{"file", "impact", "line", "severity", "text"}) {
+	if !slices.Equal(doc.Required, []string{"findings", "verdict"}) || !slices.Equal(items.Required, []string{"evidence_question", "file", "impact", "kind", "line", "severity", "text"}) {
 		t.Fatalf("required = %q, items required = %q", doc.Required, items.Required)
 	}
 	if doc.AdditionalProperties == nil || *doc.AdditionalProperties || items.AdditionalProperties == nil || *items.AdditionalProperties {

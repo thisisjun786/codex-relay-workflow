@@ -2,8 +2,10 @@ package cli
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -13,13 +15,15 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/reviewadapter"
 )
 
-// The landing path of a head made outside a project-lane run (CRW-1354): the gate-only workflow land-head takes the issue's node, the head
+// The landing path of a head made outside a project-lane run (CRW-1354): the workflow land-head takes the issue's node, the head
 // the child made and the subagent threads that wrote it, and lands the head through the gates every head of a run goes through -
 // crw.verify (verification-record/1 of the exact tree), crw.unitCheck of the committed range base..head (the review tool run in Go,
 // CRW-1468; the relay takes it only from another model family than the authors, by the runtime's read-back), crw.accept (the relay's
-// agent acceptance) and crw.integrate - writing the rows those operations write. No
-// executor call is made and none is recorded: the authors are the threads the child names, whose pair the run reads back from the host
-// and the release records on the node's execution, which is what the relay's acceptance judges the reviewer against.
+// agent acceptance) and crw.integrate - writing the rows those operations write. The authors are the threads the child names, whose pair
+// the run reads back from the host and the release records on the node's execution, which is what the relay's acceptance judges the
+// reviewer against. A check that needs changes is fixed in the run (CRW-1490): an executor call on the release's head, committed and
+// checked again, up to the cap of fix rounds; a finding that is only missing evidence is asked of an explorer and checked again on the
+// same head.
 
 // outsideHead makes a commit on a branch of the lab's repository outside any run: the work of the issue's node, as a subagent of the child
 // wrote it, on a worktree of its own. It answers the commit.
@@ -310,20 +314,22 @@ func landValueOf(t *testing.T, res Result) landValue {
 	return v
 }
 
-// TestLandHeadLandsAgainAfterALandThatDidNotPass (CRW-1354, post-evaluation d1): the gate-only lane fixes nothing, so a head that does not
-// pass its gates is the child's to change and land again - in a new land-head run. A land that ends escalated gives its release back:
+// TestLandHeadLandsAgainAfterALandThatDidNotPass (CRW-1354, post-evaluation d1; CRW-1490): the lane fixes a head that needs changes in
+// the run, up to the cap of fix rounds, so a head that still does not pass its gates is the child's to change and land again - in a new
+// land-head run. A land that ends escalated gives its release back:
 // the relay closes the node's execution (land_ended, cancelled, the slot returned in the same transaction), so the next land of the
 // node is a new release - a new execution of the new run, its worktree and the pair of the authors it names - and lands through the same
-// gates. Two firsts: a unit check that needs changes (land_review_needs_changes, the ids of all its findings carried on the escalation
+// gates. Two firsts: a land whose fix rounds ran out (land_fix_rounds, the ids of the last check's findings carried on the escalation
 // and in the land's value: the child fixes them outside), and authors the run could not read back (independence_unproven).
 func TestLandHeadLandsAgainAfterALandThatDidNotPass(t *testing.T) {
 	for _, c := range []struct {
 		name, reason string
 		needs        bool
+		round        int
 		authors      func(l *laneLab) []string
 	}{
-		{"review needs changes", "land_review_needs_changes", true, func(l *laneLab) []string { return []string{l.authorThread("claude-fake-sonnet", "high")} }},
-		{"authors not read back", "independence_unproven", false, func(l *laneLab) []string { return []string{"0190a000-0000-7000-8000-ffffffffffff"} }},
+		{"fix rounds ran out", "land_fix_rounds", true, 2, func(l *laneLab) []string { return []string{l.authorThread("claude-fake-sonnet", "high")} }},
+		{"authors not read back", "independence_unproven", false, 0, func(l *laneLab) []string { return []string{"0190a000-0000-7000-8000-ffffffffffff"} }},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
@@ -332,7 +338,12 @@ func TestLandHeadLandsAgainAfterALandThatDidNotPass(t *testing.T) {
 				carried = l.needsChanges("A-1")
 			}
 			first := l.outsideHead("A-1", "outside-a1")
-			run1 := l.start("start", "land-head", "--args", landArgs(l, "A-1", "outside-a1", c.authors(l)...), "--handoff", l.file)
+			authors := c.authors(l)
+			args := landArgs(l, "A-1", "outside-a1", authors...)
+			if c.needs {
+				args = landArgsRound(l, "A-1", "outside-a1", c.round, authors...)
+			}
+			run1 := l.start("start", "land-head", "--args", args, "--handoff", l.file)
 			res1 := l.runToEnd(run1.RunID)
 			if v := landValueOf(t, res1); v.State != "escalated" || v.Reason != c.reason || v.Head != first && c.needs {
 				t.Fatalf("the first land: %+v, want escalated %s", v, c.reason)
@@ -474,126 +485,481 @@ func (l *laneLab) landEscalationOf(node, reason string) (map[string]any, bool) {
 	return row, row != nil
 }
 
-// TestLandHeadNeedsChangesHandsTheChildAFixPacketWithTheCarriedFindings (CRW-1490): a land-head run of fix round 0 (no fix_round given)
-// whose committed-mode unit check needs changes ends escalated land_review_needs_changes with no ask - the child acts, not the 부모 -
-// with fix_round 0 and the ids of the findings on the escalation and in the value, gives the node's release back, and hands the child
-// a fix packet: the findings by id with their file, line and text, the range as a git diff command, and the route of the fix (a new
-// executor subagent fixes the head, and a new land-head run of the node lands it with fix_round 1).
-func TestLandHeadNeedsChangesHandsTheChildAFixPacketWithTheCarriedFindings(t *testing.T) {
+// landFixCalls counts the executor calls the current process's journal prepared for a node whose label is land-fix:<node>:<round>,
+// and answers their labels in order.
+func landFixCalls(l *laneLab, node string) []string {
+	var out []string
+	for _, e := range l.events() {
+		if e.Kind == engine.KindCall && e.Event == engine.EvPrepared && strings.HasPrefix(e.Label, "land-fix:"+node+":") {
+			out = append(out, e.Label)
+		}
+	}
+	return out
+}
+
+// preparedCalls counts the calls of the given roles the current process's journal prepared.
+func (l *laneLab) preparedCalls(roles ...string) int {
+	n := 0
+	for _, e := range l.events() {
+		if e.Kind == engine.KindCall && e.Event == engine.EvPrepared && slices.Contains(roles, str(e.Data, "role")) {
+			n++
+		}
+	}
+	return n
+}
+
+// TestLandHeadNeedsChangesRunsFixWithCarriedFindings (CRW-1490): a land-head run of fix round 0 (no fix_round given) whose
+// committed-mode unit check needs changes fixes in the run instead of handing the child a fix packet: one executor call
+// (land-fix:<node>:r1) is given the carried findings - each by id with its file and text - and the range of the land (base..head);
+// its work on the head the release checked out is committed and checked again, and a verified recheck lands the fixed head through
+// the gates of the same run. Nothing escalates, the node is released once and the release is never given back: the run ends landed.
+// The fixed head descends from the head the child made: the node's file at the landed head still holds the outside work, plus the
+// fix the call wrote.
+func TestLandHeadNeedsChangesRunsFixWithCarriedFindings(t *testing.T) {
 	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
 	carried := l.needsChanges("A-1")
-	head := l.outsideHead("A-1", "outside-a1")
+	original := l.outsideHead("A-1", "outside-a1")
 	author := l.authorThread("claude-fake-sonnet", "high")
 	spec := l.start("start", "land-head", "--args", landArgs(l, "A-1", "outside-a1", author), "--handoff", l.file)
 	res := l.runToEnd(spec.RunID)
-	var v landFixValue
-	if res.Status != engine.RunCompleted || json.Unmarshal(res.Value, &v) != nil || v.State != "escalated" || v.Reason != "land_review_needs_changes" || v.Head != head {
-		t.Fatalf("a land whose unit check needs changes: %s %s %s\n%s", res.Status, res.ErrorKind, res.Error, res.Value)
-	}
-	if v.FixRound == nil || *v.FixRound != 0 || strings.Join(v.Carried, ",") != strings.Join(carried, ",") {
-		t.Errorf("the land's value: fix_round %v carried %q, want 0 and %q", v.FixRound, v.Carried, carried)
+	v := landValueOf(t, res)
+	if v.State != "landed" || v.Head == "" || v.Head == original || v.Acceptance == "" {
+		for _, e := range l.events() {
+			if e.Kind == engine.KindFlow && e.Event == engine.EvEscalation {
+				t.Logf("escalation: %v", e.Data)
+			}
+		}
+		t.Fatalf("a land whose unit check needed changes did not fix in-run and land: %s %s %s\n%s", res.Status, res.ErrorKind, res.Error, res.Value)
 	}
 	node := l.nodeOf["A-1"]
-	row, ok := l.landEscalationOf(node, "land_review_needs_changes")
-	if !ok {
-		t.Fatalf("no escalation land_review_needs_changes of %s", node)
+	label := "land-fix:" + node + ":r1"
+	if labels := landFixCalls(l, node); len(labels) != 1 || labels[0] != label {
+		t.Errorf("the land-fix calls of %s: %v, want [%s]", node, labels, label)
 	}
-	ev, _ := row["evidence"].(map[string]any)
-	if str(row, "ask") != "" || ev["fix_round"] != float64(0) || len(ev["carried"].([]any)) != len(carried) {
-		t.Errorf("the escalation: ask %q evidence %v, want no ask, fix_round 0 and %d carried", str(row, "ask"), ev, len(carried))
+	if n := l.preparedCalls("reviewer", "critic", "crosscheck"); n != 0 {
+		t.Errorf("%d reviewer or crosscheck calls in the land run, want none", n)
+	}
+	for _, e := range l.events() {
+		if e.Kind == engine.KindCall && e.Op == ops.OpCrosscheck {
+			t.Errorf("a crw.crosscheck row in the land run: %s %v", e.Event, e.Data)
+		}
+	}
+	if _, ok := l.landEscalationOf(node, "land_review_needs_changes"); ok {
+		t.Errorf("the run escalated land_review_needs_changes: the fix is the run's, not the child's")
 	}
 	rels := l.releaseRowsOf(node)
 	if len(rels) != 1 {
-		t.Fatalf("the land release rows: %+v", rels)
+		t.Fatalf("%d release rows of %s, want 1: the fix runs on the one release", len(rels), node)
 	}
+	if n := l.count("SELECT COUNT(*) FROM dag_agent_closures WHERE subject_kind = 'execution' AND state = 'cancelled'"); n != 0 {
+		t.Errorf("%d cancelled closures, want 0: the in-run fix keeps the release", n)
+	}
+	l.mu.Lock()
+	prompt := l.texts[label]
+	l.mu.Unlock()
 	base := str(rels[0].Data, "base")
-	for _, want := range []string{
-		"[high] " + carried[0] + " node-A-1.txt:1 the work is incomplete",
-		"[low] " + carried[1] + " node-A-1.txt:1 the line has no full stop",
-		"git diff " + base + ".." + head,
-		"a new executor subagent",
-		"crw flow start land-head",
-		`"issue":"A-1"`,
-		`"fix_round":1`,
-		`"authors":["` + author + `","<the fixer subagent thread>"]`,
-		"--handoff <the plan's handoff file>",
-	} {
-		if !strings.Contains(v.Fix, want) {
-			t.Errorf("the fix packet lacks %q:\n%s", want, v.Fix)
+	for _, want := range []string{carried[0], carried[1], "node-A-1.txt", "the work is incomplete", "the line has no full stop", base + ".." + original} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("the fix call's packet lacks %q:\n%s", want, prompt)
 		}
 	}
-	if n := l.count("SELECT COUNT(*) FROM dag_agent_closures WHERE subject_kind = 'execution' AND state = 'cancelled' AND reason = 'land_ended'"); n != 1 {
-		t.Errorf("the land gave its release back %d times, want 1", n)
-	}
-	if n := l.count("SELECT COUNT(*) FROM dag_agent_acceptances"); n != 0 {
-		t.Errorf("%d acceptances after a check that needs changes", n)
+	content := l.git(l.repo, "show", v.Head+":node-A-1.txt")
+	if !strings.Contains(content, "the work of A-1, made outside a run\n") || !strings.Contains(content, label) {
+		t.Errorf("the file of the node at the landed head %s is %q, want the outside work and the fix", v.Head, content)
 	}
 }
 
-// TestLandHeadLandsAfterTheFixRunAndAVerifiedRecheck (CRW-1490): after a land of fix round 0 that needed changes, the child's fix - a
-// new head made outside a run (l.outsideFix) - lands through a second land-head run of the same node with the fix_round and the authors
-// the fix packet names (the first head's author and the fixer's thread): a new release of the node, a unit check of the fixed head that
-// verifies it, the acceptance and the integration.
-func TestLandHeadLandsAfterTheFixRunAndAVerifiedRecheck(t *testing.T) {
+// TestLandHeadLandsAfterFixAndVerifiedRecheck (CRW-1490): the needs_changes → fix → recheck loop of one land-head run: the first
+// committed check of the head the child made needs changes, the fix call's work is committed and verified, the recheck of the fixed
+// head over the same base verifies it, and the acceptance and the integration land it - all in the one run, on the one release.
+// The fixed head descends from the head the child made, and the acceptance is stored for it.
+func TestLandHeadLandsAfterFixAndVerifiedRecheck(t *testing.T) {
 	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
 	l.needsChanges("A-1")
-	l.outsideHead("A-1", "outside-a1")
+	original := l.outsideHead("A-1", "outside-a1")
 	author := l.authorThread("claude-fake-sonnet", "high")
-	run1 := l.start("start", "land-head", "--args", landArgs(l, "A-1", "outside-a1", author), "--handoff", l.file)
-	var v1 landFixValue
-	if res := l.runToEnd(run1.RunID); json.Unmarshal(res.Value, &v1) != nil || v1.State != "escalated" || v1.Reason != "land_review_needs_changes" || !strings.Contains(v1.Fix, `"fix_round":1`) {
-		t.Fatalf("the first land: %s", res.Value)
-	}
-	second := l.outsideFix("A-1", "outside-a1-fix", "the work of A-1, fixed after the unit check\n")
-	// the fix packet's route: the authors of the first head and the fixer's thread
-	run2 := l.start("start", "land-head", "--args", landArgsRound(l, "A-1", "outside-a1-fix", 1, author, l.authorThread("claude-fake-opus", "high")), "--handoff", l.file)
-	v := landValueOf(t, l.runToEnd(run2.RunID))
-	if v.State != "landed" || v.Head != second || v.Acceptance == "" {
-		t.Fatalf("the fix run of the node did not land: %+v", v)
+	spec := l.start("start", "land-head", "--args", landArgs(l, "A-1", "outside-a1", author), "--handoff", l.file)
+	v := landValueOf(t, l.runToEnd(spec.RunID))
+	if v.State != "landed" || v.Head == "" || v.Head == original || v.Acceptance == "" {
+		for _, e := range l.events() {
+			if e.Kind == engine.KindFlow && e.Event == engine.EvEscalation {
+				t.Logf("escalation: %v", e.Data)
+			}
+		}
+		t.Fatalf("the land after the fix and the verified recheck: %+v", v)
 	}
 	node := l.nodeOf["A-1"]
+	rels := l.releaseRowsOf(node)
+	if len(rels) != 1 {
+		t.Fatalf("%d release rows of %s, want 1", len(rels), node)
+	}
+	base := str(rels[0].Data, "base")
 	checks := l.unitCheckRowsOf(node)
-	if len(checks) != 1 || str(checks[0].Data, "verdict") != "verified" || str(checks[0].Data, "commit") != second {
-		t.Errorf("the recheck of the fixed head: %+v", checks)
+	if len(checks) != 2 {
+		t.Fatalf("%d crw.unitCheck rows of %s, want 2", len(checks), node)
+	}
+	if str(checks[0].Data, "commit") != original || str(checks[0].Data, "verdict") != "needs_changes" || str(checks[0].Data, "base") != base {
+		t.Errorf("the check of the head the child made: %+v", checks[0].Data)
+	}
+	if str(checks[1].Data, "commit") != v.Head || str(checks[1].Data, "verdict") != "verified" || str(checks[1].Data, "base") != base {
+		t.Errorf("the recheck of the fixed head: %+v", checks[1].Data)
+	}
+	var verifies []engine.Event
+	fixID, seqFix, seqCommit, seqAccept, seqIntegrate := "", 0, 0, 0, 0
+	for _, e := range l.events() {
+		if e.Kind != engine.KindCall {
+			continue
+		}
+		switch {
+		case e.Event == engine.EvPrepared && e.Label == "land-fix:"+node+":r1":
+			fixID = e.CallID
+		case fixID != "" && e.Event == engine.EvCompleted && e.CallID == fixID:
+			seqFix = e.Seq
+		case e.Event == engine.EvCompleted && e.Op == ops.OpCommit && str(e.Data, "node") == node:
+			seqCommit = e.Seq
+		case e.Event == engine.EvCompleted && e.Op == ops.OpVerify && str(e.Data, "node") == node:
+			verifies = append(verifies, e)
+		case e.Event == engine.EvCompleted && e.Op == ops.OpAccept:
+			seqAccept = e.Seq
+		case e.Event == engine.EvCompleted && e.Op == ops.OpIntegrate:
+			seqIntegrate = e.Seq
+		}
+	}
+	if len(verifies) != 2 || str(verifies[0].Data, "head") != original || str(verifies[1].Data, "head") != v.Head ||
+		verifies[0].Data["ok"] != true || verifies[1].Data["ok"] != true {
+		t.Errorf("the verifications: %+v, want a pass of %s and a pass of %s", verifies, original, v.Head)
+	}
+	seqVerify2 := 0
+	if len(verifies) == 2 {
+		seqVerify2 = verifies[1].Seq
+	}
+	steps := []struct {
+		name string
+		seq  int
+	}{
+		{"the first check", checks[0].Seq},
+		{"the fix call", seqFix},
+		{"the commit", seqCommit},
+		{"the verification of the fixed head", seqVerify2},
+		{"the recheck", checks[1].Seq},
+		{"the acceptance", seqAccept},
+		{"the integration", seqIntegrate},
+	}
+	for i, step := range steps {
+		if step.seq == 0 {
+			t.Errorf("no row of %s", step.name)
+			continue
+		}
+		if i > 0 && steps[i-1].seq > 0 && step.seq <= steps[i-1].seq {
+			t.Errorf("the order: %s (seq %d) is not after %s (seq %d)", step.name, step.seq, steps[i-1].name, steps[i-1].seq)
+		}
+	}
+	if out := l.git(l.repo, "merge-base", "--is-ancestor", original, v.Head); out != "" {
+		t.Errorf("the fixed head does not descend from the head the child made: %s", out)
+	}
+	if out := l.git(l.repo, "merge-base", "--is-ancestor", v.Head, "integration"); out != "" {
+		t.Errorf("the landed head is not on the target: %s", out)
 	}
 	var accepted string
-	if err := l.w.st.DB.QueryRow("SELECT head FROM dag_agent_acceptances WHERE node_id = ?", node).Scan(&accepted); err != nil || accepted != second {
-		t.Errorf("the acceptance: head %q, want %s: %v", accepted, second, err)
+	if err := l.w.st.DB.QueryRow("SELECT head FROM dag_agent_acceptances WHERE node_id = ?", node).Scan(&accepted); err != nil || accepted != v.Head {
+		t.Errorf("the acceptance: head %q, want %s: %v", accepted, v.Head, err)
 	}
-	if out := l.git(l.repo, "merge-base", "--is-ancestor", second, "integration"); out != "" {
-		t.Errorf("merge-base: %s", out)
+	l.effectsOnce("A-1")
+}
+
+// TestLandHeadEscalatesWhenTheFixRoundsPassTheCap (CRW-1490): the run fixes in-run at most LAND_FIX_ROUNDS (2) times over the fix
+// rounds it started with: a land that starts at fix_round r may run 2-r fixes, and a check that still needs changes then ends
+// escalated land_fix_rounds with ask land_fix_rounds - a Question for the 부모 - with the carried findings of the last check and no
+// fix packet, and gives the node's release back. Nothing is accepted or integrated.
+func TestLandHeadEscalatesWhenTheFixRoundsPassTheCap(t *testing.T) {
+	for _, c := range []struct {
+		round, fixes, checks int
+	}{
+		{0, 2, 3},
+		{1, 1, 2},
+		{2, 0, 1},
+	} {
+		t.Run(fmt.Sprintf("fix_round %d", c.round), func(t *testing.T) {
+			l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+			var carried []string
+			for i := 0; i < c.checks; i++ {
+				carried = l.needsChanges("A-1")
+			}
+			l.outsideHead("A-1", "outside-a1")
+			spec := l.start("start", "land-head", "--args", landArgsRound(l, "A-1", "outside-a1", c.round, l.authorThread("claude-fake-sonnet", "high")), "--handoff", l.file)
+			res := l.runToEnd(spec.RunID)
+			var v landFixValue
+			if res.Status != engine.RunCompleted || json.Unmarshal(res.Value, &v) != nil || v.State != "escalated" || v.Reason != "land_fix_rounds" || v.Escalation == "" {
+				t.Fatalf("a land whose fix rounds passed the cap: %s %s %s\n%s", res.Status, res.ErrorKind, res.Error, res.Value)
+			}
+			if v.Fix != "" || v.FixRound == nil || *v.FixRound != 2 || strings.Join(v.Carried, ",") != strings.Join(carried, ",") {
+				t.Errorf("the land's value: fix %q fix_round %v carried %q, want no fix packet, 2 and %q", v.Fix, v.FixRound, v.Carried, carried)
+			}
+			node := l.nodeOf["A-1"]
+			if checks := l.unitCheckRowsOf(node); len(checks) != c.checks {
+				t.Errorf("%d unit checks of %s, want %d", len(checks), node, c.checks)
+			}
+			if labels := landFixCalls(l, node); len(labels) != c.fixes {
+				t.Errorf("the land-fix calls of %s: %v, want %d", node, labels, c.fixes)
+			}
+			row, ok := l.landEscalationOf(node, "land_fix_rounds")
+			if !ok {
+				t.Fatalf("no escalation land_fix_rounds of %s", node)
+			}
+			if ev, _ := row["evidence"].(map[string]any); str(row, "ask") != "land_fix_rounds" || ev["fix_round"] != float64(2) {
+				t.Errorf("the escalation: ask %q evidence %v, want ask land_fix_rounds and fix_round 2", str(row, "ask"), ev)
+			}
+			if _, ok := l.landEscalationOf(node, "land_review_needs_changes"); ok {
+				t.Errorf("a land past the fix rounds escalated land_review_needs_changes too")
+			}
+			for _, e := range l.events() {
+				if e.Kind == engine.KindCall && e.Event == engine.EvCompleted && (e.Op == ops.OpAccept || e.Op == ops.OpIntegrate) {
+					t.Errorf("a %s row after the fix rounds passed the cap: %v", e.Op, e.Data)
+				}
+			}
+			if n := l.count("SELECT COUNT(*) FROM dag_agent_closures WHERE subject_kind = 'execution' AND state = 'cancelled' AND reason = 'land_ended'"); n != 1 {
+				t.Errorf("the land gave its release back %d times, want 1", n)
+			}
+		})
 	}
 }
 
-// TestLandHeadEscalatesWhenTheFixRoundsPassTheCap (CRW-1490): a land-head run of fix round LAND_FIX_ROUNDS (2) whose unit check needs
-// changes again ends escalated land_fix_rounds with ask land_fix_rounds - a Question for the 부모 - with the carried findings and no
-// fix packet, and gives the node's release back.
-func TestLandHeadEscalatesWhenTheFixRoundsPassTheCap(t *testing.T) {
-	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
-	carried := l.needsChanges("A-1")
-	head := l.outsideHead("A-1", "outside-a1")
-	spec := l.start("start", "land-head", "--args", landArgsRound(l, "A-1", "outside-a1", 2, l.authorThread("claude-fake-sonnet", "high")), "--handoff", l.file)
-	res := l.runToEnd(spec.RunID)
-	var v landFixValue
-	if res.Status != engine.RunCompleted || json.Unmarshal(res.Value, &v) != nil || v.State != "escalated" || v.Reason != "land_fix_rounds" || v.Head != head || v.Escalation == "" {
-		t.Fatalf("a land past the fix rounds: %s %s %s\n%s", res.Status, res.ErrorKind, res.Error, res.Value)
+// evidenceRouteRounds counts the completed crw.exploreRoute rows of the current process's journal that routed questions of the
+// kind evidence.
+func evidenceRouteRounds(l *laneLab) int {
+	n := 0
+	for _, e := range l.events() {
+		if e.Kind == engine.KindCall && e.Op == ops.OpExploreRoute && e.Event == engine.EvCompleted && str(e.Data, "kind") == ops.ExploreEvidence {
+			n++
+		}
 	}
-	if v.Fix != "" || v.FixRound == nil || *v.FixRound != 2 || strings.Join(v.Carried, ",") != strings.Join(carried, ",") {
-		t.Errorf("the land's value: fix %q fix_round %v carried %q, want no fix packet, 2 and %q", v.Fix, v.FixRound, v.Carried, carried)
+	return n
+}
+
+// TestLandHeadEvidenceMissingAsksAndRechecks (CRW-1490): a finding whose defect is missing verification evidence
+// (kind evidence_missing, with the question the check wants answered) is not a fix: no executor call runs and nothing is committed -
+// the run asks the question of an explorer (crw.explore of the kind evidence over the released head) and checks the same head again
+// with the answer and its evidence in the recheck's prompt. A verified recheck lands the head the child made, unchanged. The ask is
+// a fix round: a check that still needs changes after LAND_FIX_ROUNDS asks ends land_fix_rounds as a fixer's would. A needs_changes
+// check with no findings, or with an ordinary finding among them, is no evidence question: it takes the executor path.
+func TestLandHeadEvidenceMissingAsksAndRechecks(t *testing.T) {
+	missing := func(t *testing.T) reviewadapter.Finding {
+		var f reviewadapter.Finding
+		if err := json.Unmarshal([]byte(`{"severity":"P2","impact":"criterion_unmet","file":"node-A-1.txt","line":1,"text":"the verification evidence is missing","kind":"evidence_missing","evidence_question":{"question":"Which command proves the node behavior?","files_needed":["node-A-1.txt"]}}`), &f); err != nil {
+			t.Fatal(err)
+		}
+		return f
 	}
-	node := l.nodeOf["A-1"]
-	row, ok := l.landEscalationOf(node, "land_fix_rounds")
-	if !ok {
-		t.Fatalf("no escalation land_fix_rounds of %s", node)
+	scriptExplorer := func(l *laneLab) {
+		l.turn = func(c labCall, _ fakehost.TurnRequest) (fakehost.TurnPlan, bool) {
+			if c.Role != "explorer" {
+				return fakehost.TurnPlan{}, false
+			}
+			return labSay(map[string]any{
+				"answer":   "the focused command passed",
+				"evidence": []string{"go test ./node: PASS"},
+				"verified": []string{"go test ./node: PASS"},
+				"inferred": []string{},
+				"unknown":  []string{},
+			}), true
+		}
 	}
-	if ev, _ := row["evidence"].(map[string]any); str(row, "ask") != "land_fix_rounds" || ev["fix_round"] != float64(2) {
-		t.Errorf("the escalation: ask %q evidence %v, want ask land_fix_rounds and fix_round 2", str(row, "ask"), ev)
+	needsEvidence := func(l *laneLab, f reviewadapter.Finding, times int) {
+		for i := 0; i < times; i++ {
+			l.UnitChecks("A-1", ops.UnitCheckCommitted, labCheck{Verdict: reviewadapter.VerdictNeedsChanges, Findings: []reviewadapter.Finding{f}})
+		}
 	}
-	if _, ok := l.landEscalationOf(node, "land_review_needs_changes"); ok {
-		t.Errorf("a land past the fix rounds escalated land_review_needs_changes too")
+	commits := func(l *laneLab, node string) int {
+		n := 0
+		for _, e := range l.events() {
+			if e.Kind == engine.KindCall && e.Op == ops.OpCommit && e.Event == engine.EvCompleted && str(e.Data, "node") == node {
+				n++
+			}
+		}
+		return n
 	}
-	if n := l.count("SELECT COUNT(*) FROM dag_agent_closures WHERE subject_kind = 'execution' AND state = 'cancelled' AND reason = 'land_ended'"); n != 1 {
-		t.Errorf("the land gave its release back %d times, want 1", n)
+	t.Run("verified after the evidence", func(t *testing.T) {
+		l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+		needsEvidence(l, missing(t), 1)
+		head := l.outsideHead("A-1", "outside-a1")
+		author := l.authorThread("claude-fake-sonnet", "high")
+		scriptExplorer(l)
+		spec := l.start("start", "land-head", "--args", landArgs(l, "A-1", "outside-a1", author), "--handoff", l.file)
+		v := landValueOf(t, l.runToEnd(spec.RunID))
+		if v.State != "landed" || v.Head != head || v.Acceptance == "" {
+			for _, e := range l.events() {
+				if e.Kind == engine.KindFlow && e.Event == engine.EvEscalation {
+					t.Logf("escalation: %v", e.Data)
+				}
+			}
+			t.Fatalf("a land whose check lacked only evidence: %+v", v)
+		}
+		node := l.nodeOf["A-1"]
+		if n := l.preparedCalls("executor", "executor-t1"); n != 0 {
+			t.Errorf("%d executor calls, want 0: missing evidence is asked, not fixed", n)
+		}
+		if n := commits(l, node); n != 0 {
+			t.Errorf("%d commits, want 0: the head the child made lands unchanged", n)
+		}
+		if n := evidenceRouteRounds(l); n != 1 {
+			t.Errorf("%d evidence route rounds, want 1", n)
+		}
+		calls := l.uc.requests()
+		if len(calls) != 2 {
+			t.Fatalf("%d unit checks, want 2", len(calls))
+		}
+		for _, want := range []string{"Which command proves the node behavior?", "the focused command passed", "go test ./node: PASS"} {
+			if !strings.Contains(calls[1].Request.Prompt, want) {
+				t.Errorf("the recheck's prompt lacks %q:\n%s", want, calls[1].Request.Prompt)
+			}
+		}
+		if str(l.unitCheckRowsOf(node)[0].Data, "verdict") != "needs_changes" || str(l.unitCheckRowsOf(node)[1].Data, "verdict") != "verified" {
+			t.Errorf("the checks: %+v", l.unitCheckRowsOf(node))
+		}
+		verifies := 0
+		for _, e := range l.events() {
+			if e.Kind == engine.KindCall && e.Op == ops.OpVerify && e.Event == engine.EvCompleted && str(e.Data, "node") == node {
+				verifies++
+			}
+		}
+		if verifies != 1 {
+			t.Errorf("%d verifications of the node, want 1 (the original head)", verifies)
+		}
+		if n := l.count("SELECT COUNT(*) FROM dag_agent_closures WHERE subject_kind = 'execution' AND state = 'cancelled'"); n != 0 {
+			t.Errorf("%d cancelled closures, want 0", n)
+		}
+	})
+	t.Run("a check not given the prompt holds", func(t *testing.T) {
+		l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+		l.UnitChecks("A-1", ops.UnitCheckCommitted, labCheck{Verdict: reviewadapter.VerdictNeedsChanges, Findings: []reviewadapter.Finding{missing(t)}},
+			labCheck{Verdict: reviewadapter.VerdictVerified, OmitPrompt: true})
+		l.outsideHead("A-1", "outside-a1")
+		author := l.authorThread("claude-fake-sonnet", "high")
+		scriptExplorer(l)
+		spec := l.start("start", "land-head", "--args", landArgs(l, "A-1", "outside-a1", author), "--handoff", l.file)
+		res := l.runToEnd(spec.RunID)
+		var v struct{ State, Reason, Source string }
+		if json.Unmarshal(res.Value, &v) != nil || v.State != "held" || v.Reason != "unit_check_no_answer" || v.Source != "unit_check" {
+			t.Fatalf("a recheck the tool was not given the evidence of: %s %s %s\n%s", res.Status, res.ErrorKind, res.Error, res.Value)
+		}
+		if n := l.preparedCalls("executor", "executor-t1"); n != 0 {
+			t.Errorf("%d executor calls, want 0", n)
+		}
+		if n := l.count("SELECT COUNT(*) FROM dag_agent_acceptances"); n != 0 {
+			t.Errorf("%d acceptances of a check that read no evidence", n)
+		}
+		if n := l.count("SELECT COUNT(*) FROM dag_agent_closures WHERE subject_kind = 'execution' AND state = 'cancelled'"); n != 0 {
+			t.Errorf("the held land gave its release back: %d cancelled closures", n)
+		}
+	})
+	t.Run("evidence rounds pass the cap", func(t *testing.T) {
+		l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+		needsEvidence(l, missing(t), 3)
+		head := l.outsideHead("A-1", "outside-a1")
+		author := l.authorThread("claude-fake-sonnet", "high")
+		scriptExplorer(l)
+		spec := l.start("start", "land-head", "--args", landArgs(l, "A-1", "outside-a1", author), "--handoff", l.file)
+		res := l.runToEnd(spec.RunID)
+		var v landFixValue
+		if res.Status != engine.RunCompleted || json.Unmarshal(res.Value, &v) != nil || v.State != "escalated" || v.Reason != "land_fix_rounds" || v.Head != head ||
+			v.FixRound == nil || *v.FixRound != 2 || v.Fix != "" {
+			t.Fatalf("a land whose evidence rounds passed the cap: %s %s %s\n%s", res.Status, res.ErrorKind, res.Error, res.Value)
+		}
+		node := l.nodeOf["A-1"]
+		if checks := l.unitCheckRowsOf(node); len(checks) != 3 {
+			t.Errorf("%d unit checks of %s, want 3", len(checks), node)
+		}
+		// the same question at the same head may reuse the explorer's answer, so the asks are two route rounds, not necessarily
+		// two explorer calls
+		if n := evidenceRouteRounds(l); n != 2 {
+			t.Errorf("%d evidence route rounds, want 2", n)
+		}
+		if n := l.preparedCalls("executor", "executor-t1"); n != 0 || commits(l, node) != 0 {
+			t.Errorf("%d executor calls and %d commits, want 0 and 0", n, commits(l, node))
+		}
+		if n := l.count("SELECT COUNT(*) FROM dag_agent_acceptances"); n != 0 {
+			t.Errorf("%d acceptances, want 0", n)
+		}
+		if n := l.count("SELECT COUNT(*) FROM dag_agent_closures WHERE subject_kind = 'execution' AND state = 'cancelled' AND reason = 'land_ended'"); n != 1 {
+			t.Errorf("the land gave its release back %d times, want 1", n)
+		}
+	})
+	t.Run("a check without findings is no evidence question", func(t *testing.T) {
+		l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+		l.UnitChecks("A-1", ops.UnitCheckCommitted, labCheck{Verdict: reviewadapter.VerdictNeedsChanges})
+		l.outsideHead("A-1", "outside-a1")
+		author := l.authorThread("claude-fake-sonnet", "high")
+		scriptExplorer(l)
+		spec := l.start("start", "land-head", "--args", landArgs(l, "A-1", "outside-a1", author), "--handoff", l.file)
+		v := landValueOf(t, l.runToEnd(spec.RunID))
+		if v.State != "landed" {
+			t.Fatalf("a land whose check needed changes without a finding: %+v", v)
+		}
+		if n := evidenceRouteRounds(l); n != 0 {
+			t.Errorf("%d evidence route rounds for a check with no finding, want 0", n)
+		}
+		if labels := landFixCalls(l, l.nodeOf["A-1"]); len(labels) == 0 {
+			t.Errorf("no land-fix call: a check that needs changes without evidence questions takes the executor path")
+		}
+	})
+	t.Run("an ordinary finding among them takes the executor path", func(t *testing.T) {
+		l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+		l.UnitChecks("A-1", ops.UnitCheckCommitted, labCheck{Verdict: reviewadapter.VerdictNeedsChanges,
+			Findings: []reviewadapter.Finding{missing(t), {Severity: "P1", Impact: "core_function", File: "node-A-1.txt", Line: 2, Text: "the work is wrong"}}})
+		l.outsideHead("A-1", "outside-a1")
+		author := l.authorThread("claude-fake-sonnet", "high")
+		scriptExplorer(l)
+		spec := l.start("start", "land-head", "--args", landArgs(l, "A-1", "outside-a1", author), "--handoff", l.file)
+		v := landValueOf(t, l.runToEnd(spec.RunID))
+		if v.State != "landed" {
+			t.Fatalf("a land whose check had an ordinary finding: %+v", v)
+		}
+		if n := evidenceRouteRounds(l); n != 0 {
+			t.Errorf("%d evidence route rounds for a mixed check, want 0", n)
+		}
+		if labels := landFixCalls(l, l.nodeOf["A-1"]); len(labels) == 0 {
+			t.Errorf("no land-fix call: a check with an ordinary finding takes the executor path")
+		}
+	})
+}
+
+// TestLandHeadFixKeepsOriginalAuthorIndependence (CRW-1490): the in-run fix does not loosen the independence gate. The relay checks
+// the land's original authors alongside the completed executor calls, so a head whose original author the run could not read back
+// stays independence_unproven after a fixer the run observed, and one whose original author ran on the checker's family stays
+// independence_refused. The fix and the verified recheck happen; the gate alone refuses.
+func TestLandHeadFixKeepsOriginalAuthorIndependence(t *testing.T) {
+	for _, c := range []struct {
+		name, reason string
+		authors      func(l *laneLab) []string
+	}{
+		{"an original author the run cannot read back", "independence_unproven", func(l *laneLab) []string { return []string{"0190a000-0000-7000-8000-ffffffffffff"} }},
+		{"an original author of the checker's family", "independence_refused", func(l *laneLab) []string { return []string{l.authorThread("grok-fake-sol", "high")} }},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+			l.needsChanges("A-1")
+			l.outsideHead("A-1", "outside-a1")
+			spec := l.start("start", "land-head", "--args", landArgs(l, "A-1", "outside-a1", c.authors(l)...), "--handoff", l.file)
+			res := l.runToEnd(spec.RunID)
+			var v landValue
+			if res.Status != engine.RunCompleted || json.Unmarshal(res.Value, &v) != nil || v.State != "escalated" || v.Reason != c.reason {
+				t.Fatalf("a land whose head needed changes, by authors %s: %s %s %s\n%s", c.name, res.Status, res.ErrorKind, res.Error, res.Value)
+			}
+			node := l.nodeOf["A-1"]
+			if labels := landFixCalls(l, node); len(labels) != 1 {
+				t.Errorf("the land-fix calls of %s: %v, want 1", node, labels)
+			}
+			checks := l.unitCheckRowsOf(node)
+			if len(checks) != 2 || str(checks[0].Data, "verdict") != "needs_changes" || str(checks[1].Data, "verdict") != "verified" {
+				t.Errorf("the checks: %+v, want needs_changes then a verified recheck", checks)
+			}
+			if n := l.count("SELECT COUNT(*) FROM dag_agent_acceptances"); n != 0 {
+				t.Errorf("%d acceptances after a refused one", n)
+			}
+			if n := l.count("SELECT COUNT(*) FROM dag_agent_closures WHERE subject_kind = 'execution' AND state = 'cancelled' AND reason = 'land_ended'"); n != 1 {
+				t.Errorf("the refused land gave its release back %d times, want 1", n)
+			}
+		})
 	}
 }
 
