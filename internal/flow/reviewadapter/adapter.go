@@ -493,6 +493,8 @@ func onlyValue(dec *json.Decoder) error {
 // unique inside a record. security[i] is the security flag review.NormalizeGrade read from the severity of findings[i]. In order:
 //   - an impact that is not empty and not one of premerge.Impacts is an error;
 //   - a security finding without an impact gets safety_or_data;
+//   - after the collapse, a P3 finding still without an impact gets minor_separable (CRW-1480): a profile such as Bugbot's table
+//     names no impact, so the grade alone judges it; a P0-P2 finding without an impact keeps it empty and blocks by its grade;
 //   - after the collapse, a verified verdict over a finding that premerge.Blocks is an error naming the finding (the adapter's
 //     form of verdict_invalid).
 func normalize(verdict string, findings []Finding, security []bool) ([]Finding, error) {
@@ -507,6 +509,11 @@ func normalize(verdict string, findings []Finding, security []bool) ([]Finding, 
 		checked = append(checked, f)
 	}
 	out := MergeFindings(checked)
+	for i := range out {
+		if out[i].Impact == "" && out[i].Severity == string(review.P3) {
+			out[i].Impact = premerge.MinorSeparable
+		}
+	}
 	if verdict == VerdictVerified {
 		if f, ok := firstBlocking(out); ok {
 			return nil, fmt.Errorf("the answer is verified over the blocking finding %s at %s:%d (severity %s, impact %q)", f.ID, f.File, f.Line, f.Severity, f.Impact)
@@ -561,10 +568,16 @@ func FindingID(file, text string) string {
 	return hex.EncodeToString(sum[:])[:16]
 }
 
+// firstLine is the first line of b with surrounding space trimmed, cut to at most 200 bytes at a rune boundary, so a rune that
+// crosses the cut is dropped whole and the text stays valid UTF-8 (CRW-1480).
 func firstLine(b []byte) string {
 	line, _, _ := strings.Cut(strings.TrimSpace(string(b)), "\n")
 	if len(line) > 200 {
-		line = line[:200]
+		cut := 200
+		for cut > 0 && !utf8.RuneStart(line[cut]) {
+			cut--
+		}
+		line = line[:cut]
 	}
 	return line
 }

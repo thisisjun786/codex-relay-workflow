@@ -82,8 +82,21 @@ func TestOverlayAppendsToEmbeddedPrompt(t *testing.T) {
 	if _, err := Prompt("child", Options{}); err == nil {
 		t.Error("a relay role has no overlay")
 	}
-	// The second tier, the final reviewer and the critic are built on the definitions of their families.
-	for role, family := range map[string]string{"executor-t1": "executor", "reviewer-final": "reviewer", "critic": "reviewer"} {
+	// reviewer-final is a retired role key (CRW-1450): it has no definition, no overlay and no prompt.
+	for _, part := range []func() (string, error){
+		func() (string, error) { return Base("reviewer-final") },
+		func() (string, error) { return Overlay("reviewer-final", Options{}) },
+		func() (string, error) { return Prompt("reviewer-final", Options{}) },
+	} {
+		if _, err := part(); err == nil {
+			t.Error("the retired reviewer-final key still has a part of a prompt")
+		}
+	}
+	if _, err := overlays.ReadFile("reviewer-final.md"); err == nil {
+		t.Error("the reviewer-final overlay file is still embedded")
+	}
+	// The second tier and the critic are built on the definitions of their families.
+	for role, family := range map[string]string{"executor-t1": "executor", "critic": "reviewer"} {
 		a, _ := Base(role)
 		b, _ := Base(family)
 		if a != b {
@@ -120,7 +133,7 @@ func TestOverlayReplacesLeafSentence(t *testing.T) {
 		helper bool
 	}{
 		{"executor", Options{}, true}, {"executor-t1", Options{}, true}, {"architect", Options{}, true},
-		{"reviewer", Options{}, true}, {"reviewer-final", Options{}, true},
+		{"reviewer", Options{}, true},
 		{"explorer", Options{}, false}, {"critic", Options{}, false}, {"executor", Options{QA: true}, false},
 	} {
 		base, _ := Base(row.role)
@@ -331,7 +344,7 @@ func TestArchitectOverlayAuthorityBoundary(t *testing.T) {
 	}
 }
 
-// TestCriticRoleHasOverlayAndDefinition (CRW-1434): the critic is a seventh role of an engine call. It has no definition
+// TestCriticRoleHasOverlayAndDefinition (CRW-1434): the critic is the last role of an engine call. It has no definition
 // file of its own: its thread is built on the reviewer definition (it spawns as agent_type reviewer), followed by its own
 // overlay, which names the LEAF sentence and allows no helper.
 func TestCriticRoleHasOverlayAndDefinition(t *testing.T) {
@@ -427,6 +440,107 @@ func TestRollbackIsAskedInRisksAndCheckedThere(t *testing.T) {
 	}
 	if !strings.Contains(architect, "For a change to stored data or a behaviour change, say in `risks` how it rolls back") {
 		t.Error("the architect overlay does not ask for the rollback in risks, which the critic checks")
+	}
+}
+
+// CRW-1497: the role prompt (definition and overlay) is the fixed head of every call of the role, the same bytes on every run: it
+// names no date, time, absolute path, run, call or turn of a run. The values of a call are in its task packet after "## Task".
+func TestRoleHeadHasNoPerRunValues(t *testing.T) {
+	perRun := map[string]*regexp.Regexp{
+		"a date":                regexp.MustCompile(`\b20\d\d-\d\d-\d\d\b`),
+		"a clock time":          regexp.MustCompile(`\b\d\d:\d\d:\d\d\b`),
+		"an absolute path":      regexp.MustCompile(`(^|[\s"'(=])/(home|state|scratch|tmp|var|Users|opt|w)/`),
+		"a run id":              regexp.MustCompile(`\brun-[0-9a-f]{6,}\b`),
+		"a call id":             regexp.MustCompile(`\bc_[0-9a-f]{6,}\b`),
+		"a step marker":         regexp.MustCompile(`/t\d+-a\d+\b`),
+		"a crw-flow-op marker":  regexp.MustCompile(`crw-flow-op: \S`),
+		"a thread or agent id":  regexp.MustCompile(`\b(thread|agent)-[0-9a-f]{8,}\b`),
+		"a full commit sha":     regexp.MustCompile(`\b[0-9a-f]{40}\b`),
+		"a home directory form": regexp.MustCompile(`~/`),
+	}
+	type variant struct {
+		role string
+		opts Options
+	}
+	var variants []variant
+	for _, name := range Names {
+		variants = append(variants, variant{name, Options{}})
+	}
+	variants = append(variants, variant{"executor", Options{QA: true}})
+	for _, v := range variants {
+		prompt, err := Prompt(v.role, v.opts)
+		if err != nil {
+			t.Fatalf("%s (qa %v): %v", v.role, v.opts.QA, err)
+		}
+		again, _ := Prompt(v.role, v.opts)
+		if again != prompt {
+			t.Errorf("%s (qa %v): two builds of the prompt differ", v.role, v.opts.QA)
+		}
+		for what, re := range perRun {
+			if m := re.FindString(prompt); m != "" {
+				t.Errorf("%s (qa %v): the role prompt names %s (%q), a per-run value", v.role, v.opts.QA, what, m)
+			}
+		}
+	}
+}
+
+// CRW-1498: the executor overlays tell the executor to batch its tool calls: read every file it needs in one command, apply a
+// multi-file edit with one script and run the target test in the same command as the edit. The rule is one bullet of the fixed
+// head ("## Your thread", before the Skills bullet) of the executor and the second tier; the QA capture call has no edit to batch.
+func TestExecutorOverlayTellsToReadOnceEditByOneScriptAndTestInTheSameCall(t *testing.T) {
+	rules := []string{
+		"read every file you need in one command",
+		"apply a multi-file edit with one script",
+		"run the target test in the same command as the edit",
+	}
+	var bullets []string
+	for _, role := range []string{"executor", "executor-t1"} {
+		overlay, err := Overlay(role, Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		thread := sectionOf(overlay, "## Your thread")
+		if thread == "" {
+			t.Fatalf("%s: the overlay has no \"## Your thread\" section", role)
+		}
+		skills := strings.Index(thread, "\n- Skills:")
+		if skills < 0 {
+			t.Fatalf("%s: the \"## Your thread\" section has no Skills bullet", role)
+		}
+		var bullet string
+		for _, line := range strings.Split(thread, "\n") {
+			if strings.HasPrefix(line, "- ") && strings.Contains(line, rules[0]) {
+				bullet = line
+			}
+		}
+		if bullet == "" {
+			t.Errorf("%s: no bullet of \"## Your thread\" says to %s", role, rules[0])
+			continue
+		}
+		bullets = append(bullets, bullet)
+		for _, rule := range rules {
+			if !strings.Contains(bullet, rule) {
+				t.Errorf("%s: the batching bullet does not say to %s: %q", role, rule, bullet)
+			}
+			if n := strings.Count(overlay, rule); n != 1 {
+				t.Errorf("%s: the overlay says %q %d times, want once", role, rule, n)
+			}
+		}
+		if at := strings.Index(thread, bullet); at > skills {
+			t.Errorf("%s: the batching bullet comes after the Skills bullet", role)
+		}
+	}
+	if len(bullets) == 2 && bullets[0] != bullets[1] {
+		t.Errorf("the executor and the second tier carry different batching bullets:\n%q\n%q", bullets[0], bullets[1])
+	}
+	qa, err := Overlay("executor", Options{QA: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rule := range rules {
+		if strings.Contains(qa, rule) {
+			t.Errorf("the QA overlay carries the batching rule %q", rule)
+		}
 	}
 }
 

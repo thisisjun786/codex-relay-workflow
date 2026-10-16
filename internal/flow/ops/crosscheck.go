@@ -570,7 +570,7 @@ type authorCall struct {
 	CallID, Role, Node, Model string
 }
 
-// milestoneAuthorCalls are the author calls of the run's journal (the prepared rows milestoneAuthorModels reads: architect, executor and
+// milestoneAuthorCalls are the author calls of the run's journal (the prepared rows of the architect, executor and
 // executor-t1), each once, in journal order, with the ones that name no model kept: such a call's model is undecided.
 func (r rows) milestoneAuthorCalls() []authorCall {
 	var out []authorCall

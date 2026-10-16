@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// CRW-1196: the policy file's agent-roles section names the pair of each of the roles a flow engine runs (seven since CRW-1434),
+// CRW-1196: the policy file's agent-roles section names the pair of each of the roles a flow engine runs (six since CRW-1450),
 // and its agent-aliases section is the table that maps a Claude script's options onto one of them.
 
 const (
@@ -16,16 +16,15 @@ const (
 	agentSol    = "gpt-6.1-sol"
 )
 
-// agentRolesDoc is the agent-roles section of the design: one pair per role, the reviewers and the critic on another model family.
+// agentRolesDoc is the agent-roles section of the design: one pair per role, the reviewer and the critic on another model family.
 func agentRolesDoc() doc {
 	return doc{
-		"architect":      doc{"model": agentOpus, "reasoningEffort": "xhigh"},
-		"executor":       doc{"model": agentHaiku, "reasoningEffort": "xhigh"},
-		"executor-t1":    doc{"model": agentSonnet, "reasoningEffort": "xhigh"},
-		"reviewer":       doc{"model": agentSol, "reasoningEffort": "high"},
-		"reviewer-final": doc{"model": agentSol, "reasoningEffort": "xhigh"},
-		"explorer":       doc{"model": agentHaiku, "reasoningEffort": "high"},
-		"critic":         doc{"model": agentSol, "reasoningEffort": "xhigh"},
+		"architect":   doc{"model": agentOpus, "reasoningEffort": "xhigh"},
+		"executor":    doc{"model": agentHaiku, "reasoningEffort": "xhigh"},
+		"executor-t1": doc{"model": agentSonnet, "reasoningEffort": "xhigh"},
+		"reviewer":    doc{"model": agentSol, "reasoningEffort": "high"},
+		"explorer":    doc{"model": agentHaiku, "reasoningEffort": "high"},
+		"critic":      doc{"model": agentSol, "reasoningEffort": "xhigh"},
 	}
 }
 
@@ -55,7 +54,7 @@ func TestAgentRolesOnePairEach(t *testing.T) {
 	}
 	want := map[string][2]string{
 		"architect": {agentOpus, "xhigh"}, "executor": {agentHaiku, "xhigh"}, "executor-t1": {agentSonnet, "xhigh"},
-		"reviewer": {agentSol, "high"}, "reviewer-final": {agentSol, "xhigh"}, "explorer": {agentHaiku, "high"},
+		"reviewer": {agentSol, "high"}, "explorer": {agentHaiku, "high"},
 		"critic": {agentSol, "xhigh"},
 	}
 	if len(declared.Roles) != len(want) {
@@ -97,8 +96,8 @@ func TestAgentRolesOnePairEach(t *testing.T) {
 	}
 	// Every role is declared: a section that leaves one out names it.
 	missing := agentRolesDoc()
-	delete(missing, "reviewer-final")
-	if message := agentSectionWarning(t, agentPolicy(missing)); !strings.Contains(message, "reviewer-final") {
+	delete(missing, "explorer")
+	if message := agentSectionWarning(t, agentPolicy(missing)); !strings.Contains(message, "explorer") {
 		t.Fatalf("a missing role is named: %v", message)
 	}
 	// An autoCompactTokenLimit belongs to the pair, as it does in a relay role.
@@ -137,7 +136,7 @@ func TestAgentRolesPairsMustBeAllowed(t *testing.T) {
 	for _, row := range []struct{ role, model, effort string }{
 		{"architect", agentOpus, "high"},            // an allowed model at an effort the list does not approve
 		{"executor", "openai/gpt-6-astra", "xhigh"}, // a model the list does not name
-		{"reviewer-final", agentSol, "max"},
+		{"reviewer", agentSol, "max"},
 	} {
 		roles := withRole(row.role, pairDoc(row.model, row.effort))
 		policy := agentPolicy(roles)
@@ -159,7 +158,7 @@ func TestReviewerFamilyDiffersFromExecutor(t *testing.T) {
 		roles doc
 	}{
 		{"reviewer on the executor's model", withRole("reviewer", pairDoc(agentHaiku, "high"))},
-		{"reviewer-final on the executor-t1's model", withRole("reviewer-final", pairDoc(agentSonnet, "xhigh"))},
+		{"reviewer on the executor-t1's model", withRole("reviewer", pairDoc(agentSonnet, "xhigh"))},
 		{"reviewer on another model of the executor's vendor", withRole("reviewer", pairDoc("anthropic/claude-sonnet-5", "high"))},
 		{"reviewer under a bare name of the executor's family", withRole("reviewer", pairDoc("claude-opus-5-5", "high"))},
 	} {
@@ -194,8 +193,8 @@ func TestReviewerFamilyDiffersFromExecutor(t *testing.T) {
 // TestAliasTableMapsEachPairToOneRole walks every (key, effort, isolation) combination of the table.
 func TestAliasTableMapsEachPairToOneRole(t *testing.T) {
 	declared, _ := mustLoad(t, agentPolicy(agentRolesDoc())).AgentRoles()
-	if len(declared.Aliases) != 6 {
-		t.Fatalf("the design's alias table has six rows, got %+v", declared.Aliases)
+	if len(declared.Aliases) != 5 {
+		t.Fatalf("the design's alias table has five rows, got %+v", declared.Aliases)
 	}
 	type outcome struct{ role, refuse string }
 	want := map[[3]string]outcome{
@@ -203,12 +202,12 @@ func TestAliasTableMapsEachPairToOneRole(t *testing.T) {
 		{"haiku", "", "worktree"}:                {"executor", ""},
 		{"haiku", "", ""}:                        {"", "alias_ambiguous"},
 		{"sonnet", "", ""}:                       {"executor-t1", ""},
-		{"ocx-gpt-6-1-sol", "xhigh", ""}:         {"reviewer-final", ""},
+		{"ocx-gpt-6-1-sol", "xhigh", ""}:         {"reviewer", ""},
 		{"ocx-gpt-6-1-sol", "high", ""}:          {"reviewer", ""},
 		{"ocx-gpt-6-1-sol", "", ""}:              {"reviewer", ""},
 		{"haiku", "medium", "worktree"}:          {"executor", ""},
 		{"haiku", "medium", ""}:                  {"", "alias_ambiguous"},
-		{"ocx-gpt-6-1-sol", "xhigh", "worktree"}: {"reviewer-final", ""},
+		{"ocx-gpt-6-1-sol", "xhigh", "worktree"}: {"reviewer", ""},
 		{"gpt-x", "", ""}:                        {"", ""},
 	}
 	keys := []string{"opus", "haiku", "sonnet", "ocx-gpt-6-1-sol", "gpt-x"}
@@ -239,7 +238,7 @@ func TestAliasTableMapsEachPairToOneRole(t *testing.T) {
 			}
 		}
 	}
-	// Every role a row names is one of the six, and every role is reachable by its key as a role or an alias.
+	// Every role a row names is one of the six, and every role but the explorer and the critic is reachable by its key.
 	roles := map[string]bool{}
 	for _, role := range declared.Roles {
 		roles[role.Name] = true
@@ -253,7 +252,7 @@ func TestAliasTableMapsEachPairToOneRole(t *testing.T) {
 			reached[row.Role] = true
 		}
 	}
-	for _, name := range []string{"architect", "executor", "executor-t1", "reviewer", "reviewer-final"} {
+	for _, name := range []string{"architect", "executor", "executor-t1", "reviewer"} {
 		if !reached[name] {
 			t.Fatalf("role %s has no alias row", name)
 		}
@@ -267,7 +266,7 @@ func TestAliasTableMapsEachPairToOneRole(t *testing.T) {
 		aliases[role.Name] = role.Aliases
 	}
 	if !reflect.DeepEqual(aliases["executor"], []string{"haiku"}) || !reflect.DeepEqual(aliases["explorer"], []string{"haiku"}) ||
-		!reflect.DeepEqual(aliases["reviewer-final"], []string{"ocx-gpt-6-1-sol"}) {
+		!reflect.DeepEqual(aliases["reviewer"], []string{"ocx-gpt-6-1-sol"}) {
 		t.Fatalf("aliases %+v", aliases)
 	}
 
@@ -333,15 +332,15 @@ func TestAgentRolesDigestAndSummary(t *testing.T) {
 		t.Fatalf("%#v", summary)
 	}
 	roles := section["roles"].([]any)
-	if len(roles) != len(AgentRoleNames) || roles[0].(map[string]any)["role"] != "architect" || roles[5].(map[string]any)["role"] != "explorer" || roles[6].(map[string]any)["role"] != "critic" {
+	if len(roles) != len(AgentRoleNames) || roles[0].(map[string]any)["role"] != "architect" || roles[4].(map[string]any)["role"] != "explorer" || roles[5].(map[string]any)["role"] != "critic" {
 		t.Fatalf("roles in declaration order of the design: %#v", roles)
 	}
-	if len(section["aliases"].([]any)) != 6 {
+	if len(section["aliases"].([]any)) != 5 {
 		t.Fatalf("%#v", section["aliases"])
 	}
 }
 
-// CRW-1434 (D1-1): the critic is a seventh agent role, the design audit's. A policy file written before it (six roles) still loads:
+// CRW-1434 (D1-1): the critic is the last agent role, the design audit's. A policy file written before it (no critic) still loads:
 // its critic takes the compiled default pair with one warning that says so, a file that declares the critic keeps its own pair
 // without that warning, and a file that misses another role is still ignored with the old warning.
 func TestAgentRoleNamesIncludeCriticAndOldPolicyFilesStillLoad(t *testing.T) {
@@ -373,8 +372,8 @@ func TestAgentRoleNamesIncludeCriticAndOldPolicyFilesStillLoad(t *testing.T) {
 		return out
 	}
 
-	// A six-role file, as every file written before the critic is.
-	old := sixRolesDoc()
+	// A file without a critic, as every file written before the critic is.
+	old := rolesBeforeCriticDoc()
 	p := mustLoad(t, agentPolicy(old))
 	role := critic(p)
 	if role.Pair.Model != agentSol || role.Pair.Effort != "xhigh" || !reflect.DeepEqual(role.Aliases, []string{"ocx-gpt-6-1-sol"}) {
@@ -386,21 +385,29 @@ func TestAgentRoleNamesIncludeCriticAndOldPolicyFilesStillLoad(t *testing.T) {
 	if !p.DeclaresAgentRoles() {
 		t.Fatal("the file declares its agent roles")
 	}
+	// A file of the time before the critic also declares reviewer-final, a retired role key since CRW-1450: it loads the same,
+	// with the fill warning and the retired key's notice.
+	older := rolesBeforeCriticDoc()
+	older["reviewer-final"] = pairDoc(agentSol, "xhigh")
+	p = mustLoad(t, agentPolicy(older))
+	if role := critic(p); role.Pair.Model != agentSol || len(filled(p)) != 1 || len(p.Warnings()) != 2 || !strings.Contains(strings.Join(p.Warnings(), "\n"), RetiredRoleKeyNotice) {
+		t.Fatalf("a file of the time before the critic: %+v %q", role, p.Warnings())
+	}
 
-	// A seven-role file keeps its own critic and has no fill warning.
-	own := sixRolesDoc()
+	// A file that declares the critic keeps its own critic and has no fill warning.
+	own := rolesBeforeCriticDoc()
 	own["critic"] = pairDoc("openai/gpt-5.6-sol", "high")
 	p = mustLoad(t, agentPolicy(own))
 	if role := critic(p); role.Pair.Model != "openai/gpt-5.6-sol" || role.Pair.Effort != "high" {
 		t.Fatalf("the declared critic %+v", role)
 	}
 	if len(p.Warnings()) != 0 {
-		t.Fatalf("a seven-role file warns: %q", p.Warnings())
+		t.Fatalf("a file with its own critic warns: %q", p.Warnings())
 	}
 
 	// The alias table gains no row: the critic is named by agentType, as the explorer is.
 	declared, _ := p.AgentRoles()
-	if len(declared.Aliases) != 6 {
+	if len(declared.Aliases) != 5 {
 		t.Fatalf("aliases %+v", declared.Aliases)
 	}
 	for _, row := range declared.Aliases {
@@ -410,7 +417,7 @@ func TestAgentRoleNamesIncludeCriticAndOldPolicyFilesStillLoad(t *testing.T) {
 	}
 
 	// A file that misses another role is still ignored with the old warning, and names no critic.
-	missing := sixRolesDoc()
+	missing := rolesBeforeCriticDoc()
 	delete(missing, "executor-t1")
 	message := agentSectionWarning(t, agentPolicy(missing))
 	if !strings.Contains(message, "executor-t1") || strings.Contains(message, "critic") {
@@ -425,9 +432,76 @@ func TestAgentRoleNamesIncludeCriticAndOldPolicyFilesStillLoad(t *testing.T) {
 	}
 }
 
-// sixRolesDoc is agentRolesDoc without the critic: the agent-roles section of a file written before the critic existed.
-func sixRolesDoc() doc {
+// rolesBeforeCriticDoc is agentRolesDoc without the critic: the agent-roles section of a file written before the critic existed.
+func rolesBeforeCriticDoc() doc {
 	roles := agentRolesDoc()
 	delete(roles, "critic")
 	return roles
+}
+
+// CRW-1450: reviewer-final is a retired role key. A file that still holds it loads: its agent-roles entry is skipped, an agent-aliases
+// row that names it is dropped (such a call resolves by the other rows, ocx-gpt-6-1-sol to the reviewer), and one warning names the
+// sections and the notice. Every other unknown key is still the reason the sections are ignored.
+func TestRetiredReviewerFinalKeyLoadsAndIsNamed(t *testing.T) {
+	retiredWarnings := func(p Policy) []string {
+		var out []string
+		for _, w := range p.Warnings() {
+			if strings.Contains(w, RetiredRoleKeyNotice) {
+				out = append(out, w)
+			}
+		}
+		return out
+	}
+	// the entry alone
+	p := mustLoad(t, agentPolicy(withRole(AgentReviewerFinal, pairDoc(agentSol, "xhigh"))))
+	declared, ok := p.AgentRoles()
+	if !ok || len(declared.Roles) != len(AgentRoleNames) {
+		t.Fatalf("a file holding the retired key: %+v %q", declared.Roles, p.Warnings())
+	}
+	if _, has := declared.Role(AgentReviewerFinal); has {
+		t.Fatal("the retired key is a declared role")
+	}
+	if got := retiredWarnings(p); len(got) != 1 || len(p.Warnings()) != 1 || !strings.Contains(got[0], "execution policy's agent-roles names reviewer-final") {
+		t.Fatalf("warnings %q", p.Warnings())
+	}
+	// the entry and an alias row naming it: one warning names both sections
+	document := agentPolicy(withRole(AgentReviewerFinal, pairDoc(agentSol, "xhigh")))
+	document["agent-aliases"] = []any{
+		doc{"key": "opus", "role": "architect"},
+		doc{"key": "ocx-gpt-6-1-sol", "effort": "xhigh", "role": AgentReviewerFinal},
+		doc{"key": "ocx-gpt-6-1-sol", "role": "reviewer"},
+	}
+	p = mustLoad(t, document)
+	declared, ok = p.AgentRoles()
+	if !ok || len(declared.Aliases) != 2 {
+		t.Fatalf("aliases %+v %q", declared.Aliases, p.Warnings())
+	}
+	if row, found := declared.Match("ocx-gpt-6-1-sol", "xhigh", ""); !found || row.Role != AgentReviewer {
+		t.Fatalf("an xhigh call of ocx-gpt-6-1-sol: %+v", row)
+	}
+	if got := retiredWarnings(p); len(got) != 1 || !strings.Contains(got[0], "agent-roles and agent-aliases name reviewer-final") {
+		t.Fatalf("warnings %q", p.Warnings())
+	}
+	// an alias row alone
+	document = agentPolicy(agentRolesDoc())
+	document["agent-aliases"] = []any{doc{"key": "opus", "role": "architect"}, doc{"key": "gpt", "role": AgentReviewerFinal}}
+	if got := retiredWarnings(mustLoad(t, document)); len(got) != 1 || !strings.Contains(got[0], "agent-aliases names reviewer-final") {
+		t.Fatalf("warnings %q", got)
+	}
+	// no retired key, no notice; another unknown key still has the sections ignored
+	if got := retiredWarnings(mustLoad(t, agentPolicy(agentRolesDoc()))); len(got) != 0 {
+		t.Fatalf("a notice without the key: %q", got)
+	}
+	if message := agentSectionWarning(t, agentPolicy(withRole("reviewer-first", pairDoc(agentSol, "xhigh")))); !strings.Contains(message, "reviewer-first") || strings.Contains(message, "retired") {
+		t.Fatalf("another unknown key: %q", message)
+	}
+	// a section that does not parse for another reason is ignored with the loader's warning alone
+	broken := withRole(AgentReviewerFinal, pairDoc(agentSol, "xhigh"))
+	delete(broken, "explorer")
+	if message := agentSectionWarning(t, agentPolicy(broken)); strings.Contains(message, RetiredRoleKeyNotice) {
+		t.Fatalf("an ignored section is also named retired: %q", message)
+	}
+	if strings.Contains(supportedAgentRoles, AgentReviewerFinal) || RetiredRoleKeyNotice != "reviewer-final is a retired role key and is ignored" {
+		t.Fatalf("supported %s, notice %q", supportedAgentRoles, RetiredRoleKeyNotice)
+	}
 }

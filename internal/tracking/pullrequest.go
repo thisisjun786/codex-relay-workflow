@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // PullRequests is the pull request side of the adapter (CRW-1355): a project session opens a pull request from its milestone
@@ -30,6 +31,9 @@ var _ PullRequests = (*GitHub)(nil)
 // ErrInvalidPullRequest is the error of a pull request the adapter will not open: a head or base that is not a branch name of the
 // repository, a head that is the base, a title that is not one line, or no issue to carry.
 var ErrInvalidPullRequest = errors.New("tracking: invalid pull request")
+
+// maxBodyChars is the longest body GitHub accepts for a pull request, in characters.
+const maxBodyChars = 65536
 
 // NewPullRequest is what OpenPullRequest sends.
 type NewPullRequest struct {
@@ -187,6 +191,9 @@ func (in NewPullRequest) body() (string, error) {
 	body := "Carries: " + strings.Join(carried, ", ")
 	if text := strings.TrimRight(in.Body, "\r\n \t"); text != "" {
 		body = text + "\n\n" + body
+	}
+	if n := utf8.RuneCountInString(body); n > maxBodyChars {
+		return "", fmt.Errorf("%w: the body is %d characters with its Carries: line, over the %d GitHub accepts", ErrInvalidPullRequest, n, maxBodyChars)
 	}
 	return body, nil
 }

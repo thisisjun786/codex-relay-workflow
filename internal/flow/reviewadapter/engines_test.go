@@ -137,10 +137,10 @@ func TestAstraProfileReadsTheLastAgentMessage(t *testing.T) {
 			t.Fatalf("engine family %q, model %q, effort %q", res.EngineFamily, res.Model, res.Effort)
 		}
 	})
-	t.Run("a verified answer over a null impact stands", func(t *testing.T) {
+	t.Run("a verified answer over a null impact stands and the P3 is minor_separable", func(t *testing.T) {
 		res := check(t, p, fakeRun{stdout: astraStream(`{"verdict":"verified","findings":[{"severity":"P3","impact":null,"file":"a.go","line":3,"text":"naming"}]}`)})
 		wantState(t, res, StateOK)
-		if res.Verdict != VerdictVerified || len(res.Findings) != 1 || res.Findings[0].Impact != "" {
+		if res.Verdict != VerdictVerified || len(res.Findings) != 1 || res.Findings[0].Impact != "minor_separable" {
 			t.Fatalf("result = %+v", res)
 		}
 	})

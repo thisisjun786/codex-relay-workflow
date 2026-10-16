@@ -158,6 +158,7 @@ func (s *scriptVM) install() error {
 	_ = crw.Set("callFacts", s.callFacts)
 	_ = crw.Set("recordedSignal", s.recordedSignal)
 	_ = crw.Set("priorRelease", s.priorRelease)
+	_ = crw.Set("deferredAsks", s.deferredAsks)
 	if err := s.installOps(crw); err != nil {
 		return err
 	}

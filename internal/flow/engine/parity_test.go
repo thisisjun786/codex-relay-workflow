@@ -321,7 +321,7 @@ func TestParityCorpusRoles(t *testing.T) {
 	}
 
 	g = goldenOf(t, "judge-panel")
-	if decide := find(g, "decide"); decide.Role != "reviewer-final" || decide.RequestedPair.Effort != "xhigh" || decide.ConfiguredPair != policy.Roles["reviewer-final"].Pair {
+	if decide := find(g, "decide"); decide.Role != "reviewer" || decide.RequestedPair.Effort != "xhigh" || decide.ConfiguredPair != reviewer {
 		t.Errorf("%+v", decide)
 	}
 	if judge := find(g, "judge:cost"); judge.Role != "architect" || judge.RequestedPair.Effort != "high" || judge.ConfiguredPair.Effort != "xhigh" {
@@ -381,7 +381,7 @@ func TestParityCorpusRoles(t *testing.T) {
 		t.Errorf("a judge for each lane: %+v", g.Calls)
 	}
 	for _, c := range g.Calls {
-		if c.Role != "reviewer-final" || c.Sandbox != SandboxReadOnly || c.RequestedPair.Effort != "xhigh" || c.ConfiguredPair != (Pair{}) || c.Reason != ReasonSchemaNotStrict {
+		if c.Role != "reviewer" || c.Sandbox != SandboxReadOnly || c.RequestedPair.Effort != "xhigh" || c.ConfiguredPair != (Pair{}) || c.Reason != ReasonSchemaNotStrict {
 			t.Errorf("%+v", c)
 		}
 	}
@@ -585,7 +585,7 @@ func TestParityPortDiffOptionsOnly(t *testing.T) {
 						continue
 					}
 					entry, ok := entries[name][file+":"+strconv.Itoa(i+1)]
-					for _, word := range []string{"reviewer", "reviewer-final", "requestedPair", "configuredPair"} {
+					for _, word := range []string{"reviewer", "at any effort", "requestedPair", "configuredPair"} {
 						if !ok || !strings.Contains(entry, word) {
 							t.Errorf("README entry for %s:%d does not say why the reviewer line is kept (%q missing): %s", file, i+1, word, entry)
 							break

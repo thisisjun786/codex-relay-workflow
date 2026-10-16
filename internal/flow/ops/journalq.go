@@ -3,7 +3,6 @@ package ops
 import (
 	"encoding/json"
 	"slices"
-	"sort"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 )
@@ -94,61 +93,6 @@ func (r rows) terminal(callID string) (engine.Event, bool) {
 		}
 		return false
 	})
-}
-
-// authorModels are the models of the author calls of a node (its executors) and of the architect that planned it, as the
-// journal records them: the pair a reviewer must be independent of.
-func (r rows) authorModels(node string) []string {
-	seen := map[string]bool{}
-	var out []string
-	for _, ev := range r.prepared() {
-		role := str(ev.Data, "role")
-		isAuthor := role == "architect" || ((role == "executor" || role == "executor-t1") && str(ev.Data, "node") == node)
-		if !isAuthor {
-			continue
-		}
-		model := str(ev.Data, "configured_model")
-		if model == "" {
-			model = str(ev.Data, "model")
-		}
-		if model != "" && !seen[model] {
-			seen[model] = true
-			out = append(out, model)
-		}
-	}
-	// the authors a land release read back from the host for a head made outside a run (CRW-1354)
-	for _, model := range r.landAuthorModels(node) {
-		if !seen[model] {
-			seen[model] = true
-			out = append(out, model)
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
-// milestoneAuthorModels are the models of every author of a milestone as the journal records them - its architect and the
-// executors of all its nodes: the pair reviewer-final must be independent of.
-func (r rows) milestoneAuthorModels() []string {
-	seen := map[string]bool{}
-	var out []string
-	for _, ev := range r.prepared() {
-		switch str(ev.Data, "role") {
-		case "architect", "executor", "executor-t1":
-		default:
-			continue
-		}
-		model := str(ev.Data, "configured_model")
-		if model == "" {
-			model = str(ev.Data, "model")
-		}
-		if model != "" && !seen[model] {
-			seen[model] = true
-			out = append(out, model)
-		}
-	}
-	sort.Strings(out)
-	return out
 }
 
 // worktreeOf is the path of the node's current attempt worktree: the newest fresh or restore allocation of one of its calls,

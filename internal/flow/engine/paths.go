@@ -67,9 +67,23 @@ func (p *pathState) child(position int, key string, join *joinState) *pathState 
 	return &pathState{id: p.childID(position, key), suffix: p.suffix, join: join}
 }
 
-// childID is the id of the path of a join's item.
+// childID is the id of the path of a join's item, or of a workflow() child (key "workflow": nestedPathID).
 func (p *pathState) childID(position int, key string) string {
-	return p.id + "/" + strconv.Itoa(position) + ":" + escapeKey(key)
+	return itemPathID(p.id, position, key)
+}
+
+// itemPathID is the id of the path that position of the path parent opens for key: `<parent>/<position>:<key>`, the key escaped.
+func itemPathID(parent string, position int, key string) string {
+	return parent + "/" + strconv.Itoa(position) + ":" + escapeKey(key)
+}
+
+// nestedWorkflowKey is the key of the child path workflow() opens at its position (engine/workflow.go: path.child(position, "workflow", ...)).
+const nestedWorkflowKey = "workflow"
+
+// nestedPathID is the path a workflow() child runs on: the child path of the workflow_opened row's path and position. The lane scope of
+// the legacy refusal reads a nested lane's rows by it, so the scope and the engine agree on the format.
+func nestedPathID(parent string, position int) string {
+	return itemPathID(parent, position, nestedWorkflowKey)
 }
 
 // keyEscaper makes an item key safe as a path segment: the characters that separate segments and positions are

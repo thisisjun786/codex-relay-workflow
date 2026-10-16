@@ -715,7 +715,7 @@ return [
 ]`)
 	want := []string{
 		"completed/<nil>/architect/high", "completed/<nil>/executor/xhigh", "refused/policy_refused//",
-		"completed/<nil>/reviewer-final/xhigh", "completed/<nil>/reviewer/high", "completed/<nil>/executor/low",
+		"completed/<nil>/reviewer/xhigh", "completed/<nil>/reviewer/high", "completed/<nil>/executor/low",
 		"refused/pair_refused//", "refused/policy_refused//", "refused/policy_refused//",
 	}
 	for i, w := range want {

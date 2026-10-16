@@ -55,8 +55,8 @@ func TestNextHandsOutTheStepsOfTheBus(t *testing.T) {
 	}
 	defer lock.Release()
 	bus := engine.NewFileStepBus(RunDir(w.state, run))
-	spawnStep := engine.Step{Run: run, Call: "c_000000000001", K: 1, Attempt: 2, Op: "c_000000000001/t1-a2", Role: "reviewer-final", Action: engine.StepSpawn,
-		AgentType: "reviewer", Model: "gpt-fake-sol", ReasoningEffort: "xhigh", Message: "crw-flow-op: c_000000000001/t1-a2\nCRW-ROLE: reviewer-final\n\nread it",
+	spawnStep := engine.Step{Run: run, Call: "c_000000000001", K: 1, Attempt: 2, Op: "c_000000000001/t1-a2", Role: "critic", Action: engine.StepSpawn,
+		AgentType: "reviewer", Model: "gpt-fake-sol", ReasoningEffort: "xhigh", Message: "crw-flow-op: c_000000000001/t1-a2\nCRW-ROLE: critic\n\nread it",
 		Packet: "/p/packet-t1-a2.md", Workspace: "/w/call/c_000000000001"}
 	inputStep := engine.Step{Run: run, Call: "c_000000000002", K: 2, Attempt: 1, Op: "c_000000000002/t2-a1", Role: "executor", Action: engine.StepSendInput,
 		AgentType: "executor", AgentID: "agent-7", Message: "crw-flow-op: c_000000000002/t2-a1\n\nrepair"}

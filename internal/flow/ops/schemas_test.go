@@ -38,14 +38,16 @@ func librarySchemas(t *testing.T) map[string]any {
 	return out
 }
 
-// schemaOwner says which issue builds the producer of a schema this build only decodes.
+// schemaOwner says which issue builds the producer of a schema this build only decodes, or retired it: the build then decodes what an
+// old run's producer left in its rows.
 var schemaOwner = map[string]string{
 	SchemaVerdictBatch: "CRW-1225 (the candidate batch review, SP-REV-2)",
+	SchemaVerdict:      "CRW-1447 (the node reviewer is retired: crw.accept decodes the VERDICT of an old run's crw.review row)",
 }
 
 // consumers are the decoders of the Go side, by schema.
 var consumers = map[string]string{
-	SchemaReceipt: "DecodeReceipt", SchemaVerdict: "DecodeVerdict", SchemaVerdictBatch: "DecodeVerdictBatch", SchemaVerdictFinal: "DecodeVerdictFinal",
+	SchemaReceipt: "DecodeReceipt", SchemaVerdict: "DecodeVerdict", SchemaVerdictBatch: "DecodeVerdictBatch",
 	SchemaDesign: "DecodeDesign", SchemaDesignAudit: "DecodeDesignAudit", SchemaReflection: "DecodeReflection", SchemaFindings: "DecodeFindings", SchemaFindingsEnd: "DecodeFindings",
 	SchemaQACapture: "DecodeQACapture", SchemaQAPass: "DecodeQAPass", SchemaQAReceipt: "DecodeQAReceipt",
 }
@@ -169,6 +171,9 @@ func TestRuleIDsHaveOneSource(t *testing.T) {
 		}
 		if strings.Contains(filepath.ToSlash(path), "/tracetest/") {
 			return nil // the test builder of the trace package is a test double, not a writer
+		}
+		if filepath.ToSlash(path) == "../engine/legacy.go" {
+			return nil // the legacy refusal reads old rows by the retired ids; engine/legacy_ops_test.go pins them to ops/rules.go
 		}
 		b, err := os.ReadFile(path)
 		if err != nil {

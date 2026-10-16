@@ -1,22 +1,22 @@
 // crw:lib/lane: the composites of the project lane. Each is a sequence of agent calls and crw operations that the script would
-// otherwise repeat at every site, written once so that the sequence is the same everywhere: crw.dag (the lane scheduler),
-// crw.review (the reviewer call and its record), crw.reviewHalt, crw.explore and crw.exploreEvidence (the explorer fan-out and its
-// record), crw.land (accept, then integrate), crw.evidence (the tier evidence of a node) and crw.milestoneHalt (a milestone that
-// cannot go on).
+// otherwise repeat at every site, written once so that the sequence is the same everywhere: crw.dag (the lane scheduler), crw.explore
+// (the explorer fan-out and its record), crw.land (accept, then integrate), crw.evidence (the tier evidence of a node) and
+// crw.milestoneHalt (a milestone that cannot go on). A node is judged by its unit check (crw.unitCheck, an operation of the host), and
+// no composite calls a reviewer agent (CRW-1447).
 //
 // crw.dag also runs the signal path of a milestone (CRW-1202) when it is given an onSignal function: every RECEIPT of a lane is a
 // trigger, the triggers are taken in the journal's order into one signal at a time, and onSignal decides what the signal comes to
 // (continue, refresh or halt). The signal path is described above dag.
 //
 // install(crw) makes them members of the crw object, next to the operations the host registers (internal/flow/ops): the script
-// then reads as the design writes it, `crw.review(...)`, `crw.land(...)`. A composite is not an operation of its own: it takes no
+// then reads as the design writes it, `crw.dag(...)`, `crw.land(...)`. A composite is not an operation of its own: it takes no
 // position of its path, and every position it uses is that of a call or of an operation it makes, so a resume replays it through
 // the journal like any other code of the script. It reads no variable outside its arguments.
 
-import { FINDINGS, FINDINGS_END, VERDICT } from 'crw:lib/schemas'
+import { FINDINGS, FINDINGS_END } from 'crw:lib/schemas'
 import { evidence } from 'crw:lib/evidence'
-import { explorerPacket, reviewPacket } from 'crw:lib/packets'
-import { closeMilestone, settleReviews } from 'crw:lib/close'
+import { explorerPacket } from 'crw:lib/packets'
+import { closeMilestone } from 'crw:lib/close'
 
 // The executors a project runs at once (docs: at most three, and never more than the region-disjoint ready nodes).
 export const DEFAULT_CAP = 3
@@ -112,6 +112,9 @@ const noSignals = { receipt() {}, plan() {} }
 // the options of every release of a lane: crw.release compares the live plan with the plan the audited DESIGN stands on, in the flow,
 // before Relay.Release, whose release commit compares the node's slice of that plan again (CRW-1288)
 const PINNED = { pinned: true }
+
+// the reason of a release the relay held back because its edit regions overlap regions a node it holds released has (dagsched)
+const DEFER_EDIT_OVERLAP = 'defer:edit_overlap'
 
 // admit holds a lane back from its release while a signal is being decided, for a lane that an earlier process released under a
 // revision a signal made until that signal is decided, and for a lane whose plan read was a trigger until the signal that took the
@@ -229,7 +232,8 @@ async function signalPath(S, ms, onSignal) {
 // reads them without an operation of its own, and a pair it has no answer for overlaps. Every judgment is an operation on the path of
 // dag's caller or of the signal path, made in an order and with arguments that only the plan, the DESIGN and the signals' results
 // decide, never the order the lanes ran in.
-// A node whose predecessor did not land is not started: its result is blocked. The result is the list of the lanes' results in
+// A node the relay held back for an edit overlap that a node of the dag may hold is pending again until another node has ended
+// (CRW-1467, in the lane below). A node whose predecessor did not land is not started: its result is blocked. The result is the list of the lanes' results in
 // the order of opts.nodes. The lane function is called with the node, its release and an object whose receipt(result) reports the
 // RECEIPT of an executor call to the signal path (opts.onSignal; a dag without one has none). A node reads the plan (crw.planRead) before
 // its release when there is a signal path, and every release compares the plan with the one the audited DESIGN stands on.
@@ -242,13 +246,21 @@ export async function dag(planId, lane, opts) {
   const state = {}
   const gates = {}
   const blockedBy = {}
+  const newGate = () => {
+    const gate = {}
+    gate.promise = new Promise((resolve) => { gate.open = resolve })
+    return gate
+  }
   for (const n of nodes) {
     byId[n.id] = n
     state[n.id] = 'pending'
-    const gate = {}
-    gate.promise = new Promise((resolve) => { gate.open = resolve })
-    gates[n.id] = gate
+    gates[n.id] = newGate()
   }
+  // ended counts the lanes that ended after they ran; deferredAt is, for a node the relay held back for an edit overlap that another
+  // node of the dag may hold (it is pending again), the count of the node's ask: it is admitted again once a node ended after that ask
+  // (-1 for an answer the record asked again after: it waits for no end)
+  let ended = 0
+  const deferredAt = {}
   // a node waits for nodes that wait for it would never start: the plan is a DAG, and a script that is given another shape says so
   const visiting = {}
   const visit = (id, trail) => {
@@ -318,9 +330,13 @@ export async function dag(planId, lane, opts) {
   // after the scheduler admitted the node, so the node is checked against the nodes that hold theirs once more.
   const claimed = {}
   const clashes = (n) => nodes.some((o) => o !== n && claimed[o.id] && state[o.id] === 'running' && overlaps(o.regions, n.regions))
-  async function claim(n, ask) {
+  // seen is the node's held-back answers (defer:edit_overlap) so far: the recorded release is the answer of the ask after the recorded ones
+  // too (crw.deferredAsks), so an ask before them, which replays one of them, does not wait for the signal of the recorded release's
+  // revision (that signal may wait for the plan read after a held-back answer)
+  async function claim(n, ask, seen) {
+    const recordedAsk = seen >= crw.deferredAsks(n.id) ? ask : -1
     while (true) {
-      if (!(await admit(S, n.id, ask)) || S.halted) return false
+      if (!(await admit(S, n.id, recordedAsk)) || S.halted) return false
       if (S.holds()) continue
       if (!clashes(n)) {
         claimed[n.id] = true
@@ -329,11 +345,13 @@ export async function dag(planId, lane, opts) {
       await S.wait()
     }
   }
+  // the order the pump offers the nodes in: the scheduler's, a node that is pending again after a held-back release last
+  const offered = () => nodes.filter((n) => deferredAt[n.id] === undefined).concat(nodes.filter((n) => deferredAt[n.id] !== undefined))
   function pump() {
     let again = true
     while (again) {
       again = false
-      for (const n of nodes) {
+      for (const n of offered()) {
         if (state[n.id] !== 'pending') continue
         if (S && S.halted) {
           // a milestone that was halted starts no more nodes
@@ -353,12 +371,18 @@ export async function dag(planId, lane, opts) {
           continue
         }
         if (S && S.recordedPending && !S.allowed[n.id]) continue
+        // a node held back for an edit overlap waits until another node has ended since it asked
+        if (deferredAt[n.id] !== undefined && ended <= deferredAt[n.id]) continue
+        // a replayed re-admission (-1) comes after every pending node that overlaps it and does not wait for it: that node may be the one
+        // that made the signal the re-admitted node's claim waits for, and it cannot enter beside the node (CRW-1467)
+        if (deferredAt[n.id] === -1 && nodes.some((o) => o !== n && state[o.id] === 'pending' && deferredAt[o.id] === undefined && !waitsFor(o.id)[n.id] && overlaps(o.regions, n.regions))) continue
         // no node is admitted while a signal is decided: what it makes (a revision, the regions of its nodes) is what the admission reads
         if (S && S.holds()) continue
         const running = active()
         if (running.length >= cap) continue
         if (running.some((r) => overlaps(r.regions, n.regions))) continue
         state[n.id] = 'running'
+        delete deferredAt[n.id]
         gates[n.id].open(true)
       }
     }
@@ -377,17 +401,51 @@ export async function dag(planId, lane, opts) {
       // and the release waits for the signal that comes of it, which re-plans and audits a delta for that plan or keeps the revision -
       // and asks again; without one the node is not released. A relay refusal while the plan the flow reads again is still the pinned
       // one (relay_plan_changed) raises the run-level hold plan_superseded (CRW-1291): the run does not follow the relay's new revision.
+      //
+      // A release the relay held back for an edit overlap (defer:edit_overlap) while another node of this dag held the regions is the
+      // dag's own doing (CRW-1467): the relay judges by the same rule as the dag, but it sees the nodes it holds released, which the dag
+      // admitted beside this one. The node gives up its claim and asks again: at once when another node ended since it asked (that node may
+      // be the one that held it back, whether it ended before or after the answer came and before the lane read it), otherwise pending
+      // again - it holds no slot of the cap and no regions - until another node has ended. A resume reads, from the record, the held-back
+      // answers the lane asked again after (crw.deferredAsks) and asks again after each of them as the record did, whatever the order the
+      // other lanes replay in: the node is pending again, and the pump takes it after the other pending nodes as soon as the cap and the
+      // regions let it, waiting for no end. A node held back while no other node runs and none ended since it asked is held back by something outside
+      // the dag: it is not released (unreleased), as before. Each re-ask after the record's needs another node to have ended, so a node
+      // asks again at most once for each other node.
       let rel = null
-      for (let ask = 0; ; ask++) {
+      let seen = 0
+      for (let ask = 0; ; ) {
         if (S) {
           S.forLane(n.id).plan(await crw.planRead(opts.milestone, n.id))
-          if (!(await claim(n, ask))) break
+          if (!(await claim(n, ask, seen))) break
         }
+        const askedAt = ended
         rel = await crw.release(planId, n.id, opts.milestone, PINNED)
+        if (!rel.released && rel.reason === DEFER_EDIT_OVERLAP && !rel.hold && rel.kind === 'executor') {
+          const recorded = seen < crw.deferredAsks(n.id)
+          const others = nodes.some((o) => o !== n && state[o.id] === 'running')
+          if (!recorded && !others && ended === askedAt) break
+          seen++
+          claimed[n.id] = false
+          rel = null
+          if (S) S.notify()
+          if (recorded || ended === askedAt) {
+            // pending again: the node holds no slot of the cap and no regions, and the pump takes it after the other pending nodes - a
+            // replayed answer as soon as the cap and the regions let it (a node that ran in its place, and the signal it made, replay
+            // first), a live one once another node has ended since its ask
+            deferredAt[n.id] = recorded ? -1 : askedAt
+            gates[n.id] = newGate()
+            state[n.id] = 'pending'
+            pump()
+            if (!(await gates[n.id].promise)) break
+          }
+          continue
+        }
         if (!S || rel.released || rel.reason !== 'plan_changed') break
         // the node holds no regions while it waits: the revision a re-plan makes may give it others
         claimed[n.id] = false
         rel = null
+        ask++
       }
       if (!rel) {
         out = { node: n.id, state: 'halted', reason: 'signal_halt' }
@@ -400,11 +458,13 @@ export async function dag(planId, lane, opts) {
       }
     } catch (e) {
       state[n.id] = 'ended'
+      ended++
       if (S) S.laneFinished(n.id)
       pump()
       throw e
     }
     state[n.id] = out && out.state === 'landed' ? 'landed' : 'ended'
+    ended++
     if (S) S.laneFinished(n.id)
     pump()
     return out
@@ -589,59 +649,6 @@ export async function explore(kind, questions, ctx, opts) {
   }
 }
 
-// exploreEvidence is SP-EXPL-3: a verdict with a defect of kind evidence_missing sends its evidence_question to an explorer
-// before the node's next round; its FINDINGS go to the next fix packet and the next reviewer packet. A verdict with no such defect
-// records the skip. The finding is never interpreted again by a model. ctx.head is the committed head the reviewer judged: the
-// explorer's read-only worktree is made at it, so the evidence is about the revision the question was asked of.
-export async function exploreEvidence(node, verdict, ctx) {
-  const questions = verdict.defects
-    .filter((d) => d.kind === 'evidence_missing' && d.evidence_question)
-    .map((d) => ({ id: d.ref, question: d.evidence_question.question, scope: d.file, files_needed: d.evidence_question.files_needed }))
-  return explore('evidence', questions, Object.assign({ node }, ctx || {}))
-}
-
-// review is the reviewer call of a round and its record: a fresh reviewer thread reads the committed head (SP-REV-1) and answers
-// VERDICT, and crw.review's record decides the state of the answer. A reviewer whose answer is null_model is asked once more on a
-// fresh thread; the result of that second call is the result. The state is verdict only for a completed, valid VERDICT of a
-// reviewer of another model family than the node's authors.
-async function review(record, node, plan, head, ci, opts) {
-  const round = opts.round || 1
-  const packet = reviewPacket(node, plan, head, ci, opts)
-  await crw.spawnDecision('REV_1', 'spawn', { node, role: 'reviewer', inputs: { round, head: head.commit } })
-  let call = await agent.call(packet, { agentType: 'reviewer', node, head: head.commit, schema: VERDICT, label: 'review:' + node + ':r' + round })
-  let rv = await record(node, head, plan.criteria_digest, call, {})
-  if (rv.state === 'null_model') {
-    call = await agent.call(packet, { agentType: 'reviewer', node, head: head.commit, schema: VERDICT, label: 'review:' + node + ':r' + round + ':retry' })
-    rv = await record(node, head, plan.criteria_digest, call, { retried: true })
-  }
-  return rv
-}
-
-// reviewHalt takes the review results that are not a verdict, which are never an executor fix and never tier evidence: held and
-// unknown hold the node, refused (independence_refused included) escalates as a configuration fault, null_model - asked twice
-// already - escalates, superseded stops.
-async function reviewHalt(node, rv) {
-  const call = rv.call.callId
-  switch (rv.state) {
-    case 'held':
-      await crw.hold(node, { reason: rv.reason || 'host_infra_unknown', call, source: 'review' })
-      return { node, state: 'held', reason: rv.reason, call }
-    case 'unknown':
-      await crw.hold(node, { reason: 'dispatch_unknown', call, source: 'review' })
-      return { node, state: 'held', reason: 'dispatch_unknown', call }
-    case 'refused': {
-      const esc = await crw.escalate(node, { reason: rv.reason || 'reviewer_refused', call, ask: 'configuration' })
-      return { node, state: 'escalated', reason: rv.reason || 'reviewer_refused', call, escalation: esc.id }
-    }
-    case 'null_model': {
-      const esc = await crw.escalate(node, { reason: 'reviewer_null_model', call, detail: rv.reason || '' })
-      return { node, state: 'escalated', reason: 'reviewer_null_model', call, escalation: esc.id }
-    }
-    default:
-      return { node, state: 'superseded', call }
-  }
-}
-
 // milestoneHalt takes a call of the design phase, of the close or of a re-plan that did not complete, or a gate that failed. held and
 // unknown hold the milestone (a resume goes on when the cause is gone, and runs the same call again as a new turn), superseded
 // stops, and everything else - refused, null_model, a gate that failed or cannot be settled, a QA that is INCONCLUSIVE, a crosscheck
@@ -711,21 +718,16 @@ async function tierStep(mint, node, ev) {
   return { id: recorded.id, checkpoint: recorded.checkpoint }
 }
 
-// install makes the composites members of crw. The operation the host registered as crw.review is the record of a review, and the
-// engine's crw.tierStep mints the id of a step; the composites replace them, calling them for the part they own.
+// install makes the composites members of crw. The engine's crw.tierStep mints the id of a step; the composite replaces it, calling it
+// for the part it owns.
 export function install(host) {
-  const record = host.review
   const mint = host.tierStep
   host.tierStep = (node, ev) => tierStep(mint, node, ev)
   host.dag = dag
   host.explore = explore
-  host.exploreEvidence = exploreEvidence
-  host.review = (node, plan, head, ci, opts) => review(record, node, plan, head, ci, opts || {})
-  host.reviewHalt = reviewHalt
   host.milestoneHalt = milestoneHalt
   host.land = land
   host.closeMilestone = closeMilestone
-  host.settleReviews = settleReviews
   host.evidence = evidence
   host.skip = (rule, info) => host.spawnDecision(rule, 'skip', info || {})
   return host

@@ -46,7 +46,7 @@ func TestCRW1330_CapabilitiesAgentRolesComeFromTheRoleHelperSnapshot(t *testing.
 	}
 	// No store yet: the summary is the snapshot's (four undecided roles, the compiled defaults of the flow-only keys), never the
 	// file's pairs. It describes every role of the snapshot (role.FlowRoles; the critic joins it, CRW-1434), whatever the file
-	// declares: this file is a six-role one, written before the critic.
+	// declares: this file was written before the critic and still names reviewer-final, a retired role key since CRW-1450.
 	section := pyjson.Map(capabilitiesWith(t, policy)["agentRoles"])
 	if strings.Contains(pyjson.Text(section["source"]), "policy.json") || len(section["roles"].([]any)) != len(role.FlowRoles()) {
 		t.Fatalf("agentRoles %v", section)
@@ -72,8 +72,11 @@ func TestCRW1330_CapabilitiesAgentRolesComeFromTheRoleHelperSnapshot(t *testing.
 	if section["source"] != store || section["digest"] != role.ReadFlowSnapshot(host.LookupEnv(os.LookupEnv)).Digest() || pyjson.Text(pyjson.Map(roles[0])["role"]) != "architect" {
 		t.Fatalf("agentRoles %v", section)
 	}
-	if byRole["executor"]["model"] != "anthropic/claude-haiku-5" || byRole["executor"]["reasoningEffort"] != "xhigh" || byRole["reviewer-final"]["model"] != "gpt-6.1-sol" || byRole["reviewer-final"]["state"] != "compiled_default" || byRole["architect"]["state"] != "undecided" {
+	if byRole["executor"]["model"] != "anthropic/claude-haiku-5" || byRole["executor"]["reasoningEffort"] != "xhigh" || byRole["critic"]["model"] != "gpt-6.1-sol" || byRole["critic"]["state"] != "compiled_default" || byRole["architect"]["state"] != "undecided" {
 		t.Fatalf("roles %v", byRole)
+	}
+	if _, listed := byRole["reviewer-final"]; listed {
+		t.Fatalf("the retired reviewer-final key is described as a role: %v", byRole)
 	}
 	// Every role described carries the design's model aliases, the critic's those of the gpt reviewers (CRW-1434).
 	for name, entry := range byRole {
@@ -86,8 +89,8 @@ func TestCRW1330_CapabilitiesAgentRolesComeFromTheRoleHelperSnapshot(t *testing.
 	if critic := execution.DefaultModelAliases(execution.AgentCritic); len(critic) != 1 || critic[0] != "ocx-gpt-6-1-sol" {
 		t.Fatalf("critic aliases %v", critic)
 	}
-	// The code's alias table: six rows, none for the explorer or the critic (named by agentType).
-	if len(section["aliases"].([]any)) != len(execution.DefaultAliasRows()) || len(section["aliases"].([]any)) != 6 || len(section["warnings"].([]any)) == 0 {
+	// The code's alias table: five rows, none for the explorer or the critic (named by agentType).
+	if len(section["aliases"].([]any)) != len(execution.DefaultAliasRows()) || len(section["aliases"].([]any)) != 5 || len(section["warnings"].([]any)) == 0 {
 		t.Fatalf("agentRoles %v", section)
 	}
 	// The relay's policy description (the worker policy receipt) is the file's, unchanged.

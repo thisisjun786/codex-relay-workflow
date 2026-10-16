@@ -103,7 +103,7 @@ func sessionPool(pool, maxThreads int) int {
 	return max(1, min(pool, maxThreads-1))
 }
 
-// ownerPairs are the seven role pairs of the run's table, as the orchestrator line carries them.
+// ownerPairs are the six role pairs of the run's table, as the orchestrator line carries them.
 func ownerPairs(table *engine.Policy) map[string]bound.Pair {
 	out := map[string]bound.Pair{}
 	for _, role := range bound.OrchestratorRoles {
@@ -215,7 +215,7 @@ func sessionFacts(req sessionFactRequest) []Fact {
 		add(FactOwnerBound, LevelPass, "", fmt.Sprintf("thread %s is bound to no live run: the start binds it", req.Thread))
 	}
 
-	// role_models: the seven pairs, a role without one or without an effort (only the decided parts are compared, CRW-1331), a
+	// role_models: the six pairs, a role without one or without an effort (only the decided parts are compared, CRW-1331), a
 	// reviewer of an author's family, and a critic of the architect's (the design audit refuses that one, CRW-1434)
 	var missing, effortless, pairs, overlap []string
 	for _, role := range bound.OrchestratorRoles {
@@ -236,7 +236,6 @@ func sessionFacts(req sessionFactRequest) []Fact {
 		authors  []string
 	}{
 		{"reviewer", []string{"architect", "executor", "executor-t1"}},
-		{"reviewer-final", []string{"architect", "executor", "executor-t1"}},
 		{"critic", []string{"architect"}},
 	} {
 		for _, author := range check.authors {

@@ -81,7 +81,7 @@ type UpResult struct {
 	BodyDigest  string `json:"body_digest"`
 }
 
-var reportKinds = map[string]bool{KindMilestoneReport: true, KindProjectBlocked: true, KindProjectDecisionRequest: true, KindJunDecisionRequest: true}
+var reportKinds = map[string]bool{KindMilestoneReport: true, KindProjectBlocked: true, KindProjectDecisionRequest: true, KindJunDecisionRequest: true, KindMergeRequest: true}
 
 // ReportID is the id a report of a run gets when the caller names none.
 func ReportID(kind, run, milestone, subject, digest string) string {
@@ -108,7 +108,7 @@ func LogicalID(kind, run, milestone, id string) string {
 func (w *Writer) Up(ctx context.Context, req UpRequest) (UpResult, error) {
 	var res UpResult
 	if !reportKinds[req.Kind] {
-		return res, fmt.Errorf("report: %q is no report kind (milestone_report, project_blocked, project_decision_request, jun_decision_request)", req.Kind)
+		return res, fmt.Errorf("report: %q is no report kind (milestone_report, project_blocked, project_decision_request, jun_decision_request, merge_request)", req.Kind)
 	}
 	if req.Run == "" || len(req.Body) == 0 {
 		return res, errors.New("report: a report names its run and has a body")
@@ -367,6 +367,7 @@ type Reporter struct {
 }
 
 var _ ops.Reporter = Reporter{}
+var _ ops.MergeRequester = Reporter{}
 
 // ReportUp implements ops.Reporter. The report's id is derived from the run, the milestone and the tip the close judged, so a replay of the
 // operation finds its row; it is returned for the operation's own row.
@@ -376,6 +377,26 @@ func (r Reporter) ReportUp(ctx context.Context, rep ops.Report) (string, error) 
 	res, err := r.W.Up(ctx, UpRequest{ID: id, Kind: KindMilestoneReport, Run: r.Run, Milestone: rep.Milestone, Plan: rep.Plan, Body: body})
 	if err != nil {
 		return "", err
+	}
+	return res.ReportID, nil
+}
+
+// MergeRequest implements ops.MergeRequester: the request to merge a pull request goes up as a merge_request report. The request id the
+// operation derived (once for each pull request and head) is the report's id, so a replay finds its row and the store dedupes it.
+func (r Reporter) MergeRequest(ctx context.Context, req ops.MergeRequest) (string, error) {
+	id := req.RequestID
+	if id == "" {
+		id = "rep_" + shortHash(r.Run, req.Milestone, strings.ToLower(req.PR), req.Head)
+	}
+	res, err := r.W.Up(ctx, UpRequest{ID: id, Kind: KindMergeRequest, Run: r.Run, Milestone: req.Milestone, Plan: req.Plan,
+		Subject: "merge request " + req.PR, Body: mergeBody(req)})
+	if err != nil {
+		return "", err
+	}
+	if res.Delivery == "" && res.Reason != "" {
+		// the channel refused to stage it (the hierarchy drifted, say): the report row stands, but the operation must not record the request
+		// as made, or the once-per-head rule would never let a replay stage it; the report row is replayed by the retry
+		return "", fmt.Errorf("report: the merge request of %s was not staged for the 부모 (%s): it is retried", req.PR, res.Reason)
 	}
 	return res.ReportID, nil
 }
@@ -397,6 +418,22 @@ func MilestoneBody(rep ops.Report) []byte {
 	}
 	fmt.Fprintf(&b, "\nFinal gate: %s\nCrosscheck: %s\nReflection: %s\nFinal review: %s\nAudit: %s\n", compact(rep.Close.Gate), compact(rep.Close.Crosscheck), reflection,
 		compact(rep.Close.Final), compact(rep.Close.Audit))
+	return []byte(b.String())
+}
+
+// mergeBody is the body of a merge request: the pull request ref and the SHAs, what the lane judged (checks, crosscheck at the head, the
+// review comments) and nothing else (no path, host or id).
+func mergeBody(req ops.MergeRequest) []byte {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Milestone %s of plan %s asks to merge pull request %s.\n\nHead: %s\nBase: %s\n", req.Milestone, req.Plan, req.PR, req.Head, req.Base)
+	fmt.Fprintf(&b, "\nChecks at the head: %s\n", req.Checks)
+	cc := req.Crosscheck
+	fmt.Fprintf(&b, "Crosscheck at the head: %s at %s, round %d, %s/%s\n", cc.Verdict, cc.Head, cc.Round, cc.EngineFamily, cc.Model)
+	if req.BotsNotConnected {
+		b.WriteString("Review comments: review bots not connected\n")
+	} else {
+		fmt.Fprintf(&b, "Review comments unresolved: %d\n", req.Unresolved)
+	}
 	return []byte(b.String())
 }
 
