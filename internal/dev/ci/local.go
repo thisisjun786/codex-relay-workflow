@@ -1039,8 +1039,9 @@ func localStepLabel(step localStep) string {
 const localTimeoutMark = "panic: test timed out"
 
 // localReason is the reason a failed command's output gives: the failing test lines that come
-// before the last lines (so a test that failed early still reaches the record), then the last
-// localReasonLines lines, cut to localReasonBytes. The reason stays bounded however long the output.
+// before the last lines (so a test that failed early still reaches the record), each --- FAIL line
+// with the message lines that say why (localFailMessages), then the last localReasonLines lines,
+// cut to localReasonBytes. The reason stays bounded however long the output.
 func localReason(output string) string {
 	text := strings.TrimRight(output, "\n")
 	if text == "" {
@@ -1051,13 +1052,26 @@ func localReason(output string) string {
 	if cut < 0 {
 		cut = 0
 	}
+	head := all[:cut]
+	used := map[int]bool{}
 	var marked []string
-	for _, line := range all[:cut] {
-		if localMarkedLine(line) {
-			marked = append(marked, localCut(line, localReasonLine))
-			if len(marked) == localReasonMarked {
-				break
-			}
+	for i, line := range head {
+		if len(marked) == localReasonMarked {
+			break
+		}
+		if used[i] || !localMarkedLine(line) {
+			continue
+		}
+		used[i] = true
+		messages := localFailMessages(head, i, used)
+		if room := localReasonMarked - len(marked) - 1; len(messages) > room {
+			messages = messages[:room]
+		}
+		block := append([]int{i}, messages...)
+		sort.Ints(block)
+		for _, at := range block {
+			used[at] = true
+			marked = append(marked, localCut(head[at], localReasonLine))
 		}
 	}
 	tail := localCutEnd(strings.Join(all[cut:], "\n"), localReasonBytes)
@@ -1065,6 +1079,51 @@ func localReason(output string) string {
 		tail = strings.Join(marked, "\n") + "\n...\n" + tail
 	}
 	return ": " + tail
+}
+
+// localFailMessages are the indexes of the message lines of the --- FAIL line at lines[at], at most
+// localReasonMessages of them, none already used. go test prints a failed test's messages below its
+// --- FAIL line, indented deeper than it (a subtest's --- FAIL line and its own messages one level
+// deeper again). go test -v prints them before it instead, as the indented lines that follow the
+// test's last "=== RUN", "=== CONT" or "=== NAME" line. A message line is indented and is neither a
+// marked line nor a "===" line, so unindented stdout is never taken for a message.
+func localFailMessages(lines []string, at int, used map[int]bool) []int {
+	trimmed := strings.TrimSpace(lines[at])
+	if !strings.HasPrefix(trimmed, "--- FAIL:") {
+		return nil
+	}
+	message := func(i int, below int) bool {
+		line := lines[i]
+		inner := strings.TrimSpace(line)
+		return !used[i] && inner != "" && localIndent(line) > below && !localMarkedLine(line) && !strings.HasPrefix(inner, "===")
+	}
+	var found []int
+	for i := at + 1; i < len(lines) && len(found) < localReasonMessages && message(i, localIndent(lines[at])); i++ {
+		found = append(found, i)
+	}
+	if len(found) > 0 {
+		return found
+	}
+	fields := strings.Fields(trimmed)
+	if len(fields) < 3 {
+		return nil
+	}
+	name := fields[2]
+	for start := at - 1; start >= 0; start-- {
+		run := strings.Fields(lines[start])
+		if len(run) == 3 && run[0] == "===" && (run[1] == "RUN" || run[1] == "CONT" || run[1] == "NAME") && run[2] == name {
+			for i := start + 1; i < at && len(found) < localReasonMessages && message(i, 0); i++ {
+				found = append(found, i)
+			}
+			break
+		}
+	}
+	return found
+}
+
+// localIndent is the width of a line's leading spaces and tabs.
+func localIndent(line string) int {
+	return len(line) - len(strings.TrimLeft(line, " \t"))
 }
 
 // localMarkedLine reports whether a line of a test run names a failing test or a panic.
@@ -1090,12 +1149,15 @@ func localCutEnd(text string, n int) string {
 }
 
 // The bounds of a failure's reason: the last lines of the output and at most this many bytes of
-// them, plus up to localReasonMarked failing lines from earlier in the output.
+// them, plus up to localReasonMarked marked lines from earlier in the output (failing lines and the
+// message lines of each --- FAIL line, at most localReasonMessages per FAIL line), each cut to
+// localReasonLine bytes.
 const (
-	localReasonLines  = 40
-	localReasonBytes  = 4096
-	localReasonMarked = 20
-	localReasonLine   = 300
+	localReasonLines    = 40
+	localReasonBytes    = 4096
+	localReasonMarked   = 20
+	localReasonMessages = 6
+	localReasonLine     = 300
 )
 
 // localEngineSources are the paths the engine's plan is compiled from: the engine package, the command
