@@ -5,9 +5,9 @@ import { answeredQuestions, architectPacket, auditFindings, designAnswersPacket,
 export const meta = { name: 'project-lane', description: 'Run the issues of a milestone: background explorers, architect, design audit by the critic, explorers, one lane per issue node, milestone close and report', phases: ['explore', 'design', 'build', 'milestone'], args: { plan: 'string', milestone: 'string', cap: 'number' } }
 
 // The project lane. Explorers first read the repository for each node of the milestone (the background questions, CRW-1466), the
-// milestone is designed once by its architect over what they found, the DESIGN is audited by the critic, of another model family,
+// milestone is designed once by its architect over what they found, the DESIGN is audited by the critic in a separate review execution,
 // before any executor starts, every issue node then runs its own lane (an executor, the unit check of its uncommitted work by a
-// review tool of another model family, run in Go with no reviewer agent, the run's commit and verification, the land), and the
+// separately invoked review tool, run in Go with no reviewer agent or agent thread id, the run's commit and verification, the land). An observed same-thread review is warning-only and recorded, and the run continues; model family is provenance. The
 // milestone is closed over what the lanes integrated. Every fact a lane uses comes from the journal: the plan of its issue from the
 // design revision it was released under (crw.issuePlan), the evidence of its tier from the calls and checks it made. The operations
 // are the host's (internal/flow/ops); the composites (crw.dag, crw.land, ...) come from crw:lib/lane.
@@ -32,7 +32,7 @@ const END_CONDITIONS = []
 for (const n of ms.nodes) for (const c of n.end_condition || []) END_CONDITIONS.push({ issue: n.issue, command: c })
 
 // The design audit of a DESIGN of the architect: its open questions go to explorers or, when out of the architect's authority or
-// beyond the explorer cap, to the orchestrator (crw.exploreRoute), the critic (a role of its own, of another model family than the
+// beyond the explorer cap, to the orchestrator (crw.exploreRoute), the critic (a role of its own, in a separate review execution from the
 // architect, CRW-1452) audits the DESIGN with the answers, after the answers an open question got have gone back to the architect on
 // its own thread (design-answers, CRW-1466), and needs_changes sends it back to the architect on its own thread, for
 // AUDIT_ROUNDS rounds. From the second round on the critic's packet carries the findings of the earlier rounds by id (r<round>.<index>)
@@ -519,7 +519,7 @@ try {
 async function closeAndReport() {
   phase('milestone')
   // The close: the final gate over the integrated head (test evidence, and the QA receipt for a driven surface), the crosscheck over the
-  // range with the passed gate as its input (two passes of a review engine of another model family than every author, run by the host),
+  // range with the passed gate as its input (two passes of a review engine in a separate tool invocation, run by the host; no agent thread id),
   // and the close recorded over the tip it judged. A gate that fails or cannot be settled ends the milestone here, and the crosscheck does
   // not run; a crosscheck that does not verify the range ends it too, and nothing is closed, reflected on or reported (crw:lib/close).
   // The halt carries what the close's stop does: the ask, the crosscheck's V in the escalation's evidence and in the run's value, and the

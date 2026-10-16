@@ -33,7 +33,7 @@ var codexEffortWord = regexp.MustCompile(`^[a-z]+$`)
 
 // Validate refuses a configuration the profiles cannot pass to codex: a set model is given inside a TOML string (model="..."), so it
 // may hold no space, quote, backslash or control character, and its family must be one execution.ModelFamily can tell (the record
-// names it, and the acceptance judges the reviewer's independence by it); a set effort must be one lower-case word.
+// names it as provenance, not as an author-family comparison); a set effort must be one lower-case word.
 func (c CodexReviewConfig) Validate() error {
 	m := strings.TrimSpace(c.Model)
 	if m != "" && strings.ContainsFunc(m, func(r rune) bool {

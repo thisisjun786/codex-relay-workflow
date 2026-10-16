@@ -1,11 +1,15 @@
 package scenario
 
 import (
+	"context"
+	"encoding/json"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
 )
 
 func planCycleWorld(t *testing.T) *Lab {
@@ -27,8 +31,12 @@ func planCycleWorld(t *testing.T) *Lab {
 		change("two")
 		return nil
 	})
-	// at A's unit check, after its build (where its review was before CRW-1465)
-	lab.UnitChecks("A", UnitCheck{Do: func() { change("one") }})
+	// Keep P2 until its signal has planned and reached the audit. The unit check and
+	// signal binding run concurrently; changing back there could hide P2 from the signal.
+	lab.On("^design-audit:replan-s2:r1$", func(*Call) *fakehostPlan {
+		change("one")
+		return nil
+	})
 	return lab
 }
 
@@ -140,4 +148,44 @@ func TestPlanDigestReappearsUnchangedResumeZeroLive(t *testing.T) {
 			checkPlanCycle(t, lab)
 		})
 	}
+}
+
+// signalAfterUnitCheck delays the second signal bind until the unit check finished: the red test's
+// deterministic shape of "the unit check answered before the second signal read the plan"
+// (CRW-1584).
+type signalAfterUnitCheck struct {
+	engine.Op
+	checked <-chan struct{}
+}
+
+func (o signalAfterUnitCheck) Run(ctx context.Context, req engine.OpRequest) (engine.OpResult, error) {
+	var args []json.RawMessage
+	var k int
+	if json.Unmarshal(req.Args, &args) == nil && len(args) > 1 {
+		_ = json.Unmarshal(args[1], &k)
+	}
+	if k == 2 {
+		select {
+		case <-o.checked:
+		case <-ctx.Done():
+			return engine.OpResult{}, ctx.Err()
+		}
+	}
+	return o.Op.Run(ctx, req)
+}
+
+// A unit check that finishes before the second signal bind reads the plan must still leave the
+// intermediate plan judged: the signal sees P2 (CRW-1584).
+func TestPlanCycleKeepsIntermediatePlanWhenUnitCheckFinishesFirst(t *testing.T) {
+	lab := planCycleWorld(t)
+	checked := make(chan struct{})
+	var once sync.Once
+	lab.OnSettled(func(row engine.Event) {
+		if row.Op == "crw.unitCheck" {
+			once.Do(func() { close(checked) })
+		}
+	})
+	lab.OldOps = map[string]engine.Op{ops.NameSignalBind: signalAfterUnitCheck{Op: lab.lane.Ops()[ops.NameSignalBind], checked: checked}}
+	mustRun(t, lab)
+	checkPlanCycle(t, lab)
 }

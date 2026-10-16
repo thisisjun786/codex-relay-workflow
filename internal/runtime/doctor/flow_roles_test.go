@@ -45,7 +45,7 @@ func TestCRW1330_DoctorFlowRolesWarnsAboutAnUnreadAgentRolesSection(t *testing.T
 	if code != 0 || report["store"] != store || report["present"] != true || len(report["roles"].([]any)) != 6 || len(report["digest"].(string)) != 64 {
 		t.Fatalf("exit %d: %s", code, text)
 	}
-	for _, want := range []string{"agent-roles", "no longer reads", policy, "family", "executor-t1", "critic", "undecided"} {
+	for _, want := range []string{"agent-roles", "no longer reads", policy, "executor-t1", "critic", "undecided"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the report lacks %q:\n%s", want, text)
 		}

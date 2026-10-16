@@ -3,16 +3,13 @@ package dagsched
 import (
 	"context"
 	"testing"
-
-	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 )
 
 // TestAgentReleaseRecordsTheAuthorPairTheAcceptanceJudges (CRW-1354): a release can record the pair that wrote the node's work when it is
 // known as the release is decided - a head made outside a run, whose authoring subagent the run read back from the host - in the
-// execution row's author_model and author_effort (AgentReleaseOptions). The agent acceptance reads that pair as an observed author pair
-// (authorPairs, unchanged): a reviewer of another family is accepted with no executor call recorded, a reviewer of the author's family
-// is independence_refused, and a release that records none leaves the acceptance independence_unproven. A pair with white space around
-// it is refused as malformed; the stored form is unchanged.
+// execution row's author_model and author_effort (AgentReleaseOptions). The agent acceptance keeps that pair in its author-pair digest
+// (authorPairs, unchanged), while model-family overlap and missing author metadata do not block a verified review. A pair with white space
+// around it is refused as malformed; the stored form is unchanged.
 func TestAgentReleaseRecordsTheAuthorPairTheAcceptanceJudges(t *testing.T) {
 	t.Parallel()
 	one := func(n string) agentSpec {
@@ -52,13 +49,15 @@ func TestAgentReleaseRecordsTheAuthorPairTheAcceptanceJudges(t *testing.T) {
 		t.Fatal(err)
 	}
 	k.review("same", reviewerModel, "verified", criteria)
-	_, err = k.accept("same")
-	wantAgentRefusal(t, "a reviewer of the recorded author's family", err, contract.RefusalDispositionConflict, IndependenceRefused)
+	if got, err := k.accept("same"); err != nil || got.AcceptanceID == "" {
+		t.Fatalf("same-family reviewer acceptance: %+v %v", got, err)
+	}
 
 	if err := release("none", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	k.review("none", reviewerModel, "verified", criteria)
-	_, err = k.accept("none")
-	wantAgentRefusal(t, "no author recorded or observed", err, contract.RefusalDispositionConflict, IndependenceUnproven)
+	if got, err := k.accept("none"); err != nil || got.AcceptanceID == "" {
+		t.Fatalf("missing author model metadata must not block acceptance: %+v %v", got, err)
+	}
 }

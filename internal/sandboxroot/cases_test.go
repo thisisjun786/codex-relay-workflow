@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -60,6 +61,18 @@ type world struct {
 	sub  func(string) string
 }
 
+// gitMeta materializes a Git directory at dir: the regular HEAD and objects directory a marker must
+// resolve to (CRW-1588: a .git that holds no repository is no marker).
+func gitMeta(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(dir, "objects"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "HEAD"), []byte("ref: refs/heads/main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // materialize builds the case's fake tree, configuration files and account home in a temporary
 // directory and points the rule at them. Nothing of the real host is read.
 func materialize(t *testing.T, c Case) world {
@@ -75,12 +88,12 @@ func materialize(t *testing.T, c Case) world {
 		}
 	}
 	for _, dir := range c.GitDirs {
-		if err := os.MkdirAll(filepath.Join(sub(dir), ".git"), 0o755); err != nil {
-			t.Fatal(err)
-		}
+		gitMeta(t, filepath.Join(sub(dir), ".git"))
 	}
-	for _, dir := range c.GitFiles {
-		if err := os.WriteFile(filepath.Join(sub(dir), ".git"), []byte("gitdir: /elsewhere\n"), 0o644); err != nil {
+	for i, dir := range c.GitFiles {
+		target := filepath.Join(root, "gitmeta", strconv.Itoa(i))
+		gitMeta(t, target)
+		if err := os.WriteFile(filepath.Join(sub(dir), ".git"), []byte("gitdir: "+target+"\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}

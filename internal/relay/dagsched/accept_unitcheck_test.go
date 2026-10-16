@@ -69,9 +69,8 @@ func TestAgentAcceptsOnAUnitCheckRecordWithoutAReviewerCall(t *testing.T) {
 	}
 }
 
-// A unit check is judged as a reviewer is: a model of the author's family (read from the model, or the family the result records) is refused independence_refused, a result that names no model
-// independence_unproven, a verdict other than verified reviewer_not_verified, and a check given another criteria set than the plan's criteria_set_changed. Nothing is written.
-func TestAgentRefusesAUnitCheckOfTheAuthorFamily(t *testing.T) {
+// Unit-check model family and model availability do not gate a verified check. Verdict and criteria checks remain enforced.
+func TestAgentAcceptsUnitChecksRegardlessOfModelFamily(t *testing.T) {
 	t.Parallel()
 	one := func(n string) agentSpec { return agentSpec{name: n, files: map[string]string{n + ".txt": n + "\n"}} }
 	k := newAgentKit(t, one("same"), one("family"), one("nomodel"), one("needs"), one("digest"))
@@ -85,16 +84,18 @@ func TestAgentRefusesAUnitCheckOfTheAuthorFamily(t *testing.T) {
 	}
 
 	check("same", func(r *reviewadapter.Result) { r.Model, r.EngineFamily = "claude-fake-opus", "" }, criteria)
-	_, err := k.accept("same")
-	wantAgentRefusal(t, "a unit check of the author's family", err, contract.RefusalDispositionConflict, IndependenceRefused)
+	if got, err := k.accept("same"); err != nil || got.AcceptanceID == "" {
+		t.Fatalf("same-family unit check: %+v, %v", got, err)
+	}
 
 	check("family", func(r *reviewadapter.Result) { r.Model, r.EngineFamily = reviewerModel, "claude" }, criteria)
-	_, err = k.accept("family")
-	wantAgentRefusal(t, "a unit check whose recorded family is the author's", err, contract.RefusalDispositionConflict, IndependenceRefused)
+	if got, err := k.accept("family"); err != nil || got.AcceptanceID == "" {
+		t.Fatalf("unit check with author-family metadata: %+v, %v", got, err)
+	}
 
 	check("nomodel", func(r *reviewadapter.Result) { r.Model, r.EngineFamily = "", "" }, criteria)
-	_, err = k.accept("nomodel")
-	wantAgentRefusal(t, "a unit check that names no model", err, contract.RefusalDispositionConflict, IndependenceUnproven)
+	_, err := k.accept("nomodel")
+	wantAgentRefusal(t, "a unit check without recorded model provenance", err, contract.RefusalDispositionConflict, ReviewerMissing)
 
 	check("needs", func(r *reviewadapter.Result) { r.Verdict = reviewadapter.VerdictNeedsChanges }, criteria)
 	_, err = k.accept("needs")
@@ -104,8 +105,8 @@ func TestAgentRefusesAUnitCheckOfTheAuthorFamily(t *testing.T) {
 	_, err = k.accept("digest")
 	wantAgentRefusal(t, "a unit check given another criteria set", err, contract.RefusalCriteriaSetChanged, "saw criteria")
 
-	if n := k.agentAcceptanceRows(); n != 0 {
-		t.Fatalf("dag_agent_acceptances holds %d rows after the refusals, want none", n)
+	if n := k.agentAcceptanceRows(); n != 2 {
+		t.Fatalf("dag_agent_acceptances holds %d rows after accepts and refusals, want two accepts", n)
 	}
 }
 
@@ -191,10 +192,8 @@ func TestAgentStillAcceptsOnAReviewerVerdictOfAnEarlierRun(t *testing.T) {
 	wantAgentRefusal(t, "a reviewer call of another run", err, contract.RefusalDispositionConflict, ReviewerMissing)
 }
 
-// The family a unit check declares is read in canonical form (trimmed, lower case), as an author's family is read from its model: ' Claude ' against an
-// author of family claude is the author's own family (independence_refused). A declared family that is blank after the trim, or is not a family name (it
-// carries a provider prefix, a dash or a space), is unknown (independence_unproven), as the family of a check that names no model is. Nothing is written.
-func TestAgentReadsTheDeclaredFamilyOfAUnitCheckCanonically(t *testing.T) {
+// Declared engine-family spelling and validity do not gate acceptance.
+func TestAgentDoesNotGateOnDeclaredUnitCheckFamily(t *testing.T) {
 	t.Parallel()
 	one := func(n string) agentSpec { return agentSpec{name: n, files: map[string]string{n + ".txt": n + "\n"}} }
 	k := newAgentKit(t, one("spelled"), one("upper"), one("blank"), one("prefixed"), one("model"), one("spaced"))
@@ -208,21 +207,24 @@ func TestAgentReadsTheDeclaredFamilyOfAUnitCheckCanonically(t *testing.T) {
 	}
 
 	check("spelled", " Claude ")
-	_, err := k.accept("spelled")
-	wantAgentRefusal(t, "a unit check declaring ' Claude ' over an author of family claude", err, contract.RefusalDispositionConflict, IndependenceRefused)
+	if got, err := k.accept("spelled"); err != nil || got.AcceptanceID == "" {
+		t.Fatalf("declared family must not block acceptance: %+v, %v", got, err)
+	}
 
 	check("upper", "CLAUDE")
-	_, err = k.accept("upper")
-	wantAgentRefusal(t, "a unit check declaring 'CLAUDE'", err, contract.RefusalDispositionConflict, IndependenceRefused)
+	if got, err := k.accept("upper"); err != nil || got.AcceptanceID == "" {
+		t.Fatalf("declared family must not block acceptance: %+v, %v", got, err)
+	}
 
 	for node, family := range map[string]string{"blank": "  \t", "prefixed": "anthropic/claude", "model": "claude-opus", "spaced": "cla ude"} {
 		check(node, family)
-		_, err = k.accept(node)
-		wantAgentRefusal(t, "a unit check declaring the family "+family, err, contract.RefusalDispositionConflict, IndependenceUnproven)
+		if got, err := k.accept(node); err != nil || got.AcceptanceID == "" {
+			t.Errorf("declared family %q must not block acceptance: %+v, %v", family, got, err)
+		}
 	}
 
-	if n := k.agentAcceptanceRows(); n != 0 {
-		t.Fatalf("dag_agent_acceptances holds %d rows after the refusals, want none", n)
+	if n := k.agentAcceptanceRows(); n != 6 {
+		t.Fatalf("dag_agent_acceptances holds %d rows, want six accepted checks", n)
 	}
 }
 

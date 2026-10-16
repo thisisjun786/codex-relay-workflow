@@ -105,7 +105,7 @@ export const DESIGN = obj({
 })
 
 // DESIGN_AUDIT: the independent audit of a DESIGN before the first executor starts. The auditor is a reviewer of another
-// model family than the architect; needs_changes sends the DESIGN back to the architect (the same thread), and the executors
+// separate review execution; an observed same-thread review is warning-only and recorded without blocking; needs_changes sends the DESIGN back to the architect (the same thread), and the executors
 // start only on an approved audit. The findings name what must change, by the decision or issue they concern.
 export const DESIGN_AUDIT = obj({
   verdict: { type: 'string', enum: ['approved', 'needs_changes'] },

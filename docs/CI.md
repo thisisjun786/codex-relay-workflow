@@ -21,7 +21,7 @@ workflow starts only on a manual dispatch, and integration does not wait on it.
 | `node --test plugins/crw/skills/*/tests/*.test.mjs` | `skill-scripts-node`: the skills' own Node tests (the skills ported from CXC carry them), on Node 24.20.0, only when a skill path changed from the run's own base (a pull request from its merge base); a run that skips them is success |
 | `npm ci`, `npm test`, `npm run build -- --outDir "$RUNNER_TEMP/gui-built" --emptyOutDir`, `crw-dev ci gui-drift --built "$RUNNER_TEMP/gui-built"` | `gui`: the screens under `web/` build and match the committed `internal/gui/assets` tree byte for byte, on Node 24.20.0, only when a watched path changed ([below](#the-gui-job)); `make gui` runs the same three commands locally |
 | `make lint` | `go-product` leg `lint`: vet (also of the `dev` and `integration` tagged packages), staticcheck and gofmt |
-| `make test-part TEST_PART=<n>` | `go-product` legs `test-<n>` and `test-rest`: the Go tests and the contract corpus; together the parts are `make test` |
+| `make test-part TEST_PART=<part>` | `go-product` legs `test-1` through `test-5`, `test-rest`, and `test-dev`: the Go tests and the contract corpus; together the parts are `make test` |
 | `CGO_ENABLED=0 make dist` per target | `go-product` leg `dist`: static `crw` for linux/amd64, linux/arm64 and darwin/arm64, uploaded with `SHA256SUMS` |
 | `CRW_TEST_BINARY=<crw> go test -tags integration ./internal/runtime/integration/...` | `dist`: installs release archives of the linux/amd64 binary it built (and a relinked second one) into an isolated home with `crw install` and runs the plugin's declared Stop hook and MCP server against them (IS-1, IS-7, IS-8) |
 
@@ -35,15 +35,31 @@ See the [workflow](../.github/workflows/ci.yml) for the exact job inputs.
 ## The local run
 
 `crw-dev ci local` (and `make ci-local`) runs every job and step of
-[the workflow](../.github/workflows/ci.yml) locally, in the same order and at the same pinned
+[the workflow](../.github/workflows/ci.yml) locally, at the same pinned
 versions, and writes a `verification-record/1`. The record of the integration batch is the evidence, and the hosted run is optional: it runs only when started with
 `workflow_dispatch`.
 
-The run makes a **clean worktree** of the commit being verified under the work root (the XDG state directory, or --work-root)
+Independent jobs and matrix legs run concurrently. `-jobs N` bounds the number in flight;
+`-jobs 1` runs them serially. The default (`-jobs 0`) is the CPU count divided by
+`-parallel` (Go package parallelism, default 4), rounded down with a minimum of one:
+20 CPUs select five jobs. Steps within a job remain sequential. The aggregate `dev-gate`
+waits for every preceding job, including failed jobs. Output and record entries stay in
+workflow order, with each job's output kept together.
+
+The run makes **clean worktrees** of the commit being verified under the work root (the XDG state directory, or --work-root)
 (`git worktree add --detach`), with `HOME` and the XDG directories pointed into a
 temporary home and `TZ=UTC`, so uncommitted changes in the caller's checkout and the host's
 caches cannot change the result. The record names the commit and its tree, never the caller's
-working state. The worktree is removed afterwards. The engine that decides the steps is the caller's own source (`internal/dev/ci`, `cmd/crw-dev`, `Makefile`, and `internal/crwconfig`, whose tool-root code the engine runs to build every step's environment), so the run refuses with `engine_differs_from_commit` when the working tree under any of those paths differs from the commit's files byte for byte: an edited, deleted or extra file, whatever the index marks (assume-unchanged, skip-worktree) or the ignore files say. An ignored file is let through only when Go does not compile it (a log, a coverage file); a FIFO, device or other special file in place of an engine file is a difference and is never opened. A prebuilt `crw-dev` is held to the same rule: `go build` stamps the revision and the modified flag in it, and the run refuses with `engine_differs_from_commit` when the binary was built from a modified tree or from a revision whose engine paths differ from the verified commit's (`make crw-dev` from a clean checkout of the commit builds the right one). A binary with no revision (`go run`, `go test`, `-buildvcs=false`) is compiled from the working tree that the byte comparison has just checked, so the comparison is all there is to bind it. No record is written or reused from such a checkout. The `secrets` step fetches the linux x64 Gitleaks archive and calls `sha256sum`, so a plan that carries it refuses any other host with `unsupported_platform` before a step runs. `GOCACHE` and `NPM_CONFIG_CACHE` are inherited: they decide how fast a step runs, not what it decides. The configuration file's `paths.build_cache` replaces the inherited `GOCACHE` and `paths.build_work` is the steps' `GOTMPDIR`; a root the file does not name passes nothing. The module cache is not inherited, not even `paths.module_cache`, and GOFLAGS is set by the engine ([where crw keeps its files](runtime-install.md#where-crw-keeps-its-files)).
+working state. The worktrees are removed afterwards. The engine that decides the steps is the caller's own source (`internal/dev/ci`, `cmd/crw-dev`, `Makefile`, `internal/crwconfig`, whose tool-root code the engine runs to build every step's environment, and `internal/gitprobe`, whose repository marker check refuses a step TMPDIR before the steps run), so the run refuses with `engine_differs_from_commit` when the working tree under any of those paths differs from the commit's files byte for byte: an edited, deleted or extra file, whatever the index marks (assume-unchanged, skip-worktree) or the ignore files say. An ignored file is let through only when Go does not compile it (a log, a coverage file); a FIFO, device or other special file in place of an engine file is a difference and is never opened. A prebuilt `crw-dev` is held to the same rule: `go build` stamps the revision and the modified flag in it, and the run refuses with `engine_differs_from_commit` when the binary was built from a modified tree or from a revision whose engine paths differ from the verified commit's (`make crw-dev` from a clean checkout of the commit builds the right one). A binary with no revision (`go run`, `go test`, `-buildvcs=false`) is compiled from the working tree that the byte comparison has just checked, so the comparison is all there is to bind it. No record is written or reused from such a checkout. The `secrets` step fetches the linux x64 Gitleaks archive and calls `sha256sum`, so a plan that carries it refuses any other host with `unsupported_platform` before a step runs.
+
+Each job has its own checkout, home/XDG directories, `TMPDIR`, runner output/scripts,
+and `GOCACHE`. Job caches override the caller's inherited or configured build cache.
+`GOTMPDIR` is removed from job environments so Go build work and test temporaries use
+that job's `TMPDIR`, including when a test temporarily changes it. Concurrent builds
+cannot replace another job's test binary.
+`NPM_CONFIG_CACHE` may still be inherited. The module cache is not inherited, not even
+`paths.module_cache`, and GOFLAGS is set by the engine
+([where crw keeps its files](runtime-install.md#where-crw-keeps-its-files)).
 
 ### The local step to GitHub job mapping
 
@@ -70,7 +86,7 @@ working state. The worktree is removed afterwards. The engine that decides the s
 | `go-product` | the light mode notice | not run: hosted-only step |
 | `go-product` | the mirror pair, checkout, `setup-go` | as above |
 | `go-product` | `make lint` (leg `lint`) | run |
-| `go-product` | `make test-part TEST_PART=<n>` (legs `test-1`..`test-rest`) | run, one leg at a time |
+| `go-product` | `make test-part TEST_PART=<part>` (legs `test-1`..`test-5`, `test-rest`, `test-dev`) | run, subject to `-jobs` |
 | `go-product` | the three `make dist` builds and `sha256sum` (leg `dist`) | run |
 | `go-product` | `CRW_TEST_BINARY=... go test -tags integration ./internal/runtime/integration/...` (leg `dist`) | run |
 | `go-product` | the four `upload-artifact` steps | not run: nothing is uploaded locally |
@@ -98,7 +114,9 @@ ran, read from the package result lines go test prints (`[no tests to run]`, `[n
 absent when no step printed such a line and from every record written before it, which a reader takes as unknown, never as zero, and
 a count of 0 changes no result (the flow's gate warns `no_tests_run`), and `runEnv` (CRW-1489, additive): where the run ran,
 as `cwd` (the directory `crw-dev` ran in), `root` (the repository root it verified), `callerTmpDir` (the caller's `TMPDIR`,
-empty when it was unset), `tmpDir` (the fresh `TMPDIR` its steps got) and `home` (the run's own `HOME`). These are paths,
+empty when it was unset), `tmpDir` and `home` (the run's own temporary and home roots).
+Multiple jobs use separate children of these roots; a single-job plan uses the roots directly.
+These are paths,
 written as they are. A failed checkout's record carries it too. It is absent from every record written before it, which a
 reader takes as unknown, and it is not a reuse key: a reused record keeps the `runEnv` of the run that verified it. `digest` is the sha256 of the
 canonical serialization: the record as JSON with its keys sorted, no indentation and no HTML
@@ -107,11 +125,14 @@ pin is named in `pinMismatch`, and such a record is never reused.
 
 A step runs under `bash --noprofile --norc -eo pipefail`, as the runner does, so its first
 failed command fails it. A failed step's `reason` gives the exit status, the failing test lines
-of its output (a `--- FAIL`, `FAIL` or `panic:` line, at most 20) and the last 40 lines of the
-output, at most 4 KB; a Go test that outlived its `-timeout` is named with a `timeout:` prefix,
+of its output (a `--- FAIL`, `FAIL` or `panic:` line), their associated diagnostic lines,
+and the last 40 lines of the output. Selected lines are preserved in full, including long
+UTF-8 messages; failure blocks are not dropped after a fixed number of failures.
+A Go test that outlived its `-timeout` is named with a `timeout:` prefix,
 so a load timeout reads as a timeout, not as a verdict on the code. The steps inherit `PATH`.
-They do not inherit `TMPDIR`: a run gives its steps a fresh, empty `TMPDIR` of its own (CRW-1489),
-`ci<8 hex>` directly below the caller's temporary directory, and removes it after the run (`--keep`
+They do not inherit `TMPDIR`: a run makes a fresh, empty root of its own (CRW-1489),
+`ci<8 hex>` directly below the caller's temporary directory, gives each job a separate child,
+and removes the root after the run (`--keep`
 keeps and prints it; a run killed before its cleanup leaves it, see
 [Leftover verify trees](#leftover-verify-trees)). The temporary directory is `TMPDIR`, or `/tmp`
 (source `default`) when `TMPDIR` is unset or empty; it is taken at its physical place, resolved from
@@ -129,10 +150,12 @@ record when one fails:
    judged before anything is written there;
 2. it exists, is a directory and is writable (`temp_dir_unusable`, naming the directory and its
    source);
-3. no `.git` (of any type) is at or above it, because the repository's own tests find a checkout by
-   walking up from `TMPDIR` for a `.git` (a sandbox's stray `/tmp/.git` made them judge the wrong
-   tree): `temp_dir_unusable: <dir> is below <.git>`, set `TMPDIR` to a directory with no `.git` at or
-   above it;
+3. no repository is at or above it, because the repository's own tests find a checkout by walking up
+   from `TMPDIR` for a `.git` (a sandbox's stray `/tmp/.git` made them judge the wrong tree): a `.git`
+   counts only when it resolves to a Git directory — a directory holding a regular `HEAD` and an
+   `objects` directory (the objects reached through `commondir` for a linked worktree), or a
+   `gitdir: ` file naming one — so an empty or garbage `.git` is no marker and is ignored (CRW-1588):
+   `temp_dir_unusable: <dir> is below <.git>`, set `TMPDIR` to a directory outside every repository;
 4. a socket folder made (and removed) below `/tmp` leaves room for the longest socket path a test puts
    below it within the 103-byte bound of a Unix socket path: `socket_dir_unusable`, naming the folder
    and, when it does not fit, the bytes needed, the bound and how far over.
@@ -319,16 +342,24 @@ skipped by a mode: a manual dispatch runs this job exactly as any other event do
 
 ## The test legs
 `make test-part TEST_PART=<n>` runs one leg on its own runner, so the slowest leg sets how long a
-full run waits. Parts 1 to 4 name their packages in the Makefile and `rest` is every other
-package plus the `dev`-tagged tests, so a package runs in exactly one leg. `internal/dev/ci` holds
+full run waits. Parts 1 to 5 name their packages in the Makefile and `rest` is every other
+default-tag package. `dev` runs `./cmd/crw-dev/... ./internal/dev/...` with the dev tag.
+Each package/tag invocation runs in exactly one leg. `internal/dev/ci` holds
 that: it refuses a package named by two parts, a part missing from `TEST_PARTS` (what `rest`
 subtracts, so its packages would run again in `rest`), a named path with no tests, a pattern, and a
-package of the `dev`-tagged set, which only `rest` runs, with the tag.
+package of the `dev`-tagged set, which only `dev` runs with the tag. A recipe-level check
+also resolves the actual `go test` arguments and verifies their disjoint union against
+both invocations in `make test`.
+
+CRW-1584 split the previous `test-rest` into `test-5` (flow cli, scenario and engine),
+`test-rest` (remaining default-tag packages), and `test-dev` (the dev-tagged tooling).
+The matrix and the local plan use this same split. Parts 1–4 are unchanged.
 
 A runner spends about 55 s before its tests (checkout, toolchain, the one `crw` build), and the leg
 compiles its own test binaries before it starts. It then runs a few packages at a time on four CPUs,
 in the order a part lists them, so a leg takes about that plus its slowest package, or its packages'
-total over four CPUs if that is longer; list a slow package first. The legs as rebalanced after the
+total over four CPUs if that is longer; list a slow package first. Historical measurements before
+the CRW-1584 split follow: the legs as rebalanced after the
 slow packages' tests ran in parallel, with the hosted job time before (median of six runs on
 2026-10-06) and after (median of three runs of the change that moved packages between the parts):
 
@@ -340,9 +371,9 @@ slow packages' tests ran in parallel, with the hosted job time before (median of
 | `test-4` | `relay/delivery`, `relay/store`, `relay/sync`, `relay/faults`, `relay/dag`, `role`, `pyjson`, `relay/linkage`, `recall`, `relay/routing`, `relay/childcleanup` | 131.5 s | 184 s |
 | `test-rest` | the other 77 packages and the `dev`-tagged tests | 246 s | 145 s |
 
-`runtime/install` is the floor of the longest leg: its tests run one after another for about 175 s, so
-the leg that holds it takes about 260 s however the others are split, and a sixth leg would not
-shorten the longest one. The packages that do not parallelize well are kept apart for the same
+In those measurements, `runtime/install` was the floor of the longest leg: its tests ran one after another for about 175 s, so
+the leg that held it took about 260 s; another leg would not then have shortened the longest one.
+The packages that do not parallelize well are kept apart for the same
 reason: `relay/delivery` leads `test-4` beside the medium packages, and `skill`, `relay/managed` and
 `relay/adapter` sit in `test-3` with the middle tier, so no leg holds two of them. To rebalance
 again, read the `ok <package> <seconds>` lines and the job times of several hosted runs of one commit

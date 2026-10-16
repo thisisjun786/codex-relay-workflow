@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/publishpolicy"
 )
 
 var ctx = context.Background()
@@ -426,5 +428,54 @@ func TestRestoreRefusesAMissingTMPDIRWithTheTempFunctionsReason(t *testing.T) {
 	_, err = Restore(ctx, ExecGit("git"), repo, dest, c, p)
 	if err == nil || !strings.Contains(err.Error(), "temp_dir_unusable") || !strings.Contains(err.Error(), missing) {
 		t.Fatalf("Restore with TMPDIR=%s: %v, want tmploc's temp_dir_unusable naming the directory", missing, err)
+	}
+}
+
+// TestOpsCommitScrubsPublicMessageAndStopsSecrets (CRW-1549): the commit message is public text — a
+// private path is replaced before commit-tree writes it, a token shape stops the commit before HEAD
+// or the index can move.
+func TestOpsCommitScrubsPublicMessageAndStopsSecrets(t *testing.T) {
+	dir := t.TempDir()
+	g := ExecGit("git")
+	ctx := context.Background()
+	mk := func(args ...string) string {
+		t.Helper()
+		out, err := g(ctx, dir, nil, args...)
+		if err != nil {
+			t.Fatalf("git %v: %v", args, err)
+		}
+		return out
+	}
+	mk("init", "-q", "-b", "main")
+	mk("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "base")
+	base := mk("rev-parse", "HEAD")
+	priv := dir
+	tree := mk("write-tree")
+	if _, err := Commit(ctx, g, dir, CommitRequest{Tree: tree, Parent: base, Message: "work in " + priv}); err != nil {
+		t.Fatal(err)
+	}
+	msg := mk("log", "-1", "--format=%B")
+	if strings.Contains(msg, priv) || !strings.Contains(msg, "[path]") {
+		t.Errorf("the committed message holds the private path: %q", msg)
+	}
+	// a token stops the commit before the index: HEAD and index are untouched
+	token := "ghp_" + strings.Repeat("A", 24)
+	before := mk("rev-parse", "HEAD")
+	beforeTree := mk("write-tree")
+	if _, err := Commit(ctx, g, dir, CommitRequest{Tree: tree, Parent: before, Message: "key " + token}); err == nil {
+		t.Fatal("a commit with a token shape succeeded")
+	} else {
+		if !errors.Is(err, publishpolicy.ErrSecret) {
+			t.Errorf("error %v, want ErrSecret", err)
+		}
+		if strings.Contains(err.Error(), token) {
+			t.Errorf("the error echoes the token: %v", err)
+		}
+	}
+	if mk("rev-parse", "HEAD") != before {
+		t.Error("HEAD moved on a blocked commit")
+	}
+	if mk("write-tree") != beforeTree {
+		t.Error("the index moved on a blocked commit")
 	}
 }

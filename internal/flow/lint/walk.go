@@ -43,13 +43,12 @@ func phaseList(mask uint8) string {
 }
 
 // state is what holds on every path that reaches a point of a function body: the set of lifecycle phases each executor
-// node may be in, the labels already used, the model family of the last author call, and the names that hold the result
+// node may be in, the labels already used, and the names that hold the result
 // of crw.tierStep. A state with live unset is a point no path reaches.
 type state struct {
 	live   bool
 	phases map[string]uint8
 	labels map[string]bool
-	author string
 	// steps are the bindings of the function whose value, on every path that reaches the point, comes from a
 	// crw.tierStep call made before it on the same path, or from a parameter (what the caller passes is for the dry run
 	// to judge).
@@ -135,7 +134,7 @@ func (s *state) dead() bool { return !s.live }
 func (s *state) kill()      { s.live = false }
 
 func (s *state) clone() *state {
-	c := &state{live: s.live, author: s.author, phases: make(map[string]uint8, len(s.phases)), labels: make(map[string]bool, len(s.labels)), steps: make(map[*binding]bool, len(s.steps)), pend: make(map[*binding]pendSet, len(s.pend)), checked: make(map[string]bool, len(s.checked))}
+	c := &state{live: s.live, phases: make(map[string]uint8, len(s.phases)), labels: make(map[string]bool, len(s.labels)), steps: make(map[*binding]bool, len(s.steps)), pend: make(map[*binding]pendSet, len(s.pend)), checked: make(map[string]bool, len(s.checked))}
 	for k := range s.checked {
 		c.checked[k] = true
 	}
@@ -203,13 +202,10 @@ func (s *state) join(o *state) {
 		}
 		s.pend[k] = have
 	}
-	if s.author != o.author {
-		s.author = ""
-	}
 }
 
 func (s *state) equal(o *state) bool {
-	if s.live != o.live || s.author != o.author || len(s.phases) != len(o.phases) || len(s.labels) != len(o.labels) || len(s.steps) != len(o.steps) || len(s.pend) != len(o.pend) || len(s.checked) != len(o.checked) {
+	if s.live != o.live || len(s.phases) != len(o.phases) || len(s.labels) != len(o.labels) || len(s.steps) != len(o.steps) || len(s.pend) != len(o.pend) || len(s.checked) != len(o.checked) {
 		return false
 	}
 	for k := range s.checked {
@@ -310,7 +306,7 @@ type walker struct {
 	initial   map[string]uint8
 }
 
-// flow checks lifecycle, labels and reviewer family over the body of every function.
+// flow checks lifecycle, labels and review thread reuse over the body of every function.
 func (s *scanner) flow() {
 	lanes := s.laneFunctions()
 	for _, fn := range s.a.order {
@@ -1526,12 +1522,10 @@ func (w *walker) agent(call *agentCall, st *state) {
 		}
 	}
 	if a.reviewCall(call) {
-		family := call.modelFamily
 		if call.resume {
-			family = a.resumeFamily(call.opts["resume"], w.s.policy, 0)
-		}
-		if st.author != "" && family != "" && family == st.author {
-			w.s.add(RuleReviewerFamily, call.line, call.label, "a review call runs on the %s model family, the family of the call that wrote the change; a review comes from another model family than the author's", family)
+			if root := a.resumeRoot(call.opts["resume"], w.s.policy, 0); root != nil && root.family == "executor" {
+				w.s.add(RuleReviewerThreadSame, call.line, call.label, "the review call resumes the author's thread; this is recorded as a warning")
+			}
 		}
 		return
 	}
@@ -1543,7 +1537,6 @@ func (w *walker) agent(call *agentCall, st *state) {
 		return
 	}
 	if call.family == "executor" {
-		st.author = call.modelFamily
 		w.event(buildEvent, a.buildNode(call), call.line, st, nil)
 	}
 }
@@ -1575,8 +1568,8 @@ func (w *walker) resumed(call *agentCall, st *state) {
 	}
 }
 
-// resumeRoot is the fresh agent call whose thread a resume option continues, as far as the text shows (resumeFamily's
-// walk): nil when the option is not a handle of a single agent call.
+// resumeRoot is the fresh agent call whose thread a resume option continues, as far as the text shows: nil when the option
+// is not a handle of a single agent call.
 func (a *analysis) resumeRoot(e ast.Expression, policy *engine.Policy, depth int) *agentCall {
 	if depth > 8 || e == nil {
 		return nil

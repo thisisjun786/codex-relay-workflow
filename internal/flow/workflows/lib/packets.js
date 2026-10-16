@@ -99,7 +99,7 @@ function missingLine(a) {
 // (internal/flow/roles/architect.md) states the same two to the architect.
 const EXECUTOR_CONTRACT = [
   '- the executor never commits: its edits stay uncommitted in its own directory, and it runs no branch-level git command;',
-  '- the run commits the directory after the executor\'s turn, with the fixed message `crw <node> <call>` and the request id, so no done condition can ask for text in a commit message or a commit body;',
+  '- the run commits the directory after the executor\'s turn, with the fixed message `crw <node> [call_id:<12-hex SHA-256>]`, a blank line and one `CRW-Request: <64-hex SHA-256>` line. The lowercase hashes are the first 12 hex digits of the original call id\'s SHA-256 and all 64 hex digits of the original request id\'s SHA-256; raw call/run/request ids are not written. This metadata format is fixed before the repository\'s publication filter runs, so no done condition can ask for text in a commit message or a commit body;',
   '- the executor reports a RECEIPT (outcome, files, verification, summary, gap, research_question, plan_mismatch), which has no field for a commit, a commit message or the reason for an exception;',
   '- a done condition is a check that runs at the committed HEAD of the node or a state of the worktree; one that needs the executor to commit first, or a check that compares with HEAD before the run\'s commit exists (as `make gui` does through `crw-dev ci gui-drift`), cannot be carried out;',
   '- a generated asset is planned with its generation command and its verification command, the verification running at the committed HEAD.',
@@ -212,7 +212,7 @@ export function designAuditPacket(ms, cand, round, prior, context) {
   const at = context ? headBlock(context) : null
   const replanned = context && Array.isArray(context.unstarted)
   return [
-    'ROLE: critic. Audit the DESIGN of milestone ' + ms.id + ' (round ' + round + ') before any executor starts. You did not write it and are of another model family than the architect.',
+    'ROLE: critic. Audit the DESIGN of milestone ' + ms.id + ' (round ' + round + ') in a separate review execution before any executor starts. Model family is provenance only. If the host actually reports this review reuses the architect thread, record a warning and continue; do not invent a thread id.',
     'Answer with DESIGN_AUDIT: approved only when every issue node has a plan an executor can carry out inside its edit regions, every done condition can be met under the executor contract below, the decisions are consistent with the plan, no decision of the DESIGN is outside the architect\'s authority below, and no P0 or P1 finding stands; otherwise needs_changes with the findings the architect must act on. Check every done condition against the executor contract and every decision against the authority boundary: a done condition the contract cannot meet and a decision outside the authority are each a P1 finding that names its node or decision.',
     section('EXECUTOR CONTRACT (every done condition must be met under it)', EXECUTOR_CONTRACT),
     section('OUT-OF-AUTHORITY DECISIONS (the architect raises these as open questions and does not decide them)', AUTHORITY),

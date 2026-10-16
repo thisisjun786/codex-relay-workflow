@@ -380,8 +380,7 @@ func (w *closeWorld) checkClosedUnderTheRunDir() {
 	}
 }
 
-// the milestone has an architect and an executor of another model family than the crosscheck's engine: the authors it must be
-// independent of
+// The milestone's architect and executor models remain recorded as author provenance.
 const closeHeader = `import { install } from 'crw:lib/lane'
 export const meta = { name: 'close' }
 install(crw)

@@ -1,6 +1,7 @@
 package scenario
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"io/fs"
 	"reflect"
@@ -10,7 +11,6 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	flowcli "github.com/thisisjun786/codex-relay-workflow/internal/flow/cli"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
@@ -31,10 +31,13 @@ func seqOf(t *testing.T, l *Lab, what string, keep func(engine.Event) bool) int 
 	return 0
 }
 
-// The first executor starts after an approved audit of the DESIGN, by the critic, of another model family than the architect: the
+// The first executor starts after an approved audit by a critic on a separate thread, even using the architect's model (CRW-1515): the
 // audit is recorded as a design_audit row before the first release, and the release before the first executor call.
 func TestDesignAuditBeforeFirstExecutor(t *testing.T) {
 	l := NewLab(t, twoNodes()...)
+	critic := l.Policy.Roles["critic"]
+	critic.Pair = l.Policy.Roles["architect"].Pair
+	l.Policy.Roles["critic"] = critic
 	mustRun(t, l)
 	audit := seqOf(t, l, "approved audit", func(ev engine.Event) bool {
 		return ev.Op == ops.OpDesignAudit && ev.Event == engine.EvCompleted && str(ev.Data, "state") == "approved"
@@ -49,8 +52,13 @@ func TestDesignAuditBeforeFirstExecutor(t *testing.T) {
 	}
 	row := l.Rows(ops.OpDesignAudit)[0]
 	arch, rev := str(row.Data, "architect_model"), str(row.Data, "critic_model")
-	if arch == "" || rev == "" || execution.ModelFamily(arch) == execution.ModelFamily(rev) {
-		t.Errorf("the audit was not independent: architect %q, auditor %q", arch, rev)
+	if arch == "" || rev != arch {
+		t.Errorf("the same-model audit did not retain its model records: architect %q, auditor %q", arch, rev)
+	}
+	authorCall, authorFound := engine.LookupCall(l.journal, str(row.Data, "architect_call"))
+	criticCall, criticFound := engine.LookupCall(l.journal, str(row.Data, "critic_call"))
+	if !authorFound || !criticFound || authorCall.ThreadID == "" || criticCall.ThreadID == "" || authorCall.ThreadID == criticCall.ThreadID {
+		t.Errorf("separate audit threads were not observed: architect=%+v critic=%+v", authorCall, criticCall)
 	}
 	if l.Labels()[1] != "design-audit:r1" || l.Roles()[1] != "critic" {
 		t.Errorf("calls %v", l.Labels())
@@ -843,7 +851,7 @@ func TestUnitCheckFindingIsFixedOnTheThreadAndItsResearchGoesToAnExplorer(t *tes
 // ---- the executor contract and the authority boundary of the DESIGN (CRW-1321) ----
 
 // The architect overlay and the design audit packet both state the executor contract the run enforces, and the facts they state
-// are the run's: the commit of a node is made by the run with the message `crw <node> <call>`, a blank line and the request id,
+// are the run's: the commit subject carries the call's hash, and after a blank line the body carries the request's hash,
 // and a RECEIPT has exactly the fields each names - no field for a commit, a commit message or an exception's reason. Both copies
 // are held to ops.Receipt and to the run's commit, so neither can drift from the run or from the other.
 func TestArchitectContractMatchesTheRun(t *testing.T) {
@@ -860,18 +868,22 @@ func TestArchitectContractMatchesTheRun(t *testing.T) {
 	row := commits[0]
 	call := str(row.Data, "call")
 	msg := strings.TrimRight(l.Git("log", "-1", "--format=%B", str(row.Data, "commit")), "\n")
-	head, reqID, ok := strings.Cut(msg, "\n\n")
-	short := call
-	if len(short) > 12 {
-		short = short[:12]
+	requestID := str(row.Data, "request_id")
+	if requestID == "" {
+		t.Fatal("the completed commit row has no request_id")
 	}
-	if !ok || head != "crw A "+short || reqID == "" || strings.ContainsAny(reqID, "\n ") {
-		t.Errorf("the run's commit message is %q, not `crw <node> <call>`, a blank line and the request id", msg)
+	callHash := sha256.Sum256([]byte(call))
+	requestHash := sha256.Sum256([]byte(requestID))
+	wantMessage := fmt.Sprintf("crw A [call_id:%x]\n\nCRW-Request: %x", callHash[:6], requestHash[:])
+	if msg != wantMessage {
+		t.Errorf("the run's commit message is %q, want exactly %q", msg, wantMessage)
 	}
 	audit := textOfCall(l, callNamed(t, l, "design-audit:r1").ID)
 	for where, text := range map[string]string{"the architect overlay": overlay, "the design audit packet": audit} {
-		if !strings.Contains(text, "fixed message `crw <node> <call>`") || !strings.Contains(text, "request id") {
-			t.Errorf("%s does not state the run's commit message (`crw <node> <call>` and the request id)", where)
+		for _, want := range []string{"fixed message `crw <node> [call_id:<12-hex SHA-256>]`", "a blank line", "`CRW-Request: <64-hex SHA-256>`", "request id"} {
+			if !strings.Contains(text, want) {
+				t.Errorf("%s does not state the run's commit message: missing %q", where, want)
+			}
 		}
 	}
 	// The sentence of each that lists the fields names each field of ops.Receipt and nothing the RECEIPT does not have.
@@ -920,7 +932,7 @@ func TestDesignAuditPacketChecksExecutabilityAndAuthority(t *testing.T) {
 		"EXECUTOR CONTRACT",
 		"the executor never commits",
 		"the run commits",
-		"`crw <node> <call>`",
+		"`crw <node> [call_id:<12-hex SHA-256>]`",
 		"RECEIPT",
 		"at the committed HEAD",
 		"state of the worktree",

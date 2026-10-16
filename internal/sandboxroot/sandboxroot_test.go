@@ -229,7 +229,8 @@ func TestCodexHomeLinkFollowedByDotDotNamesTheKernelsDirectory(t *testing.T) {
 	sub := mk(codex, "sub")
 	project := mk(root, "projects", "app")
 	repo := mk(codex, "worktrees", "abc", "repo")
-	write(filepath.Join(repo, ".git"), "gitdir: /nowhere\n")
+	gitMeta(t, mk(root, "gitdir"))
+	write(filepath.Join(repo, ".git"), "gitdir: "+filepath.Join(root, "gitdir")+"\n")
 	write(filepath.Join(codex, "config.toml"), "[projects.\""+project+"\"]\ntrust_level = \"trusted\"\n")
 	cfg := mk(root, "cfg")
 	write(filepath.Join(cfg, "config.toml"), "# the decoy: no projects\n")
@@ -253,5 +254,59 @@ func TestCodexHomeLinkFollowedByDotDotNamesTheKernelsDirectory(t *testing.T) {
 	// The decoy directory next to the link is no worktree base.
 	if err := CheckDestination(filepath.Join(cfg, "worktrees", "def", "repo"), "workspace-write"); err == nil {
 		t.Fatal("the lexical spelling's worktrees directory was taken for a base")
+	}
+}
+
+// CRW-1588: a .git file is a linked worktree's marker only when it resolves to a Git directory; an empty,
+// garbage or dangling file does not authorize the directory below a worktree base.
+func TestLinkedWorktreeRequiresAValidGitfile(t *testing.T) {
+	base := t.TempDir()
+	checkout := filepath.Join(base, "slot", "checkout")
+	if err := os.MkdirAll(checkout, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r := &rules{worktreeBase: []string{base}}
+	marker := filepath.Join(checkout, ".git")
+	for _, content := range []string{"", "garbage\n", "gitdir: " + filepath.Join(base, "missing") + "\n"} {
+		if err := os.WriteFile(marker, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if r.linkedWorktree(checkout) {
+			t.Errorf("invalid marker %q counted as linked worktree", content)
+		}
+	}
+	target := filepath.Join(base, "metadata")
+	gitMeta(t, target)
+	if err := os.WriteFile(marker, []byte("gitdir: "+target+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !r.linkedWorktree(checkout) {
+		t.Fatal("valid gitfile did not identify linked worktree")
+	}
+}
+
+// The user-state default is a dedicated descendant of home; home itself is still protected.
+func TestDefaultSandboxRootUnderHomeIsDedicated(t *testing.T) {
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	work := filepath.Join(home, ".local", "state", "crw", "sandbox", "work")
+	if err := os.MkdirAll(work, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	getenv := func(key string) string {
+		if key == "HOME" {
+			return home
+		}
+		return ""
+	}
+	t.Cleanup(Inject(getenv, home))
+	if err := Check(work, "workspace-write"); err != nil {
+		t.Fatalf("the default sandbox directory was not dedicated: %v", err)
+	}
+	var refusal *Refusal
+	if err := Check(home, "workspace-write"); !errors.As(err, &refusal) || refusal.Rule != RuleAccountHome {
+		t.Fatalf("the account home lost its protection: %v", err)
 	}
 }

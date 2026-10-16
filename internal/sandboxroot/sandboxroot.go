@@ -3,7 +3,7 @@
 // makes and removes an empty .git mount target in a working root that has no .git of its own, so a
 // sandbox whose working root (or writable root) is the account home, or a directory above other
 // projects, makes <home>/.git appear and vanish. The rule names the roots where that cannot happen: the
-// crwconfig sandbox_root (its default is crwconfig.DefaultSandboxRoot), a known project root or a
+// crwconfig sandbox_root (by default below the user's XDG state directory), a known project root or a
 // linked worktree, never the account home, a directory above it, or a directory above a known project
 // root.
 //
@@ -29,6 +29,7 @@ import (
 	"sync"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
+	"github.com/thisisjun786/codex-relay-workflow/internal/gitprobe"
 	"github.com/thisisjun786/codex-relay-workflow/internal/tomledit"
 )
 
@@ -188,9 +189,12 @@ func isHomeOrAbove(p string, homes []string) (rule string) {
 	return ""
 }
 
+// hasGit reports whether dir's .git resolves to a Git directory (gitprobe.ResolveGitDir): an entry that
+// holds no repository — the empty .git directory a sandbox mount leaves, a file that is no gitfile — is
+// no marker (CRW-1588), and one that cannot be read counts as none.
 func hasGit(dir string) bool {
-	_, err := os.Lstat(filepath.Join(dir, ".git"))
-	return err == nil
+	found, err := gitprobe.ResolveGitDir(filepath.Join(dir, ".git"))
+	return err == nil && found != ""
 }
 
 func codexHome(getenv func(string) string, accountHome string) string {
@@ -293,7 +297,7 @@ func containsString(list []string, s string) bool {
 
 // unusableBase judges the configured sandbox base by rules 1 to 4.
 func unusableBase(configured, base string, baseErr error, homes []string) *Refusal {
-	hint := "set paths.sandbox_root in the crw configuration (crw config show) to an existing dedicated directory outside the account home"
+	hint := "set paths.sandbox_root in the crw configuration (crw config show) to an existing dedicated directory, not the account home or an ancestor of it"
 	refuse := func(why string) *Refusal {
 		return &Refusal{Path: configured, Resolved: base, Rule: RuleSandboxRootUnusable, Hint: why + "; " + hint}
 	}
@@ -466,14 +470,16 @@ func Check(candidate, sandbox string) error {
 }
 
 // linkedWorktree reports whether real lies below a worktree base inside a directory that has a .git
-// file (a linked worktree's marker).
+// file resolving to a Git directory (a linked worktree's marker). The file shape alone is kept (it is
+// what tells a linked worktree's marker from a clone's .git directory), and it must still resolve: an
+// empty or garbage file is no worktree (CRW-1588).
 func (r *rules) linkedWorktree(real string) bool {
 	for _, base := range r.worktreeBase {
 		if !below(real, base) {
 			continue
 		}
 		for dir := real; below(dir, base); dir = filepath.Dir(dir) {
-			if info, err := os.Lstat(filepath.Join(dir, ".git")); err == nil && info.Mode().IsRegular() {
+			if info, err := os.Lstat(filepath.Join(dir, ".git")); err == nil && info.Mode().IsRegular() && hasGit(dir) {
 				return true
 			}
 		}

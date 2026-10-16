@@ -16,15 +16,17 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
-	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/homeguard"
+	"github.com/thisisjun786/codex-relay-workflow/internal/gitprobe"
 	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
@@ -59,7 +61,10 @@ type localOptions struct {
 	WorkRoot string
 	// Parallel is the Go test parallelism every step runs with (GOFLAGS=-p=N); 0 means 4.
 	Parallel int
-	Plan     []localJob
+	// Jobs is the maximum number of CI job/legs running at once; zero selects the CPU-based
+	// default (CRW-1584).
+	Jobs int
+	Plan []localJob
 	// Env is extra environment for every step, after the isolated home and TZ (tests use it).
 	Env []string
 	// Tools are the tool roots the configuration file names (paths.build_cache, paths.build_work).
@@ -74,7 +79,7 @@ type localOptions struct {
 	hostOS, hostArch string
 	// buildInfo reports the build record of the running binary; nil means runtime/debug.ReadBuildInfo. Only tests set it.
 	buildInfo func() (*debug.BuildInfo, bool)
-	// stepTmp is the fresh TMPDIR every step of this run gets (localStepTempDir), set once per run.
+	// stepTmp is the fresh temporary root (localStepTempDir); concurrent jobs use separate children.
 	stepTmp string
 	// socketRoot replaces tmploc.SocketRoot as the root the pre-check makes its socket folder below
 	// (localSocketDirCheck) when it is not empty. Only tests set it; the command never does.
@@ -114,6 +119,7 @@ func Local(args []string, stdout, stderr io.Writer) int {
 	keep := flags.Bool("keep", false, "keep the clean worktree for debugging")
 	workRoot := flags.String("work-root", "", "the directory the clean worktree is made in (default: the XDG state directory)")
 	parallel := flags.Int("parallel", 4, "the Go test parallelism every step runs with (GOFLAGS=-p=N)")
+	jobs := flags.Int("jobs", 0, "concurrent CI job/legs (0: CPU count divided by Go parallelism)")
 	description := "Run every job and step of .github/workflows/ci.yml locally, in a clean worktree of the\n" +
 		"commit being verified, and write a verification-record/1. The record is answered without\n" +
 		"running again only when the tree, the ci.yml digest, the tool versions, the dependency\n" +
@@ -140,6 +146,7 @@ func Local(args []string, stdout, stderr io.Writer) int {
 		Keep:      *keep,
 		WorkRoot:  *workRoot,
 		Parallel:  *parallel,
+		Jobs:      *jobs,
 	}
 	if opts.Record == "" {
 		opts.Record = filepath.Join(root, localRecordDefault)
@@ -183,6 +190,9 @@ func Local(args []string, stdout, stderr io.Writer) int {
 // localVerify answers a reused record when every key matches, or runs the table and returns the
 // record it made.
 func localVerify(opts localOptions, reusePath string, stdout io.Writer) (verificationRecord, bool, error) {
+	if opts.Jobs < 0 {
+		return verificationRecord{}, false, fmt.Errorf("jobs must be zero (automatic) or positive")
+	}
 	// CRW-1186: what the run writes outside the clean worktree is the record (and its siblings) and the
 	// probes' directories in TMPDIR; neither lands in the account's real home, and nothing is made
 	// before both are known. A work root is judged again where it is made (localWorkRoot).
@@ -518,6 +528,11 @@ func localExecute(opts localOptions, plan []localJob, current verificationRecord
 		fmt.Fprintf(stdout, "local: pin mismatch (%s); this record will not be reused\n", strings.Join(record.PinMismatch, ", "))
 	}
 
+	// Flatten job/legs into tasks in plan order; a job carrying the aggregate step is a barrier:
+	// it runs alone, after every task before it finished and its records are complete (CRW-1584).
+	limit := localJobLimit(opts.Jobs, opts.Parallel, runtime.NumCPU())
+	var addMu sync.Mutex
+	var tasks []localTask
 	for _, job := range plan {
 		legs := job.legs
 		if legs == nil {
@@ -528,53 +543,76 @@ func localExecute(opts localOptions, plan []localJob, current verificationRecord
 			if leg != "" {
 				name = job.name + " (" + leg + ")"
 			}
-			recorded := recordJob{Name: name}
-			failed := false
-			for _, step := range job.steps {
-				if step.legs != nil && !localContains(step.legs, leg) {
-					continue
-				}
-				entry := recordStep{Job: name, Name: step.name, Command: step.command, Scope: step.scope}
-				if entry.Name == "" {
-					entry.Name = localStepLabel(step)
-				}
-				start := time.Now()
-				offset := localOutputSize(opts.output)
-				switch {
-				case step.kind == localNotApplicable:
-					entry.Result, entry.Reason = localNotApplicableResult, step.note
-				case failed:
-					// GitHub stops a job's later steps once one fails; the local run does the same
-					// and records the rest as skipped, which is itself a failure (answer 5).
-					entry.Result, entry.Reason = localSkipped, "an earlier step of this job did not pass"
-				default:
-					var tests localTests
-					entry.Result, entry.Reason, tests = localRunStep(opts, step, worktree, leg, env, record.Jobs)
-					if tests.saw {
-						n := tests.ran
-						if record.TestPackagesRun != nil {
-							n += *record.TestPackagesRun
-						}
-						record.TestPackagesRun = &n
-					}
-					if entry.Result != localPassed {
-						failed = true
-					}
-				}
-				entry.Decision = localDecisionSince(opts.output, offset)
-				entry.Seconds = time.Since(start).Seconds()
-				recorded.Steps = append(recorded.Steps, entry)
-				fmt.Fprintf(stdout, "local: %-26s %-44s %s\n", name, entry.Name, entry.Result)
-			}
-			recorded.Result = localPassed
-			for _, step := range recorded.Steps {
-				if step.Result != localPassed && step.Result != localNotApplicableResult {
-					recorded.Result = localFail
-					break
-				}
-			}
-			record.Jobs = append(record.Jobs, recorded)
+			tasks = append(tasks, localTask{job: job, leg: leg, name: name, index: len(tasks)})
 		}
+	}
+	isAggregate := func(t localTask) bool {
+		for _, step := range t.job.steps {
+			if step.action == localAggregate {
+				return true
+			}
+		}
+		return false
+	}
+	// Every non-aggregate task's worktree path is owned by this run before the workers start, so a
+	// failed post-add checkout or setup still gets its directory removed (CRW-1584).
+	var ownedWorktrees []string
+	if len(tasks) > 1 {
+		for _, task := range tasks {
+			if !isAggregate(task) {
+				ownedWorktrees = append(ownedWorktrees, filepath.Join(temp, fmt.Sprintf("job-%03d", task.index), "tree"))
+			}
+		}
+	}
+	appendResult := func(res localTaskResult) {
+		record.Jobs = append(record.Jobs, res.job)
+		if res.tests.saw {
+			n := res.tests.ran
+			if record.TestPackagesRun != nil {
+				n += *record.TestPackagesRun
+			}
+			record.TestPackagesRun = &n
+		}
+		stdout.Write(res.output.Bytes())
+	}
+	runTask := func(task localTask, done []recordJob) localTaskResult {
+		if len(tasks) == 1 {
+			// One task uses the coordinator's own roots, so the one-job records and
+			// keep/temp-location evidence read exactly as before; only the Go caches
+			// stay private to the task, and they exist before it runs (CRW-1584).
+			gocache := filepath.Join(temp, "job-cache", "gocache")
+			cerr := os.MkdirAll(gocache, 0o755)
+			taskEnv := localJobEnv(env, gocache)
+			return localExecuteTask(opts, task, worktree, taskEnv, done, cerr)
+		}
+		ws, werr := localMakeTaskWorkspace(opts, task, temp, home, &addMu)
+		if werr == nil {
+			return localExecuteTask(ws.opts, task, ws.worktree, ws.env, done, nil)
+		}
+		return localExecuteTask(opts, task, worktree, env, done, werr)
+	}
+	defer func() {
+		if opts.Keep {
+			return
+		}
+		for _, path := range ownedWorktrees {
+			runGit(opts.Root, "worktree", "remove", "--force", path)
+		}
+	}()
+	for b := 0; b < len(tasks); {
+		if isAggregate(tasks[b]) {
+			done := append([]recordJob(nil), record.Jobs...)
+			appendResult(localExecuteTask(opts, tasks[b], worktree, env, done, nil))
+			b++
+			continue
+		}
+		end := b
+		for end < len(tasks) && !isAggregate(tasks[end]) {
+			end++
+		}
+		done := append([]recordJob(nil), record.Jobs...)
+		localRunTasks(tasks[b:end], limit, func(task localTask) localTaskResult { return runTask(task, done) }, appendResult)
+		b = end
 	}
 	record.Result = localPass
 	for _, job := range record.Jobs {
@@ -784,10 +822,11 @@ func localMkStepDir(parent, prefix string) (string, error) {
 	return "", fmt.Errorf("no free %s<8 hex> name below %s after 16 tries", prefix, parent)
 }
 
-// localGitAbove is the first .git entry (of any type) at or above dir, or "" when there is none. The
-// walk follows both the path as written and its resolved form, and it stops below a ceiling: a ceiling
-// directory and what lies above it are not checked.
-func localGitAbove(dir string, ceilings []string) string {
+// localGitAbove is the .git marker of the first repository at or above dir (gitprobe.RepositoryAbove:
+// a marker that resolves to a Git directory, not a sandbox's empty .git or a file that is no gitfile), or
+// "" when there is none. The walk follows both the path as written and its resolved form, and it stops
+// below a ceiling: a ceiling directory and what lies above it are not checked.
+func localGitAbove(dir string, ceilings []string) (string, error) {
 	stop := map[string]bool{}
 	for _, ceiling := range ceilings {
 		if ceiling == "" {
@@ -798,23 +837,24 @@ func localGitAbove(dir string, ceilings []string) string {
 			stop[resolved] = true
 		}
 	}
+	stops := make([]string, 0, len(stop))
+	for ceiling := range stop {
+		stops = append(stops, ceiling)
+	}
 	forms := []string{filepath.Clean(dir)}
 	if resolved, err := filepath.EvalSymlinks(dir); err == nil && resolved != forms[0] {
 		forms = append(forms, resolved)
 	}
 	for _, form := range forms {
-		for d := form; !stop[d]; {
-			if _, err := os.Lstat(filepath.Join(d, ".git")); err == nil {
-				return filepath.Join(d, ".git")
-			}
-			parent := filepath.Dir(d)
-			if parent == d {
-				break
-			}
-			d = parent
+		root, err := gitprobe.RepositoryAbove(form, gitprobe.RepositorySearch{Ceilings: stops})
+		if err != nil {
+			return "", err
+		}
+		if root != "" {
+			return filepath.Join(root, ".git"), nil
 		}
 	}
-	return ""
+	return "", nil
 }
 
 // localStepTempDir makes the fresh TMPDIR every step of a run gets (CRW-1489): ci<8 hex> directly below
@@ -822,16 +862,21 @@ func localGitAbove(dir string, ceilings []string) string {
 // physical place, resolved from the value as written (no lexical Clean first). It is the one candidate
 // (CRW-1569): its length is not judged, because no test socket lies below TMPDIR (CRW-1568), and the run
 // never moves the steps elsewhere. The failing tests find a repository by walking up from TMPDIR for a
-// .git, so a .git at or above it (a sandbox's /tmp/.git) refuses the run (temp_dir_unusable) before
-// anything is made. The record's callerTmpDir stays the raw TMPDIR value and its tmpDir is the directory
-// made.
+// .git, so a repository at or above it refuses the run (temp_dir_unusable) before anything is made — a
+// .git that resolves to no Git directory (a sandbox's stray empty /tmp/.git, a file that is no gitfile)
+// is no marker (CRW-1588). The record's callerTmpDir stays the raw TMPDIR value and its tmpDir is the
+// directory made.
 func localStepTempDir(opts localOptions) (string, error) {
 	parent, err := tmploc.Check()
 	if err != nil {
 		return "", err
 	}
-	if git := localGitAbove(parent, opts.gitCeilings); git != "" {
-		return "", fmt.Errorf("temp_dir_unusable: %s is below %s; set TMPDIR to a directory with no .git at or above it", parent, git)
+	git, err := localGitAbove(parent, opts.gitCeilings)
+	if err != nil {
+		return "", fmt.Errorf("temp_dir_unusable: %s: checking for a repository at or above it: %w; set TMPDIR to a readable directory outside every repository", parent, err)
+	}
+	if git != "" {
+		return "", fmt.Errorf("temp_dir_unusable: %s is below %s; set TMPDIR to a directory outside every repository", parent, git)
 	}
 	dir, err := localMkStepDir(parent, "ci")
 	if err != nil {
@@ -1040,49 +1085,46 @@ const localTimeoutMark = "panic: test timed out"
 
 // localReason is the reason a failed command's output gives: the failing test lines that come
 // before the last lines (so a test that failed early still reaches the record), each --- FAIL line
-// with the message lines that say why (localFailMessages), then the last localReasonLines lines,
-// cut to localReasonBytes. The reason stays bounded however long the output.
+// with the message lines that say why (localFailMessages), then the last localReasonLines lines.
+// Failure diagnostics and tail lines are retained in full.
 func localReason(output string) string {
 	text := strings.TrimRight(output, "\n")
 	if text == "" {
 		return ""
 	}
 	all := strings.Split(text, "\n")
-	cut := len(all) - localReasonLines
-	if cut < 0 {
-		cut = 0
-	}
-	head := all[:cut]
+	cut := max(0, len(all)-localReasonLines)
 	used := map[int]bool{}
-	var marked []string
-	for i, line := range head {
-		if len(marked) == localReasonMarked {
-			break
-		}
-		if used[i] || !localMarkedLine(line) {
+	var indices []int
+	for i := 0; i < cut; i++ {
+		if used[i] || !localMarkedLine(all[i]) {
 			continue
 		}
 		used[i] = true
-		messages := localFailMessages(head, i, used)
-		if room := localReasonMarked - len(marked) - 1; len(messages) > room {
-			messages = messages[:room]
-		}
-		block := append([]int{i}, messages...)
-		sort.Ints(block)
-		for _, at := range block {
-			used[at] = true
-			marked = append(marked, localCut(head[at], localReasonLine))
+		indices = append(indices, i)
+		// every diagnostic line that belongs to this marker reaches the reason, even across the
+		// tail's boundary (CRW-1584)
+		for _, at := range localFailMessages(all, i, used) {
+			if at < cut && !used[at] {
+				used[at] = true
+				indices = append(indices, at)
+			}
 		}
 	}
-	tail := localCutEnd(strings.Join(all[cut:], "\n"), localReasonBytes)
+	sort.Ints(indices)
+	marked := make([]string, 0, len(indices))
+	for _, at := range indices {
+		marked = append(marked, all[at])
+	}
+	tail := strings.Join(all[cut:], "\n")
 	if len(marked) > 0 {
 		tail = strings.Join(marked, "\n") + "\n...\n" + tail
 	}
 	return ": " + tail
 }
 
-// localFailMessages are the indexes of the message lines of the --- FAIL line at lines[at], at most
-// localReasonMessages of them, none already used. go test prints a failed test's messages below its
+// localFailMessages are the indexes of the message lines of the --- FAIL line at lines[at],
+// none already used. go test prints a failed test's messages below its
 // --- FAIL line, indented deeper than it (a subtest's --- FAIL line and its own messages one level
 // deeper again). go test -v prints them before it instead, as the indented lines that follow the
 // test's last "=== RUN", "=== CONT" or "=== NAME" line. A message line is indented and is neither a
@@ -1098,7 +1140,7 @@ func localFailMessages(lines []string, at int, used map[int]bool) []int {
 		return !used[i] && inner != "" && localIndent(line) > below && !localMarkedLine(line) && !strings.HasPrefix(inner, "===")
 	}
 	var found []int
-	for i := at + 1; i < len(lines) && len(found) < localReasonMessages && message(i, localIndent(lines[at])); i++ {
+	for i := at + 1; i < len(lines) && message(i, localIndent(lines[at])); i++ {
 		found = append(found, i)
 	}
 	if len(found) > 0 {
@@ -1112,7 +1154,7 @@ func localFailMessages(lines []string, at int, used map[int]bool) []int {
 	for start := at - 1; start >= 0; start-- {
 		run := strings.Fields(lines[start])
 		if len(run) == 3 && run[0] == "===" && (run[1] == "RUN" || run[1] == "CONT" || run[1] == "NAME") && run[2] == name {
-			for i := start + 1; i < at && len(found) < localReasonMessages && message(i, 0); i++ {
+			for i := start + 1; i < at && message(i, 0); i++ {
 				found = append(found, i)
 			}
 			break
@@ -1132,39 +1174,15 @@ func localMarkedLine(line string) bool {
 	return strings.HasPrefix(trimmed, "--- FAIL") || strings.HasPrefix(trimmed, "FAIL") || strings.HasPrefix(trimmed, "panic:")
 }
 
-// localCut is the first n bytes of a line, valid UTF-8.
-func localCut(line string, n int) string {
-	if len(line) > n {
-		return strings.ToValidUTF8(line[:n], "")
-	}
-	return line
-}
-
-// localCutEnd is the last n bytes of the text, valid UTF-8.
-func localCutEnd(text string, n int) string {
-	if len(text) > n {
-		return strings.ToValidUTF8(text[len(text)-n:], "")
-	}
-	return text
-}
-
-// The bounds of a failure's reason: the last lines of the output and at most this many bytes of
-// them, plus up to localReasonMarked marked lines from earlier in the output (failing lines and the
-// message lines of each --- FAIL line, at most localReasonMessages per FAIL line), each cut to
-// localReasonLine bytes.
-const (
-	localReasonLines    = 40
-	localReasonBytes    = 4096
-	localReasonMarked   = 20
-	localReasonMessages = 6
-	localReasonLine     = 300
-)
+// Passing output contributes only this tail; earlier failure diagnostics are retained separately.
+const localReasonLines = 40
 
 // localEngineSources are the paths the engine's plan is compiled from: the engine package, the command
-// that runs it and the Makefile target that starts it (CRW-1025), and the configuration package whose tool
+// that runs it and the Makefile target that starts it (CRW-1025), the configuration package whose tool
 // roots the engine applies to every step's environment (CRW-958: crwconfig.LoadToolRoots and
-// ToolRoots.Apply execute from the caller's compiled source).
-var localEngineSources = []string{"internal/dev/ci", "cmd/crw-dev", "Makefile", "internal/crwconfig"}
+// ToolRoots.Apply execute from the caller's compiled source), and the gitprobe package whose repository
+// marker preflight decides whether the run's step TMPDIR is refused at all (CRW-1588).
+var localEngineSources = []string{"internal/dev/ci", "cmd/crw-dev", "Makefile", "internal/crwconfig", "internal/gitprobe"}
 
 // localCompiledExt are the extensions of files the Go toolchain compiles or links into a package, so an
 // ignored file with one of them under the engine paths is engine source whatever git ignores.

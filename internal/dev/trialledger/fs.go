@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/pyload"
+	"github.com/thisisjun786/codex-relay-workflow/internal/gitprobe"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -231,22 +232,12 @@ func within(child, parent string) bool {
 	return here == root || strings.HasPrefix(here, strings.TrimSuffix(root, "/")+"/")
 }
 
-// gitWorktreeOf is the nearest directory at or above the resolved path holding a .git, or "".
+// gitWorktreeOf is the nearest directory at or above the resolved path whose .git resolves to a Git
+// directory (gitprobe.RepositoryAbove), or "". An entry that holds no repository is no marker (CRW-1588),
+// and the walk is advisory: a marker that cannot be read answers none.
 func gitWorktreeOf(path string) string {
-	here := store.PathlibSpelling(realpath(path))
-	for {
-		if _, err := os.Stat(join(here, ".git")); err == nil {
-			return here
-		}
-		if here == "/" {
-			return ""
-		}
-		if i := strings.LastIndex(here, "/"); i > 0 {
-			here = here[:i]
-		} else {
-			here = "/"
-		}
-	}
+	root, _ := gitprobe.RepositoryAbove(store.PathlibSpelling(realpath(path)), gitprobe.RepositorySearch{})
+	return root
 }
 
 // pySplitLines is str.splitlines(): every line boundary Python knows, the boundary dropped.

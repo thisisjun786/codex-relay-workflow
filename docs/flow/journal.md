@@ -267,7 +267,7 @@ when no merged finding blocks and every pass's own `verdict` is verified), the m
 `findings`, `carried` and `follow_ups` (the findings that do not block, by id and as one line each), `guide_rev`, `engine_family`,
 `engine_families`, `model`, `round`, `evidence_round`, `milestone`, `plan`, `head`, `base`, `run`, `author_families` and `authors` (each
 author with its `source` `role` or `call`, its `name`, `model` and `family`), `receipts` (each node's receipt `state` and `sha256`),
-`receipts_file` and `receipts_sha256`, and `passes`. A crosscheck is proven (`ops.CrosscheckProof`) by a completed row of the same
+`receipts_file` and `receipts_sha256`, and `passes`. `engine_family`, `engine_families` and `author_families` remain provenance fields for compatibility; they do not select or refuse a new review. Missing author model information is recorded in `author_warnings` and does not block. A crosscheck is a separate tool invocation with no agent thread id. A same-thread review observation on an agent path is warning-only and recorded, and the run continues. A crosscheck is proven (`ops.CrosscheckProof`) by a completed row of the same
 milestone, head, round and evidence round with a state other than held; a row of another head is no proof, and a held row proves
 nothing, so a resume runs the round again.
 

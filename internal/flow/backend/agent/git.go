@@ -11,6 +11,8 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
+	"github.com/thisisjun786/codex-relay-workflow/internal/publication"
+	"github.com/thisisjun786/codex-relay-workflow/internal/publishpolicy"
 )
 
 // GitFunc runs one git command with `git -C dir args...` and returns its trimmed standard output. The allocator
@@ -80,6 +82,20 @@ func (a *Allocator) Head(ctx context.Context, path string) (string, error) {
 func (a *Allocator) Commit(ctx context.Context, path, message string, allowEmpty bool) (string, error) {
 	if message == "" {
 		return "", errors.New("agent: a commit needs a message")
+	}
+	// the commit message is public text (CRW-1549): scrub it with the repository's policy before
+	// anything is staged; a secret shape stops the commit. Author metadata is not scrubbed.
+	remote, _ := a.git(ctx, path, nil, "remote", "get-url", "origin")
+	repo := publication.Repository(remote)
+	p, err := publication.Policy(repo, os.Getenv)
+	if err != nil {
+		return "", err
+	}
+	c := publishpolicy.HostContext()
+	c.Paths = append(c.Paths, a.cfg.Repo, a.cfg.StateDir, path)
+	message, err = publication.Prepare(repo, "commit", "message", message, c, p, os.Stderr)
+	if err != nil {
+		return "", err
 	}
 	if _, err := a.git(ctx, path, nil, "add", "--all"); err != nil {
 		return "", err

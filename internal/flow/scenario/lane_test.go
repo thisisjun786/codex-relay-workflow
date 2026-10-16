@@ -50,7 +50,7 @@ func mustRun(t *testing.T, l *Lab) laneResult {
 func index(list []string, want string) int { return slices.Index(list, want) }
 
 // The happy path: the architect plans the milestone, the critic (independent) audits the DESIGN, each node is released, built by
-// an executor, unit-checked by the review tool of another family (CRW-1465: no reviewer agent), committed, verified and landed, the
+// an executor, unit-checked by a separate review tool invocation (CRW-1465: no reviewer agent), committed, verified and landed, the
 // milestone closes over the integrated range and the report goes up. No tier step is taken.
 func TestLaneHappyPath(t *testing.T) {
 	l := NewLab(t, twoNodes()...)

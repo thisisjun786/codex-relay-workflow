@@ -252,7 +252,7 @@ func TestCodexReviewFallbackIsNoCleanReview(t *testing.T) {
 
 // TestCodexReviewFamilyIsTheModels (CRW-1517): the profiles name the family of the model they run (execution.ModelFamily, the way
 // the adapter reads a profile with no family), never gpt for any model: a Claude model configured for the review records claude, so
-// the acceptance refuses it over a Claude author. Validate refuses a model whose family cannot be told.
+// the record preserves the actual model's family even when the author used it too. Validate refuses a model whose family cannot be told.
 func TestCodexReviewFamilyIsTheModels(t *testing.T) {
 	for model, family := range map[string]string{"": "gpt", "gpt-6.1-sol": "gpt", "openai/gpt-5.6-sol": "gpt", "anthropic/claude-sonnet-5": "claude", "Claude-Opus-5-5": "claude", "o9": "o9"} {
 		cfg := CodexReviewConfig{Model: model}

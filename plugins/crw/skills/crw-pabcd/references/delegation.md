@@ -272,9 +272,7 @@ subagent its own task, goal or PABCD state.
   `reset`, `rebase`, `merge`, `pull`) in one checkout; a file scope cannot
   separate one HEAD. Work that needs its own goal or PABCD cycle stays a
   separate thread task.
-- **REVIEW-DECORRELATE-01:** prefer an independent context; use a different model family
-  only when host policy and user authorization permit the override. Otherwise inherit
-  and record that family-level independence was not established.
+- **REVIEW-DECORRELATE-01:** prefer a separate review execution context when available; model family is provenance, not a review constraint. If the host actually reports that an agent review reused the author's thread, record a warning and continue. Tool reviews run as separate invocations and have no agent thread id; never invent one.
 - **SPECIALIST-CRUX-01:** when a narrow crux lies outside the builder's domain,
   dispatch a specialist to re-derive it from first principles.
 - Returns preserve VERBATIM ANCHORS: exact `path:line` quotations, exact figures,

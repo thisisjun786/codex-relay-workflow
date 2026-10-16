@@ -6,7 +6,7 @@
 //                     H - crw.verify, and the QA calls - and the gate is judged again. A gate that fails or cannot be settled stops
 //                     the close: the crosscheck does not run.
 //   the crosscheck    one round of crw.crosscheck over the range of the passed gate (CRW-1473): two passes (A coverage, B bug hunt) of a
-//                     review engine of another model family than every author of the milestone, run by the host in Go, their findings
+//                     review engine in a separate tool invocation with no agent thread id, run by the host in Go; same-thread agent review, if observed, is warning-only and recorded, and model family is provenance. Its findings
 //                     merged into one verdict V by one rule (ops.CrosscheckRule, premerge.Blocks). Only a V of verified (accepts) lets
 //                     the milestone close. A V of needs_changes gets the close's one correction in the run (CRW-1490): findings that
 //                     are only missing evidence are asked of an explorer and the same head rechecked with the answers (round 2,
@@ -121,7 +121,7 @@ export async function crosscheckRound(ms, g, opts) {
 // crosscheckStop is the stop of a crosscheck that did not verify the range. A verdict of needs_changes keeps the milestone open as
 // crosscheck_pending: V goes into the escalation's evidence and the fix packet with it, and the 자식 hands both to the 부모 (ask
 // crosscheck_pending). A crosscheck that held holds the milestone (a resume runs the round again); one that was refused (an author
-// pair that is undecided, no engine of another family) asks for the configuration; one that failed or gave no verdict asks with
+// pair that is undecided, no available engine) asks for the configuration; historical family-based outcomes remain readable, while a same-thread observation is warning-only and recorded. One that failed or gave no verdict asks with
 // its state.
 function crosscheckStop(ms, x) {
   const detail = x.detail || ''

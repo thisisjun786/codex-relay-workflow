@@ -222,7 +222,7 @@ const landHeadJS = "internal/flow/workflows/land-head.js"
 
 // landHeadCallsTheCommittedCheck is whether land-head.js calls crw.unitCheck with a commit and a base, the form the pages describe.
 func landHeadCallsTheCommittedCheck(script string) bool {
-	return regexp.MustCompile(`crw\.unitCheck\([^)]*\bcommit:[^)]*\bbase:`).MatchString(script)
+	return regexp.MustCompile(`crw\.unitCheck\([^)]*\bcommit\s*:[^)]*,\s*base\s*(?::|[,}])`).MatchString(script)
 }
 
 // landHeadSectionUnitCheckProblems judges script.md's section on landing a head made outside a run.
@@ -260,11 +260,14 @@ func landHeadLineUnitCheckProblems(line string) []string {
 	if line == "" {
 		return []string{"there is no line naming land-head"}
 	}
-	if !regexp.MustCompile("(?i)unit check in the committed mode[^;)]*`?base\\.\\.head`?[^;)]*another model family than (its|the) authors").MatchString(line) {
-		problems = append(problems, "the land-head line does not name the committed-mode unit check of base..head by another model family than the authors")
+	if !regexp.MustCompile("(?i)unit check in the committed mode[^;)]*`?base\\.\\.head`?").MatchString(line) {
+		problems = append(problems, "the land-head line does not name the committed-mode unit check of base..head")
 	}
-	if regexp.MustCompile(`(?i)a review by another model family`).MatchString(line) {
-		problems = append(problems, "the land-head line still names a review by another model family")
+	if regexp.MustCompile(`(?i)(another|different) model family`).MatchString(line) {
+		problems = append(problems, "the land-head line still requires a different model family")
+	}
+	if !regexp.MustCompile(`(?i)separate tool invocation`).MatchString(line) {
+		problems = append(problems, "the land-head line does not identify the separate tool invocation")
 	}
 	return problems
 }
@@ -290,6 +293,27 @@ func TestUnitCheckDocsNameTheLandHeadCommittedCheck(t *testing.T) {
 	if !landHeadCallsTheCommittedCheck(readRepoText(t, landHeadJS)) {
 		t.Errorf("%s does not call crw.unitCheck with a commit and a base", landHeadJS)
 	}
+	t.Run("fixture: committed base property forms", func(t *testing.T) {
+		for _, tc := range []struct {
+			name, script string
+			want         bool
+		}{
+			{"explicit", `crw.unitCheck(node, null, { commit: head, base: head.base })`, true},
+			{"shorthand before evidence", `crw.unitCheck(node, ex, { round: 2, commit: head, base, evidence })`, true},
+			{"shorthand last", `crw.unitCheck(node, ex, { commit: head, base })`, true},
+			{"missing base", `crw.unitCheck(node, ex, { commit: head, evidence })`, false},
+			{"base in commit value", `crw.unitCheck(node, ex, { commit: head.base, evidence })`, false},
+			{"different field", `crw.unitCheck(node, ex, { commit: head, baseOther: base })`, false},
+			{"missing commit", `crw.unitCheck(node, ex, { base })`, false},
+			{"review call", `crw.review(node, head, digest, call)`, false},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				if got := landHeadCallsTheCommittedCheck(tc.script); got != tc.want {
+					t.Errorf("call recognized = %v, want %v: %s", got, tc.want, tc.script)
+				}
+			})
+		}
+	})
 	if p := landHeadSectionUnitCheckProblems(readRepoText(t, scriptDocPath)); len(p) > 0 {
 		t.Errorf("%s:\n  %s", scriptDocPath, strings.Join(p, "\n  "))
 	}
@@ -309,10 +333,10 @@ func TestUnitCheckDocsNameTheLandHeadCommittedCheck(t *testing.T) {
 				t.Errorf("no problem names %q:\n%s", want, got)
 			}
 		}
-		if p := landHeadLineUnitCheckProblems("`land-head` lands a head (verification, a review by another model family than the authors, acceptance and integration)"); len(p) != 2 {
-			t.Errorf("the old land-head line gives %d problems, want 2: %v", len(p), p)
+		if p := landHeadLineUnitCheckProblems("`land-head` lands a head (verification, a review by another model family than the authors, acceptance and integration)"); len(p) != 3 {
+			t.Errorf("the old land-head line gives %d problems, want 3: %v", len(p), p)
 		}
-		if p := landHeadLineUnitCheckProblems("`land-head` lands a head (verification, a unit check in the committed mode over `base..head` by another model family than the authors, acceptance and integration)"); len(p) != 0 {
+		if p := landHeadLineUnitCheckProblems("`land-head` lands a head (verification, a unit check in the committed mode over `base..head` in a separate tool invocation, acceptance and integration)"); len(p) != 0 {
 			t.Errorf("the new land-head line gives problems: %v", p)
 		}
 		if landHeadCallsTheCommittedCheck("await crw.review(node, head, digest, call)") || !landHeadCallsTheCommittedCheck("crw.unitCheck(node, null, { commit: head, base: head.base })") {
@@ -419,7 +443,7 @@ func TestUnitCheckDocsNameCodexReviewAsTheDefault(t *testing.T) {
 		}
 	})
 	t.Run("fixture: the Codex wording passes", func(t *testing.T) {
-		row := "| Audit | the run | runs the unit check of each node's work itself (`crw.unitCheck`: a Codex review by default, Bugbot on a Codex quota, of another model family than the node's authors) |"
+		row := "| Audit | the run | runs the unit check of each node's work itself (`crw.unitCheck`: a Codex review by default, Bugbot on a Codex quota, in a separate tool invocation) |"
 		if p := codexDefaultProblems("the Audit row", row); len(p) != 0 {
 			t.Errorf("the Codex Audit row gives problems: %v", p)
 		}

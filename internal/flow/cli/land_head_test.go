@@ -18,7 +18,7 @@ import (
 // The landing path of a head made outside a project-lane run (CRW-1354): the workflow land-head takes the issue's node, the head
 // the child made and the subagent threads that wrote it, and lands the head through the gates every head of a run goes through -
 // crw.verify (verification-record/1 of the exact tree), crw.unitCheck of the committed range base..head (the review tool run in Go,
-// CRW-1468; the relay takes it only from another model family than the authors, by the runtime's read-back), crw.accept (the relay's
+// CRW-1468; a separate review invocation whose model is recorded as provenance), crw.accept (the relay's
 // agent acceptance) and crw.integrate - writing the rows those operations write. The authors are the threads the child names, whose pair
 // the run reads back from the host and the release records on the node's execution, which is what the relay's acceptance judges the
 // reviewer against. A check that needs changes is fixed in the run (CRW-1490): an executor call on the release's head, committed and
@@ -59,7 +59,7 @@ func landArgs(l *laneLab, key, head string, authors ...string) string {
 // TestLandHeadLandsAHeadMadeOutsideARun (CRW-1354): over the fake App Server, a head the child's subagent (a Claude pair) made on a branch
 // outside any run lands on the target branch through land-head: the node is released to the run (one agent execution, recording the
 // author pair the run read back from the subagent's thread and the run's worktree of the head), the head is verified, a unit check of
-// another family (the lab's grok checker) verifies its committed range, the relay accepts it on its agent path and the integration merges
+// the lab's grok checker verifies its committed range, the relay accepts it on its agent path and the integration merges
 // it. The journal holds the rows of crw.verify, crw.unitCheck, crw.accept and crw.integrate and no executor or reviewer call; the
 // relay's acceptance judged the check against the recorded author.
 func TestLandHeadLandsAHeadMadeOutsideARun(t *testing.T) {
@@ -222,58 +222,59 @@ func TestLandHeadUsesTheCommittedModeUnitCheck(t *testing.T) {
 	})
 }
 
-// TestLandHeadKeepsTheIndependenceGate (CRW-1354, CRW-1468): the same path with a subagent on the unit check's model family (a GPT
-// author, and the lab's checker answering as a GPT pair) lands nothing: the check verifies the range, and the relay refuses the
-// acceptance on it independence_refused (the gate, an escalation of the configuration that gives the release back), so nothing is
-// accepted or integrated; a head one of whose authors the run cannot read back is independence_unproven. A gate refuses; nothing else does.
-func TestLandHeadKeepsTheIndependenceGate(t *testing.T) {
+// Model families do not restrict a separately checked head; its original author records remain (CRW-1515).
+func TestLandHeadPreservesAuthorsWithoutFamilyGate(t *testing.T) {
 	for _, c := range []struct {
-		name, reason string
-		authors      func(l *laneLab) []string
+		name    string
+		authors func(l *laneLab) []string
 	}{
-		{"same family", "independence_refused", func(l *laneLab) []string {
+		{"same family", func(l *laneLab) []string {
 			l.uc.setDefault(labCheck{Family: "gpt", Model: "gpt-fake-sol", Effort: "high"})
 			return []string{l.authorThread("gpt-fake-worker", "high")}
 		}},
-		{"no author read back", "independence_unproven", func(l *laneLab) []string { return []string{"0190a000-0000-7000-8000-ffffffffffff"} }},
-		// post-evaluation d2: an author of the head whose pair is not read back may be of the check's family, so one observed author of
-		// another family does not prove the check independent
-		{"one author not read back", "independence_unproven", func(l *laneLab) []string {
+		{"no author read back", func(l *laneLab) []string { return []string{"0190a000-0000-7000-8000-ffffffffffff"} }},
+		{"one author not read back", func(l *laneLab) []string {
 			return []string{l.authorThread("claude-fake-sonnet", "high"), "0190a000-0000-7000-8000-ffffffffffff"}
 		}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
 			l.outsideHead("A-1", "outside-a1")
-			spec := l.start("start", "land-head", "--args", landArgs(l, "A-1", "outside-a1", c.authors(l)...), "--handoff", l.file)
+			authorIDs := c.authors(l)
+			spec := l.start("start", "land-head", "--args", landArgs(l, "A-1", "outside-a1", authorIDs...), "--handoff", l.file)
 			res := l.runToEnd(spec.RunID)
 			var v landValue
-			if res.Status != engine.RunCompleted || json.Unmarshal(res.Value, &v) != nil || v.State != "escalated" || v.Reason != c.reason || v.Escalation == "" {
+			if res.Status != engine.RunCompleted || json.Unmarshal(res.Value, &v) != nil || v.State != "landed" || v.Acceptance == "" {
 				t.Fatalf("a land of a head whose author is %s: %s %s %s\n%s", c.name, res.Status, res.ErrorKind, res.Error, res.Value)
 			}
-			if n := l.count("SELECT COUNT(*) FROM dag_agent_acceptances") + l.count("SELECT COUNT(*) FROM dag_integration_batches"); n != 0 {
-				t.Errorf("%d acceptance or integration rows after a refused acceptance", n)
+			if n := l.count("SELECT COUNT(*) FROM dag_agent_acceptances") + l.count("SELECT COUNT(*) FROM dag_integration_batches"); n != 2 {
+				t.Errorf("%d acceptance or integration rows, want 2", n)
 			}
 			node := l.nodeOf["A-1"]
 			if checks := l.unitCheckRowsOf(node); len(checks) != 1 || str(checks[0].Data, "state") != "ok" || str(checks[0].Data, "verdict") != "verified" {
 				t.Errorf("the unit check of the head: %+v", checks)
 			}
-			escalated := false
 			for _, e := range l.events() {
 				if e.Kind == engine.KindCall && e.Op == ops.OpReview {
 					t.Errorf("a crw.review row: %s %v", e.Event, e.Data)
 				}
-				if e.Kind == engine.KindFlow && e.Event == engine.EvEscalation && str(e.Data, "node") == node {
-					escalated = str(e.Data, "reason") == c.reason && str(e.Data, "ask") == "configuration" && str(e.Data, "class") == "configuration_fault"
+			}
+			rows := l.releaseRowsOf(node)
+			if len(rows) != 1 {
+				t.Fatalf("release rows: %+v", rows)
+			}
+			raw, err := json.Marshal(rows[0].Data["authors"])
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, id := range authorIDs {
+				if !strings.Contains(string(raw), id) {
+					t.Errorf("original author %s missing from %s", id, raw)
 				}
 			}
-			if !escalated {
-				t.Errorf("no escalation of the configuration %s", c.reason)
+			if n := l.count("SELECT COUNT(*) FROM dag_agent_closures WHERE subject_kind = 'execution' AND state = 'cancelled' AND reason = 'land_ended'"); n != 0 {
+				t.Errorf("the landed execution was cancelled %d times", n)
 			}
-			if n := l.count("SELECT COUNT(*) FROM dag_agent_closures WHERE subject_kind = 'execution' AND state = 'cancelled' AND reason = 'land_ended'"); n != 1 {
-				t.Errorf("the refused land gave its release back %d times, want 1", n)
-			}
-			t.Logf("%s: %s", c.name, res.Value)
 		})
 	}
 }
@@ -319,8 +320,7 @@ func landValueOf(t *testing.T, res Result) landValue {
 // land-head run. A land that ends escalated gives its release back:
 // the relay closes the node's execution (land_ended, cancelled, the slot returned in the same transaction), so the next land of the
 // node is a new release - a new execution of the new run, its worktree and the pair of the authors it names - and lands through the same
-// gates. Two firsts: a land whose fix rounds ran out (land_fix_rounds, the ids of the last check's findings carried on the escalation
-// and in the land's value: the child fixes them outside), and authors the run could not read back (independence_unproven).
+// gates. A land whose fix rounds ran out carries the last findings on the escalation and in its value for correction outside the run.
 func TestLandHeadLandsAgainAfterALandThatDidNotPass(t *testing.T) {
 	for _, c := range []struct {
 		name, reason string
@@ -329,7 +329,6 @@ func TestLandHeadLandsAgainAfterALandThatDidNotPass(t *testing.T) {
 		authors      func(l *laneLab) []string
 	}{
 		{"fix rounds ran out", "land_fix_rounds", true, 2, func(l *laneLab) []string { return []string{l.authorThread("claude-fake-sonnet", "high")} }},
-		{"authors not read back", "independence_unproven", false, 0, func(l *laneLab) []string { return []string{"0190a000-0000-7000-8000-ffffffffffff"} }},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
@@ -923,17 +922,14 @@ func TestLandHeadEvidenceMissingAsksAndRechecks(t *testing.T) {
 	})
 }
 
-// TestLandHeadFixKeepsOriginalAuthorIndependence (CRW-1490): the in-run fix does not loosen the independence gate. The relay checks
-// the land's original authors alongside the completed executor calls, so a head whose original author the run could not read back
-// stays independence_unproven after a fixer the run observed, and one whose original author ran on the checker's family stays
-// independence_refused. The fix and the verified recheck happen; the gate alone refuses.
-func TestLandHeadFixKeepsOriginalAuthorIndependence(t *testing.T) {
+// A repair keeps the original author records while a verified separate review can land any model family (CRW-1515).
+func TestLandHeadFixKeepsOriginalAuthorMetadata(t *testing.T) {
 	for _, c := range []struct {
-		name, reason string
-		authors      func(l *laneLab) []string
+		name    string
+		authors func(l *laneLab) []string
 	}{
-		{"an original author the run cannot read back", "independence_unproven", func(l *laneLab) []string { return []string{"0190a000-0000-7000-8000-ffffffffffff"} }},
-		{"an original author of the checker's family", "independence_refused", func(l *laneLab) []string { return []string{l.authorThread("grok-fake-sol", "high")} }},
+		{"an original author the run cannot read back", func(l *laneLab) []string { return []string{"0190a000-0000-7000-8000-ffffffffffff"} }},
+		{"an original author of the checker's family", func(l *laneLab) []string { return []string{l.authorThread("grok-fake-sol", "high")} }},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
@@ -942,7 +938,7 @@ func TestLandHeadFixKeepsOriginalAuthorIndependence(t *testing.T) {
 			spec := l.start("start", "land-head", "--args", landArgs(l, "A-1", "outside-a1", c.authors(l)...), "--handoff", l.file)
 			res := l.runToEnd(spec.RunID)
 			var v landValue
-			if res.Status != engine.RunCompleted || json.Unmarshal(res.Value, &v) != nil || v.State != "escalated" || v.Reason != c.reason {
+			if res.Status != engine.RunCompleted || json.Unmarshal(res.Value, &v) != nil || v.State != "landed" || v.Acceptance == "" {
 				t.Fatalf("a land whose head needed changes, by authors %s: %s %s %s\n%s", c.name, res.Status, res.ErrorKind, res.Error, res.Value)
 			}
 			node := l.nodeOf["A-1"]
@@ -953,11 +949,11 @@ func TestLandHeadFixKeepsOriginalAuthorIndependence(t *testing.T) {
 			if len(checks) != 2 || str(checks[0].Data, "verdict") != "needs_changes" || str(checks[1].Data, "verdict") != "verified" {
 				t.Errorf("the checks: %+v, want needs_changes then a verified recheck", checks)
 			}
-			if n := l.count("SELECT COUNT(*) FROM dag_agent_acceptances"); n != 0 {
-				t.Errorf("%d acceptances after a refused one", n)
+			if n := l.count("SELECT COUNT(*) FROM dag_agent_acceptances"); n != 1 {
+				t.Errorf("%d acceptances, want 1", n)
 			}
-			if n := l.count("SELECT COUNT(*) FROM dag_agent_closures WHERE subject_kind = 'execution' AND state = 'cancelled' AND reason = 'land_ended'"); n != 1 {
-				t.Errorf("the refused land gave its release back %d times, want 1", n)
+			if n := l.count("SELECT COUNT(*) FROM dag_agent_closures WHERE subject_kind = 'execution' AND state = 'cancelled' AND reason = 'land_ended'"); n != 0 {
+				t.Errorf("the landed execution was cancelled %d times", n)
 			}
 		})
 	}

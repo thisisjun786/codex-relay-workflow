@@ -73,6 +73,10 @@ func TestInstallWarnsWhenTrackingIsMissing(t *testing.T) {
 // CRW-1577: `crw install` prints the one repair line of a missing tracking section to stderr while
 // the JSON answer keeps it in warnings; a configured section warns nothing.
 func TestInstallCLIPrintsTrackingRepairWarning(t *testing.T) {
+	// The CLI probes codex from PATH; a clean CI host need not have it installed.
+	fakeBin := t.TempDir()
+	writeExecutable(t, filepath.Join(fakeBin, "codex"), []byte("#!/bin/sh\necho codex-cli 0.154.0\n"), 0o755)
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	h := newHost(t)
 	config := filepath.Join(h.home, "crw.json")
 	write(t, config, `{}`)

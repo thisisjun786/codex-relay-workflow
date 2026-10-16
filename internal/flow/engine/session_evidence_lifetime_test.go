@@ -588,3 +588,52 @@ func TestRealEvidenceDirRefusesLinks(t *testing.T) {
 		}
 	})
 }
+
+// TestEvidenceRestorePlacedHostReleasedWithoutBind (CRW-1512): a restored attempt holds every placed
+// host directory it must later drop — the evidence_placed row of a host outside the spawned copies
+// merges into the restored assignment, and the end of the attempt with no subagent bound releases all
+// of them.
+func TestEvidenceRestorePlacedHostReleasedWithoutBind(t *testing.T) {
+	base, owner, host, root := t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir()
+	if err := realEvidenceDir(root); err != nil {
+		t.Fatal(err)
+	}
+	const op = "c_5cff7231980e/t1-a1"
+	id := evidence.FlowAssignmentID(sessionOwner, "run-restore", "c_5cff7231980e", op)
+	rec, err := evidence.NewFlowAssignment(sessionOwner, id, root, op, time.Now().Add(-time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, cwd := range []string{base, owner, host} {
+		if err := rec.PersistNew(cwd); err != nil {
+			t.Fatal(err)
+		}
+		if got, ok := evidence.RecordedAssignment(cwd, sessionOwner, id); !ok || got.ID != id {
+			t.Fatalf("missing initial copy at %s", cwd)
+		}
+	}
+	c := &callRun{e: &Engine{cfg: Config{Session: &SessionConfig{Owner: sessionOwner, EvidenceCwd: base}}}, sess: &sessionCall{attempt: 1}}
+	rows := []Event{
+		{Event: EvPrepared, Data: map[string]any{"evidence_cwd": base, "evidence_cwds": []string{base, owner}}},
+		{Event: EvStepPublished, Data: map[string]any{"action": StepSpawn, "evidence_assignment": id, "marker": op, "attempt": 1, "evidence_cwds": []string{base, owner}}},
+		{Event: EvEvidencePlaced, Data: map[string]any{"evidence_assignment": id, "evidence_cwd": host, "attempt": 1}},
+	}
+	c.evidenceRestore(rows)
+	if c.sess.evidence == nil {
+		t.Fatal("published assignment was not restored")
+	}
+	if got := c.sess.evidence.cwds; !slices.Equal(got, []string{base, owner, host}) {
+		t.Errorf("restored cwds %v; want base, owner and placed host", got)
+	}
+	if c.sess.agent != "" {
+		t.Fatal("test unexpectedly bound a subagent")
+	}
+	// A resumed attempt ends before binding again; only its restored directory list can clean the host copy.
+	c.sessionEnd(CallResult{Status: StatusRefused})
+	for _, cwd := range []string{base, owner, host} {
+		noOpenRecord(t, "ended restored attempt", cwd)
+	}
+	if c.sess.evidence != nil {
+		t.Error("ended attempt retained evidence state")
+	}
+}

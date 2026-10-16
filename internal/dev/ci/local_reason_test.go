@@ -112,45 +112,43 @@ func TestLocalReason_keeps_the_message_lines_of_a_failing_test(t *testing.T) {
 		}
 	})
 
-	t.Run("at most 6 messages per FAIL line", func(t *testing.T) {
-		const messages = 6
+	t.Run("every message of a FAIL line", func(t *testing.T) {
+		const messages = 9
 		output := "--- FAIL: TestMany (0.00s)\n"
-		for i := 1; i <= messages+1; i++ {
+		for i := 1; i <= messages; i++ {
 			output += fmt.Sprintf("    many_test.go:%d: message %d\n", i, i)
 		}
 		output += localFiller(localReasonLines + 5)
 		head := localReasonHead(t, localReason(output))
 		if len(head) != 1+messages {
-			t.Errorf("the marked block has %d lines %q, want the FAIL line and %d messages", len(head), head, messages)
+			t.Errorf("the marked block has %d lines %q, want the FAIL line and every message", len(head), head)
 		}
-		if strings.Contains(strings.Join(head, "\n"), fmt.Sprintf("message %d", messages+1)) {
-			t.Errorf("the marked block %q keeps a message past the bound", head)
+		if !strings.Contains(strings.Join(head, "\n"), fmt.Sprintf("message %d", messages)) {
+			t.Errorf("the marked block %q lost the last message", head)
 		}
 	})
 
-	t.Run("each message cut to 300 bytes", func(t *testing.T) {
-		long := "    long_test.go:1: " + strings.Repeat("é", localReasonLine)
+	t.Run("a message is never cut", func(t *testing.T) {
+		long := "    long_test.go:1: " + strings.Repeat("é", 300) + "SENTINEL"
 		output := "--- FAIL: TestLong (0.00s)\n" + long + "\n" + localFiller(localReasonLines+5)
 		head := localReasonHead(t, localReason(output))
-		if len(head) != 2 {
-			t.Fatalf("the marked block %q, want the FAIL line and its message", head)
-		}
-		if len(head[1]) > localReasonLine || !strings.HasPrefix(long, head[1]) {
-			t.Errorf("the message is %d bytes %q, want the first %d bytes at most", len(head[1]), head[1], localReasonLine)
+		if len(head) != 2 || head[1] != long {
+			t.Errorf("the marked block %q, want the FAIL line and its whole message", head)
 		}
 	})
 
-	t.Run("at most 20 marked lines in total", func(t *testing.T) {
+	t.Run("every marked line and its message", func(t *testing.T) {
 		var b strings.Builder
 		for i := 0; i < 30; i++ {
 			fmt.Fprintf(&b, "--- FAIL: Test%d (0.00s)\n    t_test.go:%d: message of %d\n", i, i, i)
 		}
 		head := localReasonHead(t, localReason(b.String()+localFiller(localReasonLines+5)))
-		if len(head) != localReasonMarked {
-			t.Errorf("the marked block has %d lines, want %d", len(head), localReasonMarked)
+		if len(head) != 60 {
+			t.Errorf("the marked block has %d lines, want every FAIL line and message", len(head))
 		}
-		if head[0] != "--- FAIL: Test0 (0.00s)" || head[1] != "    t_test.go:0: message of 0" {
-			t.Errorf("the marked block starts %q, want the first failure with its message", head[:2])
+		if head[0] != "--- FAIL: Test0 (0.00s)" || head[1] != "    t_test.go:0: message of 0" ||
+			head[58] != "--- FAIL: Test29 (0.00s)" || head[59] != "    t_test.go:29: message of 29" {
+			t.Errorf("the marked block is %q…%q, want first and last failure kept", head[:2], head[len(head)-2:])
 		}
 	})
 
@@ -164,6 +162,24 @@ func TestLocalReason_keeps_the_message_lines_of_a_failing_test(t *testing.T) {
 		want := "--- FAIL: TestOut (0.00s)\n    out_test.go:3: the message"
 		if strings.Join(head, "\n") != want {
 			t.Errorf("the marked block is %q, want %q", strings.Join(head, "\n"), want)
+		}
+	})
+
+	t.Run("diagnostics at the tail boundary appear once", func(t *testing.T) {
+		// 41 lines: the marker is line 0, its two diagnostics cross into the 40-line tail
+		output := "--- FAIL: TestBoundary (0.00s)\n    x_test.go:1: unique-A\n    x_test.go:2: unique-B\n" + localFiller(38)
+		reason := localReason(output)
+		if strings.Count(reason, "unique-A") != 1 || strings.Count(reason, "unique-B") != 1 {
+			t.Errorf("the boundary diagnostics appear %d/%d times, want once each:\n%s", strings.Count(reason, "unique-A"), strings.Count(reason, "unique-B"), reason)
+		}
+	})
+
+	t.Run("a tail line is never cut", func(t *testing.T) {
+		long := "tail " + strings.Repeat("é", 3000) + "SENTINEL"
+		output := "--- FAIL: TestTail (0.00s)\n" + localFiller(localReasonLines-1) + long + "\n"
+		reason := localReason(output)
+		if !strings.Contains(reason, long) {
+			t.Errorf("the tail lost the long line: %d bytes of %d", len(reason), len(output))
 		}
 	})
 }

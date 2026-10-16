@@ -59,12 +59,12 @@ type localJob struct {
 
 // localGoProductLegs is the go-product matrix, in ci.yml order.
 func localGoProductLegs() []string {
-	return []string{"lint", "test-1", "test-2", "test-3", "test-4", "test-rest", "dist"}
+	return []string{"lint", "test-1", "test-2", "test-3", "test-4", "test-5", "test-rest", "test-dev", "dist"}
 }
 
 // localGoProductTestLegs is the go-product test legs, the ones `make test-part` runs.
 func localGoProductTestLegs() []string {
-	return []string{"test-1", "test-2", "test-3", "test-4", "test-rest"}
+	return []string{"test-1", "test-2", "test-3", "test-4", "test-5", "test-rest", "test-dev"}
 }
 
 // The placeholders the runner replaces when it builds a step's environment: the range base and head
