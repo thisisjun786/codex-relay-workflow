@@ -163,6 +163,29 @@ func designOf(nodes ...string) Design {
 	return d
 }
 
+// legacyDesignJSON is a DESIGN as a binary before S-1 recorded it (CRW-1435): the Design marshalled, with the sub_tasks member of every
+// issue dropped.
+func legacyDesignJSON(t *testing.T, d Design) json.RawMessage {
+	t.Helper()
+	b, err := json.Marshal(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+	issues, _ := m["issues"].([]any)
+	for _, is := range issues {
+		delete(is.(map[string]any), "sub_tasks")
+	}
+	out, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
 func call(id, status, model string, output any) CallRef {
 	var c CallRef
 	c.CallID, c.Status, c.Handle = id, status, "crwh1:run-1:"+id
@@ -446,13 +469,14 @@ func TestReleasedPlansAndDesignHead(t *testing.T) {
 
 // A node whose audited issue is sized for a split or a child has started too: its lane recorded a release row under the revision it
 // was sized under (released false, kind split or child) and escalated it. crw.releasedPlans lists it with that plan, as it lists a
-// node released to an executor, so a later re-plan's critic compares the DESIGN with it.
+// node released to an executor, so a later re-plan's critic compares the DESIGN with it. The split here has no sub-tasks: the DESIGN
+// was recorded before S-1 (CRW-1435), whose split release is unreleased.
 func TestReleasedPlansListTheNodesSizedForASplitOrAChild(t *testing.T) {
 	w := newWorld(t)
 	w.relay.plan = planOfNodes(map[string]string{"A": "sa", "B": "sb", "C": "sc"}, "A", "B", "C")
 	d := designOf("A", "B", "C")
 	d.Issues[1].SizeFit, d.Issues[1].SizeReason, d.Issues[1].IssueSizeDecision = "split", "two packages", "over_line"
-	w.ledgered(true, d)
+	w.ledgeredLegacy(d)
 	for _, n := range []string{"A", "B"} {
 		w.must("release", "plan-1", n, "M")
 	}
@@ -477,13 +501,13 @@ func TestReleasedPlansListTheNodesSizedForASplitOrAChild(t *testing.T) {
 // A node whose audited issue is sized for a child has started: its lane recorded a release row (released false, kind child,
 // size_fit_child) before it escalated the node. Both readers of the one started predicate count it so: the signal path (lanes, which
 // crw.signalBind records as started) does not leave it unstarted for a due signal to re-plan, and crw.releasedPlans lists it with
-// the plan it was sized under.
+// the plan it was sized under. A DESIGN sizes a node for a child only when a binary before S-1 recorded it (CRW-1435).
 func TestAChildSizedNodeHasStarted(t *testing.T) {
 	w := newWorld(t)
 	w.relay.plan = planOfNodes(map[string]string{"A": "sa", "B": "sb", "C": "sc"}, "A", "B", "C")
 	d := designOf("A", "B", "C")
 	d.Issues[1].SizeFit, d.Issues[1].SizeReason, d.Issues[1].IssueSizeDecision = "child", "a child of its own", "over_line"
-	w.ledgered(true, d)
+	w.ledgeredLegacy(d)
 	var rel ReleaseOutcome
 	_ = json.Unmarshal(w.must("release", "plan-1", "B", "M"), &rel)
 	if rel.Released || rel.Kind != "child" || rel.Reason != "size_fit_child" {

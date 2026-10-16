@@ -2462,6 +2462,8 @@ func TestASplitNodeHasStartedForTheSignal(t *testing.T) {
 		}
 	}
 	l.Design = &d
+	// a split with no sub-tasks, which its lane escalates: a DESIGN recorded before S-1 (CRW-1435)
+	l.UseLegacyDesign()
 	mismatching(l, "A")
 	fixedOnce(l, "A")
 	// B's size_split leaves the milestone incomplete
@@ -2515,6 +2517,8 @@ func TestAReplanKeepsASplitNodeUnderReleasedPlans(t *testing.T) {
 		}
 	}
 	l.Design = &d
+	// a split with no sub-tasks, which its lane escalates: a DESIGN recorded before S-1 (CRW-1435)
+	l.UseLegacyDesign()
 	mismatching(l, "A")
 	fixedOnce(l, "A")
 	// B's size_split leaves the milestone incomplete

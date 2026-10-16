@@ -28,6 +28,8 @@ func TestSizeFitChildEscalatesSizeSplitAndStartsNoChild(t *testing.T) {
 		{ID: "B", Issue: "CRW-B", Title: "issue B", Regions: []string{"b/"}},
 	}
 	l := NewLab(t, nodes...)
+	// only a DESIGN recorded before S-1 sizes a node for a child (CRW-1435)
+	l.UseLegacyDesign()
 	got := mustRunIncomplete(t, l)
 	if state, reason := laneOf(t, got, "A"); state != "escalated" || reason != "size_split" {
 		t.Fatalf("lane A: %s %s, want escalated size_split", state, reason)
@@ -140,6 +142,8 @@ func TestSpawnDecisionsRecorded(t *testing.T) {
 		{ID: "B", Issue: "CRW-B", Title: "a big issue", Regions: []string{"b/"}, SizeFit: "child", SizeReason: "own_goal"},
 	}
 	l := NewLab(t, nodes...)
+	// only a DESIGN recorded before S-1 sizes a node for a child (CRW-1435)
+	l.UseLegacyDesign()
 	same := Finding("P1", "the guard is missing")
 	l.UnitChecks("A", NeedsChanges(same), NeedsChanges(same))
 	d := l.designFor()
