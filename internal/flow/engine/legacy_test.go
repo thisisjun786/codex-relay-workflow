@@ -95,15 +95,23 @@ func agentRow(run, callID, path string, position int, role, node string) Event {
 	return Event{RunID: run, Kind: KindCall, CallID: callID, Path: path, Position: position, Op: "agent", Label: role + ":" + node, Event: EvPrepared, Data: map[string]any{"role": role, "node": node}}
 }
 
+// designAuditRow is the prepared row of the design audit's call as a build before the critic (CRW-1434) wrote it: role reviewer, no node,
+// the label design-audit:r<round>.
+func designAuditRow(run, callID, path string, position int, label string) Event {
+	return Event{RunID: run, Kind: KindCall, CallID: callID, Path: path, Position: position, Op: "agent", Label: label, Event: EvPrepared, Data: map[string]any{"role": "reviewer", "node": ""}}
+}
+
 func openedRow(run, path string, position int, label, callID string) Event {
 	return Event{RunID: run, Kind: KindFlow, Path: path, Position: position, Op: "workflow", Label: label, Event: "workflow_opened", Data: map[string]any{"call_id": callID, "script_digest": "d"}}
 }
 
 // TestLegacyReviewerRunNamesTheRetiredRow (CRW-1429): a run whose journal holds a row of the retired node reviewer or reviewer-final path
 // is a legacy run, and the reason names the row (its op or role, its call id, its node or milestone), the retired path and CRW-1429.
-// A crw.review or crw.reviewerFinal row is one in any run; a reviewer or reviewer-final agent call and a spawn decision of a retired
-// rule are one only where an old lane wrote them: the whole run when it was started as a lane workflow, else the subtree of a lane it
-// nested with workflow() (by name or by {scriptPath}), whose reason also names the nested label and its workflow_opened call. A crw.archive
+// A crw.review or crw.reviewerFinal row and a reviewer-final agent call are one in any run (the role is retired, so no run of the current
+// build calls it); a reviewer agent call and a spawn decision of a retired rule are one only where an old lane wrote them: the whole run
+// when it was started as a lane workflow, else the subtree of a lane it nested with workflow() (by name or by {scriptPath}), whose reason
+// also names the nested label and its workflow_opened call. A reviewer call of the design audit (an old build's, before the critic) is
+// named as that call, by its label, not as a node's reviewer. A crw.archive
 // row is one in the lane scope, and anywhere in the run when it follows a crw.audit on its path (CRW-1447: the old close's settle step,
 // with or without its audit_mismatch escalation between).
 func TestLegacyReviewerRunNamesTheRetiredRow(t *testing.T) {
@@ -123,6 +131,16 @@ func TestLegacyReviewerRunNamesTheRetiredRow(t *testing.T) {
 			[]string{"reviewer agent call", "c_r", "node A", "the retired node reviewer path (CRW-1429)"}},
 		"a reviewer-final agent call of the land-head workflow": {[]Event{startedRow(run, "land-head"), agentRow(run, "c_rf", RootPath, 9, "reviewer-final", "")},
 			[]string{"reviewer-final agent call", "c_rf", "the retired reviewer-final path (CRW-1429)"}},
+		"a reviewer-final agent call of a custom run": {[]Event{startedRow(run, "custom"), agentRow(run, "c_rf", RootPath, 2, "reviewer-final", "")},
+			[]string{"reviewer-final agent call", "c_rf", "label reviewer-final:", "the retired reviewer-final path (CRW-1429)", "which the current project lane does not replay", legacyReadOnly}},
+		"a reviewer-final agent call under a helper nested by its script path": {[]Event{startedRow(run, "custom"), openedRow(run, RootPath, 3, "workflow:lanes/helper.js", "c_wf"),
+			agentRow(run, "c_rf", nested, 1, "reviewer-final", "")},
+			[]string{"reviewer-final agent call", "c_rf", "the retired reviewer-final path (CRW-1429)"}},
+		"the design audit an old build ran with role reviewer": {[]Event{startedRow(run, "project-lane"), designAuditRow(run, "c_da", RootPath, 3, "design-audit:r1")},
+			[]string{"reviewer agent call", "c_da", "label design-audit:r1", "of the design audit, which an old build ran with role reviewer and the current lane runs as the critic (CRW-1453, CRW-1429)"}},
+		"the design audit retry of an old build under a nested project lane": {[]Event{startedRow(run, "custom"), openedRow(run, RootPath, 3, "workflow:project-lane", "c_wf"),
+			designAuditRow(run, "c_da", nested, 4, "design-audit:r2:retry")},
+			[]string{"reviewer agent call", "c_da", "label design-audit:r2:retry", "workflow:project-lane", "c_wf", "of the design audit"}},
 		"a decision of a retired rule": {[]Event{startedRow(run, "night-batch"), opRow(run, "c_sp", RootPath, 6, opSpawnDecision, map[string]any{"rule": "SP-REV-1", "node": "A", "role": "reviewer"})},
 			[]string{opSpawnDecision, "SP-REV-1", "c_sp", "node A", "CRW-1429"}},
 		"the decision and the reviewer call under a nested project lane": {[]Event{startedRow(run, "custom"), openedRow(run, RootPath, 3, "workflow:project-lane", "c_wf"),
@@ -173,13 +191,14 @@ func TestLegacyReviewerRunNamesTheRetiredRow(t *testing.T) {
 }
 
 // TestCurrentLaneRunIsNotTakenForALegacyReviewerRun (CRW-1429): what the current lane writes is no legacy row (the unit check, the
-// critic, the close's audit, its audit_mismatch escalation and its report), and neither is a reviewer call or a crw.archive of a user
-// workflow outside any nested lane that does not follow a crw.audit on its path (right after it, or after it and an escalation), a
-// reviewer call under a nested workflow that is not a lane, or a row of another run.
+// critic, the close's audit, its audit_mismatch escalation and its report), and neither is a reviewer call (whatever its label) or a
+// crw.archive of a user workflow outside any nested lane that does not follow a crw.audit on its path (right after it, or after it and
+// an escalation), a reviewer call under a nested workflow that is not a lane, or a row of another run.
 func TestCurrentLaneRunIsNotTakenForALegacyReviewerRun(t *testing.T) {
 	const run = "run-1"
 	for name, events := range map[string][]Event{
 		"the current project lane": {startedRow(run, "project-lane"), agentRow(run, "c_crit", RootPath, 3, "critic", ""),
+			{RunID: run, Kind: KindCall, CallID: "c_da", Path: RootPath, Position: 4, Op: "agent", Label: "design-audit:r1", Event: EvPrepared, Data: map[string]any{"role": "critic", "node": ""}},
 			opRow(run, "c_sp", RootPath, 4, opSpawnDecision, map[string]any{"rule": "SP-AUD-1", "role": "critic"}),
 			opRow(run, "c_uc", RootPath+"/9:A", 5, "crw.unitCheck", map[string]any{"node": "A", "role": "unit-check"}),
 			opRow(run, "c_aud", RootPath, 20, "crw.audit", map[string]any{"milestone": "M1"}),
@@ -201,7 +220,8 @@ func TestCurrentLaneRunIsNotTakenForALegacyReviewerRun(t *testing.T) {
 		"a reviewer call under a nested helper": {startedRow(run, "custom"), openedRow(run, RootPath, 3, "workflow:helper", "c_wf"),
 			agentRow(run, "c_r", nestedPathID(RootPath, 3), 1, "reviewer", "A")},
 		"a reviewer call under a helper nested by its script path": {startedRow(run, "custom"), openedRow(run, RootPath, 3, "workflow:lanes/helper.js", "c_wf"),
-			agentRow(run, "c_r", nestedPathID(RootPath, 3), 1, "reviewer-final", "")},
+			agentRow(run, "c_r", nestedPathID(RootPath, 3), 1, "reviewer", "A")},
+		"a reviewer call of a custom run labelled like the design audit": {startedRow(run, "custom"), designAuditRow(run, "c_r", RootPath, 1, "design-audit:r1")},
 		"a reviewer call beside a nested lane, on a path the lane's is a prefix of": {startedRow(run, "custom"), openedRow(run, RootPath, 3, "workflow:project-lane", "c_wf"),
 			openedRow(run, RootPath, 30, "workflow:helper", "c_wf2"), agentRow(run, "c_r", nestedPathID(RootPath, 30), 1, "reviewer", "A")},
 		"another run's rows": {startedRow(run, "project-lane"), startedRow("run-2", "project-lane"),

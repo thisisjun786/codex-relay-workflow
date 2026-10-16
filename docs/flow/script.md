@@ -1069,9 +1069,12 @@ with a reason (`engine.LegacyJournal`, the code `legacy_issue_child_run` of ever
 rows of its run id, a run is one when its journal holds
 
 - anywhere, a `crw.review` or `crw.reviewerFinal` row: no operation of either name is registered, so only an old script wrote it;
-- in the lane scope, an agent call of role `reviewer` or of the retired role key of the `crw.reviewerFinal` op, a completed
-  `crw.spawnDecision` row of a retired rule (`SP-REV-1`, `SP-REV-2`, `SP-REVF-1`, `SP-EXPL-3`: what an old lane wrote before the record
-  of the review, when its process ended in between), or a `crw.archive` row;
+- anywhere, an agent call of the retired role key of the `crw.reviewerFinal` op, from a lane or from a user workflow: the key names no
+  role, so only an old build called it, and the role is part of a call's input digest, so the call does not replay in any script;
+- in the lane scope, an agent call of role `reviewer`, a completed `crw.spawnDecision` row of a retired rule (`SP-REV-1`, `SP-REV-2`,
+  `SP-REVF-1`, `SP-EXPL-3`: what an old lane wrote before the record of the review, when its process ended in between), or a
+  `crw.archive` row. A `reviewer` call labelled `design-audit:` is the design check of a build before the critic, which ran it with
+  role `reviewer`; the current lane calls the critic at that position;
 - anywhere, the settle shape of the old close: a `crw.archive` row whose path holds a `crw.audit` call at the position right before it,
   or a `crw.escalate` call there and a `crw.audit` call at the position before that (the audit, the `audit_mismatch` escalation on a
   mismatch, the archive). It finds an old lane nested under any name and a script that imported `crw:lib/close` and settled that way.
@@ -1085,9 +1088,10 @@ key `reviewer` and the `crw.archive` op stay usable: a user workflow's reviewer 
 and an archive that does not follow an audit on its path in that way make no run legacy. A workflow of the user that runs
 `crw.audit` and then `crw.archive` on one path is the settle shape and is refused: start a new run, and its records stay readable.
 
-The reason names the row (its op or role, its call id, its node or milestone, and for a nested lane its `workflow_opened` label and
-call id), the retired path it belongs to (a node's old reviewer path, the path of the `crw.reviewerFinal` op, or the review-thread
-archive of the old close) with CRW-1429, and ends with "the run is not resumed and nothing is written to it; its records stay read only". Every resume refuses it
+The reason names the row (its op or role, its call id, its node or milestone, the label of an agent call that has no node, and for a
+nested lane its `workflow_opened` label and call id), the retired path it belongs to (a node's old reviewer path, the path of the
+`crw.reviewerFinal` op, the old `reviewer` call of the design check with CRW-1453, or the review-thread archive of the old close) with
+CRW-1429, and ends with "the run is not resumed and nothing is written to it; its records stay read only". Every resume refuses it
 before a row is written (`crw flow resume`, `crw flow resume RUN SCRIPT`, the resumes of `crw flow answer` and `crw flow next`), and so
 does every command that would write a row to it: `crw flow cancel`, `pause`, `recover` (it appends no `recovery_cleared` row),
 `dispatched` and the run's report up; `crw flow audit`

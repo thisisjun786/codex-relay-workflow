@@ -454,3 +454,59 @@ func TestOldLaneNestedInACustomWrapperIsRefusedBeforeAnyWrite(t *testing.T) {
 		recoverAndAuditRefused(t, l, arc.CallID, false, ops.OpArchive, arc.CallID)
 	})
 }
+
+// TestOldCustomRunThatCalledReviewerFinalIsRefusedBeforeAnyWrite (CRW-1429, CRW-1450): reviewer-final is a retired role key in every run,
+// not only in an old lane. A custom workflow whose old run called agentType reviewer-final ran it on the role the old role table had; under
+// the current table the key names no role, and the role is part of the call's input digest, so the unchanged script run again over that
+// journal would not replay the call: the completed call and every later position of its path would run live. The resume of the custom
+// run is refused before any row is written, naming the reviewer-final agent call, its call id, the retired path and CRW-1429, and
+// Recover writes nothing to it. The old rows are appended by hand after the run's first call, in the shape the old build wrote them (the
+// current build has no reviewer-final role to write them with).
+func TestOldCustomRunThatCalledReviewerFinalIsRefusedBeforeAnyWrite(t *testing.T) {
+	l := NewLab(t, oneNode()...)
+	custom, err := script.Load(script.Source{Name: "custom.js", Text: []byte("export const meta = { name: 'custom' }\n" +
+		"const look = await agent.call('read the range', { agentType: 'explorer', label: 'look' })\n" +
+		"const judged = await agent.call('judge the range', { agentType: 'reviewer-final', label: 'judge' })\n" +
+		"return { look: look.status, judged: judged.status }\n")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// the old process: the explorer call, then it ended; the old build's reviewer-final call at the next position follows by hand
+	var look engine.Event
+	l.OnRow(func(ev engine.Event) {
+		if ev.Kind == engine.KindCall && ev.Op == "agent" && ev.Event == engine.EvCompleted && ev.Label == "look" && look.CallID == "" {
+			look = ev
+			l.Kill()
+		}
+	})
+	_, _ = runOver(l, custom, nil, false)
+	l.OnRow(nil)
+	if look.CallID == "" || look.Path != engine.RootPath {
+		t.Fatalf("the custom run's first call: %+v; calls %v", look, l.Labels())
+	}
+	l.NewProcess("proc-2")
+	const call, model = "c_old_judge", "gpt-fake-sol"
+	answer := `{"verdict":"verified","criteria":[],"defects":[],"summary":"judged"}`
+	for _, ev := range []engine.Event{
+		{Kind: engine.KindCall, CallID: call, Position: look.Position + 1, Op: "agent", Label: "judge", Event: engine.EvPrepared,
+			Data: map[string]any{"role": "reviewer-final", "node": "", "family": "reviewer", "model": model, "configured_model": model, "effort": "xhigh", "configured_effort": "xhigh"}},
+		{Kind: engine.KindCall, CallID: call, Position: look.Position + 1, Op: "agent", Label: "judge", Event: engine.EvCompleted,
+			Data: map[string]any{"reason": "", "result": answer}},
+	} {
+		ev.RunID, ev.Path = l.RunID, engine.RootPath
+		l.journal.Append(ev)
+	}
+	l.journal.flush()
+	if got := l.CallsOf("reviewer-final"); len(got) != 1 || got[0].ID != call {
+		t.Fatalf("the old custom run holds the reviewer-final calls %+v", got)
+	}
+	refusedUnchanged(t, l, custom, "reviewer-final agent call", call, "label judge", "the retired reviewer-final path")
+	before := len(l.Events())
+	if _, err := engine.Recover(context.Background(), l.journal, engine.ReconcileConfig{RunID: l.RunID, Host: l.backend}, engine.RecoverRequest{CallID: call, Absent: true}); err == nil ||
+		!strings.Contains(err.Error(), call) || !strings.Contains(err.Error(), "CRW-1429") {
+		t.Errorf("Recover of the old custom run: %v, want the refusal naming the call", err)
+	}
+	if got := len(l.Events()); got != before {
+		t.Errorf("the refused recovery wrote rows: %d -> %d", before, got)
+	}
+}

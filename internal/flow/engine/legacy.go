@@ -92,10 +92,12 @@ var LegacyRetiredRules = []string{"SP-REV-1", "SP-REV-2", "SP-REVF-1", "SP-EXPL-
 // the built-ins.
 var LegacyLaneWorkflows = []string{"project-lane", "land-head", "night-batch"}
 
-// The roles of the retired reviewer calls.
+// The roles of the retired reviewer calls, and the label prefix of the design audit's call, which a build before the critic (CRW-1434)
+// ran with role reviewer (the current lane calls the critic there, with the same label).
 const (
 	legacyReviewerRole      = "reviewer"
 	legacyReviewerFinalRole = "reviewer-final"
+	legacyDesignAuditLabel  = "design-audit:"
 )
 
 // legacyLanePath is a lane a run nested with workflow(): the subtree of its child path and the workflow_opened row that opened it.
@@ -122,8 +124,11 @@ func nestedWorkflowName(label string) string {
 // not replay those positions: it would run them live, and every later position of their path after them (the report would be sent
 // twice). A run is one when, for its run id,
 //   - its journal holds a row of OpLegacyReview or OpLegacyReviewerFinal (no built-in script calls them; only an old one wrote them);
-//   - inside the lane scope, its journal holds an agent call of role reviewer or reviewer-final, or a completed crw.spawnDecision row of a
-//     retired rule (LegacyRetiredRules): what an old lane wrote before the record of the review, when its process ended in between;
+//   - its journal holds an agent call of role reviewer-final: the role is retired (CRW-1450), so only an old build called it, from a lane
+//     or from a user workflow, and the role is part of the call's input digest, so the call would not replay anywhere;
+//   - inside the lane scope, its journal holds an agent call of role reviewer, or a completed crw.spawnDecision row of a retired rule
+//     (LegacyRetiredRules): what an old lane wrote before the record of the review, when its process ended in between. A reviewer call
+//     labelled design-audit: is the design audit an old build ran with role reviewer before the critic (CRW-1434), and is named as that;
 //   - inside the lane scope, its journal holds a row of OpLegacyArchive: the old close archived the reviewer threads after its audit,
 //     where the current close goes on to its report;
 //   - anywhere in the run, a row of OpLegacyArchive follows a crw.audit row on the same path, at the position right before it or, with a
@@ -135,8 +140,8 @@ func nestedWorkflowName(label string) string {
 // and the subtree of every lane the run nested with workflow() (a workflow_opened row whose label names a workflow of the list, by name
 // or by its script path's base name): every row whose path is the child path nestedPathID gives or lies under it. A reviewer call of a
 // user workflow outside any nested lane, or under a nested workflow that is not a lane, is no legacy row: the role key stays usable.
-// The reason names the row (its op or role, its call id, its node or milestone, and for a nested lane its label and its workflow_opened
-// call) and the retired path. The records stay read only, as a legacy `child` session run's do.
+// The reason names the row (its op or role, its call id, its node or milestone, the label of an agent call that has no node, and for a
+// nested lane its label and its workflow_opened call) and the retired path. The records stay read only, as a legacy `child` session run's do.
 func LegacyReviewerRun(events []Event, runID string) string {
 	whole := false
 	var lanes []legacyLanePath
@@ -200,14 +205,18 @@ func LegacyReviewerRun(events []Event, runID string) string {
 			record = fmt.Sprintf("its journal holds a %s row (call %s, node %s) of the retired node reviewer path (CRW-1429)", ev.Op, ev.CallID, nodeOr(rowStr(ev.Data, "node")))
 		case record == "" && ev.Op == OpLegacyReviewerFinal:
 			record = fmt.Sprintf("its journal holds a %s row (call %s, milestone %s) of the retired reviewer-final path (CRW-1429)", ev.Op, ev.CallID, nodeOr(rowStr(ev.Data, "milestone")))
-		case call == "" && ev.Op == "agent" && (rowStr(ev.Data, "role") == legacyReviewerRole || rowStr(ev.Data, "role") == legacyReviewerFinalRole):
-			if lane, in := scope(ev); in {
-				role := rowStr(ev.Data, "role")
-				retired := "the retired node reviewer path"
-				if role == legacyReviewerFinalRole {
-					retired = "the retired reviewer-final path"
-				}
-				call = fmt.Sprintf("its journal holds%s a %s agent call (call %s, node %s) of %s (CRW-1429)", lane.under(), role, ev.CallID, nodeOr(rowStr(ev.Data, "node")), retired)
+		case call == "" && ev.Op == "agent" && rowStr(ev.Data, "role") == legacyReviewerFinalRole:
+			// the role is retired: no run of this build calls it, so the row is an old build's wherever it lies
+			lane, _ := scope(ev)
+			call = fmt.Sprintf("its journal holds%s a %s agent call (call %s, label %s) of the retired reviewer-final path (CRW-1429)", lane.under(), legacyReviewerFinalRole, ev.CallID, nodeOr(ev.Label))
+		case call == "" && ev.Op == "agent" && rowStr(ev.Data, "role") == legacyReviewerRole:
+			lane, in := scope(ev)
+			switch {
+			case !in:
+			case strings.HasPrefix(ev.Label, legacyDesignAuditLabel):
+				call = fmt.Sprintf("its journal holds%s a %s agent call (call %s, label %s) of the design audit, which an old build ran with role %s and the current lane runs as the critic (CRW-1453, CRW-1429)", lane.under(), legacyReviewerRole, ev.CallID, ev.Label, legacyReviewerRole)
+			default:
+				call = fmt.Sprintf("its journal holds%s a %s agent call (call %s, node %s) of the retired node reviewer path (CRW-1429)", lane.under(), legacyReviewerRole, ev.CallID, nodeOr(rowStr(ev.Data, "node")))
 			}
 		case decision == "" && ev.Op == opSpawnDecision && ev.Event == EvCompleted && slices.Contains(LegacyRetiredRules, rowStr(ev.Data, "rule")):
 			if lane, in := scope(ev); in {
