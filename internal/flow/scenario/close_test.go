@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"slices"
 	"strings"
@@ -383,13 +384,16 @@ func TestCloseGateFailsOnAFailedVerificationAndHoldsOnAMissingVerifier(t *testin
 	}
 }
 
-// A crosscheck verdict that does not verify the range keeps the milestone open (CRW-1471, CRW-1473): the crosscheck's pass A finds a
-// P1 core_function finding over a passed gate, its V is needs_changes, and the run escalates the milestone crosscheck_pending with ask
-// crosscheck_pending (the 자식 hands it to the 부모 with V and the fix packet). Nothing reads it as a close: no crw.milestoneClose, no
-// reflection of the architect, no report up, no hold, and the crosscheck is not asked again.
+// A crosscheck verdict that does not verify the range keeps the milestone open (CRW-1471, CRW-1473, CRW-1490): the crosscheck's pass A
+// finds a P1 core_function finding over a passed gate, its V is needs_changes, the close's one repair commits over the failed head and
+// the second round needs changes again, and the run escalates the milestone crosscheck_pending with ask crosscheck_pending (the 자식
+// hands it to the 부모 with V and the fix packet). Nothing reads it as a close: no crw.milestoneClose, no reflection of the architect,
+// no report up, no hold, and the unpublished repair moves no ref.
 func TestNeedsChangesFinalDoesNotCloseTheMilestone(t *testing.T) {
 	l := NewLab(t, oneNode()...)
-	l.Crosschecks("M1", 1, 0, "A", 1, Crosscheck{Verdict: "needs_changes", Findings: []reviewadapter.Finding{Finding("P1", "the range breaks the criterion")}})
+	blocker := Crosscheck{Verdict: "needs_changes", Findings: []reviewadapter.Finding{Finding("P1", "the range breaks the criterion")}}
+	l.Crosschecks("M1", 1, 0, "A", 1, blocker)
+	l.Crosschecks("M1", 2, 0, "A", 1, blocker)
 	res := l.Run()
 	if res.Status != engine.RunCompleted {
 		t.Fatalf("run %s: %s: %s\ncalls: %v", res.Status, res.ErrorKind, res.Error, l.Labels())
@@ -402,11 +406,13 @@ func TestNeedsChangesFinalDoesNotCloseTheMilestone(t *testing.T) {
 		t.Errorf("escalations %v, want crosscheck_pending", reasons)
 	}
 	cc := l.Rows("crw.crosscheck")
-	if len(cc) != 1 || str(cc[0].Data, "state") != "verdict" {
-		t.Fatalf("crosscheck rows %+v, want one verdict", cc)
+	if len(cc) != 2 || str(cc[0].Data, "state") != "verdict" || str(cc[1].Data, "state") != "verdict" {
+		t.Fatalf("crosscheck rows %+v, want the verdicts of the two rounds", cc)
 	}
-	if v, _ := cc[0].Data["verdict"].(map[string]any); str(v, "verdict") != "needs_changes" {
-		t.Errorf("the crosscheck's V %v, want needs_changes", cc[0].Data["verdict"])
+	for k, row := range cc {
+		if v, _ := row.Data["verdict"].(map[string]any); str(v, "verdict") != "needs_changes" {
+			t.Errorf("round %d's V %v, want needs_changes", k+1, row.Data["verdict"])
+		}
 	}
 	if n := len(l.Rows("crw.milestoneClose")); n != 0 {
 		t.Errorf("%d crw.milestoneClose rows: the milestone closed over a crosscheck that needs changes", n)
@@ -417,22 +423,43 @@ func TestNeedsChangesFinalDoesNotCloseTheMilestone(t *testing.T) {
 	if n := len(l.Rows("crw.hold")); n != 0 {
 		t.Errorf("%d crw.hold rows: a verdict is not held", n)
 	}
+	fixes := 0
 	for _, label := range l.Labels() {
 		if label == "reflection:M1" || strings.HasPrefix(label, "reviewer-final:") {
 			t.Errorf("the call %s ran over a range the crosscheck did not verify: %v", label, l.Labels())
 		}
+		if label == "close-fix:M1" {
+			fixes++
+		}
 	}
-	if n := len(l.Crosschecker.Calls()); n != 2 {
-		t.Errorf("%d crosscheck passes, want the two of one round: a verdict is not asked again", n)
+	if fixes != 1 {
+		t.Fatalf("%d close-fix calls, want the one of the first round's repair: %v", fixes, l.Labels())
+	}
+	repairs := closeRepairCommits(l)
+	if len(repairs) != 1 {
+		t.Fatalf("repair commits %v, want the one the fix made", repairs)
+	}
+	if str(cc[0].Data, "head") != str(repairs[0].Data, "parent") || str(cc[1].Data, "head") != str(repairs[0].Data, "commit") {
+		t.Errorf("round 1 judged %s and round 2 %s, want the failed head and its repair", str(cc[0].Data, "head"), str(cc[1].Data, "head"))
+	}
+	if l.Tip() != str(repairs[0].Data, "parent") {
+		t.Fatalf("tip %q: the failed candidate's repair must not publish without a verifying round", l.Tip())
+	}
+	if len(l.Relay.Repairs) != 0 {
+		t.Errorf("the relay published %d repairs for a close that never verified", len(l.Relay.Repairs))
+	}
+	if n := len(l.Crosschecker.Calls()); n != 4 {
+		t.Errorf("%d crosscheck passes, want the two of each of the two rounds", n)
 	}
 }
 
-// A crosscheck pass that answers needs_changes with no finding does not verify the range (CRW-1473): V is needs_changes though no
-// merged finding blocks, so the run escalates the milestone crosscheck_pending and does not close it (no crw.milestoneClose, no report
-// up, no reflection).
+// A crosscheck pass that answers needs_changes with no finding does not verify the range (CRW-1473, CRW-1490): V is needs_changes
+// though no merged finding blocks, so after the close's one repair and a second round that still needs changes the run escalates the
+// milestone crosscheck_pending and does not close it (no crw.milestoneClose, no report up, no reflection).
 func TestANeedsChangesPassWithNoFindingDoesNotCloseTheMilestone(t *testing.T) {
 	l := NewLab(t, oneNode()...)
 	l.Crosschecks("M1", 1, 0, "B", 1, Crosscheck{Verdict: "needs_changes"})
+	l.Crosschecks("M1", 2, 0, "B", 1, Crosscheck{Verdict: "needs_changes"})
 	res := l.Run()
 	if res.Status != engine.RunCompleted {
 		t.Fatalf("run %s: %s: %s\ncalls: %v", res.Status, res.ErrorKind, res.Error, l.Labels())
@@ -442,12 +469,17 @@ func TestANeedsChangesPassWithNoFindingDoesNotCloseTheMilestone(t *testing.T) {
 		t.Fatalf("%+v; calls %v; escalations %v", got, l.Labels(), escalationReasons(l))
 	}
 	cc := l.Rows("crw.crosscheck")
-	if len(cc) != 1 || str(cc[0].Data, "state") != "verdict" {
-		t.Fatalf("crosscheck rows %+v, want one verdict", cc)
+	if len(cc) != 2 || str(cc[0].Data, "state") != "verdict" || str(cc[1].Data, "state") != "verdict" {
+		t.Fatalf("crosscheck rows %+v, want the verdicts of the two rounds", cc)
 	}
-	v, _ := cc[0].Data["verdict"].(map[string]any)
-	if findings, _ := v["findings"].([]any); str(v, "verdict") != "needs_changes" || len(findings) != 0 {
-		t.Errorf("the crosscheck's V %v, want needs_changes with no finding", cc[0].Data["verdict"])
+	for k, row := range cc {
+		if fmt.Sprint(row.Data["round"]) != fmt.Sprint(k+1) {
+			t.Errorf("row %d is round %v, want %d", k, row.Data["round"], k+1)
+		}
+		v, _ := row.Data["verdict"].(map[string]any)
+		if findings, _ := v["findings"].([]any); str(v, "verdict") != "needs_changes" || len(findings) != 0 {
+			t.Errorf("round %d's V %v, want needs_changes with no finding", k+1, row.Data["verdict"])
+		}
 	}
 	if n := len(l.Rows("crw.milestoneClose")); n != 0 {
 		t.Errorf("%d crw.milestoneClose rows: the milestone closed over a pass that needs changes", n)
@@ -455,40 +487,109 @@ func TestANeedsChangesPassWithNoFindingDoesNotCloseTheMilestone(t *testing.T) {
 	if n := len(l.Rows("crw.reportUp")); n != 0 {
 		t.Errorf("%d crw.reportUp rows: a milestone that did not close was reported up", n)
 	}
+	fixes := 0
 	for _, label := range l.Labels() {
 		if label == "reflection:M1" {
 			t.Errorf("the reflection ran over a range the crosscheck did not verify: %v", l.Labels())
 		}
+		if label == "close-fix:M1" {
+			fixes++
+		}
+	}
+	if fixes != 1 {
+		t.Fatalf("%d close-fix calls, want the one of the first round's repair: %v", fixes, l.Labels())
+	}
+	repairs := closeRepairCommits(l)
+	if len(repairs) != 1 || l.Tip() != str(repairs[0].Data, "parent") {
+		t.Errorf("repair commits %v over tip %s, want the one unpublished fix", repairs, l.Tip())
+	}
+	if len(repairs) == 1 && (str(cc[0].Data, "head") != str(repairs[0].Data, "parent") || str(cc[1].Data, "head") != str(repairs[0].Data, "commit")) {
+		t.Errorf("round 1 judged %s and round 2 %s, want the failed head and its repair", str(cc[0].Data, "head"), str(cc[1].Data, "head"))
+	}
+	if len(l.Relay.Repairs) != 0 {
+		t.Errorf("the relay published %d repairs for a close that never verified", len(l.Relay.Repairs))
+	}
+	if n := len(l.Crosschecker.Calls()); n != 4 {
+		t.Errorf("%d crosscheck passes, want the two of each of the two rounds", n)
 	}
 }
 
-// The escalation of a crosscheck that needs changes follows the latest crosscheck (CRW-1473): the run escalates crosscheck_pending
-// over V1 of the head H1, another actor moves the target to H2, and the resume gates H2 again and its crosscheck needs changes with
-// another finding (V2). The escalation the run's value names holds V2 of H2 in its evidence - the same V as the value's crosscheck -
-// and is a new question of the milestone (an escalation of its own, the current one); the escalation of H1 keeps V1.
+// The escalation of a crosscheck that needs changes follows the latest adjudicated head (CRW-1473, CRW-1490): the run escalates
+// crosscheck_pending over the verdict of the repair committed on H1, another actor moves the target to H2, and the resume gates H2 and
+// its repair's round-2 recheck needs changes again. The escalation the run's value names holds that latest verdict - of the candidate
+// over the moved head - and is a new question of the milestone (an escalation of its own, the current one); the escalation of the first
+// run keeps its own verdict.
 func TestACrosscheckEscalationOnAResumeAtANewHeadHoldsTheNewVerdict(t *testing.T) {
 	l := NewLab(t, oneNode()...)
 	l.Crosschecks("M1", 1, 0, "A", 1,
 		Crosscheck{Verdict: "needs_changes", Findings: []reviewadapter.Finding{Finding("P1", "the first head breaks the criterion")}},
 		Crosscheck{Verdict: "needs_changes", Findings: []reviewadapter.Finding{Finding("P1", "the moved head breaks the criterion")}})
+	l.Crosschecks("M1", 2, 0, "A", 1,
+		Crosscheck{Verdict: "needs_changes", Findings: []reviewadapter.Finding{Finding("P1", "the first repair still fails")}},
+		Crosscheck{Verdict: "needs_changes", Findings: []reviewadapter.Finding{Finding("P1", "the moved repair still fails")}})
 	first := l.Run()
 	v1 := Value[map[string]any](t, first)
 	h1 := l.Tip()
 	if v1["state"] != "escalated" || v1["reason"] != "crosscheck_pending" {
 		t.Fatalf("the first run: %s", first.Value)
 	}
+	if repairs := closeRepairCommits(l); len(repairs) != 1 || str(repairs[0].Data, "parent") != h1 {
+		t.Fatalf("repair commits of the first run %v, want the one over %s", repairs, h1)
+	}
+	repair1 := str(closeRepairCommits(l)[0].Data, "commit")
 	moved := l.Git("commit-tree", l.Git("rev-parse", h1+"^{tree}"), "-p", h1, "-m", "another actor moved the target")
 	l.Git("update-ref", IntegrationRef, moved)
 
 	l.NewProcess("proc-2")
 	second := l.Resume()
 	v2 := Value[map[string]any](t, second)
-	cc, _ := v2["crosscheck"].(map[string]any)
-	if v2["state"] != "escalated" || v2["reason"] != "crosscheck_pending" || cc == nil || cc["head"] != moved {
+	cc2, _ := v2["crosscheck"].(map[string]any)
+	if v2["state"] != "escalated" || v2["reason"] != "crosscheck_pending" || cc2 == nil {
 		t.Fatalf("the resume at the new head %s: %s", moved, second.Value)
 	}
-	if rows := l.Rows("crw.crosscheck"); len(rows) < 2 {
-		t.Fatalf("crosscheck rows %d, want the one of H1 and the one of H2", len(rows))
+	repairs := closeRepairCommits(l)
+	if len(repairs) != 2 || str(repairs[1].Data, "parent") != moved {
+		t.Fatalf("repair commits %+v, want second parent %s", repairs, moved)
+	}
+	repair2 := str(repairs[1].Data, "commit")
+	cc1, _ := v1["crosscheck"].(map[string]any)
+	if cc1 == nil || str(cc1, "head") != repair1 || str(cc1, "prior_head") != h1 {
+		t.Errorf("the first escalation's V %v, want the verdict of the first repair %s over %s", v1["crosscheck"], repair1, h1)
+	}
+	if str(cc2, "head") != repair2 || str(cc2, "prior_head") != moved {
+		t.Errorf("the resume's V %v, want the verdict of the repair %s at the moved head %s", v2["crosscheck"], repair2, moved)
+	}
+	if l.Tip() != moved {
+		t.Errorf("tip %q, want %s: a repair that never verified is not published", l.Tip(), moved)
+	}
+	if rows := l.Rows("crw.crosscheck"); len(rows) != 4 {
+		t.Fatalf("crosscheck rows %d, want the two rounds of each of the two runs", len(rows))
+	}
+	for _, label := range l.Labels() {
+		if label == "reflection:M1" || strings.HasPrefix(label, "reviewer-final:") {
+			t.Errorf("the call %s ran over a range the crosscheck did not verify: %v", label, l.Labels())
+		}
+	}
+	if n := len(l.Rows("crw.milestoneClose")); n != 0 {
+		t.Errorf("%d crw.milestoneClose rows", n)
+	}
+	if n := len(l.Rows("crw.reportUp")); n != 0 {
+		t.Errorf("%d crw.reportUp rows", n)
+	}
+	if n := len(l.Crosschecker.Calls()); n != 8 {
+		t.Errorf("%d crosscheck passes, want the two of each round of each run", n)
+	}
+	fixes := 0
+	for _, label := range l.Labels() {
+		if label == "close-fix:M1" {
+			fixes++
+		}
+	}
+	if fixes != 2 {
+		t.Errorf("%d close-fix calls, want the one repair of each run", fixes)
+	}
+	if len(l.Relay.Repairs) != 0 {
+		t.Errorf("the relay published %d repairs over a moved head that never verified", len(l.Relay.Repairs))
 	}
 	byID := map[string]map[string]any{}
 	var order []string
@@ -508,15 +609,194 @@ func TestACrosscheckEscalationOnAResumeAtANewHeadHoldsTheNewVerdict(t *testing.T
 		t.Fatalf("no escalation row of the value's escalation %v; rows %v", v2["escalation"], order)
 	}
 	evidence, _ := row["evidence"].(map[string]any)
-	if !jsonSame(t, evidence["crosscheck"], cc) {
-		t.Errorf("the escalation's crosscheck is not the value's V2:\n%v\n%v", evidence["crosscheck"], cc)
+	if !jsonSame(t, evidence["crosscheck"], cc2) {
+		t.Errorf("the escalation's crosscheck is not the value's V2:\n%v\n%v", evidence["crosscheck"], cc2)
 	}
 	if len(order) != 2 || order[1] != str(v2, "escalation") || order[0] != str(v1, "escalation") {
 		t.Fatalf("crosscheck_pending escalations %v, want the one of H1 (%v) then the one of H2 (%v)", order, v1["escalation"], v2["escalation"])
 	}
 	old, _ := byID[order[0]]["evidence"].(map[string]any)
-	if oc, _ := old["crosscheck"].(map[string]any); oc == nil || oc["head"] != h1 {
-		t.Errorf("the escalation of H1 holds %v, want V1 of %s", old["crosscheck"], h1)
+	if oc, _ := old["crosscheck"].(map[string]any); oc == nil || oc["head"] != repair1 {
+		t.Errorf("the escalation of the first run holds %v, want its repair's V %s", old["crosscheck"], repair1)
+	}
+}
+
+// A crosscheck verdict that needs changes gets one in-run repair, and a round two that verifies
+// it closes the milestone (CRW-1490): the repair commits over the failed gate's head, the close
+// publishes that candidate with the repair integrator, and the tip becomes it.
+func TestNeedsChangesFinalRepairClosesTheMilestone(t *testing.T) {
+	l := NewLab(t, oneNode()...)
+	l.Crosschecks("M1", 1, 0, "A", 1, Crosscheck{Verdict: "needs_changes", Findings: []reviewadapter.Finding{Finding("P1", "the range breaks the criterion")}})
+	got := closeOf(t, l)
+	if got.State != "closed" {
+		t.Fatalf("%+v; calls %v", got, l.Labels())
+	}
+	if got.Crosscheck != "verified" {
+		t.Fatalf("the close's crosscheck %v, want verified", got.Crosscheck)
+	}
+	cc := l.Rows("crw.crosscheck")
+	if len(cc) != 2 || str(cc[0].Data, "state") != "verdict" || str(cc[1].Data, "state") != "verdict" {
+		t.Fatalf("crosscheck rows %+v, want the verdicts of round 1 and round 2", cc)
+	}
+	for k, row := range cc {
+		if fmt.Sprint(row.Data["round"]) != fmt.Sprint(k+1) {
+			t.Errorf("row %d is round %v, want %d", k, row.Data["round"], k+1)
+		}
+	}
+	if v, _ := cc[0].Data["verdict"].(map[string]any); str(v, "verdict") != "needs_changes" {
+		t.Errorf("round 1 %v, want needs_changes", v)
+	}
+	if v, _ := cc[1].Data["verdict"].(map[string]any); str(v, "verdict") != "verified" {
+		t.Errorf("round 2 %v, want verified", v)
+	}
+	if n := len(l.Crosschecker.Calls()); n != 4 {
+		t.Errorf("%d crosscheck passes, want the two of each of the two rounds", n)
+	}
+	var fixes []string
+	for _, label := range l.Labels() {
+		if label == "close-fix:M1" {
+			fixes = append(fixes, label)
+		}
+	}
+	if len(fixes) != 1 {
+		t.Fatalf("%d close-fix calls, want the one of the repair: %v", len(fixes), l.Labels())
+	}
+	repairs := closeRepairCommits(l)
+	if len(repairs) != 1 {
+		t.Fatalf("repair commits %v, want the one of the fix", repairs)
+	}
+	repaired, first := str(repairs[0].Data, "commit"), str(repairs[0].Data, "parent")
+	if l.Tip() != repaired || got.Tip != repaired {
+		t.Fatalf("tip %q / reported %q, want the published repair %q", l.Tip(), got.Tip, repaired)
+	}
+	if repaired == first {
+		t.Fatalf("the repair %q is the failed head, not a commit over it", repaired)
+	}
+	if got := l.Git("merge-base", first, repaired); got != first {
+		t.Fatalf("the repair %q is not over the failed head %q (merge-base %s)", repaired, first, got)
+	}
+	if str(cc[0].Data, "head") != first || str(cc[1].Data, "head") != repaired {
+		t.Errorf("the verdicts name %q then %q, want the failed head then the repair", str(cc[0].Data, "head"), str(cc[1].Data, "head"))
+	}
+	if n := len(l.Rows("crw.milestoneClose")); n != 1 {
+		t.Errorf("%d crw.milestoneClose rows", n)
+	}
+	if n := len(l.Rows("crw.reportUp")); n != 1 {
+		t.Errorf("%d crw.reportUp rows", n)
+	}
+	if len(l.Relay.Repairs) != 1 {
+		t.Fatalf("repairs %v, want the one publication of the repair", l.Relay.Repairs)
+	}
+	req := l.Relay.Repairs[0]
+	if req.Base != first || req.Head != repaired || req.VerificationDigest == "" {
+		t.Errorf("repair request %+v, want base %s head %s and a verification digest", req, first, repaired)
+	}
+	if reasons := escalationReasons(l); slices.Contains(reasons, "crosscheck_pending") {
+		t.Errorf("a verified repair escalated: %v", reasons)
+	}
+}
+
+// closeRepairCommits is the crw.commit rows the close's repair executor made for milestone M1.
+func closeRepairCommits(l *Lab) []engine.Event {
+	var out []engine.Event
+	for _, ev := range l.Rows("crw.commit") {
+		if str(ev.Data, "node") == "milestone:M1" {
+			out = append(out, ev)
+		}
+	}
+	return out
+}
+
+// A repair of a moved target publishes over the moved head (CRW-1490): the resume's close-fix
+// executor commits its repair over the new head the gate judged, the round-2 recheck verifies
+// it, and the relay's repair publication moves the target to it. The other actor's landing is
+// kept under it.
+func TestCloseRepairAfterMovedTargetCanClose(t *testing.T) {
+	l := NewLab(t, oneNode()...)
+	l.Crosschecks("M1", 1, 0, "A", 1,
+		Crosscheck{Verdict: "needs_changes", Findings: []reviewadapter.Finding{Finding("P1", "the head breaks the criterion")}},
+		Crosscheck{Verdict: "needs_changes", Findings: []reviewadapter.Finding{Finding("P1", "the moved head breaks the criterion")}})
+	l.Crosschecks("M1", 2, 0, "A", 1, Crosscheck{Verdict: "needs_changes", Findings: []reviewadapter.Finding{Finding("P1", "the first repair still fails")}})
+	first := l.Run()
+	v1 := Value[map[string]any](t, first)
+	if v1["state"] != "escalated" || v1["reason"] != "crosscheck_pending" {
+		t.Fatalf("the first run: %s", first.Value)
+	}
+	if repairs := closeRepairCommits(l); len(repairs) != 1 {
+		t.Fatalf("repair commits of the first run %v, want the one unpublished fix", repairs)
+	}
+	firstTip := l.Tip()
+	moved := l.AdvanceIntegration("outside.txt")
+
+	l.NewProcess("proc-2")
+	second := l.Resume()
+	got := Value[closeResult](t, second)
+	if got.State != "closed" {
+		t.Fatalf("the resume %s: %+v; calls %v", got.State, got, l.Labels())
+	}
+	if got.Crosscheck != "verified" {
+		t.Fatalf("the close's crosscheck %v, want verified", got.Crosscheck)
+	}
+	repairs := closeRepairCommits(l)
+	if len(repairs) != 2 {
+		t.Fatalf("repair commits %v, want the first run's and the resume's", repairs)
+	}
+	secondCommit := str(repairs[1].Data, "commit")
+	if str(repairs[1].Data, "parent") != moved {
+		t.Fatalf("the resume's repair is over %s, want the moved head %s", str(repairs[1].Data, "parent"), moved)
+	}
+	if got.Tip != secondCommit || l.Tip() != secondCommit {
+		t.Fatalf("tip %q / reported %q, want the published repair %s", l.Tip(), got.Tip, secondCommit)
+	}
+	cc := l.Rows("crw.crosscheck")
+	if len(cc) != 4 {
+		t.Fatalf("crosscheck rows %d, want the two rounds of each run", len(cc))
+	}
+	last, _ := cc[3].Data["verdict"].(map[string]any)
+	if str(last, "verdict") != "verified" || str(last, "prior_head") != moved || str(last, "head") != secondCommit {
+		t.Errorf("the last verdict %v, want verified of the repair over %s", last, moved)
+	}
+	if got := l.Git("show", got.Tip+":outside.txt"); got != "outside landing of outside.txt" {
+		t.Errorf("the published tip lost the other actor's landing: %q", got)
+	}
+	if n := len(l.Crosschecker.Calls()); n != 8 {
+		t.Errorf("%d crosscheck passes, want the two of each round of each run", n)
+	}
+	fixes := 0
+	for _, label := range l.Labels() {
+		if label == "close-fix:M1" {
+			fixes++
+		}
+	}
+	if fixes != 2 {
+		t.Errorf("%d close-fix calls, want one per run", fixes)
+	}
+	if len(l.Relay.Repairs) != 1 {
+		t.Fatalf("repairs %v, want the one publication", l.Relay.Repairs)
+	}
+	if req := l.Relay.Repairs[0]; req.Base != moved || req.Head != secondCommit || req.VerificationDigest == "" {
+		t.Errorf("repair request %+v, want base %s head %s and a digest", req, moved, secondCommit)
+	}
+	if n := len(l.Rows("crw.milestoneClose")); n != 1 {
+		t.Errorf("%d crw.milestoneClose rows", n)
+	}
+	if n := len(l.Rows("crw.reportUp")); n != 1 {
+		t.Errorf("%d crw.reportUp rows", n)
+	}
+	// the restored worktree of the first run's attempt, skipped over the moved pin, kept its
+	// base: its retired ref's commit is parented on the head it was made at
+	ref := l.alloc.RetiredRef("milestone:M1", 2)
+	if got := l.Git("rev-parse", ref+"^"); got != firstTip {
+		t.Errorf("the skipped restore's retired ref %s is parented on %s, want %s", ref, got, firstTip)
+	}
+	var pending []string
+	for _, ev := range l.FlowRows(engine.EvEscalation) {
+		if str(ev.Data, "ask") == "crosscheck_pending" {
+			pending = append(pending, str(ev.Data, "escalation_id"))
+		}
+	}
+	if len(pending) != 1 || pending[0] != str(v1, "escalation") {
+		t.Errorf("crosscheck_pending escalations %v, want the first run's %v only", pending, v1["escalation"])
 	}
 }
 

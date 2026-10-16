@@ -214,14 +214,15 @@ func RegionsOverlap(a, b []string) bool {
 	return LaneRegionsOverlap(laneRegions(a), laneRegions(b))
 }
 
-// LaneRegionsOverlap says whether two nodes with these region lists may edit the same place: an undeclared node (no regions) overlaps
-// every other, and two declared nodes overlap when any reading of a region of one overlaps any reading of a region of the other
-// (readings, readingsOverlap). So a pair the relay judges overlapping, with the plan's change and hold, overlaps here, and so does a
+// LaneRegionsOverlap says whether two nodes with these region lists may edit the same place: two declared nodes overlap when any
+// reading of a region of one overlaps any reading of a region of the other (readings, readingsOverlap). A side with no regions is
+// undeclared: the overlap is unknown, not proven, so the answer is false — the release that admits the node warns of the unknown
+// instead (CRW-1576). So a pair the relay judges overlapping, with the plan's change and hold, overlaps here, and so does a
 // pair Scope reads as a region covering a path: the lane never runs at once two nodes that either judgement would put on one place.
 // The answer does not depend on the order of the two lists.
 func LaneRegionsOverlap(a, b []LaneRegion) bool {
 	if len(a) == 0 || len(b) == 0 {
-		return true
+		return false
 	}
 	rb := make([][]dagsched.Region, len(b))
 	for i, y := range b {
@@ -243,12 +244,9 @@ func LaneRegionsOverlap(a, b []LaneRegion) bool {
 
 // LaneAdmissionRegions are the regions the lane admits a node by, as AdmissionRegions makes them from texts: the plan's declared regions
 // as given (a planned change and hold kept) and then the edit regions whose normal form no region before them has, so an edit region
-// that names a planned region in another spelling is that planned region, as declareRegions reads it. [] when either side is empty.
+// that names a planned region in another spelling is that planned region, as declareRegions reads it. [] when both sides are empty.
 func LaneAdmissionRegions(plan, edit []LaneRegion) []LaneRegion {
 	out := []LaneRegion{}
-	if len(plan) == 0 || len(edit) == 0 {
-		return out
-	}
 	out = append(out, plan...)
 	seen := map[RegionForm]bool{}
 	for _, r := range plan {
@@ -266,7 +264,7 @@ func LaneAdmissionRegions(plan, edit []LaneRegion) []LaneRegion {
 // regionsOverlapOp is crw.regionsOverlap(a, b): LaneRegionsOverlap of two region lists, answered true or false. Each list is an array
 // whose items are a region's text or the object {text, change, exclusive} a planned region carries (LaneRegion), mixed as the caller
 // has them: `crw.regionsOverlap(["src/", {"text": "a.go#F", "change": "delete"}], ["a.go#G"])` is true. null or a missing list is
-// undeclared, and an undeclared list overlaps every other.
+// undeclared: the overlap is unknown, not proven, so the answer is false (CRW-1576).
 type regionsOverlapOp struct{ l *Lane }
 
 func (o *regionsOverlapOp) Run(_ context.Context, req engine.OpRequest) (engine.OpResult, error) {
@@ -283,7 +281,7 @@ func (o *regionsOverlapOp) Proven(ctx context.Context, ev []engine.Event, row en
 
 // admissionRegionsOp is crw.admissionRegions(plan, edit): LaneAdmissionRegions of the plan's declared regions and the DESIGN's edit
 // regions, each list in the argument shape of crw.regionsOverlap (a text or the object {text, change, exclusive} per item). The answer
-// is a list in that shape, [] when either side is empty or null, never null: a region with no change and no hold is its text, a
+// is a list in that shape, [] when both sides are empty or null, never null: a region with no change and no hold is its text, a
 // planned delete, rename or hold stays the object, so the answer passed to crw.regionsOverlap keeps them.
 type admissionRegionsOp struct{ l *Lane }
 

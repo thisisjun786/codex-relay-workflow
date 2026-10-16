@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -19,6 +20,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/skill"
 )
@@ -358,13 +360,23 @@ func (r *SchedRelay) Release(ctx context.Context, req ops.ReleaseRequest) (ops.R
 	}
 	defer done()
 	// the node's admission regions are declared before the relay judges its release (CRW-1391); a declaration that fails is the release's
-	// warning, and the release goes on as for an undeclared node (fail open)
+	// warning, and the release goes on (fail open). A release that asks for no admission regions reports what the node stands on instead
+	// (CRW-1576): a declaration in force is kept, and none is undeclared — the edit overlap is unknown and does not block the release.
 	var declared, warning string
+	if len(req.Regions) == 0 {
+		if _, found, err := r.Sched.NodeRegions(ctx, req.Plan, req.Node); err != nil {
+			declared, warning = regionsFailed, "the node's declaration in force cannot be read: "+err.Error()
+		} else if found {
+			declared = regionsKept
+		} else {
+			declared, warning = regionsUnknown, "no admission regions were declared; edit overlap is unknown and does not block release"
+		}
+	}
 	if len(req.Regions) > 0 && request.Base != nil {
 		declared, warning = r.declareRegions(ctx, req.Plan, req.Node, request.Base.Repository, is, req.Regions)
-		// the milestone's other admitted nodes are declared too: the judgment reads an earlier-ranked ready node that has no declaration as
-		// overlapping every other, so a lane released before the one of an earlier node would be held back by it. A failure is that node's
-		// own release's to warn of.
+		// the milestone's other admitted nodes are declared too: the judgment reads an earlier-ranked ready node as the holder of its
+		// declaration, so a clash of declared regions is judged on the declarations of both sides. A failure is that node's own release's
+		// to warn of.
 		others := make([]string, 0, len(req.Admitted))
 		for other := range req.Admitted {
 			others = append(others, other)
@@ -417,11 +429,13 @@ func (r *SchedRelay) Release(ctx context.Context, req ops.ReleaseRequest) (ops.R
 		HeldRunState: state, RegionsDeclared: declared, RegionsWarning: warning}, nil
 }
 
-// The answers of declareRegions (ops.ReleaseResult.RegionsDeclared).
+// The answers of declareRegions (ops.ReleaseResult.RegionsDeclared); regionsUnknown is the answer of a release that asks for no
+// admission regions over a node with no declaration in force (CRW-1576).
 const (
 	regionsDeclared = "declared"
 	regionsKept     = "kept"
 	regionsFailed   = "failed"
+	regionsUnknown  = "unknown"
 )
 
 // declareRegions declares a node's admission regions in the target repository (dag-region-declare, dagsched.DeclareRegions) when the
@@ -850,6 +864,94 @@ func (r *SchedRelay) IntegrationTip(ctx context.Context, plan string) (string, e
 		return "", err
 	}
 	return tip.SHA, nil
+}
+
+// IntegrateMilestoneRepair publishes a close's in-run repair (ops.MilestoneRepairIntegrator, CRW-1490): inside the fenced write of
+// the plan's integration target, the ref moves from the failed gate's head to the recorded candidate - a compare-and-swap that does
+// nothing when the target moved on (Moved) or is already at the candidate (a replay of the publication), and refuses a candidate
+// that does not descend from the failed head. The move is recorded as the plan's integration stages (a verified-head intent before
+// the git move, a ref_moved inside the fenced transaction) so the official push path reads the repaired close as a verified move
+// (dagsched.VerifiedMoveOnto) - a publication fact, not an acceptance: no node state is manufactured and the repair's authority is
+// the journaled milestoneClose that asked for it.
+func (r *SchedRelay) IntegrateMilestoneRepair(ctx context.Context, req ops.MilestoneRepairRequest) (ops.MilestoneRepairResult, error) {
+	if req.VerificationDigest == "" {
+		return ops.MilestoneRepairResult{}, fmt.Errorf("the close repair of %s carries no verification digest", req.Milestone)
+	}
+	if err := r.claim(ctx, req.Plan); err != nil {
+		return ops.MilestoneRepairResult{}, err
+	}
+	checkout, ref, err := r.target(req.Plan)
+	if err != nil {
+		return ops.MilestoneRepairResult{}, err
+	}
+	batch := registry.CoordinationID("dib", req.Plan, "close-repair", r.RunID, req.Milestone, req.Base, req.Head)
+	raw, err := json.Marshal(map[string]string{
+		"verified_head":       req.Head,
+		"verification_digest": req.VerificationDigest,
+		"integration_ref":     ref,
+		"base":                req.Base,
+		"milestone":           req.Milestone,
+		"run":                 r.RunID,
+	})
+	if err != nil {
+		return ops.MilestoneRepairResult{}, err
+	}
+	recordStage := func(txCtx context.Context, stage, detail string) error {
+		id := registry.CoordinationID("dis", batch, stage, "", detail)
+		prior, err := store.IntegrationStagesOfPlan(txCtx, r.Sched.Store, req.Plan)
+		if err != nil {
+			return err
+		}
+		for _, p := range prior {
+			if p.StageID == id {
+				return nil
+			}
+		}
+		return store.RecordIntegrationStage(txCtx, r.Sched.Store, store.IntegrationStageRow{
+			StageID: id, BatchID: batch, PlanID: req.Plan, Stage: stage, Detail: detail, RecordedBy: r.Actor, RecordedAt: registry.SystemISO(),
+		})
+	}
+	// the proof stands before the git moves, so a reconciliation after a process's death can still recognize the move
+	if err := r.Sched.IntegrationWrite(ctx, req.Plan, r.Actor, func(txCtx context.Context) error {
+		return recordStage(txCtx, "intent", string(raw))
+	}); err != nil {
+		return ops.MilestoneRepairResult{}, epochLost(req.Plan, err)
+	}
+	out := ops.MilestoneRepairResult{}
+	err = r.Sched.IntegrationWrite(ctx, req.Plan, r.Actor, func(txCtx context.Context) error {
+		tip, e := r.IntegrationTip(txCtx, req.Plan)
+		if e != nil {
+			return e
+		}
+		out.Tip = tip
+		if tip == req.Head {
+			return recordStage(txCtx, "ref_moved", req.Head)
+		}
+		if tip != req.Base {
+			out.Moved = true
+			return nil
+		}
+		if ok, e := isAncestor(txCtx, checkout, req.Base, req.Head); e != nil {
+			return e
+		} else if !ok {
+			return fmt.Errorf("the close repair %s does not descend from %s", req.Head, req.Base)
+		}
+		if e := dagsched.UpdateIntegrationRef(txCtx, checkout, ref, req.Head, req.Base); e != nil {
+			// the swap lost: another actor moved the target meanwhile - onto the candidate already (an idempotent success) or
+			// another head (the repair was not published)
+			if now, readErr := r.IntegrationTip(txCtx, req.Plan); readErr == nil && now != req.Base {
+				out.Tip, out.Moved = now, now != req.Head
+				if !out.Moved {
+					return recordStage(txCtx, "ref_moved", req.Head)
+				}
+				return nil
+			}
+			return e
+		}
+		out.Tip = req.Head
+		return recordStage(txCtx, "ref_moved", req.Head)
+	})
+	return out, epochLost(req.Plan, err)
 }
 
 // Close is AgentClose (CRW-1277 f): the node's current execution is closed (a node given up or cancelled returns its slot in the same

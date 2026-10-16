@@ -134,6 +134,9 @@ type UnitCheckOpts struct {
 	Final  bool     `json:"final"`
 	Commit *HeadRef `json:"commit"`
 	Base   string   `json:"base"`
+	// Evidence are the explorer's answers to the evidence questions of the last check's findings (CRW-1490): the recheck's prompt
+	// carries them, and a check that carries evidence is no judgment when the tool was not given the prompt (PromptSent).
+	Evidence []Answer `json:"evidence,omitempty"`
 }
 
 // UnitCheckOutcome is the answer of crw.unitCheck: the adapter's record (the row's result, which crw.accept and the relay decode as a
@@ -323,6 +326,18 @@ func (o *unitCheckOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpR
 		// give the tool (the Codex committed profile's --base); the fallback's request carries the same range
 		creq.Base, creq.Head = opts.Base, head
 	}
+	if len(opts.Evidence) > 0 {
+		var b strings.Builder
+		b.WriteString("\nEVIDENCE ANSWERS (read-only answers about this same committed head; re-evaluate the findings against this evidence)\n")
+		for _, a := range opts.Evidence {
+			fmt.Fprintf(&b, "- %s: %s\n  answer: %s\n", a.ID, a.Question, a.Answer)
+			for _, e := range a.Evidence {
+				fmt.Fprintf(&b, "  evidence: %s\n", e)
+			}
+		}
+		creq.Prompt += b.String()
+		data["evidence"] = opts.Evidence
+	}
 	// fellBack is the first profile's quota record once the check fell back (UnitCheckOutcome.Fallback), also in a held answer
 	var fellBack *reviewadapter.Result
 	// every attempt is the judgment of snap, the tree the op snapped for this check (the commit's tree, or the pending tree), or of
@@ -458,6 +473,18 @@ func (o *unitCheckOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpR
 		}
 	}
 	out.Retried = retried
+	if len(opts.Evidence) > 0 {
+		// a check that carries evidence answers is no judgment when the tool was not given them: a profile whose arguments leave
+		// the prompt out (a Codex review) cannot have re-evaluated the findings against them (CRW-1490). The forced no_answer
+		// holds the node like a blank answer: a resume asks again, and no verified record is made of a call that read no evidence.
+		data["evidence_handed"] = res.PromptSent
+		if res.State == reviewadapter.StateOK && !res.PromptSent {
+			res.State = reviewadapter.StateNoAnswer
+			res.Detail = "the unit-check tool was not given the evidence answers; configure a profile that accepts the prompt"
+			res.Verdict = ""
+			res.Findings = []reviewadapter.Finding{}
+		}
+	}
 	if res.Findings == nil {
 		res.Findings = []reviewadapter.Finding{}
 	}

@@ -232,6 +232,17 @@ return [first.status, second.status, third.status]`)
 			t.Errorf("retired a2 holds %q", got)
 		}
 	})
+	t.Run("matching explicit head", func(t *testing.T) {
+		e := newEnv(t)
+		restored := e.restoreAfter("first", 2, 1)
+		res := e.run(fmt.Sprintf(`const first = await agent.call('one', { agentType: 'executor', node: 'n1', label: 'first' })
+const second = await agent.call('two', { agentType: 'executor', node: 'n1', head: %q, label: 'second' })
+return [first.status, second.status]`, e.base))
+		if got := value[[]string](t, res); !slices.Equal(got, []string{"completed", "completed"}) {
+			t.Fatalf("%v", got)
+		}
+		check(t, e, restored, "second", 1)
+	})
 	t.Run("fork", func(t *testing.T) {
 		e := newEnv(t)
 		restored := e.restoreAfter("first", 2, 1)
@@ -435,5 +446,48 @@ return [a.status, fix.status, held.status, resumed.status, arch.status, arch2.st
 	// first turn + repair + fix, the held call's turn + the turn that resumed it; the architect's two turns
 	if executorTurns != 5 || architectTurns != 2 {
 		t.Errorf("%d executor turns and %d architect turns", executorTurns, architectTurns)
+	}
+}
+
+// An explicit head pins a new executor's first commit: a pending restored worktree of the node
+// from an earlier, different head is not adopted over the pin (the close's repair at a moved
+// integration target, CRW-1490); it is retired when the fresh allocation is established, so no
+// later continuation adopts it either.
+func TestExplicitHeadSupersedesRestoredWorktree(t *testing.T) {
+	e := newEnv(t)
+	moved := git(t, e.repo, "commit-tree", "-p", e.base, "-m", "moved", git(t, e.repo, "rev-parse", e.base+"^{tree}"))
+	restored := e.restoreAfter("first", 2, 1)
+	res := e.run(fmt.Sprintf(`const first = await agent.call('one', { agentType: 'executor', node: 'n1', label: 'first' })
+const pinned = await agent.call('two', { agentType: 'executor', node: 'n1', head: %q, label: 'pinned' })
+const continued = await agent.call('continue', { resume: pinned, label: 'continued' })
+const again = await agent.call('again', { agentType: 'executor', node: 'n1', head: %q, label: 'again' })
+return [first.status, pinned.status, continued.status, again.status]`, moved, moved))
+	if got := value[[]string](t, res); !slices.Equal(got, []string{"completed", "completed", "completed", "completed"}) {
+		t.Fatalf("%v", got)
+	}
+	pinned := allocationOf(t, e.row("pinned", engine.EvPrepared))
+	if pinned["kind"] != "fresh" || pinned["path"] != e.wt("n1", 3, 1) || pinned["start_commit"] != moved {
+		t.Errorf("pinned: allocation %v, want a fresh one at the explicit head", pinned)
+	}
+	if got := git(t, e.wt("n1", 3, 1), "rev-parse", "HEAD"); got != moved {
+		t.Errorf("the pinned worktree is at %s, want the explicit head %s", got, moved)
+	}
+	continued := allocationOf(t, e.row("continued", engine.EvPrepared))
+	if continued["kind"] != "continued" || continued["path"] == restored {
+		t.Errorf("continued: allocation %v must not adopt the stale restore", continued)
+	}
+	again := allocationOf(t, e.row("again", engine.EvPrepared))
+	if again["kind"] != "fresh" || again["path"] != e.wt("n1", 4, 1) || again["start_commit"] != moved {
+		t.Errorf("again: allocation %v, want a fresh one at the explicit head past the skipped restore", again)
+	}
+	if n := e.worktreeAdds(); n != 3 {
+		t.Errorf("%d worktree adds, want first+pinned+again", n)
+	}
+	ref := fmt.Sprintf("refs/crw/flow/%s/retired/n1/a2:p.txt", e.runID)
+	if got := git(t, e.repo, "show", ref); got != "pending" {
+		t.Errorf("the skipped restore's pending file is %q on %s", got, ref)
+	}
+	if got, err := os.ReadFile(filepath.Join(restored, "p.txt")); err != nil || string(got) != "pending\n" {
+		t.Errorf("the skipped restore was rewritten: %q (%v)", got, err)
 	}
 }

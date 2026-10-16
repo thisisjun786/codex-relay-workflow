@@ -419,6 +419,96 @@ func TestFindingIdentityIgnoresLineNumbers(t *testing.T) {
 	}
 }
 
+// TestEvidenceMissingFindingKeepsItsQuestion (CRW-1490): a finding of the kind evidence_missing carries the evidence question the
+// check wants answered ({question, files_needed}), and the adapter's record keeps both: the lane asks the question of an explorer
+// and checks the head again instead of sending the finding to a fixer. The metadata is part of the answer a tool may give, not of
+// the judgment, so it survives on the Finding the record hands the lane. Two findings of one id collapse as ever - but a copy that
+// is an ordinary finding wins the kind over the evidence_missing one: a merged finding is never evidence-only because one copy of
+// it was.
+func TestEvidenceMissingFindingKeepsItsQuestion(t *testing.T) {
+	const missing = `{"severity":"P2","impact":"criterion_unmet","file":"node-A-1.txt","line":1,"text":"the verification evidence is missing","kind":"evidence_missing","evidence_question":{"question":"Which command proves the node behavior?","files_needed":["node-A-1.txt"]}}`
+	t.Run("the metadata survives the record", func(t *testing.T) {
+		res := check(t, jsonProfile(), fakeRun{stdout: `{"verdict":"needs_changes","findings":[` + missing + `]}`})
+		wantState(t, res, StateOK)
+		if res.Verdict != VerdictNeedsChanges || len(res.Findings) != 1 {
+			t.Fatalf("result = %+v", res)
+		}
+		raw, err := json.Marshal(res.Findings[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m map[string]any
+		if err := json.Unmarshal(raw, &m); err != nil {
+			t.Fatal(err)
+		}
+		if m["kind"] != "evidence_missing" {
+			t.Fatalf("the finding's kind did not survive: %s", raw)
+		}
+		eq, _ := m["evidence_question"].(map[string]any)
+		files, _ := eq["files_needed"].([]any)
+		if eq["question"] != "Which command proves the node behavior?" || len(files) != 1 || files[0] != "node-A-1.txt" {
+			t.Fatalf("the evidence question did not survive: %s", raw)
+		}
+	})
+	t.Run("a same-id ordinary finding is not evidence-only", func(t *testing.T) {
+		res := check(t, jsonProfile(), fakeRun{stdout: `{"verdict":"needs_changes","findings":[` + missing +
+			`,{"severity":"P1","impact":"core_function","file":"node-A-1.txt","line":9,"text":"the verification evidence is missing"}]}`})
+		wantState(t, res, StateOK)
+		if len(res.Findings) != 1 || res.Findings[0].Severity != "P1" {
+			t.Fatalf("findings = %+v, want the merged finding at the more severe grade", res.Findings)
+		}
+		raw, err := json.Marshal(res.Findings[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m map[string]any
+		if err := json.Unmarshal(raw, &m); err != nil {
+			t.Fatal(err)
+		}
+		if m["kind"] == "evidence_missing" {
+			t.Fatalf("the merged finding is evidence-only because one copy of it was: %s", raw)
+		}
+	})
+	t.Run("an ordinary finding first stays ordinary when an evidence copy follows", func(t *testing.T) {
+		res := check(t, jsonProfile(), fakeRun{stdout: `{"verdict":"needs_changes","findings":[
+			{"severity":"P1","impact":"core_function","file":"node-A-1.txt","line":9,"text":"the verification evidence is missing"},` + missing + `]}`})
+		wantState(t, res, StateOK)
+		if len(res.Findings) != 1 {
+			t.Fatalf("findings = %+v", res.Findings)
+		}
+		raw, err := json.Marshal(res.Findings[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m map[string]any
+		if err := json.Unmarshal(raw, &m); err != nil {
+			t.Fatal(err)
+		}
+		if m["kind"] == "evidence_missing" {
+			t.Fatalf("the merged finding took the evidence kind of the later copy: %s", raw)
+		}
+	})
+	t.Run("a null evidence question is no question", func(t *testing.T) {
+		res := check(t, jsonProfile(), fakeRun{stdout: `{"verdict":"needs_changes","findings":[
+			{"severity":"P2","impact":"core_function","file":"a.go","line":1,"text":"t","evidence_question":null}]}`})
+		wantState(t, res, StateOK)
+		if len(res.Findings) != 1 || res.Findings[0].EvidenceQuestion != nil {
+			t.Fatalf("findings = %+v", res.Findings)
+		}
+	})
+	for name, finding := range map[string]string{
+		"evidence_missing without a question":    `{"severity":"P2","file":"a.go","line":1,"text":"t","kind":"evidence_missing"}`,
+		"evidence_missing with a blank question": `{"severity":"P2","file":"a.go","line":1,"text":"t","kind":"evidence_missing","evidence_question":{"question":"  ","files_needed":["a.go"]}}`,
+		"a question on an ordinary finding":      `{"severity":"P2","file":"a.go","line":1,"text":"t","kind":"correctness","evidence_question":{"question":"q","files_needed":[]}}`,
+		"a question on a finding of no kind":     `{"severity":"P2","file":"a.go","line":1,"text":"t","evidence_question":{"question":"q","files_needed":[]}}`,
+	} {
+		t.Run("invalid: "+name, func(t *testing.T) {
+			res := check(t, jsonProfile(), fakeRun{stdout: `{"verdict":"needs_changes","findings":[` + finding + `]}`})
+			wantState(t, res, StateInvalid)
+		})
+	}
+}
+
 func TestExecRunRunsInTheWorktreeAndKillsOnTheLimit(t *testing.T) {
 	dir := t.TempDir()
 	p := JSONProfile("sh", []string{"/bin/sh", "-c", `pwd; printf '%s' "$1"; echo oops >&2; exit 3`, "sh"}, "m", "e")

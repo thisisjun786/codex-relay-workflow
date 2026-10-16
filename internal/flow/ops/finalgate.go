@@ -134,22 +134,42 @@ func (m Milestone) needsQA() bool {
 	return false
 }
 
-// finalGateOp is crw.finalGate(milestone).
+// finalGateOp is crw.finalGate(milestone, opts).
 type finalGateOp struct{ l *Lane }
+
+// finalGateOpts are the options of crw.finalGate: Head, when given, is the recorded close-repair candidate the gate judges instead
+// of the integration tip (CRW-1490).
+type finalGateOpts struct {
+	Head string `json:"head"`
+}
 
 func (o *finalGateOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResult, error) {
 	var ms string
-	if err := args(req.Args, &ms); err != nil || ms == "" {
-		return engine.OpResult{}, fmt.Errorf("crw.finalGate(milestone): a milestone is required: %v", err)
+	var opts finalGateOpts
+	if err := args(req.Args, &ms, &opts); err != nil || ms == "" {
+		return engine.OpResult{}, fmt.Errorf("crw.finalGate(milestone, opts): a milestone is required: %v", err)
 	}
 	r := rows(req.Journal.Events())
 	m, plan, err := milestoneOf(r, ms)
 	if err != nil {
 		return engine.OpResult{}, fmt.Errorf("crw.finalGate: %w", err)
 	}
-	head, err := o.l.d.Relay.IntegrationTip(ctx, plan)
-	if err != nil {
-		return engine.OpResult{}, err
+	var head string
+	candidate := opts.Head != ""
+	if candidate {
+		// a gate of a candidate judges only a recorded repair commit of this milestone (the synthetic node's crw.commit row), never
+		// an unrecorded head the script names
+		if _, ok := r.opRows(OpCommit).last(func(ev engine.Event) bool {
+			return dataStr(ev, "node") == "milestone:"+ms && dataStr(ev, "commit") == opts.Head
+		}); !ok {
+			return engine.OpResult{}, &Refusal{"close_repair_unrecorded", "the candidate " + opts.Head + " is not a recorded repair commit of milestone " + ms}
+		}
+		head = opts.Head
+	} else {
+		var err error
+		if head, err = o.l.d.Relay.IntegrationTip(ctx, plan); err != nil {
+			return engine.OpResult{}, err
+		}
 	}
 	if head == "" {
 		return engine.OpResult{}, fmt.Errorf("crw.finalGate: the integration target of plan %s has no tip", plan)
@@ -185,6 +205,9 @@ func (o *finalGateOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpR
 		"milestone": ms, "plan": plan, "head": head, "base": base, "range": out.Range, "command": strings.Join(out.Commands, ";"), "ok": out.State == GatePass,
 		"state": out.State, "reason": out.Reason, "qa_required": out.QARequired, "qa_passes": out.QAPasses, "grade": out.Grade,
 		"evidence": out.Evidence, "need_tests": out.NeedTests, "need_qa": out.NeedQA, "decisions": out.Decisions,
+	}
+	if candidate {
+		data["candidate"] = true
 	}
 	if len(out.Warnings) > 0 {
 		data["warnings"] = out.Warnings
@@ -310,13 +333,23 @@ func sourceIsHead(row engine.Event, head source.Identity) bool {
 
 // Proven: a gate judged the tip it pinned. While the target is still at that head the judgement stands (the evidence it read is
 // the journal's, which a resume has already replayed); a target that moved on is a head the gate has not judged, and the gate is
-// evaluated again from the head it has now.
-func (o *finalGateOp) Proven(ctx context.Context, _ []engine.Event, row engine.Event) (bool, string, error) {
+// evaluated again from the head it has now. A gate of a candidate judged a recorded commit: it stands as long as the commit row
+// does. And a gate whose head this run's own repair published (the milestoneClose of the same milestone moved the target from the
+// head the gate judged to the candidate built on it) stays proven too: re-judging it would repair the close a second time.
+func (o *finalGateOp) Proven(ctx context.Context, ev []engine.Event, row engine.Event) (bool, string, error) {
+	if dataBool(row, "candidate") {
+		return true, "", nil
+	}
 	tip, err := o.l.d.Relay.IntegrationTip(ctx, dataStr(row, "plan"))
 	if err != nil {
 		return false, "", err
 	}
 	if tip != dataStr(row, "head") {
+		for _, c := range rows(ev).opRows(OpMilestoneClose) {
+			if dataStr(c, "milestone") == dataStr(row, "milestone") && dataStr(c, "repair_base") == dataStr(row, "head") && dataStr(c, "repair_head") == tip {
+				return true, "", nil
+			}
+		}
 		return false, "the integration target moved after the gate judged it", nil
 	}
 	return true, "", nil

@@ -636,14 +636,32 @@ export function crosscheckPacket(ms, g, pass, opts) {
     section('DESIGN DECISIONS (the approved DESIGN of this milestone)', decisionLines(g.decisions)),
     CROSSCHECK_LENS[pass] || CROSSCHECK_LENS.B,
     CROSSCHECK_RULE,
-    'Answer with one JSON document: the verdict (verified or needs_changes) and the findings, each with its severity (P0 to P3), impact, file, line and text. A verdict of verified over a finding that blocks is refused as no answer.',
+    findingsSection('PRIOR FINDINGS (re-evaluate each at this head; a resolved finding does not carry forward)', opts && opts.prior && opts.prior.findings),
+    opts && opts.evidence && opts.evidence.length ? 'EVIDENCE ANSWERS:\n' + JSON.stringify(opts.evidence) : '',
+    'Answer with one JSON document: the verdict (verified or needs_changes) and the findings, each with its severity (P0 to P3), impact, file, line and text. A verdict of verified over a finding that blocks is refused as no answer. If only evidence is missing, set kind to evidence_missing and include evidence_question with question and files_needed; use other kinds for defects that require code changes.',
+  ].join('\n\n')
+}
+
+// The executor turn of the close's one correction (CRW-1490): the failed gate's range, the findings that need changes and the
+// milestone's scope. The run commits the executor's work itself and re-runs the same gate and crosscheck; the executor commits
+// nothing and starts no run.
+export function closeFixPacket(ms, g, v) {
+  const regions = [].concat(...(ms.nodes || []).map((n) => n.regions || []))
+  return [
+    'CLOSE FIX of milestone ' + ms.id + ' (' + ms.title + ') at ' + g.head + '.',
+    fixPacket('milestone:' + ms.id, v, null, null, null),
+    'RANGE: git diff ' + g.base + '..' + g.head,
+    section('EDIT REGIONS', list(regions, 'undeclared')),
+    section('CRITERIA OF THE MILESTONE', criteriaList(ms.criteria)),
+    'Fix the carried findings in this worktree and preserve the integrated work. Do not commit, integrate, or start another run. This run commits the correction, applies the existing final gate and crosscheck once more, and publishes the candidate only when both pass.',
   ].join('\n\n')
 }
 
 // The fix packet of a crosscheck that needs changes (CRW-1473): what the 자식 gives a new executor subagent, and the route the fix
 // takes. Every node of the milestone has landed, so the fix lands as a correction node of a new plan revision through land-head, and
-// the verdict goes up to the 부모 with the landed head. The run itself calls no executor. The findings that block are those V does
-// not carry.
+// the verdict goes up to the 부모 with the landed head. The run itself calls no executor of its own beyond the one in-run
+// correction (closeFixPacket, CRW-1490): this packet is the hand-off after that correction is spent or not enough. The findings
+// that block are those V does not carry.
 export function crosscheckFixPacket(ms, v) {
   const carried = v.carried || []
   const blocking = (v.findings || []).filter((f) => !carried.includes(f.id))
@@ -663,23 +681,14 @@ export function crosscheckFixPacket(ms, v) {
   ].join('\n\n')
 }
 
-// The fix packet of a land-head run whose unit check needs changes (CRW-1490): what the 자식 gives a new executor subagent to fix the
-// head it landed, and the land of the fix. The gate-only lane fixes nothing and the land gave the node's release back, so the fix is a
-// new head made outside a run, landed by a new land-head run of the same node with the next fix round. n is the node, findings the
-// check's findings (each by id, file, line and text), head the land's head ({commit, base}) and next the land of the fix ({plan,
-// milestone, fix_round, authors}). The fix branches from this head, so the range of its land holds this head's work too: the authors of
-// the fix's land are this land's authors and the fixer's thread, so the check stays independent of every author of the range.
-export function landFixPacket(n, findings, head, next) {
-  const authors = (next.authors || []).concat(['<the fixer subagent thread>'])
-  const fixArgs = { plan: next.plan, milestone: next.milestone, issue: n.issue || n.id, head: '<the fixed head>', authors, fix_round: next.fix_round }
+// The executor turn of a land-head repair: the current committed range, node scope and findings.
+export function landFixPacket(n, findings, head, receipt) {
   return [
-    'LAND FIX of node ' + n.id + ' (' + (n.issue || n.id) + (n.title ? ': ' + n.title : '') + '): the unit check of the committed range at ' + head.commit + ' needs changes, and the node did not land.',
-    section('FINDINGS', findingLines(findings || [])),
+    'LAND FIX of node ' + n.id + ' (' + (n.issue || n.id) + (n.title ? ': ' + n.title : '') + '): the unit check of the committed range at ' + head.commit + ' needs changes.',
+    fixPacket(n.id, { verdict: 'needs_changes', findings: findings || [] }, null, null, receipt),
     'RANGE: git diff ' + head.base + '..' + head.commit,
+    section('EDIT REGIONS', list(n.regions, 'undeclared')),
     section('CRITERIA OF THE NODE', criteriaList(n.criteria)),
-    section('ROUTE (the gate-only lane fixes nothing; the land gave the node\'s release back)', [
-      '- a new executor subagent fixes this head on a branch from it, outside any run',
-      '- land it with `crw flow start land-head --args \'' + JSON.stringify(fixArgs) + '\' --handoff <the plan\'s handoff file>`, the fixed head, the fixer\'s thread and the handoff of the plan\'s current revision in place of the placeholders; keep the authors of this head',
-    ]),
+    'Preserve the work already committed at this head. Edit only in your assigned worktree. Do not commit or start another land run: this run commits your changes, verifies the new head, and checks the full range again.',
   ].join('\n\n')
 }

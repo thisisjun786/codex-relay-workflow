@@ -113,7 +113,7 @@ func TestDeferredReasonCarriesTheRuleAndTheDecidingRow(t *testing.T) {
 	if q.Reason != DeferEditOverlap || q.Disposition != DispDefer {
 		t.Fatalf("q = %+v", q)
 	}
-	for _, want := range []string{"its edit regions overlap a node that is running or accepted and not yet landed, or a region is undeclared", "release rule defer", "exclusive overlap with p on b.go", "candidate mechanical (union)", "holder exclusive"} {
+	for _, want := range []string{"its edit regions overlap a node that is running or accepted and not yet landed", "release rule defer", "exclusive overlap with p on b.go", "candidate mechanical (union)", "holder exclusive"} {
 		if !strings.Contains(q.Detail, want) {
 			t.Errorf("detail %q does not say %q", q.Detail, want)
 		}

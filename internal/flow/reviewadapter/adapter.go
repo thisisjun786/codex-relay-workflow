@@ -98,7 +98,9 @@ var AnswerSchema = []byte(`{
           "impact": {"type": "string"},
           "file": {"type": "string"},
           "line": {"type": "integer", "minimum": 0},
-          "text": {"type": "string"}
+          "text": {"type": "string"},
+          "kind": {"type": "string", "enum": ["correctness", "criteria_unmet", "test_gap", "evidence_missing", "scope", "maintainability", "other"]},
+          "evidence_question": {"type": ["object", "null"], "additionalProperties": false, "required": ["question", "files_needed"], "properties": {"question": {"type": "string"}, "files_needed": {"type": "array", "items": {"type": "string"}}}}
         }
       }
     }
@@ -120,15 +122,29 @@ type Request struct {
 	Base, Head string
 }
 
+// EvidenceQuestion is the question an evidence_missing finding asks: what the check wants a later look (an explorer's answer) to
+// establish, and the files it needs.
+type EvidenceQuestion struct {
+	Question    string   `json:"question"`
+	FilesNeeded []string `json:"files_needed"`
+}
+
+// KindEvidenceMissing is the kind of a finding whose defect is missing evidence, not a change to the work: the lane answers its
+// evidence_question and checks again instead of sending it to a fixer (CRW-1490).
+const KindEvidenceMissing = "evidence_missing"
+
 // Finding is one finding of an ok record. Severity is a grade P0-P3; Impact is one of premerge.Impacts or empty (a security
-// finding that names none gets safety_or_data).
+// finding that names none gets safety_or_data). Kind is the optional kind of defect the answer declared (one of the schema's
+// kind words); EvidenceQuestion, only with kind evidence_missing, is the question it asks.
 type Finding struct {
-	ID       string `json:"id"`
-	Severity string `json:"severity"`
-	Impact   string `json:"impact"`
-	File     string `json:"file"`
-	Line     int    `json:"line"`
-	Text     string `json:"text"`
+	ID               string            `json:"id"`
+	Severity         string            `json:"severity"`
+	Impact           string            `json:"impact"`
+	File             string            `json:"file"`
+	Line             int               `json:"line"`
+	Text             string            `json:"text"`
+	Kind             string            `json:"kind,omitempty"`
+	EvidenceQuestion *EvidenceQuestion `json:"evidence_question,omitempty"`
 }
 
 // Result is the record a unit check leaves.
@@ -425,11 +441,13 @@ func isWordRune(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) 
 type answerDoc struct {
 	Verdict  string `json:"verdict"`
 	Findings []struct {
-		Severity string `json:"severity"`
-		Impact   string `json:"impact"`
-		File     string `json:"file"`
-		Line     int    `json:"line"`
-		Text     string `json:"text"`
+		Severity         string            `json:"severity"`
+		Impact           string            `json:"impact"`
+		File             string            `json:"file"`
+		Line             int               `json:"line"`
+		Text             string            `json:"text"`
+		Kind             string            `json:"kind"`
+		EvidenceQuestion *EvidenceQuestion `json:"evidence_question"`
 	} `json:"findings"`
 }
 
@@ -465,7 +483,15 @@ func decodeAnswer(schema *jsonschema.Resolved, answer []byte) (string, []Finding
 		if !ok {
 			return "", nil, fmt.Errorf("finding at %s:%d has a severity no grade word reads: %q", f.File, f.Line, f.Severity)
 		}
-		findings = append(findings, Finding{ID: FindingID(f.File, f.Text), Severity: string(grade), Impact: f.Impact, File: f.File, Line: f.Line, Text: f.Text})
+		if f.Kind == KindEvidenceMissing {
+			if f.EvidenceQuestion == nil || strings.TrimSpace(f.EvidenceQuestion.Question) == "" {
+				return "", nil, fmt.Errorf("finding at %s:%d is evidence_missing but names no evidence question", f.File, f.Line)
+			}
+		} else if f.EvidenceQuestion != nil {
+			return "", nil, fmt.Errorf("finding at %s:%d of kind %q carries an evidence question, which only an evidence_missing finding may", f.File, f.Line, f.Kind)
+		}
+		findings = append(findings, Finding{ID: FindingID(f.File, f.Text), Severity: string(grade), Impact: f.Impact, File: f.File, Line: f.Line, Text: f.Text,
+			Kind: f.Kind, EvidenceQuestion: f.EvidenceQuestion})
 		security = append(security, sec)
 	}
 	findings, err := normalize(doc.Verdict, findings, security)
@@ -542,6 +568,12 @@ func MergeFindings(lists ...[]Finding) []Finding {
 			}
 			if out[i].Impact == "" || (out[i].Impact == premerge.MinorSeparable && f.Impact != "" && f.Impact != premerge.MinorSeparable) {
 				out[i].Impact = f.Impact
+			}
+			// a finding that is an ordinary defect in one copy is not evidence-only because another copy of it was
+			// evidence_missing: the ordinary copy's kind stands (CRW-1490)
+			if out[i].Kind == KindEvidenceMissing && f.Kind != KindEvidenceMissing {
+				out[i].Kind = f.Kind
+				out[i].EvidenceQuestion = nil
 			}
 		}
 	}

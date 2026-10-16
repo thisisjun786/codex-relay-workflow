@@ -158,7 +158,7 @@ func TestCLIRegionDeclare(t *testing.T) {
 			t.Errorf("%s: exit %d\n%s", c.name, code, out)
 		}
 	}
-	// the declaration is in force: impl-a now holds regions, so an undeclared impl-b waits on it once impl-a is running.
+	// the declaration is in force: impl-a now holds regions; an undeclared impl-b waits on nothing — the unknown overlap does not block it (CRW-1576).
 	out, _ = crw(t, state, "dag-ready", "--plan", "p1")
 	if parseOut(t, out)["ok"] != true {
 		t.Fatalf("a reading after a declaration:\n%s", out)

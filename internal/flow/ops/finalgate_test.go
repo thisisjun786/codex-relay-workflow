@@ -53,6 +53,24 @@ func (r *closeRelay) moveTo(tip string) {
 	r.stubRelay.tip = tip
 }
 
+// IntegrateMilestoneRepair is the close relay's repair publication (ops.MilestoneRepairIntegrator, CRW-1490): the stub moves its tip
+// from the failed head to the candidate when the target still is it.
+func (r *closeRelay) IntegrateMilestoneRepair(_ context.Context, req MilestoneRepairRequest) (MilestoneRepairResult, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := MilestoneRepairResult{Tip: r.stubRelay.tip}
+	if r.stubRelay.tip == req.Head {
+		return out, nil
+	}
+	if r.stubRelay.tip != req.Base {
+		out.Moved = true
+		return out, nil
+	}
+	r.stubRelay.tip = req.Head
+	out.Tip = req.Head
+	return out, nil
+}
+
 // closeVerifier verifies the heads it is asked for: a pass unless the test says otherwise.
 type closeVerifier struct {
 	mu          sync.Mutex
@@ -97,6 +115,8 @@ type closeWorld struct {
 	decide   *MemoryDecisions
 	lane     *Lane
 	policy   *engine.Policy
+	// ops are the lane's ops with the close world's fake crw.commit in place of the real one (no allocator in this world).
+	ops map[string]engine.Op
 
 	mu sync.Mutex
 	// answers decide what a call says: the key is the kind of the packet (qa-capture, qa-pass-A, qa-pass-B, qa-synthesis, qa-review);
@@ -203,7 +223,16 @@ func newCloseWorld(t *testing.T, ms Milestone) *closeWorld {
 			return []reviewadapter.Profile{reviewadapter.AstraProfile(filepath.Join(runDir, "crosscheck", "answer.strict.json")), reviewadapter.GrokProfile(reviewadapter.AnswerSchema)}, nil
 		}}
 	w.lane = NewLane(Deps{RunID: "run-1", Journal: w.j, Relay: w.relay, Verifier: w.verifier, Decisions: w.decide, Actor: "parent", Repo: "/repo",
+		Git: func(_ context.Context, _ string, _ []string, argv ...string) (string, error) {
+			// the close world's git use is the repair's ancestry check: the heads resolve, and headTwo descends from headOne
+			if len(argv) >= 1 && (argv[0] == "merge-base" || argv[0] == "rev-parse") {
+				return "", nil
+			}
+			return "", fmt.Errorf("the close world's git got %v", argv)
+		},
 		LandRoot: w.landRoot, Crosscheck: cc, Now: func() time.Time { return time.Date(2026, 10, 12, 9, 0, 0, 0, time.UTC) }})
+	w.ops = w.lane.Ops()
+	w.ops[NameCommit] = closeCommitOp{}
 	w.fake.Handler = w.handle
 	return w
 }
@@ -224,6 +253,8 @@ func kindOf(prompt string) string {
 	case strings.HasPrefix(prompt, "ROLE: reviewer-final."):
 		// no packet of the current close starts so (the reviewer-final path is retired, CRW-1450): a test that counts it sees none
 		return "final"
+	case strings.HasPrefix(prompt, "CLOSE FIX of milestone"):
+		return "close-fix"
 	}
 	return "other"
 }
@@ -265,8 +296,29 @@ func (w *closeWorld) handle(req engine.FakeRequest) engine.FakeReply {
 		return engine.FakeReply{Text: jsonOf(map[string]any{"pass": "B", "verdict": "PASS", "findings": []any{}, "summary": "B reads the captures"})}
 	case "qa-synthesis", "qa-review":
 		return engine.FakeReply{Text: jsonOf(map[string]any{"verdict": "PASS", "findings": []any{}, "summary": "receipt"})}
+	case "close-fix":
+		return engine.FakeReply{Text: jsonOf(map[string]any{"outcome": "ready_for_review", "files": []string{"a.go"}, "verification": []any{}, "summary": "fixed", "gap": nil, "research_question": nil, "plan_mismatch": nil})}
 	}
 	return engine.FakeReply{}
+}
+
+// closeCommitOp is the crw.commit of the close world (CRW-1490): the fake backend keeps no worktree, so the repair's commit is
+// recorded as headTwo of the synthetic node, which the gate of the candidate and the close's publication read.
+type closeCommitOp struct{}
+
+func (closeCommitOp) Run(_ context.Context, req engine.OpRequest) (engine.OpResult, error) {
+	var node string
+	var ex CallRef
+	var regions []string
+	if err := args(req.Args, &node, &ex, &regions); err != nil {
+		return engine.OpResult{}, err
+	}
+	out := CommitOutcome{Commit: headTwo, Parent: headOne, Tree: "tree-candidate", Changed: []string{"a.go"}, OutOfScope: []string{}}
+	return engine.OpResult{Result: result(out), Data: map[string]any{"node": node, "commit": out.Commit, "parent": out.Parent, "tree": out.Tree, "call": ex.CallID}}, nil
+}
+
+func (closeCommitOp) Proven(context.Context, []engine.Event, engine.Event) (bool, string, error) {
+	return true, "", nil
 }
 
 func jsonOf(v any) string {
@@ -353,7 +405,7 @@ func (w *closeWorld) runSource(src string) map[string]any {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	res, err := engine.Run(ctx, prog, engine.Config{Backend: w.fake, Policy: w.policy, Journal: w.j, RunID: "run-1", Ops: w.lane.Ops()})
+	res, err := engine.Run(ctx, prog, engine.Config{Backend: w.fake, Policy: w.policy, Journal: w.j, RunID: "run-1", Ops: w.ops})
 	if err != nil {
 		w.t.Fatal(err)
 	}
@@ -941,6 +993,47 @@ func TestCrosscheckPassesCarryTheDesignDecisions(t *testing.T) {
 
 // ---- the crosscheck as the authority of the close (CRW-1473) ----
 
+// TestCloseRepairRejectsAlteredGateAndVerdict (CRW-1490): a close that publishes a repair rests on the journal's own records, not
+// the evidence the script hands it: the gate and the crosscheck V of the evidence must be the recorded outcomes of the candidate's
+// gate and recheck. A gate the script altered (its grade), a verified V it changed (its carried list), and a V of another prior
+// head are each refused close_repair_unverified, and the target stays at the head the repair was over - the stub relay is never
+// asked to publish.
+func TestCloseRepairRejectsAlteredGateAndVerdict(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		mutate func(gate, crosscheck map[string]any)
+	}{
+		{"an altered gate", func(g, x map[string]any) { g["grade"] = "C0" }},
+		{"an altered verdict", func(g, x map[string]any) { x["carried"] = []any{"f_not_recorded"} }},
+		{"a stale verdict", func(g, x map[string]any) { x["prior_head"] = "ffffffffffffffffffffffffffffffffffffffff" }},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w := newCloseWorld(t, Milestone{})
+			w.cc.script("A", ccAnswer{Verdict: reviewadapter.VerdictNeedsChanges, Findings: []reviewadapter.Finding{{Severity: "P1", Impact: "core_function", File: "a.go", Line: 3, Text: "the finding"}}})
+			got := w.close()
+			if got["state"] != "closed" || got["tip"] != headTwo {
+				t.Fatalf("the repaired close: %v", got)
+			}
+			w.relay.moveTo(headOne)
+			var gate, crosscheck map[string]any
+			gb, _ := json.Marshal(got["gate"])
+			cb, _ := json.Marshal(got["crosscheck"])
+			if err := json.Unmarshal(gb, &gate); err != nil || json.Unmarshal(cb, &crosscheck) != nil {
+				t.Fatal(err)
+			}
+			c.mutate(gate, crosscheck)
+			argv, _ := json.Marshal([]any{"M1", map[string]any{"gate": gate, "crosscheck": crosscheck, "repair": map[string]any{"base": headOne, "head": headTwo}}})
+			_, err := w.ops[NameMilestoneClose].Run(context.Background(), engine.OpRequest{RunID: "run-1", Journal: w.j, Args: argv})
+			if err == nil || ReasonOf(err.Error()) != "close_repair_unverified" {
+				t.Fatalf("the close over the altered evidence: %v", err)
+			}
+			if tip, _ := w.relay.IntegrationTip(context.Background(), "plan-1"); tip != headOne {
+				t.Errorf("the relay's tip %q: the altered close was published", tip)
+			}
+		})
+	}
+}
+
 // TestCloseFollowsTheCrosscheckRule is the close part of TestCrosscheckRuleIsOneTableForPacketOpAndClose (workflows/packets_test.go):
 // for each severity P0-P3 crossed with every impact and none, a close whose crosscheck answers that one finding (the verdict word
 // following premerge.Blocks, as the adapter holds the engine's word to it) closes exactly when the finding does not block, which is
@@ -960,21 +1053,29 @@ func TestCloseFollowsTheCrosscheckRule(t *testing.T) {
 				}
 				f := reviewadapter.Finding{Severity: sev, Impact: impact, File: "a.go", Line: 3, Text: "the finding of " + sev + "/" + impact}
 				w.cc.script("A", ccAnswer{Verdict: verdict, Findings: []reviewadapter.Finding{f}})
+				if blocks {
+					// the close's one correction rechecks the candidate; the same finding still blocks it
+					w.cc.script("A", ccAnswer{Verdict: verdict, Findings: []reviewadapter.Finding{f}})
+				}
 				got := w.close()
 				rows := w.opRows(OpCrosscheck)
-				if len(rows) != 1 {
-					t.Fatalf("%d crosscheck rows", len(rows))
+				wantRows := 1
+				if blocks {
+					wantRows = 2
+				}
+				if len(rows) != wantRows {
+					t.Fatalf("%d crosscheck rows, want %d", len(rows), wantRows)
 				}
 				// V as the op answered it (the row's result; the memory journal keeps the row's data as the op built it)
 				var x struct {
 					Verdict map[string]any `json:"verdict"`
 				}
-				if err := json.Unmarshal(resultOf(rows[0]), &x); err != nil {
+				if err := json.Unmarshal(resultOf(rows[len(rows)-1]), &x); err != nil {
 					t.Fatal(err)
 				}
 				v := x.Verdict
 				if verified := v["verdict"] == reviewadapter.VerdictVerified; verified == blocks {
-					t.Fatalf("V says %v over a finding that blocks: %v; the row %v", v["verdict"], blocks, rows[0].Data)
+					t.Fatalf("V says %v over a finding that blocks: %v; the row %v", v["verdict"], blocks, rows[len(rows)-1].Data)
 				}
 				closes := w.opRows(OpMilestoneClose)
 				if blocks {

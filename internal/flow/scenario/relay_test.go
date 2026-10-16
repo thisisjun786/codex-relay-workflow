@@ -87,6 +87,8 @@ type FakeRelay struct {
 	Accepts    []ops.AcceptRequest
 	Integrates []ops.IntegrateRequest
 	Closes     []ops.CloseRequest
+	// Repairs is the repair publications the milestone closes asked for, in order (CRW-1490).
+	Repairs []ops.MilestoneRepairRequest
 	// Landed are the nodes in the order they landed.
 	Landed []string
 }
@@ -223,13 +225,10 @@ func (r *FakeRelay) plannedRegions(node string, texts []string) []ops.LaneRegion
 
 // relayRegionRule is the relay's region judgment of a release (dagsched.Overlaps over the declared normal forms, with the planned change
 // and hold): a release whose regions overlap a region another released node holds is held back defer:edit_overlap. A node with no
-// regions, on either side, overlaps every other.
+// regions, on either side, is unknown — not an overlap (CRW-1576): the loops find no pair and the release goes on.
 func (r *FakeRelay) relayRegionRule(req ops.ReleaseRequest, holding map[string][]ops.LaneRegion) string {
 	mine := r.plannedRegions(req.Node, req.Regions)
 	for _, theirs := range holding {
-		if len(mine) == 0 || len(theirs) == 0 {
-			return dagsched.DeferEditOverlap
-		}
 		for _, a := range mine {
 			for _, b := range theirs {
 				if dagsched.Overlaps(relayRegion(a), relayRegion(b)) {
@@ -365,6 +364,34 @@ func (r *FakeRelay) Integrate(_ context.Context, req ops.IntegrateRequest) (ops.
 	r.held[req.Node] = false
 	delete(r.holding, req.Node)
 	return ops.IntegrateResult{Landed: true, BatchCommit: batch, IntegrationRef: IntegrationRef, Tip: batch}, nil
+}
+
+// IntegrateMilestoneRepair publishes a close's repair (CRW-1490): the lab's synthetic
+// compare-and-swap of the integration ref, the way Integrate moves it - a real-Git and
+// relay-store fixture seam, not a proof of production fencing.
+func (r *FakeRelay) IntegrateMilestoneRepair(ctx context.Context, req ops.MilestoneRepairRequest) (ops.MilestoneRepairResult, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.Repairs = append(r.Repairs, req)
+	if req.VerificationDigest == "" {
+		return ops.MilestoneRepairResult{}, fmt.Errorf("close repair has no verification digest")
+	}
+	tip := r.lab.Tip()
+	if tip == req.Head {
+		return ops.MilestoneRepairResult{Tip: tip}, nil
+	}
+	if tip != req.Base {
+		return ops.MilestoneRepairResult{Tip: tip, Moved: true}, nil
+	}
+	cmd := exec.CommandContext(ctx, "git", "-C", r.lab.Repo, "update-ref", IntegrationRef, req.Head, req.Base)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		now := r.lab.Tip()
+		if now != req.Base {
+			return ops.MilestoneRepairResult{Tip: now, Moved: now != req.Head}, nil
+		}
+		return ops.MilestoneRepairResult{}, fmt.Errorf("publish close repair: %w: %s", err, out)
+	}
+	return ops.MilestoneRepairResult{Tip: req.Head}, nil
 }
 
 // IntegrationTip implements ops.Relay.

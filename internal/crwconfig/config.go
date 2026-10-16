@@ -202,10 +202,10 @@ func Run(args []string, stdout, stderr io.Writer, getenv func(string) string) in
 	case "-h", "--help", "help":
 		usage(stdout)
 		return 0
-	case "paths", "show", "check", "verifier":
+	case "paths", "show", "check", "verifier", "tracking":
 	default:
 		usage(stderr)
-		fmt.Fprintf(stderr, "crw config: error: invalid command %q (choose from 'paths', 'show', 'check', 'verifier')\n", verb)
+		fmt.Fprintf(stderr, "crw config: error: invalid command %q (choose from 'paths', 'show', 'check', 'verifier', 'tracking')\n", verb)
 		return usageExit
 	}
 	flagPath, rest, err := parseConfigFlag(args[1:])
@@ -222,6 +222,9 @@ func Run(args []string, stdout, stderr io.Writer, getenv func(string) string) in
 	}
 	if verb == "verifier" {
 		return runVerifier(getenv, flagPath, rest, stdout, stderr)
+	}
+	if verb == "tracking" {
+		return runTracking(getenv, flagPath, rest, stdout, stderr)
 	}
 	if len(rest) > 0 {
 		usage(stderr)
@@ -334,9 +337,10 @@ func writeJSON(stdout, stderr io.Writer, v any) int {
 
 // usage writes the usage line and one line per subcommand.
 func usage(w io.Writer) {
-	fmt.Fprintln(w, "usage: crw config [-h] {paths,show,check,verifier} ...")
+	fmt.Fprintln(w, "usage: crw config [-h] {paths,show,check,verifier,tracking} ...")
 	fmt.Fprintln(w, "  paths\tprint every named root, its path and where the path came from")
 	fmt.Fprintln(w, "  show\tprint the configuration file's path, where it came from and its document")
 	fmt.Fprintln(w, "  check\tcheck every root: it exists or can be made, is writable, its file system and space, a socket path's length, state kept together, drift from the placement in use, and the tracking setting (gh signed in, the repository's issues readable and writable); exit 1 on a fault")
+	fmt.Fprintln(w, "  tracking\tset the work-tracking repository: --repo OWNER/NAME [--config PATH] (preserves other configuration)")
 	fmt.Fprintln(w, "  verifier\tprint the verifier's tools (verifier.go_root, verifier.crw_dev); --go-root <dir> and --crw-dev tree|<path> record them in the file")
 }
