@@ -109,15 +109,15 @@ func githubPostBodySources(words []string) []githubPostBodySource {
 	return out
 }
 
-// githubPostReadExecFile reads a body file named in an execution's directory, under the rules of githubPostReadFileAt (temporary
-// roots, a regular file of at most 1 MiB).
+// githubPostReadExecFile reads a body file named in an execution's directory, under the rules of githubPostReadFileAt (a regular
+// file, named without a final link, of at most 1 MiB, wherever it lies).
 func githubPostReadExecFile(name string, dir shellir.Dir) (string, bool) {
 	base := dir.Path
 	if !dir.Known {
 		base = githubPostNoDir
 	}
-	text, _, ok := githubPostReadFileAt(name, base)
-	return text, ok
+	text, _, cause := githubPostReadFileAt(name, base)
+	return text, cause == ""
 }
 
 // githubPostStdinTexts is the text execution i reads on standard input, as far as the command shows it: its here-strings and
