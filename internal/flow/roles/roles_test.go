@@ -82,8 +82,21 @@ func TestOverlayAppendsToEmbeddedPrompt(t *testing.T) {
 	if _, err := Prompt("child", Options{}); err == nil {
 		t.Error("a relay role has no overlay")
 	}
-	// The second tier, the final reviewer and the critic are built on the definitions of their families.
-	for role, family := range map[string]string{"executor-t1": "executor", "reviewer-final": "reviewer", "critic": "reviewer"} {
+	// reviewer-final is a retired role key (CRW-1450): it has no definition, no overlay and no prompt.
+	for _, part := range []func() (string, error){
+		func() (string, error) { return Base("reviewer-final") },
+		func() (string, error) { return Overlay("reviewer-final", Options{}) },
+		func() (string, error) { return Prompt("reviewer-final", Options{}) },
+	} {
+		if _, err := part(); err == nil {
+			t.Error("the retired reviewer-final key still has a part of a prompt")
+		}
+	}
+	if _, err := overlays.ReadFile("reviewer-final.md"); err == nil {
+		t.Error("the reviewer-final overlay file is still embedded")
+	}
+	// The second tier and the critic are built on the definitions of their families.
+	for role, family := range map[string]string{"executor-t1": "executor", "critic": "reviewer"} {
 		a, _ := Base(role)
 		b, _ := Base(family)
 		if a != b {
@@ -120,7 +133,7 @@ func TestOverlayReplacesLeafSentence(t *testing.T) {
 		helper bool
 	}{
 		{"executor", Options{}, true}, {"executor-t1", Options{}, true}, {"architect", Options{}, true},
-		{"reviewer", Options{}, true}, {"reviewer-final", Options{}, true},
+		{"reviewer", Options{}, true},
 		{"explorer", Options{}, false}, {"critic", Options{}, false}, {"executor", Options{QA: true}, false},
 	} {
 		base, _ := Base(row.role)
@@ -331,7 +344,7 @@ func TestArchitectOverlayAuthorityBoundary(t *testing.T) {
 	}
 }
 
-// TestCriticRoleHasOverlayAndDefinition (CRW-1434): the critic is a seventh role of an engine call. It has no definition
+// TestCriticRoleHasOverlayAndDefinition (CRW-1434): the critic is the last role of an engine call. It has no definition
 // file of its own: its thread is built on the reviewer definition (it spawns as agent_type reviewer), followed by its own
 // overlay, which names the LEAF sentence and allows no helper.
 func TestCriticRoleHasOverlayAndDefinition(t *testing.T) {

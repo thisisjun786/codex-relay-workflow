@@ -42,7 +42,7 @@ func TestCriticDefaultPairIsTheSameEverywhere(t *testing.T) {
 	if fc.Family != "critic" || fc.Sandbox != SandboxReadOnly || fc.Pair.Effort != execution.DefaultCriticPair.Effort || !slices.Equal(fc.ModelAliases, execution.DefaultModelAliases("critic")) {
 		t.Fatalf("fake critic %+v", fc)
 	}
-	// A call names the critic by agentType; no alias row leads to it (ocx-gpt-6-1-sol at xhigh is reviewer-final's).
+	// A call names the critic by agentType; no alias row leads to it (ocx-gpt-6-1-sol is the reviewer's at any effort).
 	for _, p := range []*Policy{fake, table} {
 		res, refusal := p.ResolveFresh(CallOpts{AgentType: "critic"})
 		if refusal != nil || res.Role != "critic" {

@@ -42,7 +42,8 @@ func TestOrchestratorCiphertextRoleFromTaskName(t *testing.T) {
 		{"role in capitals", "REVIEWER", fbExplorer, "explorer"},
 		{"architect", "architect", fbArchitect, "architect"},
 		{"architect with a suffix", "architect_plan", fbArchitect, "architect"},
-		{"reviewer-final", "reviewer-final_gate", fbReviewerFinal, "reviewer-final"},
+		// reviewer-final is a retired role key (CRW-1450): the name says no role, and the line's reviewer-final pair is never applied
+		{"the retired reviewer-final", "reviewer-final_gate", fbExplorer, "explorer"},
 	}
 	for i, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -63,7 +64,7 @@ func TestOrchestratorCiphertextRoleFromTaskName(t *testing.T) {
 			roles = append(roles, d.Role)
 		}
 	}
-	if strings.Join(roles, ",") != "reviewer,reviewer,explorer,explorer,explorer,explorer,explorer,explorer,architect,architect,reviewer-final" {
+	if strings.Join(roles, ",") != "reviewer,reviewer,explorer,explorer,explorer,explorer,explorer,explorer,architect,architect,explorer" {
 		t.Fatalf("allowed roles %v", roles)
 	}
 	// an engine thread ignores the name: its helper is the explorer pair whatever it is called

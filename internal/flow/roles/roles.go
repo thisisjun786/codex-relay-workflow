@@ -17,14 +17,15 @@ import (
 //go:embed *.md
 var overlays embed.FS
 
-// Names are the seven roles of an engine call, the critic (CRW-1434) last.
-var Names = [...]string{"architect", "executor", "executor-t1", "reviewer", "reviewer-final", "explorer", "critic"}
+// Names are the six roles of an engine call, the critic (CRW-1434) last. reviewer-final is a retired role key (CRW-1450): no
+// engine call runs as it.
+var Names = [...]string{"architect", "executor", "executor-t1", "reviewer", "explorer", "critic"}
 
-// definition is the role definition file a role's thread is built on: the second tier of the executor and the final
-// reviewer use the definitions of their families, and the critic, which has no definition file of its own, the reviewer's.
+// definition is the role definition file a role's thread is built on: the second tier of the executor uses the definition of
+// its family, and the critic, which has no definition file of its own, the reviewer's.
 var definition = map[string]string{
 	"architect": "architect", "executor": "executor", "executor-t1": "executor",
-	"reviewer": "reviewer", "reviewer-final": "reviewer", "explorer": "explorer",
+	"reviewer": "reviewer", "explorer": "explorer",
 	"critic": "reviewer",
 }
 
