@@ -275,6 +275,13 @@ and no device name is written into the product, its skills or its packet templat
 | `build_work` | unset: Go's own (`GOTMPDIR`) | the Go build work directory | `GOTMPDIR=<path>` |
 | `log_root` | `<state>/crw/logs` | the product's own logs, once a host names it | - |
 | `relay_state` | `<state>/codex-session-relay` | the relay's durable state: one directory per scope, each holding the store, its WAL and its sidecars | - |
+| `sandbox_root` | `${XDG_STATE_HOME:-~/.local/state}/crw/sandbox` | dedicated base for sandboxed Codex runs | - |
+
+The sandbox base follows XDG state, independently of `cache_root` and `scratch_root`.
+A host that uses a separate scratch disk sets `paths.sandbox_root` explicitly. The
+configuration check only tests whether the directory exists or can be created; it
+creates nothing. Before using it as a sandbox working root, create the dedicated
+directory. The account home itself and its ancestors remain protected.
 
 A root that is unset passes the tool nothing: the product starts `go` with the caller's own
 environment, and only a configured `build_cache`, `module_cache` or `build_work` becomes an

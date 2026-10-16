@@ -39,7 +39,7 @@ func rootsDefaults(home string) map[string]string {
 		RootTemp:     filepath.Join("/tmp", "crw"),
 		RootData:     filepath.Join(share, "crw", "data"),
 		RootManage:   filepath.Join(state, "crw", "manage"),
-		RootSandbox:  DefaultSandboxRoot,
+		RootSandbox:  filepath.Join(state, "crw", "sandbox"),
 		// the three tool roots have no default: unset means the tool's own
 		RootBuildCache:  "",
 		RootModuleCache: "",
@@ -60,10 +60,6 @@ func rootsCheck(t *testing.T, roots map[string]Root, want map[string]string, sou
 		wantSource := source
 		if path == "" {
 			// an unset root has no default to come from an environment variable
-			wantSource = SourceDefault
-		}
-		if name == RootSandbox && source == SourceEnv {
-			// sandbox_root is a fixed default that no environment variable moves.
 			wantSource = SourceDefault
 		}
 		if got := roots[name]; got.Path != path || got.Source != wantSource {
@@ -101,7 +97,7 @@ func TestRootsFollowTheXdgVariables(t *testing.T) {
 		RootTemp:        filepath.Join(temp, "crw"),
 		RootData:        filepath.Join(data, "crw", "data"),
 		RootManage:      filepath.Join(state, "crw", "manage"),
-		RootSandbox:     DefaultSandboxRoot,
+		RootSandbox:     filepath.Join(state, "crw", "sandbox"),
 		RootBuildCache:  "",
 		RootModuleCache: "",
 		RootBuildWork:   "",
