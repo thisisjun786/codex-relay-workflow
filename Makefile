@@ -32,9 +32,9 @@ test-binary:
 	$(GO) build -trimpath -o $(TEST_BINARY) ./cmd/crw
 
 # CI runs `make test` as parallel parts, one runner each (.github/workflows/ci.yml).
-# Parts 1-4 name the slowest packages; `rest` is every other package plus the dev-tagged
-# tests, so the parts are disjoint, together equal `make test`, and a new package always
-# lands in `rest`. A renamed package makes its part fail in `go list`, never skip.
+# Parts 1-5 name the slowest packages; `rest` is every other default-tag package and
+# `dev` runs the dev-tagged tests. Together they equal `make test`; a new default-tag
+# package lands in `rest`. A renamed package makes its part fail in `go list`, never skip.
 # Balanced on hosted CI times (docs/CI.md has the table and the measurements). A runner
 # spends about 55 s before its tests (checkout, toolchain, the one crw build) and the leg
 # compiles its own test binaries before it starts, so a leg takes about that plus its
@@ -56,18 +56,20 @@ TEST_PART_1 := ./internal/relay/dagsched ./internal/relay/cli
 TEST_PART_2 := ./internal/runtime/install ./internal/relay/registry ./internal/relay/hook
 TEST_PART_3 := ./internal/relay/service ./internal/contracttest ./internal/relay/mergeturn ./internal/relay/supervisor ./internal/skill ./internal/relay/managed ./internal/relay/adapter
 TEST_PART_4 := ./internal/relay/delivery ./internal/relay/store ./internal/relay/sync ./internal/relay/faults ./internal/relay/dag ./internal/role ./internal/pyjson ./internal/relay/linkage ./internal/recall ./internal/relay/routing ./internal/relay/childcleanup
-TEST_PARTS := $(TEST_PART_1) $(TEST_PART_2) $(TEST_PART_3) $(TEST_PART_4)
+TEST_PART_5 := ./internal/flow/cli ./internal/flow/scenario ./internal/flow/engine
+TEST_PARTS := $(TEST_PART_1) $(TEST_PART_2) $(TEST_PART_3) $(TEST_PART_4) $(TEST_PART_5)
 
 test-part: test-binary
 ifeq ($(TEST_PART),rest)
 	@set -e; named="$$($(GO) list $(TEST_PARTS))"; \
 	rest="$$($(GO) list ./... | grep -vxF "$$named")"; \
-	$(TEST_ENV) $(GO) test $(TEST_TIMEOUT) $$rest; \
+	$(TEST_ENV) $(GO) test $(TEST_TIMEOUT) $$rest
+else ifeq ($(TEST_PART),dev)
 	$(TEST_ENV) $(GO) test $(TEST_TIMEOUT) -tags dev ./cmd/crw-dev/... ./internal/dev/...
-else ifneq ($(filter $(TEST_PART),1 2 3 4),)
+else ifneq ($(filter $(TEST_PART),1 2 3 4 5),)
 	$(TEST_ENV) $(GO) test $(TEST_TIMEOUT) $(TEST_PART_$(TEST_PART))
 else
-	$(error TEST_PART must be 1, 2, 3, 4 or rest)
+	$(error TEST_PART must be 1, 2, 3, 4, 5, rest or dev)
 endif
 
 # The development tooling (cmd/crw-dev, internal/dev) builds only with -tags dev, so lint and

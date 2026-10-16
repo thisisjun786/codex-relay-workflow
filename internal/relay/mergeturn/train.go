@@ -47,7 +47,9 @@ var TrainExpectedJobs = []string{
 	"go-product (test-2)",
 	"go-product (test-3)",
 	"go-product (test-4)",
+	"go-product (test-5)",
 	"go-product (test-rest)",
+	"go-product (test-dev)",
 	"go-product (dist)",
 	"dev-gate",
 }

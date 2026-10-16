@@ -76,7 +76,8 @@ type verificationRecord struct {
 }
 
 // recordRunEnv is where a run ran (CRW-1489): the directory crw-dev ran in, the repository root it verified,
-// the caller's TMPDIR ("" when it was unset), the fresh TMPDIR its steps got and the run's own HOME. The values
+// the caller's TMPDIR ("" when it was unset), the fresh temporary root and the run's home root.
+// Multiple jobs use separate children of those roots; one-job plans use the roots directly. The values
 // are paths, not variable contents, and are written as they are. The member is additive: records written
 // before it do not have it, and a reader takes its absence as unknown. It is not a reuse key (localReuse):
 // a reused record keeps the runEnv of the run that verified it.

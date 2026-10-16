@@ -21,6 +21,15 @@ import (
 var crwDev string
 
 func TestMain(m *testing.M) {
+	// The parallel-jobs tests run this binary as a job's step; dispatch before the harness
+	// rewrites HOME and friends, so the helper measures the job's own environment (CRW-1584).
+	if os.Getenv("CRW_TEST_PARALLEL_HELPER") == "1" {
+		for _, arg := range os.Args {
+			if arg == "-test.run=^TestLocalParallelHelper$" {
+				os.Exit(m.Run())
+			}
+		}
+	}
 	testsupport.Main(m, homeguard.RefuseAccountHome, func(string) (cleanup func() error, err error) {
 		crwDev, err = testsupport.CRWDevPath()
 		return nil, err

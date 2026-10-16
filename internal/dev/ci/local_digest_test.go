@@ -24,7 +24,7 @@ func localWorkflowDrift(t *testing.T, text string) []string {
 func TestLocalDigest_a_changed_ci_yml_step_or_matrix_is_plan_drift(t *testing.T) {
 	cases := map[string]struct{ from, to string }{
 		"job env":     {"SKILLS_ROOT: plugins/crw/skills", "SKILLS_ROOT: plugins/other/skills"},
-		"matrix leg":  {"part: [lint, test-1, test-2, test-3, test-4, test-rest, dist]", "part: [lint, test-1, test-2, test-3, test-4, test-rest, dist, extra]"},
+		"matrix leg":  {"part: [lint, test-1, test-2, test-3, test-4, test-5, test-rest, test-dev, dist]", "part: [lint, test-1, test-2, test-3, test-4, test-5, test-rest, test-dev, dist, extra]"},
 		"working dir": {"working-directory: web", "working-directory: web/sub"},
 	}
 	for name, c := range cases {

@@ -2,7 +2,9 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -229,28 +231,70 @@ func (o *fakeOrch) loop() {
 			return
 		case <-tick.C:
 		}
-		steps, _ := o.bus.Steps()
-		for _, st := range steps {
-			// a step file is taken once: the same file seen again is the step already taken, and a step a process publishes again
-			// (a new file) is a new one, as the owner thread sees it
-			key := fmt.Sprintf("%s/%s/t%d-a%d/%s", st.Call, st.Action, st.K, st.Attempt, st.AgentID)
-			if st.Action != StepClose {
-				fi, err := os.Stat(filepath.Join(o.bus.StepsDir(st.Call), StepName(st.K, st.Attempt)))
-				if err != nil {
-					// retracted since it was read: no step to take
-					continue
-				}
-				key += "@" + fi.ModTime().Format(time.RFC3339Nano)
-			}
-			o.mu.Lock()
-			seen := o.seen[key]
-			o.seen[key] = true
-			o.mu.Unlock()
-			if seen {
+		o.poll(nil)
+	}
+}
+
+// readOrchStep reads a step's body and version through one open file: a publisher replaces the
+// file atomically, so the pair this returns is always one coherent version.
+func readOrchStep(path string) (Step, time.Time, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return Step{}, time.Time{}, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return Step{}, time.Time{}, err
+	}
+	raw, err := io.ReadAll(f)
+	if err != nil {
+		return Step{}, time.Time{}, err
+	}
+	var st Step
+	if err := json.Unmarshal(raw, &st); err != nil {
+		return Step{}, time.Time{}, err
+	}
+	if st.Schema != StepSchema {
+		return Step{}, time.Time{}, fmt.Errorf("unknown step schema %q", st.Schema)
+	}
+	st.File = filepath.Base(path)
+	return st, info.ModTime(), nil
+}
+
+// poll takes the steps the bus lists once each; afterRead, when set, runs between the listing and
+// the per-step read, a deterministic interleaving for the version-mix test (CRW-1584).
+func (o *fakeOrch) poll(afterRead func()) {
+	steps, _ := o.bus.Steps()
+	if afterRead != nil {
+		afterRead()
+	}
+	for _, st := range steps {
+		// a step file is taken once: the same file seen again is the step already taken, and a step a process publishes again
+		// (a new file) is a new one, as the owner thread sees it. The body and the version are read
+		// through one open file, so an atomic rename between them cannot pair a stale body with the
+		// new file's stamp.
+		var modified time.Time
+		if st.Action != StepClose {
+			var err error
+			st, modified, err = readOrchStep(filepath.Join(o.bus.StepsDir(st.Call), st.File))
+			if err != nil {
+				// retracted since it was read: no step to take
 				continue
 			}
-			o.take(st)
 		}
+		key := fmt.Sprintf("%s/%s/t%d-a%d/%s", st.Call, st.Action, st.K, st.Attempt, st.AgentID)
+		if st.Action != StepClose {
+			key += "@" + modified.Format(time.RFC3339Nano)
+		}
+		o.mu.Lock()
+		seen := o.seen[key]
+		o.seen[key] = true
+		o.mu.Unlock()
+		if seen {
+			continue
+		}
+		o.take(st)
 	}
 }
 
@@ -761,4 +805,39 @@ func (h *dyingHost) Interrupt(ctx context.Context, id, turn string) error {
 		return nil
 	}
 	return h.fakeSessionHost.Interrupt(ctx, id, turn)
+}
+
+// A step a process republishes under its own name is taken as the step the bus lists it as, not a
+// mix of the old body and the new file's version (CRW-1584): the poll's body read and version read
+// are one open file, so an atomic rename between them cannot pair a stale body with a new stamp.
+func TestFakeOrchReadsRepublishedStepWithoutMixingVersions(t *testing.T) {
+	bus := NewFileStepBus(t.TempDir())
+	o := newFakeOrch(bus, newFakeSessionHost(), nil) // no background loop, controlled poll
+	packet, err := bus.WriteFile("call", "packet-t1-a1.md", []byte("test packet\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := Step{Run: "run-test", Call: "call", K: 1, Attempt: 1, Op: "call/t1-a1", Action: StepSpawn, Role: "executor", AgentType: "executor", Message: "crw-flow-op: call/t1-a1\nold executor", Packet: packet}
+	file := filepath.Join(bus.StepsDir(old.Call), StepName(old.K, old.Attempt))
+	publish := func(st Step, when time.Time) {
+		t.Helper()
+		if err := bus.Publish(st); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(file, when, when); err != nil {
+			t.Fatal(err)
+		}
+	}
+	publish(old, time.Unix(1, 0))
+	o.poll(nil)
+	latest := old
+	latest.Role, latest.AgentType = "explorer", "explorer"
+	latest.Message = "crw-flow-op: call/t1-a1\nnew explorer"
+	// Replace after Steps reads the old file but before poll takes its version — no timing/sleeps.
+	o.poll(func() { publish(latest, time.Unix(2, 0)) })
+	o.poll(nil) // the replacement is taken exactly once
+	got := o.spawned()
+	if len(got) != 2 || got[0].AgentType != "executor" || got[1].AgentType != "explorer" || got[1].Message != latest.Message {
+		t.Fatalf("spawns %+v; want old executor then current explorer, once each", got)
+	}
 }

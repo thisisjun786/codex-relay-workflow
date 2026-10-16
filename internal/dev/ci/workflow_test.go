@@ -2303,7 +2303,7 @@ func TestWorkflow_parallel_legs_cover_the_whole_run(t *testing.T) {
 		t.Fatal("Makefile does not validate TEST_PART")
 	}
 	expectEqual(t, "validated parts", strings.Fields(filtered[1]), numbered)
-	want := []string{"lint", "dist", "test-rest"}
+	want := []string{"lint", "dist", "test-rest", "test-dev"}
 	for _, n := range numbered {
 		want = append(want, "test-"+n)
 	}
@@ -2341,8 +2341,8 @@ func TestWorkflow_parallel_legs_cover_the_whole_run(t *testing.T) {
 // legProblems lists what would make a package run in two legs, or a leg run nothing. The numbered
 // parts name their packages and `rest` is every other package (`go list ./...` less TEST_PARTS), so
 // a package runs twice when two parts name it or TEST_PARTS misses a part, and a named path without
-// tests runs nothing. The numbered parts run without the dev tag and `rest` runs the dev-tagged
-// tests in its second pass, so a part cannot name one of those packages. A package is the cleaned
+// tests runs nothing. The numbered parts run without the dev tag and `dev` runs the dev-tagged
+// tests, so a part cannot name one of those packages. A package is the cleaned
 // path of its directory, so `./internal/relay/cli/` and `./internal/relay/cli` are one package.
 func legProblems(makefile, root string) []string {
 	fields := func(name string) []string {
@@ -2370,7 +2370,7 @@ func legProblems(makefile, root string) []string {
 			case !strings.HasPrefix(pkg, "./") || strings.Contains(pkg, "...") || dir == ".." || strings.HasPrefix(dir, "../"):
 				problems = append(problems, fmt.Sprintf("part %s names %q, which is not one package directory", n, pkg))
 			case strings.HasPrefix(dir, "cmd/crw-dev") || dir == "internal/dev" || strings.HasPrefix(dir, "internal/dev/"):
-				problems = append(problems, fmt.Sprintf("part %s names %s, whose tests need the dev tag and run in rest", n, pkg))
+				problems = append(problems, fmt.Sprintf("part %s names %s, whose tests need the dev tag and run in dev", n, pkg))
 			case len(tests) == 0:
 				problems = append(problems, fmt.Sprintf("part %s names %s, which has no tests", n, pkg))
 			}
@@ -2390,6 +2390,115 @@ func TestMakefile_every_package_runs_in_exactly_one_leg(t *testing.T) {
 	}
 	if problems := legProblems(string(data), repoRoot()); len(problems) > 0 {
 		t.Errorf("the legs do not run every package exactly once:\n%s", strings.Join(problems, "\n"))
+	}
+}
+
+// Execute the recipes with a Go recorder: list uses the real package graph, while
+// build/test only record their arguments. The union is make test's two tag sets.
+func TestMakefile_split_rest_executes_every_package_once(t *testing.T) {
+	goExe, err := exec.LookPath("go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	shim := filepath.Join(dir, "go-recorder")
+	body := `#!/bin/sh
+set -eu
+case "$1" in
+  list) exec "$CRW_PART_REAL_GO" "$@" ;;
+  build) exit 0 ;;
+  test) printf '%s\n' "$@" >> "$CRW_PART_CAPTURE"; printf '.\n' >> "$CRW_PART_CAPTURE" ;;
+  *) echo "unexpected go operation: $1" >&2; exit 1 ;;
+esac
+`
+	if err := os.WriteFile(shim, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	list := func(tags string, patterns ...string) []string {
+		t.Helper()
+		args := []string{"list"}
+		if tags != "" {
+			args = append(args, "-tags", tags)
+		}
+		cmd := exec.Command(goExe, append(args, patterns...)...)
+		cmd.Dir = repoRoot()
+		var stderr strings.Builder
+		cmd.Stderr = &stderr
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("go list: %v\n%s\n%s", err, out, stderr.String())
+		}
+		return strings.Fields(string(out))
+	}
+	want := map[string]bool{}
+	for _, pkg := range list("", "./...") {
+		want["default "+pkg] = true
+	}
+	for _, pkg := range list("dev", "./cmd/crw-dev/...", "./internal/dev/...") {
+		want["dev "+pkg] = true
+	}
+	seen := map[string]string{}
+	for _, part := range []string{"1", "2", "3", "4", "5", "rest", "dev"} {
+		capture := filepath.Join(dir, "part-"+part)
+		cmd := exec.Command("make", "--no-print-directory", "test-part", "TEST_PART="+part, "GO="+shim)
+		cmd.Dir = repoRoot()
+		cmd.Env = append(os.Environ(), "CRW_PART_REAL_GO="+goExe, "CRW_PART_CAPTURE="+capture)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("part %s: %v\n%s", part, err, out)
+		}
+		raw, err := os.ReadFile(capture)
+		if err != nil {
+			t.Fatal(err)
+		}
+		invocations := strings.Split(strings.TrimSuffix(string(raw), ".\n"), "\n.\n")
+		if len(invocations) != 1 {
+			t.Fatalf("part %s ran %d test commands, want one independent tag set", part, len(invocations))
+		}
+		args := strings.Split(strings.TrimSpace(invocations[0]), "\n")
+		if len(args) == 0 || args[0] != "test" {
+			t.Fatalf("part %s: bad capture %q", part, raw)
+		}
+		tags := ""
+		var patterns []string
+		for i := 1; i < len(args); i++ {
+			switch args[i] {
+			case "-timeout", "-tags":
+				if i+1 == len(args) {
+					t.Fatalf("part %s: missing argument after %s", part, args[i])
+				}
+				if args[i] == "-tags" {
+					tags = args[i+1]
+				}
+				i++
+			default:
+				if strings.HasPrefix(args[i], "-") {
+					t.Fatalf("part %s: unexamined test flag %s", part, args[i])
+				}
+				patterns = append(patterns, args[i])
+			}
+		}
+		if len(patterns) == 0 || (part == "dev" && tags != "dev") || (part != "dev" && tags != "") {
+			t.Fatalf("part %s: tags=%q patterns=%v", part, tags, patterns)
+		}
+		tagKey := tags
+		if tagKey == "" {
+			tagKey = "default"
+		}
+		for _, pkg := range list(tags, patterns...) {
+			key := tagKey + " " + pkg
+			if previous, ok := seen[key]; ok {
+				t.Errorf("%s runs in parts %s and %s", key, previous, part)
+			}
+			seen[key] = part
+			if !want[key] {
+				t.Errorf("part %s adds unexpected test invocation %s", part, key)
+			}
+		}
+	}
+	for key := range want {
+		if _, ok := seen[key]; !ok {
+			t.Errorf("missing test invocation %s", key)
+		}
 	}
 }
 

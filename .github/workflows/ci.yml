@@ -288,7 +288,7 @@ jobs:
       contents: read
       actions: read
     # CRW-790: while the repository variable CRW_CI_MODE is light, a pull request the merge lane
-    # has not labeled crw-lane skips the five test legs' work, and the labeled event -- and every
+    # has not labeled crw-lane skips the test legs' work, and the labeled event -- and every
     # later push while the label stays -- runs them in full. One definition, read by the steps
     # below, so lint and dist can never be light and neither can a dev push or a manual dispatch.
     # A skipped job's check still reads success, so a light leg skips its steps and never the job.
@@ -299,7 +299,7 @@ jobs:
       matrix:
         # One runner each: lint; the Go suite as `make test-part` parts, which together are
         # `make test` (the contract corpus included); the static release binaries.
-        part: [lint, test-1, test-2, test-3, test-4, test-rest, dist]
+        part: [lint, test-1, test-2, test-3, test-4, test-5, test-rest, test-dev, dist]
     steps:
       # A light leg says so in its summary and does none of the leg's work. The condition is a
       # step condition, never a job-level if: GitHub reports a skipped job's check as success, so

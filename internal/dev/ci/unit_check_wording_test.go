@@ -222,7 +222,7 @@ const landHeadJS = "internal/flow/workflows/land-head.js"
 
 // landHeadCallsTheCommittedCheck is whether land-head.js calls crw.unitCheck with a commit and a base, the form the pages describe.
 func landHeadCallsTheCommittedCheck(script string) bool {
-	return regexp.MustCompile(`crw\.unitCheck\([^)]*\bcommit:[^)]*\bbase:`).MatchString(script)
+	return regexp.MustCompile(`crw\.unitCheck\([^)]*\bcommit\s*:[^)]*,\s*base\s*(?::|[,}])`).MatchString(script)
 }
 
 // landHeadSectionUnitCheckProblems judges script.md's section on landing a head made outside a run.
@@ -293,6 +293,27 @@ func TestUnitCheckDocsNameTheLandHeadCommittedCheck(t *testing.T) {
 	if !landHeadCallsTheCommittedCheck(readRepoText(t, landHeadJS)) {
 		t.Errorf("%s does not call crw.unitCheck with a commit and a base", landHeadJS)
 	}
+	t.Run("fixture: committed base property forms", func(t *testing.T) {
+		for _, tc := range []struct {
+			name, script string
+			want         bool
+		}{
+			{"explicit", `crw.unitCheck(node, null, { commit: head, base: head.base })`, true},
+			{"shorthand before evidence", `crw.unitCheck(node, ex, { round: 2, commit: head, base, evidence })`, true},
+			{"shorthand last", `crw.unitCheck(node, ex, { commit: head, base })`, true},
+			{"missing base", `crw.unitCheck(node, ex, { commit: head, evidence })`, false},
+			{"base in commit value", `crw.unitCheck(node, ex, { commit: head.base, evidence })`, false},
+			{"different field", `crw.unitCheck(node, ex, { commit: head, baseOther: base })`, false},
+			{"missing commit", `crw.unitCheck(node, ex, { base })`, false},
+			{"review call", `crw.review(node, head, digest, call)`, false},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				if got := landHeadCallsTheCommittedCheck(tc.script); got != tc.want {
+					t.Errorf("call recognized = %v, want %v: %s", got, tc.want, tc.script)
+				}
+			})
+		}
+	})
 	if p := landHeadSectionUnitCheckProblems(readRepoText(t, scriptDocPath)); len(p) > 0 {
 		t.Errorf("%s:\n  %s", scriptDocPath, strings.Join(p, "\n  "))
 	}

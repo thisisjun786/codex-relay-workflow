@@ -723,7 +723,7 @@ func TestWorkflow_the_body_only_edit_mirror_is_wired(t *testing.T) {
 	jobs, order := editMirrorJobs(t)
 	editMirrorExpectEqual(t, "the job names", editMirrorSorted(order), []string{"dev-gate", "go-product", "gui", "secrets", "skill-scripts-node", "validate"})
 	editMirrorExpectEqual(t, "the go-product legs", editMirrorSorted(editMirrorMatrixValues(t, jobs["go-product"], "part")),
-		[]string{"dist", "lint", "test-1", "test-2", "test-3", "test-4", "test-rest"})
+		[]string{"dist", "lint", "test-1", "test-2", "test-3", "test-4", "test-5", "test-dev", "test-rest"})
 
 	data, err := os.ReadFile(filepath.Join(editMirrorRepoRoot(), ".github", "workflows", "ci.yml"))
 	if err != nil {

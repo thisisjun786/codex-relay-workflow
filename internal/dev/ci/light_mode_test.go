@@ -31,7 +31,7 @@ const (
 // lightExpression is what the one job-level env holds: the pull request event, the repository
 // variable, the negated crw-lane label check and the test-* part check, in that order. The first
 // term keeps a dev push and a manual dispatch out, the third keeps a labeled pull request out and
-// the fourth keeps lint and dist out, so only the five test legs of an unlabeled pull request run
+// the fourth keeps lint and dist out, so only the test legs of an unlabeled pull request run
 // can ever be light.
 const lightExpression = "github.event_name == 'pull_request' && vars.CRW_CI_MODE == 'light' && !contains(github.event.pull_request.labels.*.name, 'crw-lane') && startsWith(matrix.part, 'test-')"
 
@@ -189,14 +189,14 @@ func TestLightMode_only_the_go_product_job_reads_the_light_condition(t *testing.
 	}
 }
 
-// The mode changes no check name: the six jobs, the seven go-product legs and dev-gate's
-// prerequisites are the twelve checks the branch protection requires. skill-scripts-node
+// The mode changes no check name: the six jobs, the nine go-product legs and dev-gate's
+// prerequisites remain the same between light and full runs. skill-scripts-node
 // (CRW-353) and gui (CRW-831) are dev-gate prerequisites like the rest.
 func TestLightMode_the_check_names_are_unchanged(t *testing.T) {
 	jobs, order := workflowJobs(t)
 	expectEqual(t, "the job names", sortedCopy(order), []string{"dev-gate", "go-product", "gui", "secrets", "skill-scripts-node", "validate"})
 	expectEqual(t, "the go-product legs", sortedCopy(matrixValues(t, jobs["go-product"], "part")),
-		[]string{"dist", "lint", "test-1", "test-2", "test-3", "test-4", "test-rest"})
+		[]string{"dist", "lint", "test-1", "test-2", "test-3", "test-4", "test-5", "test-dev", "test-rest"})
 	if !regexp.MustCompile(`(?m)^    needs: \[validate, secrets, skill-scripts-node, gui, go-product\]$`).MatchString(jobs["dev-gate"]) {
 		t.Error("dev-gate's prerequisites changed")
 	}
@@ -205,7 +205,7 @@ func TestLightMode_the_check_names_are_unchanged(t *testing.T) {
 // lightLeg is the light condition of the four terms above, evaluated rather than matched: the
 // event, the repository variable, the pull request's labels and the leg's part. GitHub evaluates
 // the same four terms in the same order, so this is what makes the claim that only an unlabeled
-// pull request's five test legs can be light a behavioural check rather than a reading of text.
+// pull request's test legs can be light a behavioural check rather than a reading of text.
 func lightLeg(event, mode string, labels []string, part string) bool {
 	if event != "pull_request" {
 		return false
@@ -221,7 +221,7 @@ func lightLeg(event, mode string, labels []string, part string) bool {
 	return strings.HasPrefix(part, "test-")
 }
 
-// The four terms evaluate to light for exactly the five test legs of an unlabeled pull request,
+// The four terms evaluate to light for exactly the test legs of an unlabeled pull request,
 // and never for a dev push, a manual dispatch, a labeled pull request, lint or dist. Each term is
 // also held to the workflow's own expression, so this evaluator cannot drift from ci.yml.
 func TestLightMode_the_condition_evaluates_to_light_only_for_unlabeled_test_legs(t *testing.T) {
@@ -235,16 +235,16 @@ func TestLightMode_the_condition_evaluates_to_light_only_for_unlabeled_test_legs
 			t.Errorf("the evaluator term %s is not in the workflow's expression", term)
 		}
 	}
-	legs := []string{"lint", "test-1", "test-2", "test-3", "test-4", "test-rest", "dist"}
+	legs := []string{"lint", "test-1", "test-2", "test-3", "test-4", "test-5", "test-rest", "test-dev", "dist"}
 	for _, row := range []struct {
 		event, mode string
 		labels      []string
 		wantLight   []string
 	}{
-		{"pull_request", "light", nil, []string{"test-1", "test-2", "test-3", "test-4", "test-rest"}},
+		{"pull_request", "light", nil, []string{"test-1", "test-2", "test-3", "test-4", "test-5", "test-rest", "test-dev"}},
 		{"pull_request", "light", []string{"crw-lane"}, nil},
 		{"pull_request", "light", []string{"crw-lane", "other"}, nil},
-		{"pull_request", "light", []string{"other"}, []string{"test-1", "test-2", "test-3", "test-4", "test-rest"}},
+		{"pull_request", "light", []string{"other"}, []string{"test-1", "test-2", "test-3", "test-4", "test-5", "test-rest", "test-dev"}},
 		{"pull_request", "", nil, nil},
 		{"pull_request", "full", nil, nil},
 		{"push", "light", nil, nil},
