@@ -2,6 +2,7 @@ package report
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -41,6 +42,53 @@ func TestManageSenderNamesTheSelectedRelayOnASupervisorNotice(t *testing.T) {
 	}
 	if strings.Contains(strings.Join(argv[0], " "), "--state") || strings.Contains(strings.Join(argv[0], " "), "--socket") {
 		t.Errorf("argv %v", argv[0])
+	}
+}
+
+// CRW-1579 (U-A5-4): the message file's default directory is tmploc's temporary directory. A relative
+// TMPDIR is tmploc's refusal: nothing is sent and nothing is made below the working directory, where before
+// the file was made relative to it.
+func TestManageSender_relativeTMPDIRIsAnError(t *testing.T) {
+	cwd := t.TempDir()
+	t.Chdir(cwd)
+	t.Setenv("TMPDIR", "rel")
+	ran := false
+	m := ManageSender{Program: "crw", Run: func(context.Context, string, ...string) ([]byte, int, error) {
+		ran = true
+		return []byte(`{"class":"accepted","requestId":"r1"}`), 0, nil
+	}}
+	_, err := m.SendParent(context.Background(), ParentSend{Thread: "orch", LogicalID: "esc-1", Text: "t", Queue: true})
+	if err == nil || !strings.Contains(err.Error(), "tmpdir_not_absolute") || !strings.Contains(err.Error(), `TMPDIR="rel"`) {
+		t.Errorf("a relative TMPDIR: %v, want tmploc's tmpdir_not_absolute", err)
+	}
+	if ran {
+		t.Error("the notice was sent although its message file had no place")
+	}
+	if left, _ := os.ReadDir(cwd); len(left) != 0 {
+		t.Errorf("a relative TMPDIR made %v below the working directory", left)
+	}
+	// A relative Dir is refused the same way; an absolute TMPDIR is used as given.
+	m.Dir = "rel-dir"
+	if _, err := m.SendParent(context.Background(), ParentSend{Thread: "orch", LogicalID: "esc-2", Text: "t", Queue: true}); err == nil || !strings.Contains(err.Error(), "temp_parent_not_absolute") {
+		t.Errorf("a relative Dir: %v, want temp_parent_not_absolute", err)
+	}
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+	var file string
+	m.Dir = ""
+	m.Run = func(_ context.Context, _ string, args ...string) ([]byte, int, error) {
+		for i, a := range args {
+			if a == "--message-file" && i+1 < len(args) {
+				file = args[i+1]
+			}
+		}
+		return []byte(`{"class":"accepted","requestId":"r1"}`), 0, nil
+	}
+	if _, err := m.SendParent(context.Background(), ParentSend{Thread: "orch", LogicalID: "esc-3", Text: "t", Queue: true}); err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Dir(file) != tmp {
+		t.Errorf("the message file %q is not in TMPDIR %s", file, tmp)
 	}
 }
 

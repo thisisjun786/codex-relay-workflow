@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/journal"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/fdsweep"
 )
 
@@ -323,11 +324,50 @@ func (c *command) execute(spec Spec, state string, resume bool, sigs <-chan os.S
 	if err := writeResult(state, spec.RunID, res, c.now()); err != nil {
 		fmt.Fprintf(c.stderr, "crw flow %s: error: the result of run %s could not be written: %v\n", c.name, spec.RunID, err)
 	}
+	// a run that ended cancelled gives up its executions here, under the run lock this process still holds (CRW-1573)
+	if res.ErrorKind == engine.ErrKindCancelled {
+		c.settleOwnCancel(state, spec)
+	}
 	// a run the operator paused ended as asked (CRW-1487): a resume goes on with it
 	if res.Status != engine.RunCompleted && res.Status != engine.RunPaused {
 		return 1
 	}
 	return 0
+}
+
+// settleOwnCancel gives up the executions of the run this process ended cancelled (CRW-1573): after its world closed, under the run
+// lock the process still holds, from the rows of the run's journal, as the cancel CLI does once the lock goes (settleEndedRun, which
+// then finds nothing: the settlement is replay-safe). Every cancelled end passes here: a cancel whose wait expired, a cancel that was
+// killed, a plain SIGTERM. A failure is told and changes no exit status (a later `crw flow cancel` of the ended run gives them up). A
+// process whose own context ended - it is being ended itself, not its run - gives nothing up.
+func (c *command) settleOwnCancel(state string, spec Spec) {
+	if c.ctx.Err() != nil {
+		return
+	}
+	failed := func(err error) {
+		fmt.Fprintf(c.stderr, "crw flow %s: error: the executions of cancelled run %s could not be given up: %v (crw flow cancel %s gives them up)\n", c.name, spec.RunID, err, spec.RunID)
+	}
+	write := c.Writer
+	if write == nil {
+		write = OpenWriter
+	}
+	st, _, err := write(c.ctx, state, spec.Socket)
+	if err != nil {
+		failed(err)
+		return
+	}
+	defer st.Close()
+	events, _, err := journal.Load(c.ctx, st, spec.RunID)
+	if err != nil {
+		failed(err)
+		return
+	}
+	settled, err := c.settle(st, spec.RunID, events)
+	if err != nil {
+		failed(err)
+		return
+	}
+	c.saySettled(spec.RunID, settled)
 }
 
 // compactJSON is a JSON value without insignificant white space, "" and "null" for no value: the form the run's arguments are

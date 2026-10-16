@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc/tmploctest"
 	"golang.org/x/sys/unix"
 )
 
@@ -42,26 +43,22 @@ func awaitControlAccepting(path string, within time.Duration) error {
 // dial is refused (ECONNREFUSED). A wait for the file takes that moment for ready; awaitControlAccepting
 // must wait it out. The socket here is bound by hand, so the gap lasts as long as the test wants.
 func TestAwaitControlAcceptingWaitsOutTheGapBetweenBindAndListen(t *testing.T) {
-	home, err := os.MkdirTemp("", "t30-gap-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(home) })
+	home := tmploctest.SocketDir(t, "t30-gap-") // a socket directory: the path must fit a sockaddr_un whatever TMPDIR is (CRW-1568)
 	path := filepath.Join(home, "control.sock")
 	// Any other error is the answer at once: a path under a regular file is ENOTDIR, which no amount of waiting changes.
 	plain := filepath.Join(home, "plain")
-	if err = os.WriteFile(plain, nil, 0o600); err != nil {
+	if err := os.WriteFile(plain, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	// ENOTDIR is the answer proved; the 9 s is a ceiling under the 10 s deadline, which a wait that retried the
 	// error would run to (it was 5 s: too close for a loaded host to the slow side, still far from the deadline).
 	started := time.Now()
-	if err = awaitControlAccepting(filepath.Join(plain, "control.sock"), 10*time.Second); !errors.Is(err, unix.ENOTDIR) || time.Since(started) > 9*time.Second {
+	if err := awaitControlAccepting(filepath.Join(plain, "control.sock"), 10*time.Second); !errors.Is(err, unix.ENOTDIR) || time.Since(started) > 9*time.Second {
 		t.Fatalf("a path under a regular file ended after %v with %v, want ENOTDIR at once", time.Since(started), err)
 	}
 	// Not bound yet: the daemon has started and has not reached its bind, so the path is absent.
 	started = time.Now()
-	if err = awaitControlAccepting(path, 100*time.Millisecond); !errors.Is(err, unix.ENOENT) || time.Since(started) < 100*time.Millisecond {
+	if err := awaitControlAccepting(path, 100*time.Millisecond); !errors.Is(err, unix.ENOENT) || time.Since(started) < 100*time.Millisecond {
 		t.Fatalf("a path nothing has bound ended after %v with %v, want ENOENT at its deadline", time.Since(started), err)
 	}
 	fd, err := unix.Socket(unix.AF_UNIX, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
@@ -70,6 +67,7 @@ func TestAwaitControlAcceptingWaitsOutTheGapBetweenBindAndListen(t *testing.T) {
 	}
 	file := os.NewFile(uintptr(fd), path)
 	defer file.Close()
+	tmploctest.CheckSocket(t, home, path)
 	if err = unix.Bind(fd, &unix.SockaddrUnix{Name: path}); err != nil {
 		t.Fatal(err)
 	}

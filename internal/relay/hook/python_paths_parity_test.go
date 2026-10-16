@@ -17,6 +17,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc/tmploctest"
 )
 
 // A path the settings or the Stop payload name reaches the system as os.fsencode's bytes: a
@@ -176,6 +177,7 @@ func TestTheControlSocketIsDialledWhereItsSourceNamesIt(t *testing.T) {
 			if err := os.MkdirAll(state, 0o700); err != nil {
 				t.Fatal(err)
 			}
+			tmploctest.CheckSocket(t, socketRootOf(t, filepath.Join(state, "control.sock")), filepath.Join(state, "control.sock"))
 			listener, err := net.Listen("unix", filepath.Join(state, "control.sock"))
 			if err != nil {
 				t.Fatal(err)

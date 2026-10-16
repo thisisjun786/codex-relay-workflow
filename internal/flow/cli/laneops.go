@@ -334,8 +334,7 @@ func CILocalIntegration(tools crwconfig.VerifierTools, notes io.Writer) dagsched
 		if command.Note != "" && notes != nil {
 			fmt.Fprintf(notes, "[crw note] integration verification: %s\n", command.Note)
 		}
-		// the fresh TMPDIR is directly below this process's resolved TMPDIR (integrationTempDir: in a run process, the TMPDIR the run's
-		// start recorded, CRW-1570), and HOME is below it
+		// the fresh TMPDIR is directly below the run's (integrationTempDir), and HOME is below it
 		tmp, err := integrationTempDir()
 		if err != nil {
 			return &dagsched.IntegrationVerifierHostError{Detail: fmt.Sprintf("the verification's own HOME and TMPDIR could not be made: %v", err)}
@@ -363,24 +362,21 @@ func CILocalIntegration(tools crwconfig.VerifierTools, notes io.Writer) dagsched
 // integrationTmpPrefix is the name prefix of an integration verification's own TMPDIR: integrationTmpPrefix and 8 lowercase hex.
 const integrationTmpPrefix = "crw-"
 
-// integrationTempDir makes the integration verification's own TMPDIR (mode 0700; the caller removes it): <parent>/crw-<8 hex> directly
-// below parent, this process's TMPDIR as the one temp function answers it, resolved (tmploc.Check: symbolic links followed, a writable
-// directory). In a run process that is the TMPDIR the run's start recorded (execute applies it, CRW-1570), so the batch verification
-// works below the run's directory whatever shell relaunched the run and however long the directory is: there is no length rule and no
-// other parent. A TMPDIR that is not usable is the error, naming the directory and the reason; nothing is made anywhere else.
+// integrationTempDir makes the integration verification's own TMPDIR (mode 0700; the caller removes it): <the run's TMPDIR>/crw-<8 hex>.
+// The run's TMPDIR is tmploc's one answer (TMPDIR as the caller has it, or tmploc.DefaultDir when it is unset), resolved and checked
+// usable by tmploc.Check, so the path is the physical one ci local measures. No length is counted: tests bind their sockets below
+// tmploc.SocketDir, never below TMPDIR, so ci local needs no room there (CRW-1568, CRW-1569). A TMPDIR that is not absolute or cannot
+// be used is refused with tmploc's reason, and nothing is made in another place (CRW-1566).
 func integrationTempDir() (string, error) {
 	parent, err := tmploc.Check()
 	if err != nil {
 		return "", err
 	}
-	made, err := integrationMkTmp(parent)
-	if err != nil {
-		return "", fmt.Errorf("%s: %w", parent, err)
-	}
-	return made, nil
+	return integrationMkTmp(parent)
 }
 
-// integrationMkTmp makes <parent>/<integrationTmpPrefix><8 lowercase hex> (mode 0700), a name of a fixed width.
+// integrationMkTmp makes <parent>/<integrationTmpPrefix><8 lowercase hex> (mode 0700), a name of a fixed width, so its length is known
+// before it exists.
 func integrationMkTmp(parent string) (string, error) {
 	for try := 0; try < 16; try++ {
 		var random [4]byte
@@ -414,8 +410,8 @@ var (
 // the caller's effective module cache (callerModuleCache: the go of a tree-mode `go run ./cmd/crw-dev` finds the modules the caller
 // already has instead of fetching them into the fresh HOME, whose go env file is not the caller's), HOME and TMPDIR at home and tmp,
 // and GOTOOLCHAIN=local. Two settings of the caller's homes are named explicitly, as the caller's ci local would find them: XDG_STATE_HOME
-// at the caller's state directory (ci local's default work root is below it, and one below the fresh TMPDIR is refused as
-// work_root_in_tmp) and CRW_CONFIG at the caller's crw configuration file (callerCrwConfig: its tool roots, which ci local applies to
+// at the caller's state directory (ci local's default work root is below it, so the verification uses the caller's work root, not
+// one below the fresh HOME) and CRW_CONFIG at the caller's crw configuration file (callerCrwConfig: its tool roots, which ci local applies to
 // every step). Everything else of the caller, GOPATH, GOFLAGS and XDG_CONFIG_HOME included, stays out.
 func integrationEnv(getenv func(string) (string, bool), home, tmp string) []string {
 	var env []string

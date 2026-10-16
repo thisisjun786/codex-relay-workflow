@@ -329,7 +329,7 @@ return [a.status, b.status, c.status, a.output, b.output, c.output]
 		t.Fatal(err)
 	}
 	run := started.Run
-	if started.Plan.Backend != BackendSession || !started.Bound || !strings.Contains(started.Next, "crw flow next "+run) || len(started.Plan.Spawns) != len(bound.OrchestratorRoles) {
+	if started.Plan.Backend != BackendSession || !started.Bound || !strings.Contains(bare(started.Next), "crw flow next "+run) || len(started.Plan.Spawns) != len(bound.OrchestratorRoles) {
 		t.Fatalf("the start: %+v", started)
 	}
 	if got := bound.Lookup(k.owner); got.State != bound.Orchestrator || got.Line.RunID != run || len(got.Line.HelperPairs) != len(bound.OrchestratorRoles) {
@@ -347,7 +347,7 @@ return [a.status, b.status, c.status, a.output, b.output, c.output]
 		return n == 1
 	})
 	if stA.Tool.Name != "spawn_agent" || stA.Tool.Arguments["fork_context"] != false || stA.Role != "explorer" || stA.Workspace == "" || stA.Packet == "" ||
-		!strings.HasPrefix(stA.Message, "crw-flow-op: "+stA.Op+"\nCRW-ROLE: explorer\n") || !strings.Contains(stA.Then, "crw flow dispatched "+run+" "+stA.Call) {
+		!strings.HasPrefix(stA.Message, "crw-flow-op: "+stA.Op+"\nCRW-ROLE: explorer\n") || !strings.Contains(bare(stA.Then), "crw flow dispatched "+run+" "+stA.Call) {
 		t.Fatalf("step a: %+v", stA)
 	}
 	agentA := k.spawnStep(stA, "the answer of a")
@@ -356,7 +356,7 @@ return [a.status, b.status, c.status, a.output, b.output, c.output]
 
 	// the next `crw flow next` finds no process: it resumes the run, and the resumed process publishes b
 	ans := k.next(run, 30)
-	if ans.Resumed == 0 || !strings.Contains(ans.Hint, "crw flow resume "+run+" --detach") {
+	if ans.Resumed == 0 || !strings.Contains(bare(ans.Hint), "crw flow resume "+run+" --detach") {
 		t.Fatalf("next did not resume the dead run: %+v", ans)
 	}
 	var stB NextStep

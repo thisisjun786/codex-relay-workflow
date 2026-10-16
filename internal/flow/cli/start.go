@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/compile"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/crwcmd"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/workflows"
@@ -207,6 +208,9 @@ func (c *command) start(args []string) int {
 			return c.fail("%v", err)
 		}
 		if why := CheckHandoff(in, planOf(spec.Args), milestoneArg(spec.Args)); why != "" {
+			return c.fail("%s", why)
+		}
+		if why := BundleBranchProblem(c.ctx, nil, in, planOf(spec.Args)); why != "" {
 			return c.fail("%s", why)
 		}
 		handoffIn = &in
@@ -423,7 +427,7 @@ func (c *command) start(args []string) int {
 	}
 	answer.Run, answer.PID, answer.State = spec.RunID, pid, sel.Path
 	if session {
-		answer.Next = "crw flow next " + spec.RunID + " --wait 600 --json"
+		answer.Next = crwcmd.Word() + " flow next " + spec.RunID + " --wait 600 --json"
 		answer.Plan.Loop = sessionLoop(spec.RunID)
 	}
 	if *asJSON {

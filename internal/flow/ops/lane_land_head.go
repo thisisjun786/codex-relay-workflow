@@ -202,7 +202,7 @@ func (o *releaseOp) landRelease(ctx context.Context, req engine.OpRequest, plan,
 	}
 	switch {
 	case pair != nil && unproven:
-		// an author set one of whose threads was not read back is unproven (landAuthorModels): the observed pair would stand on the
+		// an author set one of whose threads was not read back is unproven: the observed pair would stand on the
 		// execution for authors the run does not know, so the execution records none (CRW-1397), warned and recorded
 		warnings = append(warnings, fmt.Sprintf("%s: an author of the land was not read back, so the node's execution records no author pair (the observed %s %s is on this row)",
 			WarnLandPairUnrecorded, pair.Model, pair.Effort))
@@ -308,42 +308,4 @@ func (l *Lane) landWorktree(ctx context.Context, node, commit string) (string, e
 		return "", fmt.Errorf("crw.release: the land worktree of %s at %s: %w", node, commit, err)
 	}
 	return wt, nil
-}
-
-// landAuthorModels are the author models a land release of the node recorded: its authors for crw.review. A land one of whose named
-// authors was not read back has none (post-evaluation d2): that author may be of the reviewer's family, so the observed others do not
-// prove the review independent, and crw.review answers independence_unproven.
-func (r rows) landAuthorModels(node string) []string {
-	var out []string
-	for _, ev := range r.opRows(OpRelease) {
-		if dataStr(ev, "node") != node || dataStr(ev, "kind") != "land" || !dataBool(ev, "released") {
-			continue
-		}
-		var models []string
-		unobserved := false
-		list, _ := ev.Data["authors"].([]any)
-		for _, item := range list {
-			if a, ok := item.(map[string]any); ok {
-				if flag(a, "observed") && str(a, "model") != "" {
-					models = append(models, str(a, "model"))
-				} else {
-					unobserved = true
-				}
-			}
-		}
-		// the authors of the data before the JSON round trip of a stored row
-		if typed, ok := ev.Data["authors"].([]LandAuthor); ok {
-			for _, a := range typed {
-				if a.Observed && a.Model != "" {
-					models = append(models, a.Model)
-				} else {
-					unobserved = true
-				}
-			}
-		}
-		if !unobserved {
-			out = append(out, models...)
-		}
-	}
-	return out
 }

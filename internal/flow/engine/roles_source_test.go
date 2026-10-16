@@ -13,7 +13,7 @@ import (
 )
 
 // CRW-1330 (CRW-1316 S1): the role table of every production flow command is built from the helper role store
-// (CRW_HOME/subagents.json), not from the execution policy's agent-roles; the run pins the canonical digest of the seven pairs.
+// (CRW_HOME/subagents.json), not from the execution policy's agent-roles; the run pins the canonical digest of the six pairs.
 
 func roleStore(executor, reviewer string) string {
 	return `{"roles": {
@@ -21,7 +21,6 @@ func roleStore(executor, reviewer string) string {
   "executor": {"mode": "model", "model": "` + executor + `", "effort": "xhigh"},
   "executor-t1": {"mode": "model", "model": "anthropic/claude-sonnet-5-5", "effort": "xhigh"},
   "reviewer": {"mode": "model", "model": "` + reviewer + `", "effort": "high"},
-  "reviewer-final": {"mode": "model", "model": "gpt-6.1-sol", "effort": "xhigh"},
   "critic": {"mode": "model", "model": "gpt-6.1-sol", "effort": "xhigh"},
   "explorer": {"mode": "model", "model": "anthropic/claude-haiku-5", "effort": "high"}}}`
 }
@@ -68,8 +67,8 @@ func TestCRW1330_LoadPolicyBuildsTheTableFromTheRoleHelper(t *testing.T) {
 	}{
 		"architect": {Pair{"anthropic/claude-opus-5-5", "xhigh"}, "architect", SandboxReadOnly}, "executor": {Pair{"anthropic/claude-haiku-5", "xhigh"}, "executor", SandboxWorkspaceWrite},
 		"executor-t1": {Pair{"anthropic/claude-sonnet-5-5", "xhigh"}, "executor", SandboxWorkspaceWrite}, "reviewer": {Pair{"gpt-6.1-sol", "high"}, "reviewer", SandboxReadOnly},
-		"reviewer-final": {Pair{"gpt-6.1-sol", "xhigh"}, "reviewer", SandboxReadOnly}, "explorer": {Pair{"anthropic/claude-haiku-5", "high"}, "explorer", SandboxReadOnly},
-		"critic": {Pair{"gpt-6.1-sol", "xhigh"}, "critic", SandboxReadOnly},
+		"explorer": {Pair{"anthropic/claude-haiku-5", "high"}, "explorer", SandboxReadOnly},
+		"critic":   {Pair{"gpt-6.1-sol", "xhigh"}, "critic", SandboxReadOnly},
 	}
 	if len(table.Roles) != len(execution.AgentRoleNames) {
 		t.Fatalf("roles %+v", table.Roles)
@@ -81,7 +80,7 @@ func TestCRW1330_LoadPolicyBuildsTheTableFromTheRoleHelper(t *testing.T) {
 		}
 	}
 	// the code's alias table, nothing read from the file
-	if len(table.Aliases) != 6 || table.Aliases[0].Key != "opus" || table.Aliases[2].Cause != execution.AliasAmbiguous {
+	if len(table.Aliases) != 5 || table.Aliases[0].Key != "opus" || table.Aliases[2].Cause != execution.AliasAmbiguous {
 		t.Fatalf("aliases %+v", table.Aliases)
 	}
 	if joined := strings.Join(table.Warnings, "\n"); !strings.Contains(joined, policyPath) || !strings.Contains(joined, "agent-roles") || !strings.Contains(joined, "no longer reads") {
@@ -110,10 +109,10 @@ func TestCRW1330_PlaceholderTableOnlyUnderTestIsolationWithoutAStore(t *testing.
 		t.Fatalf("%v %+v", err, table)
 	}
 	// Outside the isolation (a production process) a missing store is the role helper's reading: four undecided roles and the
-	// three compiled defaults (executor-t1, reviewer-final, critic), each warned.
+	// two compiled defaults (executor-t1, critic), each warned.
 	t.Setenv(isolationRootEnv, "")
 	table, _, err = LoadPolicy()
-	if err != nil || table.Source == "" || table.Roles["explorer"].Pair != (Pair{}) || table.Roles["executor-t1"].Pair != (Pair{"anthropic/claude-sonnet-5-5", "xhigh"}) || table.Roles["critic"].Pair != (Pair{"gpt-6.1-sol", "xhigh"}) || len(table.Warnings) != 7 {
+	if err != nil || table.Source == "" || table.Roles["explorer"].Pair != (Pair{}) || table.Roles["executor-t1"].Pair != (Pair{"anthropic/claude-sonnet-5-5", "xhigh"}) || table.Roles["critic"].Pair != (Pair{"gpt-6.1-sol", "xhigh"}) || len(table.Warnings) != 6 {
 		t.Fatalf("%v %+v", err, table)
 	}
 }
@@ -216,7 +215,7 @@ func TestCRW1330_FlowRolesShowsTheStoreTheDigestThePairsAndTheWarnings(t *testin
 		t.Fatalf("states %v", states)
 	}
 	joined := strings.Join(report.Warnings, "\n")
-	for _, want := range []string{"executor-t1", "reviewer-final", "explorer", "critic", "agent-roles", "no longer reads"} {
+	for _, want := range []string{"executor-t1", "explorer", "critic", "agent-roles", "no longer reads"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("warnings lack %q: %q", want, report.Warnings)
 		}

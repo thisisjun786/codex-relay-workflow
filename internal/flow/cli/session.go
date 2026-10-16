@@ -12,6 +12,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/bound"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/crwcmd"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 )
 
@@ -102,7 +103,7 @@ func sessionPool(pool, maxThreads int) int {
 	return max(1, min(pool, maxThreads-1))
 }
 
-// ownerPairs are the seven role pairs of the run's table, as the orchestrator line carries them.
+// ownerPairs are the six role pairs of the run's table, as the orchestrator line carries them.
 func ownerPairs(table *engine.Policy) map[string]bound.Pair {
 	out := map[string]bound.Pair{}
 	for _, role := range bound.OrchestratorRoles {
@@ -214,7 +215,7 @@ func sessionFacts(req sessionFactRequest) []Fact {
 		add(FactOwnerBound, LevelPass, "", fmt.Sprintf("thread %s is bound to no live run: the start binds it", req.Thread))
 	}
 
-	// role_models: the seven pairs, a role without one or without an effort (only the decided parts are compared, CRW-1331), a
+	// role_models: the six pairs, a role without one or without an effort (only the decided parts are compared, CRW-1331), a
 	// reviewer of an author's family, and a critic of the architect's (the design audit refuses that one, CRW-1434)
 	var missing, effortless, pairs, overlap []string
 	for _, role := range bound.OrchestratorRoles {
@@ -235,7 +236,6 @@ func sessionFacts(req sessionFactRequest) []Fact {
 		authors  []string
 	}{
 		{"reviewer", []string{"architect", "executor", "executor-t1"}},
-		{"reviewer-final", []string{"architect", "executor", "executor-t1"}},
 		{"critic", []string{"architect"}},
 	} {
 		for _, author := range check.authors {
@@ -365,10 +365,12 @@ func roleSpawns(table *engine.Policy) []RoleSpawn {
 }
 
 // sessionLoop is the guidance the commands print for the owner's loop over a session run's steps (CRW-1316 §3.2), with the live
-// tool argument names of 0.154/0.155 (send_input and close_agent take target, wait_agent targets and timeout_ms).
+// tool argument names of 0.154/0.155 (send_input and close_agent take target, wait_agent targets and timeout_ms). Its commands start
+// with the crw that runs (CRW-1572).
 func sessionLoop(run string) string {
-	return "take the steps of `crw flow next " + run + " --json`: a spawn step is spawn_agent(agent_type, message, model, reasoning_effort, fork_context=false) with the step's values, " +
-		"then at once `crw flow dispatched " + run + " <call> --agent <the id spawn_agent returned> --k <k> --attempt <attempt>`; a send_input step is send_input(target=<agent_id>, message=<message>), " +
-		"then `crw flow dispatched`; a close step is close_agent(target=<agent_id>). While subagents work, alternate wait_agent(targets=[<open agents>], timeout_ms=600000) with " +
-		"`crw flow next " + run + " --wait 600 --json`. Never copy a subagent's answer: the run reads it from the host"
+	crw := crwcmd.Word()
+	return "take the steps of `" + crw + " flow next " + run + " --json`: a spawn step is spawn_agent(agent_type, message, model, reasoning_effort, fork_context=false) with the step's values, " +
+		"then at once `" + crw + " flow dispatched " + run + " <call> --agent <the id spawn_agent returned> --k <k> --attempt <attempt>`; a send_input step is send_input(target=<agent_id>, message=<message>), " +
+		"then `" + crw + " flow dispatched`; a close step is close_agent(target=<agent_id>). While subagents work, alternate wait_agent(targets=[<open agents>], timeout_ms=600000) with " +
+		"`" + crw + " flow next " + run + " --wait 600 --json`. Never copy a subagent's answer: the run reads it from the host"
 }

@@ -414,3 +414,31 @@ func TestAgentAcceptReadsContinuedCalls(t *testing.T) {
 	_, err = k.accept("resumedauthor")
 	wantAgentRefusal(t, "a continued author of the reviewer's family", err, contract.RefusalDispositionConflict, IndependenceRefused)
 }
+
+// TestAgentAcceptReadsAnOldReviewerFinalCall: the role key reviewer-final is retired (CRW-1450), and the journal of a run an old build
+// made holds reviewer calls under it. The agent path reads such a call as a review (reviewerRoles names the retired key): a verified
+// reviewer-final call on the head, of another family than the author's, is the acceptance's reviewer, and a later reviewer-final call
+// that needs changes withdraws an earlier verified review.
+func TestAgentAcceptReadsAnOldReviewerFinalCall(t *testing.T) {
+	t.Parallel()
+	one := func(n string) agentSpec { return agentSpec{name: n, files: map[string]string{n + ".txt": n + "\n"}} }
+	k := newAgentKit(t, one("old"), one("withdrawn"))
+	criteria := releaseCriteriaDigest()
+
+	k.author("old", authorModel)
+	call := k.record(journalCall{role: "reviewer-final", node: "old", model: reviewerModel, head: k.heads["old"], verdict: "verified", criteria: criteria})
+	res, err := k.accept("old")
+	if err != nil || res.AcceptanceID == "" {
+		t.Fatalf("accept on an old reviewer-final call: %+v, %v", res, err)
+	}
+	row, found, err := loadAgentAcceptanceByID(context.Background(), k.s.Q(context.Background()), res.AcceptanceID)
+	if err != nil || !found || row.ReviewerCallID != call || row.ReviewerModel != reviewerModel {
+		t.Fatalf("the acceptance row %+v (%v %v), want the reviewer call %s", row, found, err, call)
+	}
+
+	k.author("withdrawn", authorModel)
+	k.review("withdrawn", reviewerModel, "verified", criteria)
+	k.record(journalCall{role: "reviewer-final", node: "withdrawn", model: reviewerModel, head: k.heads["withdrawn"], verdict: "needs_changes", criteria: criteria})
+	_, err = k.accept("withdrawn")
+	wantAgentRefusal(t, "a later reviewer-final call that needs changes", err, contract.RefusalDispositionConflict, ReviewerNotVerified)
+}

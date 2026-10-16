@@ -517,8 +517,8 @@ async function closeAndReport() {
   if (reflection.state !== 'verdict') return crw.milestoneHalt(ms, 'reflection', reflection.state, reflection.reason, reflected.callId)
   // A reason to re-plan stands whatever the alignment says: the numbers of the signals, and the alignment the reflection found.
   const due = await crw.replanSignals(ms.id, { phase: 'close', reflection: reflection.alignment })
-  // The closed milestone is audited, archived and reported before any re-plan: the reviews the acceptances rest on are audited against
-  // the reviewer threads on the host before any of them is archived, and the report carries the gate, the crosscheck and the reflection.
+  // The closed milestone is audited and reported before any re-plan: the acceptances are audited against the records they rest on, and
+  // the report carries the audit, the gate, the crosscheck and the reflection.
   const reported = await reportClose(ms, closed, reflection.alignment)
   if (due.due) {
     // at the close every node has run: the whole DESIGN names none unstarted
@@ -531,5 +531,5 @@ async function closeAndReport() {
   }
   await crw.spawnDecision('ARCH_2', 'skip', { reason: 'no_replan_signal', inputs: { milestone: ms.id, revision: due.revision, plan_mismatch: due.plan_mismatch, slice_change: due.slice_change.changed, reflection: reflection.alignment } })
   return { state: 'closed', milestone: ms.id, lanes, tip: closed.tip, report: reported.report.report_id, gate: closed.gate.state, crosscheck: closed.crosscheck.verdict, reflection: reflection.alignment,
-    audit: { ok: reported.audit.ok, mismatch: reported.audit.mismatch, unobserved: reported.audit.unobserved }, archived: reported.archive.archived.length }
+    audit: { ok: reported.audit.ok, mismatch: reported.audit.mismatch, unobserved: reported.audit.unobserved } }
 }

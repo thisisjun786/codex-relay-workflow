@@ -860,6 +860,31 @@ func TestRunJournalForwardsTheCommitNotice(t *testing.T) {
 	}
 }
 
+// TestRunJournalNamesTheCriteriaOfAReviewerCall: the completed row of a reviewer call is stored with the criteria digest its input
+// snapshot named on the prepared row (reviewerCriteria), which the relay's agent acceptance reads. The role key reviewer-final is retired
+// (CRW-1450), and the call an old run made under it still reads as a reviewer's: its completed row names its criteria as the reviewer's
+// does. A call of another role, and a completed row that names its own criteria digest, are stored as they are.
+func TestRunJournalNamesTheCriteriaOfAReviewerCall(t *testing.T) {
+	for role, want := range map[string]string{"reviewer": "crit-1", "reviewer-final": "crit-1", "executor": ""} {
+		mem := engine.NewMemoryJournal()
+		var j engine.Journal = runJournal{mem}
+		j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, Op: "agent", CallID: "c_" + role, Event: engine.EvPrepared,
+			Data: map[string]any{"role": role, "node": "", "input_snapshot": "plan=plan-1;criteria=crit-1"}})
+		got := j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, Op: "agent", CallID: "c_" + role, Event: engine.EvCompleted, Data: map[string]any{"result": "{}"}})
+		if digest, _ := got.Data["criteria_digest"].(string); digest != want {
+			t.Errorf("the completed row of a %s call names criteria digest %q, want %q", role, digest, want)
+		}
+	}
+	mem := engine.NewMemoryJournal()
+	var j engine.Journal = runJournal{mem}
+	j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, Op: "agent", CallID: "c_rf", Event: engine.EvPrepared,
+		Data: map[string]any{"role": "reviewer-final", "input_snapshot": "criteria=crit-1"}})
+	got := j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, Op: "agent", CallID: "c_rf", Event: engine.EvCompleted, Data: map[string]any{"criteria_digest": "own"}})
+	if got.Data["criteria_digest"] != "own" {
+		t.Errorf("a completed row that names its own criteria digest was changed: %v", got.Data)
+	}
+}
+
 // TestRunUnderLaneOperationsCallsBatchCommitted (CRW-1277 h): a run of the lane over ProductionWorld with the upward hook the binary installs
 // hands every committed batch to the hook (F11/CRW-1204 regression of the journal wrapper: the engine never registered its notice).
 func TestRunUnderLaneOperationsCallsBatchCommitted(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/crwcmd"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
@@ -18,5 +19,6 @@ func TestMain(m *testing.M) {
 	if os.Getenv(labFakeCrwDev) == "1" {
 		os.Exit(fakeCrwDevMain())
 	}
+	crwcmd.Override(testCrw) // every owner line names the fixed crw of the tests, never the test binary (CRW-1572)
 	testsupport.Main(m)
 }

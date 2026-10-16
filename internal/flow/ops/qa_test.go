@@ -260,47 +260,33 @@ return { need: g.need_tests, ran: out.map((v) => v.command), state: again.state,
 	}
 }
 
-// reviewer-final is a review of another family than every author of the milestone, as a node's reviewer is: a model of the
-// family of an executor or of the architect is refused, a model of no known author is independence_unproven.
+// TestReviewerFinalIndependenceAndStates: reviewer-final was a review of another family than every author of the milestone, as a node's
+// reviewer was. The old op answered refused independence_unproven when no author was known, refused independence_refused for a reviewer
+// of an author's family, a verdict for one of another family, null_model verdict_invalid for an answer that was no VERDICT_FINAL or
+// said MISALIGNED with no drift, and the call's own state for a call that did not complete. The op and its independence judgment are
+// retired (CRW-1450); the close's review is the crosscheck, whose engine is of another family than every author
+// (TestCrosscheckEngineIsOfAnotherFamilyThanTheAuthors). The results the op left read as they did: the close closes on the verdict
+// alone, and every other state, the refusals of independence included, is no verified review (close_unverified, no row).
 func TestReviewerFinalIndependenceAndStates(t *testing.T) {
-	w := newWorld(t)
-	w.must("milestone", "plan-1", "M")
-	gate := map[string]any{"head": headOne, "range": headOne}
-	final := func(c CallRef) FinalResult {
-		var r FinalResult
-		_ = json.Unmarshal(w.must("reviewerFinal", "M", gate, c, map[string]any{}), &r)
-		return r
-	}
-	finalOut, _ := json.Marshal(map[string]any{"verdict": "verified", "criteria": []any{}, "defects": []any{}, "alignment": map[string]any{"verdict": "ALIGNED", "drift": []any{}}, "summary": "ok"})
-	if r := final(call("c_f", "completed", "gpt-fake-sol", nil)); r.State != StateNullModel || r.Reason != "verdict_invalid" {
-		t.Errorf("an answer that is no VERDICT_FINAL: %+v", r)
-	}
-	ok := call("c_f", "completed", "gpt-fake-sol", nil)
-	ok.Output = finalOut
-	if r := final(ok); r.State != StateRefused || r.Reason != "independence_unproven" {
-		t.Errorf("no author is known: %+v", r)
-	}
-	for _, model := range []string{"claude-fake-opus", "claude-fake-haiku"} {
-		w.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: "c_" + model, Op: "agent", Event: engine.EvPrepared, Data: map[string]any{"role": map[string]string{"claude-fake-opus": "architect", "claude-fake-haiku": "executor"}[model], "node": "A", "model": model}})
-	}
-	if r := final(ok); r.State != StateVerdict || r.Alignment != "ALIGNED" {
-		t.Errorf("a reviewer of another family: %+v", r)
-	}
-	sameFamily := call("c_f", "completed", "claude-fake-sonnet", nil)
-	sameFamily.Output = finalOut
-	if r := final(sameFamily); r.State != StateRefused || r.Reason != engine.ReasonIndependenceRefused {
-		t.Errorf("a reviewer of the family of the authors: %+v", r)
-	}
-	for status, state := range map[string]string{"held": StateHeld, "unknown": StateUnknown, "refused": StateRefused, "null_model": StateNullModel, "superseded": StateSuperseded} {
-		if r := final(call("c_f", status, "gpt-fake-sol", nil)); r.State != state {
-			t.Errorf("%s: %+v", status, r)
-		}
-	}
-	misaligned, _ := json.Marshal(map[string]any{"verdict": "needs_changes", "criteria": []any{}, "defects": []any{}, "alignment": map[string]any{"verdict": "MISALIGNED", "drift": []any{}}, "summary": "no"})
-	bad := call("c_f", "completed", "gpt-fake-sol", nil)
-	bad.Output = misaligned
-	if r := final(bad); r.State != StateNullModel {
-		t.Errorf("MISALIGNED with no drift named: %+v", r)
+	ok := finalAnswer("verified", nil)
+	for name, c := range map[string]struct {
+		state, reason string
+		closes        bool
+	}{
+		"an answer that is no VERDICT_FINAL":      {StateNullModel, "verdict_invalid", false},
+		"no author is known":                      {StateRefused, "independence_unproven", false},
+		"a reviewer of another family":            {StateVerdict, "", true},
+		"a reviewer of the family of the authors": {StateRefused, engine.ReasonIndependenceRefused, false},
+		"a call that ended held":                  {StateHeld, "", false},
+		"a call that ended unknown":               {StateUnknown, "", false},
+		"a call that ended refused":               {StateRefused, "policy_refused", false},
+		"a call that ended null_model":            {StateNullModel, "", false},
+		"a call that ended superseded":            {StateSuperseded, "", false},
+		"MISALIGNED with no drift named":          {StateNullModel, "verdict_invalid", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			wantFinalRead(t, name, oldFinalResult(c.state, c.reason, ok, false), c.closes)
+		})
 	}
 }
 

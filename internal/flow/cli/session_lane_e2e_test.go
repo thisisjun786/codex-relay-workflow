@@ -48,7 +48,6 @@ const sessionLabRoles = `{"roles": {
   "executor": {"mode": "model", "model": "anthropic/claude-haiku-5", "effort": "medium"},
   "executor-t1": {"mode": "model", "model": "anthropic/claude-sonnet-5-5", "effort": "xhigh"},
   "reviewer": {"mode": "model", "model": "gpt-6.1-sol", "effort": "high"},
-  "reviewer-final": {"mode": "model", "model": "gpt-6.1-sol", "effort": "xhigh"},
   "explorer": {"mode": "model", "model": "anthropic/claude-haiku-5", "effort": "low"},
   "critic": {"mode": "model", "model": "gpt-6.1-sol", "effort": "xhigh"}}}`
 
@@ -56,8 +55,8 @@ const sessionLabRoles = `{"roles": {
 var sessionLabPairs = map[string]engine.Pair{
 	"architect": {Model: "anthropic/claude-opus-5-5"}, "executor": {Model: "anthropic/claude-haiku-5", Effort: "medium"},
 	"executor-t1": {Model: "anthropic/claude-sonnet-5-5", Effort: "xhigh"}, "reviewer": {Model: "gpt-6.1-sol", Effort: "high"},
-	"reviewer-final": {Model: "gpt-6.1-sol", Effort: "xhigh"}, "explorer": {Model: "anthropic/claude-haiku-5", Effort: "low"},
-	"critic": {Model: "gpt-6.1-sol", Effort: "xhigh"},
+	"explorer": {Model: "anthropic/claude-haiku-5", Effort: "low"},
+	"critic":   {Model: "gpt-6.1-sol", Effort: "xhigh"},
 }
 
 // ownerEffort is the reasoning effort of the owner thread: a subagent spawned with no effort runs on it.
@@ -585,7 +584,7 @@ func TestSessionProjectMilestoneEndToEndOnTheFakeHost(t *testing.T) {
 		ans = k.next(5)
 		if ans.Resumed != 0 {
 			resumes++
-			if !strings.Contains(ans.Hint, "crw flow resume "+k.run+" --detach") {
+			if !strings.Contains(bare(ans.Hint), "crw flow resume "+k.run+" --detach") {
 				t.Errorf("next resumed the run without saying so: %s", ans.Hint)
 			}
 		}

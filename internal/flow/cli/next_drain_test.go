@@ -84,12 +84,12 @@ func TestNextKeepsHandingOutStepsWhileADrainedRunLives(t *testing.T) {
 	ans = nextOf(t, td, run)
 	writer.Release()
 	wantHint := "run " + run + " ended paused for an answer: run the same crw flow answer again (it applies and resumes the run); crw flow resume " + run + " goes on without it"
-	if ans.State != NextPaused || ans.Resumed != 0 || len(td.spawned) != 0 || !strings.Contains(ans.Hint, wantHint) {
+	if ans.State != NextPaused || ans.Resumed != 0 || len(td.spawned) != 0 || !strings.Contains(bare(ans.Hint), wantHint) {
 		t.Fatalf("a drained run an answer holds: %+v %+v", ans, td.spawned)
 	}
 	// with no holder at all: the same
 	ans = nextOf(t, td, run)
-	if ans.State != NextPaused || ans.Resumed != 0 || len(td.spawned) != 0 || !strings.Contains(ans.Hint, wantHint) {
+	if ans.State != NextPaused || ans.Resumed != 0 || len(td.spawned) != 0 || !strings.Contains(bare(ans.Hint), wantHint) {
 		t.Fatalf("a drained run no process holds: %+v %+v", ans, td.spawned)
 	}
 }

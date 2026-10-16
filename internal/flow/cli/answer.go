@@ -514,7 +514,8 @@ func (c *command) control(args []string, verb string) int {
 		deadline := time.Now().Add(time.Duration(*wait) * time.Second)
 		for LockHeld(state, run) {
 			if time.Now().After(deadline) {
-				fmt.Fprintf(c.stderr, "crw flow cancel: process %d still holds run %s after %ds\n", info.PID, run, *wait)
+				fmt.Fprintf(c.stderr, "crw flow cancel: process %d still holds run %s after %ds: %s; when they end the run gives up its executions itself (no second cancel)\n",
+					info.PID, run, *wait, c.endingCalls(cm, run))
 				return 1
 			}
 			time.Sleep(50 * time.Millisecond)
@@ -523,6 +524,25 @@ func (c *command) control(args []string, verb string) int {
 		return c.settleEnded(state, cm, rec)
 	}
 	return 0
+}
+
+// endingCalls says what a run whose process still holds it after a cancel's wait is ending (CRW-1573): the run's journal is read
+// again, since the run process wrote its cancel_waiting row after the signal, and inflightCalls names the calls in it.
+func (c *command) endingCalls(cm *common, run string) string {
+	r, err := c.reader(cm)
+	if err != nil {
+		return fmt.Sprintf("no call in flight is known (the run's journal cannot be read: %v)", err)
+	}
+	events, _, err := loadLeanJournal(c.ctx, r.St, run)
+	_ = r.Close()
+	if err != nil {
+		return fmt.Sprintf("no call in flight is known (the run's journal cannot be read: %v)", err)
+	}
+	calls := inflightCalls(events)
+	if len(calls) == 0 {
+		return "no call in flight is known"
+	}
+	return "it is ending " + strings.Join(calls, ", ")
 }
 
 // settleEnded gives up the executions of a cancelled run whose process has ended: under the run lock, so no process works on the

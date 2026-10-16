@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pluginversion"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // The proof of a base refresh (CRW-430): in a local checkout, whether a head differs from an accepted head only by merges of the base branch. The relay answers it from git objects alone, which are
@@ -250,7 +251,7 @@ func openRefreshRepo(ctx context.Context, checkout string) (*refreshRepo, error)
 	if format = strings.TrimSpace(format); format != "sha1" && format != "sha256" {
 		return nil, fmt.Errorf("git answered %q to --show-object-format, which is not an object format this proof knows", firstLine(format))
 	}
-	dir, err := os.MkdirTemp("", "dag-base-refresh-")
+	dir, err := tmploc.MkdirTemp("dag-base-refresh-")
 	if err != nil {
 		return nil, err
 	}

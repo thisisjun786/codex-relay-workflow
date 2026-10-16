@@ -25,14 +25,14 @@ label does not justify retaining independent source areas in main.
 | C1 | Single-File Local | One file, local behavior, no new abstractions | Fast path (§0.1) + targeted check |
 | C2 | Ordinary Product Slice | Conventional endpoint, form, table, model, list/detail screen, integration touchpoint | Compact plan + adjacent convention search + focused tests + micro-audit |
 | C3 | Cross-Domain Feature/Refactor | Multiple modules, public API, shared types, broad behavior | Compact or full PABCD depending on persistence/risk; add subagent audit when scope or risk warrants |
-| C4 | High-Risk | Auth, payments, data deletion, migration, release, permission model, security boundary | Full PABCD (mandatory) + full relevant gates + durable risk/evidence record; in a flow-managed run the run's high-risk lane is this process (one background explorer for each node of the milestone, then the architect DESIGN over their findings, independent pre-build design audit by the critic, of a different model family than the architect, before any executor starts, per-issue candidate review, final gate with full verification and risk record, then the crosscheck of the integrated range by a review engine of another model family than every author) and the executor starts no FSM |
+| C4 | High-Risk | Auth, payments, data deletion, migration, release, permission model, security boundary | Full PABCD (mandatory) + full relevant gates + durable risk/evidence record; in a flow-managed run the run's high-risk lane is this process (one background explorer for each node of the milestone, then the architect DESIGN over their findings, the critic's design check, independent and pre-build: by the critic, of a different model family than the architect, before any executor starts, then the unit check of each node's work before its commit, final gate with full verification and risk record, then the crosscheck of the integrated range by a review engine of another model family than every author, the acceptance audit and the milestone report) and the executor starts no FSM |
 | C5 | Research/Ambiguous | Unclear requirements, ambiguous user value, unknown territory after one §0 clarification round | No interview: back to its registration ([crw-define](../crw-define/SKILL.md)) or, in a run, a decision request to the session above the project session ([the level table](../crw-canon/references/hierarchy.md#the-levels)); then reclassify |
 
 **C5 is temporary** — it cannot enter implementation until the registration step or the
 answer to the decision request resolves the ambiguity and the task is reclassified as one
 of C0 through C4.
 
-In a flow-managed run, the crosscheck does not replace the pre-build design audit. The executor and an
+In a flow-managed run, the crosscheck does not replace the critic's design check. The executor and an
 oversized child start no PABCD state machine; the standalone PABCD rules above are unchanged.
 
 **Tie-break (DEFAULT):** when signals match two classes, the higher class wins. A

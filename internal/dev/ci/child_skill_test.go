@@ -11,7 +11,7 @@ import (
 // CRW-1353 (CRW-1316 S4, design-1316 sections 13 and 18): the child's skill and the documents it reads describe the session
 // call path and the way a child works. crw-run's default path is a flow run whose steps the child spawns as role subagents
 // (`crw flow next`, spawn_agent, `crw flow dispatched`), and a `child` session of a plan with no run is the exception; the child splits work
-// and spawns subagents broadly, follows the CXC sequence (architect, design audit, executors in parallel, a reviewer of another
+// and spawns subagents broadly, follows the CXC sequence (architect, the critic's design check, executors in parallel, a reviewer of another
 // family, a fix round, verification, landing, an explorer when needed), chooses the DAG or another way while CRW enforces the
 // order, the gates and the records, and is capped by agents.max_threads; ambiguity goes up as a decision request, never as an
 // interview; the PR bundle is only named. The canon's flow page, the spawn policy, the dispatch surfaces and the flow-bound
@@ -53,7 +53,7 @@ func childWorkingWayProblems(section string) []string {
 		`(?i)splits? the work`,
 		`(?i)in parallel`,
 		`(?i)decides? the next step (from|by) (the|their) results?`,
-		`(?i)architect[^.]*design audit[^.]*executors? in parallel[^.]*reviewer of another (model )?family[^.]*fix round[^.]*verification[^.]*land`,
+		`(?i)architect[^.]*critic's design check[^.]*executors? in parallel[^.]*reviewer of another (model )?family[^.]*fix round[^.]*verification[^.]*land`,
 		`(?i)explorer[^.]*(when|whenever) (it is )?needed`,
 		`(?i)the child (decides|chooses) whether (to use )?the DAG`,
 		`(?i)CRW enforces the order, the gates and the records`,

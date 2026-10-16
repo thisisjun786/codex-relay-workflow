@@ -19,10 +19,12 @@ const SocketRoot = "/tmp"
 const SocketBound = 103
 
 // SocketTailMax is the longest path any test puts below a socket directory (the "tail": the part
-// after the directory and its separator). It is provisional until the socket inventory measures the
-// longest tail (CRW-1568, U-A1-4); tmploctest.SocketPath and tmploctest.CheckSocket fail any tail
-// over it, so a tail that grows fails in every run, even while it still fits SocketBound.
-const SocketTailMax = 64
+// after the directory and its separator). It is the longest tail the socket inventory measured
+// (CRW-1568): 58 bytes, relative/codex-session-relay/<16 hex>/control.sock below a relay hook test
+// home (internal/relay/hook Test33ReviewD8/relative_xdg). tmploctest.SocketPath and
+// tmploctest.CheckSocket fail any tail over it, so a tail that grows fails in every run, even while
+// it still fits SocketBound; a test that needs a longer one raises it here.
+const SocketTailMax = 58
 
 // socketRoot is SocketRoot, held in a variable so the package's own tests can point it at an
 // unusable root. Nothing else changes it.

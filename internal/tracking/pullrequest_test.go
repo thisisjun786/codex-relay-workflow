@@ -76,6 +76,9 @@ func TestOpenPullRequestRefusesWhatItCannotSend(t *testing.T) {
 		"two-line title":   {Head: "crw/m1", Base: "dev", Title: "a\nb", Issues: ok.Issues},
 		"no issue":         {Head: "crw/m1", Base: "dev", Title: "t"},
 		"an invalid issue": {Head: "crw/m1", Base: "dev", Title: "t", Issues: []Ref{{Repo: "o/r", Number: 0}}},
+		// GitHub refuses a body over 65536 characters with a raw API error at the POST: refused before anything is sent (CRW-1451)
+		"a body over the limit":           {Head: "crw/m1", Base: "dev", Title: "t", Issues: ok.Issues, Body: strings.Repeat("a", 65536)},
+		"a multibyte body over the limit": {Head: "crw/m1", Base: "dev", Title: "t", Issues: ok.Issues, Body: strings.Repeat("é", 65530)},
 	} {
 		if _, err := g.OpenPullRequest(bg, in); !errors.Is(err, ErrInvalidPullRequest) {
 			t.Errorf("%s: error = %v; want ErrInvalidPullRequest", name, err)
@@ -83,6 +86,19 @@ func TestOpenPullRequestRefusesWhatItCannotSend(t *testing.T) {
 	}
 	if n := len(f.requests()); n != 0 {
 		t.Errorf("%d requests sent", n)
+	}
+	// the limit counts characters of the whole body, Carries line included: a body that fills it exactly is sent
+	carries := "\n\nCarries: o/r#1"
+	for name, text := range map[string]string{"ascii": strings.Repeat("a", 65536-len(carries)), "multibyte": strings.Repeat("é", 65536-len(carries))} {
+		in := ok
+		in.Body = text
+		if err := in.Check(); err != nil {
+			t.Errorf("a %s body of exactly 65536 characters: %v", name, err)
+		}
+		in.Body += "a"
+		if err := in.Check(); !errors.Is(err, ErrInvalidPullRequest) {
+			t.Errorf("a %s body of 65537 characters: error = %v; want ErrInvalidPullRequest", name, err)
+		}
 	}
 }
 

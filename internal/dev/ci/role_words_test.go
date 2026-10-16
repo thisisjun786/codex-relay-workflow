@@ -83,6 +83,7 @@ var nonRoleLiterals = roleWordsAllowed([]struct{ path, literal, reason string }{
 	{"internal/skill/base_refresh.go", "parents: (%s, %s) in that order\n", "git: a merge's parent commits"},
 	{"internal/skill/base_refresh.go", "the parents of %s are (%s, %s): the previous head is the second parent. An update has the parents (previous head, dev tip) in that order, and the reverse merges the branch into the base", "git: a merge's parent commits"},
 	{"internal/skill/base_refresh_mechanical.go", "parents: (%s, %s) in that order\n", "git: a merge's parent commits"},
+	{"internal/tmploc/dir.go", "temp_parent_not_absolute: parent %q; give an absolute directory", "filesystem: the parent directory a temporary directory is made in"},
 })
 
 func roleWordsAllowed(rows []struct{ path, literal, reason string }) map[string]string {

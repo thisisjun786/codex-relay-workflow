@@ -18,6 +18,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/role"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc/tmploctest"
 )
 
 func must[T any](v T, err error) T {
@@ -36,18 +37,15 @@ func check(t *testing.T, err error) {
 
 // codexHome makes a CODEX_HOME whose app-server-control/app-server-control.sock is a symlink to
 // socket, which is what the opener resolves and dials. A unix socket path has a platform length
-// bound (103 bytes), so the home is made with a short name under TMPDIR rather than t.TempDir().
+// bound (103 bytes), so the home is a socket directory (tmploctest.SocketDir, never below TMPDIR,
+// CRW-1568) and the link is measured against it.
 func codexHome(t *testing.T, socket string) string {
 	t.Helper()
-	home, err := os.MkdirTemp("", "crw653-")
-	check(t, err)
-	t.Cleanup(func() { _ = os.RemoveAll(home) })
+	home := tmploctest.SocketDir(t, "crw653-")
 	dir := filepath.Join(home, "app-server-control")
 	check(t, os.MkdirAll(dir, 0o700))
 	link := filepath.Join(dir, "app-server-control.sock")
-	if len(link) > 103 {
-		t.Fatalf("CODEX_HOME socket path is %d bytes, over the 103-byte unix bound: %s", len(link), link)
-	}
+	tmploctest.CheckSocket(t, home, link)
 	check(t, os.Symlink(socket, link))
 	return home
 }
@@ -249,11 +247,10 @@ func TestHostForwardsOnlyTheTwoReads(t *testing.T) {
 // A socket that accepts a connection but never finishes the handshake does not hold the CLI: the
 // dial is bounded and the opener returns an error and no host.
 func TestDialIsBounded(t *testing.T) {
-	dir, err := os.MkdirTemp("", "crw653-")
-	check(t, err)
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	dir := tmploctest.SocketDir(t, "crw653-") // a socket directory, never below TMPDIR (CRW-1568)
 	link := filepath.Join(dir, "app-server-control", "app-server-control.sock")
 	check(t, os.MkdirAll(filepath.Dir(link), 0o700))
+	tmploctest.CheckSocket(t, dir, link)
 	listener, err := net.Listen("unix", link)
 	check(t, err)
 	t.Cleanup(func() { _ = listener.Close() })

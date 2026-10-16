@@ -55,8 +55,8 @@ func TestNextHandsOutTheStepsOfTheBus(t *testing.T) {
 	}
 	defer lock.Release()
 	bus := engine.NewFileStepBus(RunDir(w.state, run))
-	spawnStep := engine.Step{Run: run, Call: "c_000000000001", K: 1, Attempt: 2, Op: "c_000000000001/t1-a2", Role: "reviewer-final", Action: engine.StepSpawn,
-		AgentType: "reviewer", Model: "gpt-fake-sol", ReasoningEffort: "xhigh", Message: "crw-flow-op: c_000000000001/t1-a2\nCRW-ROLE: reviewer-final\n\nread it",
+	spawnStep := engine.Step{Run: run, Call: "c_000000000001", K: 1, Attempt: 2, Op: "c_000000000001/t1-a2", Role: "critic", Action: engine.StepSpawn,
+		AgentType: "reviewer", Model: "gpt-fake-sol", ReasoningEffort: "xhigh", Message: "crw-flow-op: c_000000000001/t1-a2\nCRW-ROLE: critic\n\nread it",
 		Packet: "/p/packet-t1-a2.md", Workspace: "/w/call/c_000000000001"}
 	inputStep := engine.Step{Run: run, Call: "c_000000000002", K: 2, Attempt: 1, Op: "c_000000000002/t2-a1", Role: "executor", Action: engine.StepSendInput,
 		AgentType: "executor", AgentID: "agent-7", Message: "crw-flow-op: c_000000000002/t2-a1\n\nrepair"}
@@ -90,7 +90,7 @@ func TestNextHandsOutTheStepsOfTheBus(t *testing.T) {
 	sp := byAction[engine.StepSpawn]
 	if sp.Tool.Name != "spawn_agent" || sp.Tool.Arguments["agent_type"] != "reviewer" || sp.Tool.Arguments["model"] != "gpt-fake-sol" || sp.Tool.Arguments["reasoning_effort"] != "xhigh" ||
 		sp.Tool.Arguments["fork_context"] != false || sp.Tool.Arguments["message"] != spawnStep.Message || sp.Packet != spawnStep.Packet || sp.Workspace != spawnStep.Workspace ||
-		sp.Then != "crw flow dispatched "+run+" c_000000000001 --agent <the id spawn_agent returned> --k 1 --attempt 2" {
+		bare(sp.Then) != "crw flow dispatched "+run+" c_000000000001 --agent <the id spawn_agent returned> --k 1 --attempt 2" {
 		t.Fatalf("spawn step %+v", sp)
 	}
 	// the live tool arguments: send_input and close_agent take target
@@ -150,7 +150,7 @@ func TestNextResumesARunWithNoProcess(t *testing.T) {
 	}
 	ans := decodeNext(t, out)
 	if len(td.spawned) != 1 || !td.spawned[0].Resume || td.spawned[0].Spec.RunID != spec.RunID || ans.Resumed != 4242 ||
-		!strings.Contains(ans.Hint, "crw flow resume "+r.id+" --detach") {
+		!strings.Contains(bare(ans.Hint), "crw flow resume "+r.id+" --detach") {
 		t.Fatalf("no resume: %+v %+v", ans, td.spawned)
 	}
 	// a paused run is not resumed
@@ -298,7 +298,7 @@ func TestStartDefaultsToASessionRunAndBindsItsOwner(t *testing.T) {
 	_ = json.Unmarshal([]byte(answerOf(out)), &ans)
 	spec := td.spawned[0].Spec
 	if spec.Backend != BackendSession || ans.Plan.Backend != BackendSession || spec.Pool != 3 || ans.Plan.Pool != 3 || !ans.Bound || ans.BindWarning != "" ||
-		ans.Next != "crw flow next "+spec.RunID+" --wait 600 --json" || len(ans.Plan.Spawns) != len(bound.OrchestratorRoles) || !strings.Contains(ans.Plan.Loop, "close_agent(target=") {
+		bare(ans.Next) != "crw flow next "+spec.RunID+" --wait 600 --json" || len(ans.Plan.Spawns) != len(bound.OrchestratorRoles) || !strings.Contains(ans.Plan.Loop, "close_agent(target=") {
 		t.Fatalf("the start: %+v (spec %+v)", ans, spec)
 	}
 	names := map[string]bool{}

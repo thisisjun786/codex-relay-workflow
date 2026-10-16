@@ -14,6 +14,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc/tmploctest"
 )
 
 type routedFixture struct {
@@ -47,6 +48,7 @@ func asOwner(t *testing.T, env map[string]string) {
 // counts what it answered.
 func goOwner(t *testing.T, ctx context.Context, state string) *atomic.Int32 {
 	t.Helper()
+	tmploctest.CheckSocket(t, socketRootOf(t, filepath.Join(state, "control.sock")), filepath.Join(state, "control.sock"))
 	listener, err := net.Listen("unix", filepath.Join(state, "control.sock"))
 	if err != nil {
 		t.Fatal(err)

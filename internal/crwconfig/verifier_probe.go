@@ -2,6 +2,7 @@ package crwconfig
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"go/version"
 	"os"
@@ -11,6 +12,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // verifierProbeTimeout bounds each probe of a verifier tool.
@@ -41,26 +44,13 @@ type VerifierProbe struct {
 	Notes      []string
 }
 
-// defaultTemporaryDirs are the directories a reboot clears: a Go root below one is never offered as a candidate.
-var defaultTemporaryDirs = []string{"/tmp", "/var/tmp"}
-
-// ProbeOptions are the seams of a probe of the verifier's tools. The zero value is the host's rule.
-type ProbeOptions struct {
-	// TemporaryDirs are the directories below which a Go root found on the host is left out of the candidates; nil is /tmp and
-	// /var/tmp, which a reboot clears. A test whose temporary directory may be below /tmp names a directory of its own.
-	TemporaryDirs []string
-}
-
 // ProbeVerifierTools reads the verifier section the way a run with env reads it (flagPath as --config) and probes the tools: the
 // go's version (`go version`, GOTOOLCHAIN=local, so no other toolchain is selected or fetched) and, for a crw-dev binary,
 // `crw-dev help`. Each probe runs bounded in time, in a home of its own that is removed afterwards, so it writes nothing of the
-// host's. In tree mode crw-dev is runnable when its go runs: the tree is the one verified.
+// host's. In tree mode crw-dev is runnable when its go runs: the tree is the one verified. The probe's home is made below the
+// temporary directory of the one place (tmploc); a refusal there (a relative TMPDIR, an unusable directory) is the probe's error
+// and so a problem, never a home made somewhere else.
 func ProbeVerifierTools(ctx context.Context, env []string, flagPath string) VerifierProbe {
-	return ProbeVerifierToolsWith(ctx, env, flagPath, ProbeOptions{})
-}
-
-// ProbeVerifierToolsWith is ProbeVerifierTools with the seams of opts.
-func ProbeVerifierToolsWith(ctx context.Context, env []string, flagPath string, opts ProbeOptions) VerifierProbe {
 	getenv := envGetter(env)
 	p := VerifierProbe{}
 	tools, err := LoadVerifierTools(getenv, flagPath)
@@ -124,9 +114,13 @@ func ProbeVerifierToolsWith(ctx context.Context, env []string, flagPath string, 
 		}
 	}
 	if tools.GoRoot == "" && err == nil {
-		p.Candidates = goRootCandidates(ctx, env, p.Go, opts.TemporaryDirs)
+		var herr error
+		p.Candidates, herr = goRootCandidates(ctx, env, p.Go)
 		// the hint goes with the problems when the verifier cannot start, else with the notes of what works only through PATH
-		if len(p.Candidates) > 0 {
+		if herr != nil {
+			// no root could be probed, so "none was found" would be wrong: the reason is the probe's home
+			p.Problems = append(p.Problems, "the Go toolchain roots on this host could not be probed: "+herr.Error())
+		} else if len(p.Candidates) > 0 {
 			c := p.Candidates[0]
 			hint := fmt.Sprintf("a Go toolchain root is at %s (%s): record it with crw config verifier --go-root %s", c.Root, c.Version, c.Root)
 			if len(p.Problems) > 0 {
@@ -143,14 +137,20 @@ func ProbeVerifierToolsWith(ctx context.Context, env []string, flagPath string, 
 
 // goRootCandidates are the Go toolchain roots found on the host: the root of the go on PATH (`go env GOROOT`), then the usual
 // install locations ($HOME/.local/go/go, $HOME/.local/go, $HOME/sdk/go*, $HOME/go/go, /usr/local/go, /usr/lib/go, /opt/go),
-// each a directory whose bin/go runs and reports a version; a root below a temporary directory (temporaryDirs, nil for /tmp and
-// /var/tmp, which a reboot clears) is left out, by its path and by the path its links resolve to. They are ordered by version,
-// newest first, the earlier location first on a tie.
-func goRootCandidates(ctx context.Context, env []string, pathGo string, temporaryDirs []string) []GoRootCandidate {
+// each a directory whose bin/go is an executable regular file that runs and reports a version. A root is judged by what it holds,
+// never by where it is: one below /tmp or another temporary directory is offered like any other (CRW-1579). A root reached twice
+// (the same directory once its links are resolved) is listed once. They are ordered by version, newest first, the earlier location
+// first on a tie. When a probe's home cannot be made (tmploc refuses TMPDIR), no root can be probed: the search stops and answers
+// that refusal, so the caller reports it instead of "no root was found".
+func goRootCandidates(ctx context.Context, env []string, pathGo string) ([]GoRootCandidate, error) {
 	getenv := envGetter(env)
 	var roots []string
 	if pathGo != "" {
-		if out, err := verifierProbe(ctx, env, []string{"GOTOOLCHAIN=local"}, pathGo, "env", "GOROOT"); err == nil {
+		out, err := verifierProbe(ctx, env, []string{"GOTOOLCHAIN=local"}, pathGo, "env", "GOROOT")
+		if herr := (*probeHomeError)(nil); errors.As(err, &herr) {
+			return nil, herr
+		}
+		if err == nil {
 			if root := strings.TrimSpace(string(out)); filepath.IsAbs(root) {
 				roots = append(roots, root)
 			}
@@ -168,7 +168,7 @@ func goRootCandidates(ctx context.Context, env []string, pathGo string, temporar
 	for _, root := range roots {
 		root = filepath.Clean(root)
 		real, err := filepath.EvalSymlinks(root)
-		if err != nil || seen[real] || temporaryRoot(root, temporaryDirs) || temporaryRoot(real, temporaryDirs) {
+		if err != nil || seen[real] {
 			continue
 		}
 		seen[real] = true
@@ -177,6 +177,9 @@ func goRootCandidates(ctx context.Context, env []string, pathGo string, temporar
 			continue
 		}
 		answer, err := verifierProbe(ctx, env, []string{"GOTOOLCHAIN=local", "GOROOT=" + root}, bin, "version")
+		if herr := (*probeHomeError)(nil); errors.As(err, &herr) {
+			return nil, herr
+		}
 		m := goVersionWord.FindStringSubmatch(string(answer))
 		if err != nil || m == nil {
 			continue
@@ -184,30 +187,26 @@ func goRootCandidates(ctx context.Context, env []string, pathGo string, temporar
 		out = append(out, GoRootCandidate{Root: root, Version: m[1]})
 	}
 	slices.SortStableFunc(out, func(a, b GoRootCandidate) int { return version.Compare(b.Version, a.Version) })
-	return out
+	return out, nil
 }
 
-// temporaryRoot says whether root is one of dirs or below one; nil dirs are the directories a reboot clears (/tmp, /var/tmp).
-func temporaryRoot(root string, dirs []string) bool {
-	if dirs == nil {
-		dirs = defaultTemporaryDirs
-	}
-	for _, dir := range dirs {
-		dir = filepath.Clean(dir)
-		if root == dir || strings.HasPrefix(root, dir+"/") {
-			return true
-		}
-	}
-	return false
+// probeHomeError is a probe that did not start because its home could not be made (tmploc's refusal, which it wraps): the tool
+// was never asked, so it says nothing about the tool.
+type probeHomeError struct{ err error }
+
+func (e *probeHomeError) Error() string {
+	return "the probe's home could not be made: " + e.err.Error()
 }
+
+func (e *probeHomeError) Unwrap() error { return e.err }
 
 // verifierProbe runs one probe of a tool with env and the extra entries over it, bounded in time, and answers its output. The
-// probe has a home of its own, removed afterwards: go writes its telemetry counters below the user configuration directory
-// whenever it starts.
+// probe has a home of its own below tmploc's temporary directory, removed afterwards: go writes its telemetry counters below the
+// user configuration directory whenever it starts. tmploc's refusal is the probe's error.
 func verifierProbe(ctx context.Context, env []string, extra []string, name string, args ...string) ([]byte, error) {
-	home, err := os.MkdirTemp("", "crw-verifier-probe-")
+	home, err := tmploc.MkdirTemp("crw-verifier-probe-")
 	if err != nil {
-		return nil, err
+		return nil, &probeHomeError{err: err}
 	}
 	defer os.RemoveAll(home)
 	ctx, cancel := context.WithTimeout(ctx, verifierProbeTimeout)

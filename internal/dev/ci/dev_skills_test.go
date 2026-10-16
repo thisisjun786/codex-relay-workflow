@@ -168,8 +168,9 @@ func TestCrwDevDescriptionNoCatchAll(t *testing.T) {
 }
 
 // c4RowErrors reads the C4 row of the work classifier: in a flow-managed run the high-risk lane is the C4
-// process, with its design audit before any executor, and the executor starts no FSM. The paragraph after the
-// table says the crosscheck of the milestone close (CRW-1473) does not replace the design audit.
+// process, with the critic's design check before any executor, the unit check of each node before its commit
+// (CRW-1455), and the executor starts no FSM. The paragraph after the table says the crosscheck of the milestone
+// close (CRW-1473) does not replace the critic's design check.
 func c4RowErrors(text string) []string {
 	var process string
 	for _, row := range tableRows(text, "Class") {
@@ -182,15 +183,15 @@ func c4RowErrors(text string) []string {
 	}
 	var errs []string
 	for _, want := range []string{
-		"flow-managed run", "high-risk lane", "one background explorer for each node of the milestone", "architect DESIGN", "independent pre-build design audit",
-		"different model family", "before any executor starts", "per-issue candidate review", "crosscheck", "starts no FSM",
+		"flow-managed run", "high-risk lane", "one background explorer for each node of the milestone", "architect DESIGN", "the critic's design check, independent and pre-build",
+		"different model family", "before any executor starts", "unit check of each node's work before its commit", "crosscheck", "acceptance audit", "starts no FSM",
 	} {
 		if !strings.Contains(process, want) {
 			errs = append(errs, "crw-dev C4 row lacks "+want)
 		}
 	}
 	flat := strings.Join(strings.Fields(text), " ")
-	for _, want := range []string{"the crosscheck does not replace the pre-build design audit", "oversized child start no PABCD state machine"} {
+	for _, want := range []string{"the crosscheck does not replace the critic's design check", "oversized child start no PABCD state machine"} {
 		if !strings.Contains(flat, want) {
 			errs = append(errs, "crw-dev lacks "+want)
 		}
@@ -207,7 +208,7 @@ func TestCrwDevC4RowNamesFlowLane(t *testing.T) {
 	t.Run("fixture: the old C4 row fails", func(t *testing.T) {
 		old := "| Class | Name | Signals | Default Process |\n|---|---|---|---|\n| C4 | High-Risk | Auth | Full PABCD (mandatory) + full relevant gates + durable risk/evidence record |\n"
 		got := strings.Join(c4RowErrors(old), "\n")
-		for _, want := range []string{"lacks flow-managed run", "lacks independent pre-build design audit", "lacks starts no FSM", "lacks the crosscheck does not replace"} {
+		for _, want := range []string{"lacks flow-managed run", "lacks the critic's design check, independent and pre-build", "lacks unit check of each node's work", "lacks starts no FSM", "lacks the crosscheck does not replace"} {
 			if !strings.Contains(got, want) {
 				t.Errorf("no error contains %q:\n%s", want, got)
 			}

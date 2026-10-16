@@ -24,6 +24,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/scope"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // Object is a decoded JSON object.
@@ -122,7 +123,7 @@ func (b Bridge) Operation(identityTool string) Object {
 // over its stdio, lists its tools and calls get_capabilities. The ledger it opens lives in a
 // temporary directory removed afterwards, so the host's own ledger is never touched.
 func Session(ctx context.Context, executable, socket string, env scope.Env) Bridge {
-	scratch, err := os.MkdirTemp("", "crw-bridge-exercise-")
+	scratch, err := tmploc.MkdirTemp("crw-bridge-exercise-")
 	if err != nil {
 		return Bridge{Command: []string{executable}, Err: err}
 	}

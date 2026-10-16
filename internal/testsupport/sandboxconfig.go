@@ -26,24 +26,14 @@ var sandboxConfigFile string
 func SandboxConfig() string { return sandboxConfigFile }
 
 // SandboxConfigDocument is the crw configuration the isolation writes: sandbox_root is the real path of
-// tempDir, and the system temporary locations a test falls back to when tempDir lies in a repository
-// (fallbackTempParents) are sandbox.project_roots when they exist.
+// tempDir and nothing else. There are no project roots (a test has no other temporary location than tempDir,
+// CRW-1579) and no socket root (a socket directory is not judged by the sandbox rule).
 func SandboxConfigDocument(tempDir string) (map[string]any, error) {
 	base, err := filepath.EvalSymlinks(tempDir)
 	if err != nil {
 		return nil, err
 	}
-	doc := map[string]any{"paths": map[string]any{"sandbox_root": base}}
-	var projects []string
-	for _, parent := range fallbackTempParents {
-		if real, err := filepath.EvalSymlinks(parent); err == nil && real != base {
-			projects = append(projects, real)
-		}
-	}
-	if len(projects) > 0 {
-		doc["sandbox"] = map[string]any{"project_roots": projects}
-	}
-	return doc, nil
+	return map[string]any{"paths": map[string]any{"sandbox_root": base}}, nil
 }
 
 // WriteSandboxConfig writes SandboxConfigDocument(tempDir) to path, making its directory.

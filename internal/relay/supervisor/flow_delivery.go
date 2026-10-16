@@ -50,7 +50,7 @@ const (
 
 // flowReportKinds are the direct kinds a flow report row goes up as.
 var flowReportKinds = map[string]bool{KindFlowMilestoneReport: true, KindFlowProjectBlocked: true, KindFlowProjectDecisionRequest: true,
-	KindFlowJunDecisionRequest: true, KindFlowNoNodeStarted: true}
+	KindFlowJunDecisionRequest: true, KindFlowNoNodeStarted: true, KindFlowMergeRequest: true}
 
 // IsFlowKind reports whether kind is one a flow run stages (the project kinds and the run's wake).
 func IsFlowKind(kind string) bool {

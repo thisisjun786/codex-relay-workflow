@@ -154,6 +154,35 @@ func TestCXCReplay_against_a_fake_crw(t *testing.T) {
 	}
 }
 
+// CRW-1579 (D7, E5): a path_length_dependent fixture runs in a case root below
+// cxccorpus.RecordedScratch, the recorded 33 bytes, and nowhere else. When that parent cannot be used
+// the replay fails with the reason and the need, with no skip and no second place; the other fixtures
+// keep their own scratch.
+func TestLongCaseRoot_unusableScratchFailsWithTheReason(t *testing.T) {
+	r := cxcTestReplayer(t)
+	if r.longScratch != cxccorpus.RecordedScratch {
+		t.Fatalf("the replay's long-case scratch is %q, want cxccorpus.RecordedScratch %q", r.longScratch, cxccorpus.RecordedScratch)
+	}
+	file := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(file, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r.longScratch = file
+	row := cxcRow{given: script(`printf '%s\\n' \"${#CRW_HOME}\"`), stdout: "a:x\ncwd:${WS}\n37\n"}
+	err := r.check("cli__chat__index_status", cxcFixture(t, row.doc()), cxcClaim{State: cxcIdentical}, t.TempDir)
+	if err == nil {
+		t.Fatal("a long fixture replayed with an unusable case-root parent")
+	}
+	for _, want := range []string{"cxc_long_case_root_unusable: " + file + ":", "not a directory", "path_length_dependent fixtures need the recorded 33-byte case root"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error = %v, want it to name %q", err, want)
+		}
+	}
+	if err := r.check("cli__x__y", cxcFixture(t, row.doc()), cxcClaim{State: cxcIdentical}, t.TempDir); err == nil || strings.Contains(err.Error(), "cxc_long_case_root_unusable") {
+		t.Errorf("a fixture that is not path_length_dependent: %v, want the ordinary stdout difference", err)
+	}
+}
+
 // Pending is not run, an unregistered fixture fails, and a claim that needs what no replay provides
 // (a scripted fetch reply, a connect or dns call in the expectation, rewrite-rule text in the given) is refused before
 // anything runs, naming what is missing.

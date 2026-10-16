@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc/tmploctest"
 )
 
 // roomy is a probe that answers every path with an ordinary file system and plenty of room.
@@ -191,7 +193,10 @@ func TestCheckSocketPathLengthCountsTheSuffix(t *testing.T) {
 // long root is a warning, not a refusal.
 func TestCheckSocketPathOfATestRootIsAWarning(t *testing.T) {
 	root := t.TempDir() + "/" + strings.Repeat("t", 200)
-	report, _ := checkWith(t, `{"paths":{"temp_root":"`+root+`"}}`, Probe{Statfs: roomy().Statfs, SocketLimit: 200})
+	// the relay_state root is a socket directory (never below TMPDIR, CRW-1568), so its store socket
+	// fits whatever TMPDIR is and only temp_root's length is judged
+	relay := filepath.Join(tmploctest.SocketDir(t, "rs"), "relay")
+	report, _ := checkWith(t, `{"paths":{"temp_root":"`+root+`","relay_state":"`+relay+`"}}`, Probe{Statfs: roomy().Statfs, SocketLimit: 200})
 	mustFind(t, report, CheckSocketPath, RootTemp, LevelWarning)
 	if faults := report.Faults(); len(faults) != 0 {
 		t.Errorf("a long temp_root refused: %+v", faults)
