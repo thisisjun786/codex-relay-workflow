@@ -260,50 +260,6 @@ return { need: g.need_tests, ran: out.map((v) => v.command), state: again.state,
 	}
 }
 
-// reviewer-final is a review of another family than every author of the milestone, as a node's reviewer is: a model of the
-// family of an executor or of the architect is refused, a model of no known author is independence_unproven.
-func TestReviewerFinalIndependenceAndStates(t *testing.T) {
-	w := newWorld(t)
-	w.must("milestone", "plan-1", "M")
-	gate := map[string]any{"head": headOne, "range": headOne}
-	final := func(c CallRef) FinalResult {
-		var r FinalResult
-		_ = json.Unmarshal(w.must("reviewerFinal", "M", gate, c, map[string]any{}), &r)
-		return r
-	}
-	finalOut, _ := json.Marshal(map[string]any{"verdict": "verified", "criteria": []any{}, "defects": []any{}, "alignment": map[string]any{"verdict": "ALIGNED", "drift": []any{}}, "summary": "ok"})
-	if r := final(call("c_f", "completed", "gpt-fake-sol", nil)); r.State != StateNullModel || r.Reason != "verdict_invalid" {
-		t.Errorf("an answer that is no VERDICT_FINAL: %+v", r)
-	}
-	ok := call("c_f", "completed", "gpt-fake-sol", nil)
-	ok.Output = finalOut
-	if r := final(ok); r.State != StateRefused || r.Reason != "independence_unproven" {
-		t.Errorf("no author is known: %+v", r)
-	}
-	for _, model := range []string{"claude-fake-opus", "claude-fake-haiku"} {
-		w.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: "c_" + model, Op: "agent", Event: engine.EvPrepared, Data: map[string]any{"role": map[string]string{"claude-fake-opus": "architect", "claude-fake-haiku": "executor"}[model], "node": "A", "model": model}})
-	}
-	if r := final(ok); r.State != StateVerdict || r.Alignment != "ALIGNED" {
-		t.Errorf("a reviewer of another family: %+v", r)
-	}
-	sameFamily := call("c_f", "completed", "claude-fake-sonnet", nil)
-	sameFamily.Output = finalOut
-	if r := final(sameFamily); r.State != StateRefused || r.Reason != engine.ReasonIndependenceRefused {
-		t.Errorf("a reviewer of the family of the authors: %+v", r)
-	}
-	for status, state := range map[string]string{"held": StateHeld, "unknown": StateUnknown, "refused": StateRefused, "null_model": StateNullModel, "superseded": StateSuperseded} {
-		if r := final(call("c_f", status, "gpt-fake-sol", nil)); r.State != state {
-			t.Errorf("%s: %+v", status, r)
-		}
-	}
-	misaligned, _ := json.Marshal(map[string]any{"verdict": "needs_changes", "criteria": []any{}, "defects": []any{}, "alignment": map[string]any{"verdict": "MISALIGNED", "drift": []any{}}, "summary": "no"})
-	bad := call("c_f", "completed", "gpt-fake-sol", nil)
-	bad.Output = misaligned
-	if r := final(bad); r.State != StateNullModel {
-		t.Errorf("MISALIGNED with no drift named: %+v", r)
-	}
-}
-
 // The receipt stands on the tree the capture call exercised, not on the head it was asked to exercise (CRW-1206 correction, d2): a
 // capture whose scratch worktree ended on another commit, with uncommitted work, with a source nobody could read or with none
 // recorded is INCONCLUSIVE - never a PASS over code the gate did not pin - and the receipt row keeps the identity it rests on.

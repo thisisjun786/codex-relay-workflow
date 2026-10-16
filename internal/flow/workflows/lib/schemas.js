@@ -60,18 +60,6 @@ export const VERDICT_BATCH = obj({
   nodes: list(obj({ node: text, head: text, criteria_digest: text, ...verdictFields })),
 })
 
-// VERDICT_FINAL: the milestone-level review of reviewer-final, with the alignment judgement.
-export const VERDICT_FINAL = obj({
-  verdict: verdictFields.verdict,
-  criteria: verdictFields.criteria,
-  defects: verdictFields.defects,
-  alignment: obj({
-    verdict: { type: 'string', enum: ['ALIGNED', 'MISALIGNED', 'NOT_ASSESSED'] },
-    drift: list(obj({ decision_id: text, observed: text, file: text, line: integer, affected_nodes: texts })),
-  }),
-  summary: text,
-})
-
 // DESIGN: the architect's decisions and per-issue plan.
 export const DESIGN = obj({
   decisions: list(obj({ id: text, evidence: texts, change: text, alternatives: texts, assumptions: texts })),

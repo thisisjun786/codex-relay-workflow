@@ -44,7 +44,7 @@ var schemaOwner = map[string]string{
 
 // consumers are the decoders of the Go side, by schema.
 var consumers = map[string]string{
-	SchemaReceipt: "DecodeReceipt", SchemaVerdict: "DecodeVerdict", SchemaVerdictBatch: "DecodeVerdictBatch", SchemaVerdictFinal: "DecodeVerdictFinal",
+	SchemaReceipt: "DecodeReceipt", SchemaVerdict: "DecodeVerdict", SchemaVerdictBatch: "DecodeVerdictBatch",
 	SchemaDesign: "DecodeDesign", SchemaDesignAudit: "DecodeDesignAudit", SchemaReflection: "DecodeReflection", SchemaFindings: "DecodeFindings", SchemaFindingsEnd: "DecodeFindings",
 	SchemaQACapture: "DecodeQACapture", SchemaQAPass: "DecodeQAPass", SchemaQAReceipt: "DecodeQAReceipt",
 }
