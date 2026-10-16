@@ -1,6 +1,7 @@
 package ops
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -27,7 +28,9 @@ import (
 // (every criterion and decision, met or not, with evidence), pass B hunts bugs; each runs in a checkout of the gate head of its own
 // under the run's directory, and their findings are merged into one verdict by one rule (CrosscheckRule, premerge.Blocks).
 //
-// This revision serves round 1 only: a prior verdict, or a round other than 1, is refused (crosscheck_prior_invalid).
+// The op serves round 1 (no prior) and round 2, the close's one recheck (CRW-1490): round 2 carries the recorded round-1
+// needs_changes verdict as its prior - changed, another run's or another round's priors and a third round are refused
+// (crosscheck_prior_invalid) - and the evidence round's answers when the prior was only missing evidence.
 
 // CrosscheckGuideRev is the revision of the review guide the crosscheck's packets are built from; V records it.
 const CrosscheckGuideRev = "crw-crosscheck/1"
@@ -218,7 +221,8 @@ func followUp(f reviewadapter.Finding) string {
 }
 
 // crosscheckOp is crw.crosscheck(milestone, gate, opts): one round of the crosscheck of a milestone over the gate the close passed. In
-// order: the round (round 1 only; a prior is refused), the authors (an undecided pair refuses), the run's directory (it must be
+// order: the round (round 1, or the recorded-prior recheck round 2; every other prior is refused), the authors (an undecided pair
+// refuses), the run's directory (it must be
 // absolute), the engine (the first profile whose family is no author's), the executor receipts of the milestone's nodes (one that
 // cannot be handed over holds), the prompts (over the limit fails), both checkouts (one that is not the head's tree fails, and the
 // checkout already made for the other pass is removed), then the two passes, together, and both their results are read before the round
@@ -282,10 +286,59 @@ func (o *crosscheckOp) Run(ctx context.Context, req engine.OpRequest) (engine.Op
 		return engine.OpResult{Result: result(out), Data: data}, nil
 	}
 
-	// the round: this revision serves round 1, which has no prior
-	if present(opts.Prior) || round != 1 {
-		return finish(CrosscheckOutcome{State: CrosscheckStateRefused, Reason: ReasonCrosscheckPriorInvalid,
-			Detail: fmt.Sprintf("round %d with a prior %v: this crosscheck serves round 1 only, which has no prior", round, present(opts.Prior))})
+	// the rounds (CRW-1490): round 1 has no prior; round 2 is the close's one recheck and carries the round-1 verdict it rechecks,
+	// which must be the verdict this run's recorded round 1 wrote (a script-forged or another run's prior does not replay). A third
+	// round is never served.
+	var prior *CrosscheckVerdictRecord
+	invalid := func(detail string) (engine.OpResult, error) {
+		return finish(CrosscheckOutcome{State: CrosscheckStateRefused, Reason: ReasonCrosscheckPriorInvalid, Detail: detail})
+	}
+	switch {
+	case round == 1:
+		if present(opts.Prior) {
+			return invalid(fmt.Sprintf("round 1 with a prior: a first round has no verdict to recheck"))
+		}
+	case round == 2:
+		var p CrosscheckVerdictRecord
+		if !present(opts.Prior) || json.Unmarshal(opts.Prior, &p) != nil {
+			return invalid("round 2 carries the round-1 needs_changes verdict it rechecks as its prior")
+		}
+		if p.Run != req.RunID || p.Milestone != ms || p.Base != gate.Base || p.Round != 1 || p.Verdict != reviewadapter.VerdictNeedsChanges {
+			return invalid(fmt.Sprintf("the prior is not this run's round-1 needs_changes of %s over %s", ms, gate.Base))
+		}
+		row, ok := r.opRows(OpCrosscheck).last(func(ev engine.Event) bool {
+			return ev.RunID == req.RunID && dataStr(ev, "milestone") == ms && intOf(ev.Data["round"]) == 1 &&
+				(dataStr(ev, "state") == CrosscheckStateVerdict || dataStr(ev, "state") == CrosscheckStateEvidence)
+		})
+		var prev CrosscheckOutcome
+		if !ok || json.Unmarshal(resultOf(row), &prev) != nil || prev.Verdict == nil {
+			return invalid("round 2 without a recorded round-1 verdict of the milestone")
+		}
+		have, _ := json.Marshal(*prev.Verdict)
+		want, _ := json.Marshal(p)
+		if !bytes.Equal(have, want) {
+			return invalid("the prior is not the verdict the recorded round 1 wrote")
+		}
+		prior = prev.Verdict
+	default:
+		return invalid(fmt.Sprintf("round %d: the crosscheck serves round 1 and its one recheck", round))
+	}
+	data["base"] = gate.Base
+	if present(opts.Evidence) {
+		data["evidence"] = opts.Evidence
+	}
+	if round == 2 {
+		switch opts.EvidenceRound {
+		case 0:
+		case 1:
+			// an evidence recheck judges the same head with the answers to the prior's evidence questions: only a prior whose
+			// every finding is evidence_missing with its question earns one
+			if !present(opts.Evidence) || gate.Head != prior.Head || !allEvidenceQuestions(prior.Findings) {
+				return invalid("an evidence recheck (round 2, evidence_round 1) needs the answers to a prior whose every finding is evidence_missing at the same head")
+			}
+		default:
+			return invalid(fmt.Sprintf("evidence_round %d: the recheck is evidence round 0 or 1", opts.EvidenceRound))
+		}
 	}
 
 	// the authors: every pair the run's role table gives and every author call of the journal, none undecided
@@ -321,6 +374,10 @@ func (o *crosscheckOp) Run(ctx context.Context, req engine.OpRequest) (engine.Op
 	v := &CrosscheckVerdictRecord{Findings: []reviewadapter.Finding{}, Carried: []string{}, FollowUps: []string{}, GuideRev: CrosscheckGuideRev, EngineFamily: family,
 		EngineFamilies: []string{family}, Model: profile.Model, Round: round, EvidenceRound: opts.EvidenceRound, Milestone: ms, Plan: plan, Head: gate.Head, Base: gate.Base,
 		Run: req.RunID, AuthorFamilies: families, Authors: authors, Passes: []CrosscheckPass{}}
+	if prior != nil {
+		raw, _ := json.Marshal(prior)
+		v.PriorHead, v.PriorRun, v.PriorDigest = prior.Head, prior.Run, hashParts(string(raw))
+	}
 	data["engine_family"], data["model"] = family, profile.Model
 
 	// the executor receipts of the milestone's nodes (C12)
@@ -557,6 +614,20 @@ func (o *crosscheckOp) Proven(_ context.Context, events []engine.Event, row engi
 		return false, v.Why, nil
 	}
 	return true, "", nil
+}
+
+// allEvidenceQuestions says whether every finding is an evidence_missing one with its question: only such a prior earns an
+// evidence recheck (CRW-1490).
+func allEvidenceQuestions(findings []reviewadapter.Finding) bool {
+	if len(findings) == 0 {
+		return false
+	}
+	for _, f := range findings {
+		if f.Kind != reviewadapter.KindEvidenceMissing || f.EvidenceQuestion == nil || strings.TrimSpace(f.EvidenceQuestion.Question) == "" {
+			return false
+		}
+	}
+	return true
 }
 
 // present says whether a JSON member was given a value other than null.

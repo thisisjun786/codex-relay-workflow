@@ -1,6 +1,7 @@
 package ops
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -47,6 +48,12 @@ func (o *milestoneCloseOp) Run(ctx context.Context, req engine.OpRequest) (engin
 		Gate       json.RawMessage `json:"gate"`
 		Final      json.RawMessage `json:"final"`
 		Crosscheck json.RawMessage `json:"crosscheck"`
+		// Repair, when the close corrected the failed crosscheck in the run (CRW-1490), is the failed gate's head and the committed
+		// candidate over it: {base, head}.
+		Repair *struct {
+			Base string `json:"base"`
+			Head string `json:"head"`
+		} `json:"repair"`
 	}
 	if err := args(req.Args, &ms, &evidence); err != nil {
 		var obj struct {
@@ -70,9 +77,86 @@ func (o *milestoneCloseOp) Run(ctx context.Context, req engine.OpRequest) (engin
 	}
 	r := rows(req.Journal.Events())
 	plan := planOf(r, ms)
-	tip, err := o.l.d.Relay.IntegrationTip(ctx, plan)
-	if err != nil {
-		return engine.OpResult{}, err
+	var tip string
+	var err error
+	repairMoved := false
+	if evidence.Repair != nil {
+		// A close that repaired the crosscheck in the run publishes the candidate (CRW-1490): the journal's own records are the
+		// proof, not the script's copies - the synthetic node's commit row for the candidate, the recorded gate that passed on it
+		// (the very outcome the evidence names) and the recorded round-2 recheck's verified V of it. Then the relay moves the
+		// target by a fenced compare-and-swap from the failed head, so a target that moved on keeps what it has.
+		rep := evidence.Repair
+		bad := func(detail string) (engine.OpResult, error) {
+			return engine.OpResult{}, &Refusal{"close_repair_unverified", "milestone " + ms + ": " + detail}
+		}
+		if rep.Base == "" || rep.Head == "" || rep.Head != gateHead {
+			return bad(fmt.Sprintf("the repair %v does not name the gate's head %q", rep, gateHead))
+		}
+		if _, ok := r.opRows(OpCommit).last(func(ev engine.Event) bool {
+			return dataStr(ev, "node") == "milestone:"+ms && dataStr(ev, "commit") == rep.Head
+		}); !ok {
+			return bad("no recorded commit of the candidate " + rep.Head + " for the close's repair")
+		}
+		gateRow, ok := r.opRows(OpGate).last(func(ev engine.Event) bool {
+			return dataStr(ev, "milestone") == ms && dataStr(ev, "head") == rep.Head && dataStr(ev, "state") == GatePass
+		})
+		if !ok || !jsonSame(resultOf(gateRow), evidence.Gate) {
+			return bad("no recorded passing gate of the candidate " + rep.Head + ", or the gate in the evidence is not it")
+		}
+		// the digest of a fresh passing test verification of the candidate, which the publication records so the official push
+		// path reads the repaired close as a verified move (dagsched.VerifiedMoveOnto)
+		var passedGate GateOutcome
+		if err := json.Unmarshal(evidence.Gate, &passedGate); err != nil {
+			return bad("the gate of the evidence is not a gate: " + err.Error())
+		}
+		verificationDigest := ""
+		for _, e := range passedGate.Evidence {
+			if e.Kind == EvidenceKindTest && e.State == EvidenceFresh && e.Pass && e.Digest != "" {
+				verificationDigest = e.Digest
+				break
+			}
+		}
+		if verificationDigest == "" {
+			return bad("the recorded passing gate of the candidate has no verified test digest")
+		}
+		ccRow, ok := r.opRows(OpCrosscheck).last(func(ev engine.Event) bool {
+			return dataStr(ev, "milestone") == ms && intOf(ev.Data["round"]) == 2 && dataStr(ev, "state") == CrosscheckStateVerdict
+		})
+		var cc CrosscheckOutcome
+		if !ok || json.Unmarshal(resultOf(ccRow), &cc) != nil || cc.Verdict == nil || cc.Verdict.Verdict != reviewadapter.VerdictVerified ||
+			cc.Verdict.Head != rep.Head || cc.Verdict.PriorHead != rep.Base {
+			return bad("no recorded round-2 crosscheck that verified the candidate " + rep.Head + " over the failed head " + rep.Base)
+		}
+		var named CrosscheckVerdictRecord
+		if json.Unmarshal(evidence.Crosscheck, &named) != nil {
+			return bad("the crosscheck of the evidence is not a verdict: " + cc.State)
+		}
+		a, _ := json.Marshal(*cc.Verdict)
+		b, _ := json.Marshal(named)
+		if !bytes.Equal(a, b) {
+			return bad("the crosscheck in the evidence is not the recorded recheck's verdict")
+		}
+		if anc, aerr := IsAncestor(ctx, o.l.d.Git, o.l.d.Repo, rep.Base, rep.Head); aerr != nil {
+			return engine.OpResult{}, aerr
+		} else if !anc {
+			return bad("the candidate " + rep.Head + " does not descend from the failed head " + rep.Base)
+		}
+		integrator, ok := o.l.d.Relay.(MilestoneRepairIntegrator)
+		if !ok {
+			return engine.OpResult{}, &Refusal{"close_repair_unavailable", "the relay of this run cannot publish a close repair"}
+		}
+		res, rerr := integrator.IntegrateMilestoneRepair(ctx, MilestoneRepairRequest{Plan: plan, Milestone: ms, Base: rep.Base, Head: rep.Head, VerificationDigest: verificationDigest})
+		if rerr != nil {
+			return engine.OpResult{}, rerr
+		}
+		if res.Tip == "" {
+			return engine.OpResult{}, fmt.Errorf("crw.milestoneClose: the repair publisher returned no integration tip")
+		}
+		tip, repairMoved = res.Tip, res.Moved
+	} else {
+		if tip, err = o.l.d.Relay.IntegrationTip(ctx, plan); err != nil {
+			return engine.OpResult{}, err
+		}
 	}
 	base := ""
 	if led, ok := firstLedger(r, ms); ok {
@@ -89,17 +173,33 @@ func (o *milestoneCloseOp) Run(ctx context.Context, req engine.OpRequest) (engin
 		out.GateHead = g.Head
 		out.Moved = g.Head != "" && g.Head != tip
 	}
+	out.Moved = out.Moved || repairMoved
 	if len(evidence.Final) > 0 {
 		out.Final = evidence.Final
 	}
 	if len(evidence.Crosscheck) > 0 {
 		out.Crosscheck = evidence.Crosscheck
 	}
-	return engine.OpResult{Result: result(out), Data: map[string]any{"milestone": ms, "plan": plan, "base": base, "tip": tip, "gate_head": out.GateHead, "moved": out.Moved}}, nil
+	data := map[string]any{"milestone": ms, "plan": plan, "base": base, "tip": tip, "gate_head": out.GateHead, "moved": out.Moved}
+	if evidence.Repair != nil {
+		data["repair_base"], data["repair_head"] = evidence.Repair.Base, evidence.Repair.Head
+	}
+	return engine.OpResult{Result: result(out), Data: data}, nil
 }
 
 // ReasonCloseUnverified is the refusal of a milestone close whose evidence holds no verified review of the gate's head.
 const ReasonCloseUnverified = "close_unverified"
+
+// jsonSame says whether two JSON values are the same, by their canonical encoding.
+func jsonSame(a, b json.RawMessage) bool {
+	var x, y any
+	if json.Unmarshal(a, &x) != nil || json.Unmarshal(b, &y) != nil {
+		return false
+	}
+	am, _ := json.Marshal(x)
+	bm, _ := json.Marshal(y)
+	return bytes.Equal(am, bm)
+}
 
 // closeUnverified says why the evidence of a close does not let the milestone close ("" when it does): a crosscheck V that is not
 // verified, or is of another milestone or another head than the gate's; with no crosscheck, a final review that is not a verified

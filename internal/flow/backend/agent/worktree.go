@@ -279,6 +279,15 @@ func (a *Allocator) Place(req engine.PlaceRequest) (engine.Placement, error) {
 	if start == "" {
 		start = firstBase(restores, prepared)
 	}
+	if start == "" && req.Head != "" {
+		// a call that names a head and has no history of the node starts at it (the close's repair executor works on the failed
+		// gate's head, CRW-1490)
+		if s, err := a.commitOf(context.Background(), req.Head); err != nil {
+			return engine.Placement{}, err
+		} else {
+			start = s
+		}
+	}
 	if start == "" {
 		var err error
 		if start, err = a.base(node); err != nil {

@@ -193,6 +193,30 @@ var ErrEpochLost = errors.New("refused:" + ReasonEpochLost + ": the run lost the
 // the relay's own, which a gate-only land asks again (a transient error).
 var ErrCloseConflict = errors.New("the relay keeps the node's execution")
 
+// MilestoneRepairRequest is the publication of a close's in-run repair (CRW-1490): the candidate Head of milestone Milestone of plan
+// Plan, which must descend from and replace the failed gate's head Base. VerificationDigest is the digest of a fresh passing test
+// verification of Head that the recorded gate carries - the relay records the move with it so the official push path reads the
+// repaired close as a verified move.
+type MilestoneRepairRequest struct {
+	Plan, Milestone, Base, Head string
+	VerificationDigest          string
+}
+
+// MilestoneRepairResult is the answer of IntegrateMilestoneRepair: Tip the integration target's tip after the call, and Moved true
+// only when the target changed to a different head than Head (the repair was not published). Tip==Head with Moved false means the
+// candidate stands, whether this call published it or it already was the tip.
+type MilestoneRepairResult struct {
+	Tip   string
+	Moved bool
+}
+
+// MilestoneRepairIntegrator is the optional relay seam that publishes a close's repair: a fenced compare-and-swap of the
+// integration ref from Base to Head, which the relay's IntegrationWrite serializes. A Relay that does not implement it makes a
+// close with a repair refuse close_repair_unavailable.
+type MilestoneRepairIntegrator interface {
+	IntegrateMilestoneRepair(context.Context, MilestoneRepairRequest) (MilestoneRepairResult, error)
+}
+
 // Relay is the DAG scheduler of the relay as the lane uses it.
 type Relay interface {
 	// Milestone reads a milestone of a plan: its nodes in the order the scheduler offers them.

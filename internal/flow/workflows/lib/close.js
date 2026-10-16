@@ -8,7 +8,11 @@
 //   the crosscheck    one round of crw.crosscheck over the range of the passed gate (CRW-1473): two passes (A coverage, B bug hunt) of a
 //                     review engine of another model family than every author of the milestone, run by the host in Go, their findings
 //                     merged into one verdict V by one rule (ops.CrosscheckRule, premerge.Blocks). Only a V of verified (accepts) lets
-//                     the milestone close. A V of needs_changes stops the close as crosscheck_pending with V and the fix packet
+//                     the milestone close. A V of needs_changes gets the close's one correction in the run (CRW-1490): findings that
+//                     are only missing evidence are asked of an explorer and the same head rechecked with the answers (round 2,
+//                     evidence round 1); every other findings set goes to one executor whose commit the gate and the same
+//                     crosscheck judge again (round 2). A V that still needs changes stops the close as crosscheck_pending with the
+//                     last V and the fix packet
 //                     (crosscheckFixPacket), which the 자식 hands to the 부모 (ask crosscheck_pending); a crosscheck that held holds
 //                     the milestone, one that was refused asks for the configuration, and one that failed or gave no verdict asks with
 //                     its own state (crosscheck_failed, crosscheck_no_verdict).
@@ -25,8 +29,8 @@
 // A composite does not stop the milestone itself. It answers {state: 'stop', source, status, reason, call} (with ask, evidence and
 // fix when the stop has them), and the script halts the milestone as it does for any other call that did not complete.
 
-import { QA_CAPTURE, QA_PASS, QA_RECEIPT } from 'crw:lib/schemas'
-import { qaCapturePacket, qaPassPacket, qaSynthesisPacket, qaSelfReviewPacket, crosscheckPacket, crosscheckFixPacket } from 'crw:lib/packets'
+import { QA_CAPTURE, QA_PASS, QA_RECEIPT, RECEIPT } from 'crw:lib/schemas'
+import { qaCapturePacket, qaPassPacket, qaSynthesisPacket, qaSelfReviewPacket, crosscheckPacket, crosscheckFixPacket, closeFixPacket } from 'crw:lib/packets'
 
 // The rounds the gate makes evidence in before it gives up: the head moves while the evidence is made, and each round judges the
 // head it finds. The attempts the close makes before it gives up on a target that keeps moving.
@@ -74,11 +78,12 @@ async function qa(ms, g) {
 }
 
 // closeGate judges the evidence of the integrated head and makes what is missing, until the gate passes, fails, or cannot be
-// settled.
-async function closeGate(ms) {
+// settled. With a candidate (the committed repair of the close, CRW-1490) the gate judges that recorded head instead of the
+// integration tip.
+async function closeGate(ms, candidate) {
   let g = null
   for (let round = 1; round <= GATE_ROUNDS; round++) {
-    g = await crw.finalGate(ms.id)
+    g = await crw.finalGate(ms.id, candidate ? { head: candidate.commit } : {})
     if (g.state !== 'pending') return g
     for (const command of g.need_tests) {
       const v = await crw.verify('', g.head, { milestone: ms.id, command, base: g.base })
@@ -104,12 +109,13 @@ function accepts(x) {
 }
 
 // crosscheckRound is one round of the crosscheck over the passed gate: the text of each pass (crosscheckPacket), then crw.crosscheck,
-// which runs both passes in Go and answers X = {state, reason, hold, detail, verdict: V, questions}. This revision runs round 1 only.
+// which runs both passes in Go and answers X = {state, reason, hold, detail, verdict: V, questions}. Round 2 is the recheck after
+// the close's one correction (CRW-1490): it carries the first round's verdict as prior, and the evidence round's answers.
 export async function crosscheckRound(ms, g, opts) {
   const o = opts || {}
   const prompts = {}
   for (const p of CROSSCHECK_PASSES) prompts[p] = crosscheckPacket(ms, g, p, { prior: o.prior, evidence: o.evidence })
-  return crw.crosscheck(ms.id, g, { round: 1, evidence_round: o.evidence_round || 0, prompts })
+  return crw.crosscheck(ms.id, g, { round: o.round || 1, prior: o.prior || null, evidence: o.evidence || null, evidence_round: o.evidence_round || 0, prompts })
 }
 
 // crosscheckStop is the stop of a crosscheck that did not verify the range. A verdict of needs_changes keeps the milestone open as
@@ -136,15 +142,46 @@ function crosscheckStop(ms, x) {
 
 export async function closeMilestone(ms, opts) {
   for (let attempt = 1; attempt <= CLOSE_ATTEMPTS; attempt++) {
-    const g = await closeGate(ms)
+    let g = await closeGate(ms)
     if (g.state === 'stop') return g
     if (g.state !== 'pass') return gateStop(g)
-    const x = await crosscheckRound(ms, g, opts)
-    // a crosscheck that does not verify the range keeps the milestone open; one whose passes read no repository (CRW-1504: both void, or
-    // the one void pass void again on its rerun) is no_verdict, which stops the close with ask crosscheck_no_verdict for the 부모
+    let x = await crosscheckRound(ms, g, opts)
+    let repair = null
+    let remediated = false
+    // A needs_changes verdict gets the close's one correction (CRW-1490): findings that are only missing evidence are asked of an
+    // explorer and the same head rechecked with the answers; every other finding goes to one close-fix executor whose commit the
+    // gate and the same crosscheck judge again. A second needs_changes is the existing crosscheck_pending.
+    if ((x.state === 'verdict' || x.state === 'evidence') && x.verdict && x.verdict.verdict === 'needs_changes') {
+      remediated = true
+      const prior = x.verdict
+      const findings = prior.findings || []
+      const node = 'milestone:' + ms.id
+      const regions = [].concat(...(ms.nodes || []).map((n) => n.regions || []))
+      if (findings.length > 0 && findings.every((f) => f.kind === 'evidence_missing' && f.evidence_question && f.evidence_question.question)) {
+        const questions = findings.map((f) => ({ id: f.id, question: f.evidence_question.question, scope: '', files_needed: f.evidence_question.files_needed || [] }))
+        const asked = await crw.explore('evidence', questions, { node, milestone: ms.id, head: g.head, regions })
+        if (asked.failed) return stop('explorer', 'held', asked.failed.reason || asked.failed.status, asked.failed.callId)
+        if (asked.escalate.length || asked.orchestrator.length || !asked.answers.length || asked.answers.some((a) => !a.answer)) return crosscheckStop(ms, x)
+        x = await crosscheckRound(ms, g, { round: 2, prior, evidence: asked.answers, evidence_round: 1 })
+      } else {
+        await crw.spawnDecision('EXEC_1', 'spawn', { node, role: 'executor', tier: 'executor', inputs: { milestone: ms.id, head: g.head, label: 'close-fix:' + ms.id } })
+        const ex = await agent.call(closeFixPacket(ms, g, prior), { agentType: 'executor', node, head: g.head, schema: RECEIPT, label: 'close-fix:' + ms.id })
+        const state = crw.classify(ex)
+        if (state === 'host_held' || state === 'null_unknown') return stop('executor', 'held', state === 'null_unknown' ? 'dispatch_unknown' : ex.reason, ex.callId)
+        if (state !== 'ready' && state !== 'self_failed') return stop('executor', ex.status === 'completed' ? 'failed' : ex.status, ex.reason || 'close_fix_' + state, ex.callId)
+        const head = await crw.commit(node, ex, regions)
+        repair = { base: g.head, head: head.commit }
+        g = await closeGate(ms, head)
+        if (g.state === 'stop') return g
+        if (g.state !== 'pass') return gateStop(g)
+        x = await crosscheckRound(ms, g, { round: 2, prior })
+      }
+    }
     if (!accepts(x)) return crosscheckStop(ms, x)
-    const close = await crw.milestoneClose(ms.id, { gate: g, crosscheck: x.verdict })
+    const close = await crw.milestoneClose(ms.id, { gate: g, crosscheck: x.verdict, repair })
     if (!close.moved) return { state: 'closed', tip: close.tip, close, gate: g, crosscheck: x.verdict }
+    // A correction gets one recheck, including when publication loses its compare-and-swap.
+    if (remediated) return stop('final_gate', 'unsettled', 'close_head_moved', null, {})
   }
   return stop('final_gate', 'unsettled', 'close_head_moved', null, {})
 }

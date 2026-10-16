@@ -86,6 +86,9 @@ type laneLab struct {
 	releaseAnswer func(req ops.ReleaseRequest, out ops.ReleaseResult) ops.ReleaseResult
 	// designEdit, when a test sets it, edits the DESIGN the lab's architect answers.
 	designEdit func(d *ops.Design)
+	// verifyFail, when a test sets it, is asked by labVerifier for every verification request and a true answer fails the
+	// verification of that head (CRW-1490 close repair tests).
+	verifyFail func(req ops.VerifyRequest) bool
 	// turn, when a test sets it, is asked first for every turn of the model: a plan it answers with true is the turn's, false leaves
 	// the turn to the happy path below (CRW-1452).
 	turn func(c labCall, r fakehost.TurnRequest) (fakehost.TurnPlan, bool)
@@ -553,7 +556,8 @@ func (l *laneLab) sealed(ctx context.Context, dir, head, base string) ([]byte, e
 		Result: "pass", Jobs: []json.RawMessage{}})
 }
 
-// labVerifier verifies a node's head and the final gate's commands: a pass, with the sealed record of the head over the base.
+// labVerifier verifies a node's head and the final gate's commands: a pass, with the sealed record of the head over the base. A
+// laneLab.verifyFail script may answer true for a request, which the verification records as a failure of that head.
 type labVerifier struct{ l *laneLab }
 
 func (v labVerifier) Verify(ctx context.Context, req ops.VerifyRequest) (ops.VerifyOutcome, error) {
@@ -573,7 +577,11 @@ func (v labVerifier) Verify(ctx context.Context, req ops.VerifyRequest) (ops.Ver
 	if cmd == "" {
 		cmd = ops.CILocalCommand
 	}
-	return ops.VerifyOutcome{Pass: true, Command: cmd, Digest: digest, Record: raw, Summary: "pass", Failures: []string{}}, nil
+	out := ops.VerifyOutcome{Pass: true, Command: cmd, Digest: digest, Record: raw, Summary: "pass", Failures: []string{}}
+	if v.l.verifyFail != nil && v.l.verifyFail(req) {
+		out.Pass, out.Summary, out.Failures = false, "the lab's scripted failure", []string{"the lab's scripted failure"}
+	}
+	return out, nil
 }
 
 // verifyMerged is the verification of an integration batch's merged tree: the sealed record of the merged commit at the path the batch
@@ -937,6 +945,8 @@ type labCrosschecker struct {
 	mu    sync.Mutex
 	queue map[string][]reviewadapter.Result
 	calls []labCrosscheckCall
+	// onCheck, when a test sets it, runs with the pass's key while the check runs (a test moves the integration target mid-round).
+	onCheck func(key string)
 }
 
 func newLabCrosschecker() *labCrosschecker {
@@ -982,7 +992,11 @@ func (c *labCrosschecker) Check(ctx context.Context, req reviewadapter.Request) 
 	if q := c.queue[key]; len(q) > 0 {
 		res, c.queue[key] = q[0], q[1:]
 	}
+	hook := c.onCheck
 	c.mu.Unlock()
+	if hook != nil {
+		hook(key)
+	}
 	fp, err := ops.Snapshot(ctx, ops.ExecGit("git"), req.Worktree)
 	if err != nil {
 		return reviewadapter.Result{}, fmt.Errorf("the lab's crosschecker: fingerprint: %w", err)

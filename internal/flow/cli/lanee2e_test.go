@@ -1,16 +1,22 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/reviewadapter"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // twoMilestones is the plan of the two-milestone fixture: M1 holds A-1 and A-2 (A-2 after A-1), M2 holds B-1 after A-2.
@@ -875,31 +881,229 @@ func bodyLine(body, prefix string) string {
 	return ""
 }
 
-// TestCloseDoesNotCloseWhenTheCrosscheckHasAP1Finding (CRW-1473): the crosscheck's pass A finds a P1 core_function finding in the
-// integrated range of M1. The milestone does not close: no crw.milestoneClose and no crw.reportUp row, no reviewer-final call, and the run
-// ends escalated crosscheck_pending with ask crosscheck_pending (the 자식 hands it to the 부모). The verdict V is handed on as the op
-// recorded it: the run's value carries it as crosscheck, JSON-equal to the crw.crosscheck row's verdict and to the escalation's
-// evidence.crosscheck, and the fix packet in the value names the finding by its id and the route of the fix (a correction node landed
-// through land-head, then the verdict reported up), not a second crosscheck run.
-func TestCloseDoesNotCloseWhenTheCrosscheckHasAP1Finding(t *testing.T) {
+// closeFix is the turn hook of a close repair (CRW-1490/DV-1490-2): the executor call close-fix:<ms> appends its correction to the
+// file of the node in its worktree and answers a ready RECEIPT. The synthetic node milestone:<ms> has no file of the lab's issue
+// map, so the file is named by the issue it repairs; label is the close-fix label of the milestone.
+func closeFix(l *laneLab, issue string) func(c labCall, r fakehost.TurnRequest) (fakehost.TurnPlan, bool) {
+	return func(c labCall, r fakehost.TurnRequest) (fakehost.TurnPlan, bool) {
+		if c.Label != "close-fix:M1" {
+			return fakehost.TurnPlan{}, false
+		}
+		if c.Cwd != "" {
+			path := filepath.Join(c.Cwd, "node-"+issue+".txt")
+			prior, _ := os.ReadFile(path)
+			if err := os.WriteFile(path, append(prior, []byte("close correction\n")...), 0o644); err != nil {
+				l.t.Errorf("the close fix cannot write %s: %v", path, err)
+			}
+		}
+		return labSay(map[string]any{"outcome": "ready_for_review", "files": []string{"node-" + issue + ".txt"}, "verification": []any{},
+			"summary": "fixed the milestone finding", "gap": nil, "research_question": nil, "plan_mismatch": nil}), true
+	}
+}
+
+// closeFixCalls counts the prepared executor calls labelled close-fix:M1 (the in-run repair of the close).
+func closeFixCalls(l *laneLab) int {
+	n := 0
+	for _, c := range labCalls(l) {
+		if c.Label == "close-fix:M1" {
+			n++
+		}
+	}
+	return n
+}
+
+// syntheticCommits are the completed crw.commit rows of the synthetic close node milestone:M1.
+func syntheticCommits(l *laneLab) []engine.Event {
+	var out []engine.Event
+	for _, e := range l.events() {
+		if e.Kind == engine.KindCall && e.Op == ops.OpCommit && e.Event == engine.EvCompleted && str(e.Data, "node") == "milestone:M1" {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// ccVerdict is the verdict word of a completed crw.crosscheck row.
+func ccVerdict(e engine.Event) string {
+	v, _ := e.Data["verdict"].(map[string]any)
+	s, _ := v["verdict"].(string)
+	return s
+}
+
+// TestCloseRepairsAndRechecksBeforeClosing (CRW-1490/DV-1490-2): a crosscheck round of M1 that needs changes gets one in-run
+// correction: an executor call close-fix:M1 under the synthetic node milestone:M1 starts at the failed gate's head, its work is
+// committed by crw.commit, the final gate re-judges the candidate head and the SAME crosscheck re-runs as round 2 on it. A verified
+// round 2 closes the milestone at the candidate head: the tip the close recorded and the integration branch's tip are the fixed
+// commit, which descends from the head the crosscheck failed. No reviewer call and no second round of node unit checks run.
+func TestCloseRepairsAndRechecksBeforeClosing(t *testing.T) {
 	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+	node := l.nodeOf["A-1"]
 	f := reviewadapter.Finding{Severity: "P1", Impact: "core_function", File: "node-A-1.txt", Line: 1, Text: "the file breaks the criterion of the milestone"}
 	id := reviewadapter.FindingID(f.File, f.Text)
 	l.Crosschecks("M1", 1, 0, "A", 1, reviewadapter.Result{State: reviewadapter.StateOK, Verdict: reviewadapter.VerdictNeedsChanges, Findings: []reviewadapter.Finding{f}})
+	l.turn = closeFix(l, "A-1")
+	res, _ := unitCheckRun(t, l)
+	lv := l.closed(res)
+	if n := closeFixCalls(l); n != 1 {
+		t.Fatalf("%d close-fix executor calls, want 1 (the close escalated without an in-run correction)", n)
+	}
+	for _, c := range labCalls(l) {
+		if c.Role == "reviewer-final" || strings.HasPrefix(c.Label, "reviewer-final:") {
+			t.Errorf("the close made the call %s (%s): no new check stage", c.Label, c.Role)
+		}
+	}
+	rows, at := labRows(l, ops.OpCrosscheck)
+	if len(rows) != 2 {
+		t.Fatalf("%d crosscheck rows, want round 1 needs_changes and round 2 verified: %+v", len(rows), rows)
+	}
+	if ccVerdict(rows[0]) != reviewadapter.VerdictNeedsChanges || rows[0].Data["round"] != float64(1) {
+		t.Errorf("the first crosscheck: %v", rows[0].Data)
+	}
+	if ccVerdict(rows[1]) != reviewadapter.VerdictVerified || rows[1].Data["round"] != float64(2) || rows[1].Data["evidence_round"] != float64(0) {
+		t.Errorf("the second crosscheck: %v", rows[1].Data)
+	}
+	first, fixed := str(rows[0].Data, "head"), str(rows[1].Data, "head")
+	if first == "" || fixed == "" || first == fixed {
+		t.Fatalf("the crosscheck heads %q -> %q, want a different fixed head", first, fixed)
+	}
+	if str(rows[0].Data, "base") == "" || str(rows[0].Data, "base") != str(rows[1].Data, "base") {
+		t.Errorf("the rounds checked different bases: %q vs %q", str(rows[0].Data, "base"), str(rows[1].Data, "base"))
+	}
+	// the second round's passes ran against the candidate head, and their prompts carry the failed round's finding
+	seen := map[string]bool{}
+	for _, r := range l.cc.requests() {
+		seen[r.Key] = true
+		if strings.HasPrefix(r.Key, "M1/r2/") {
+			if !strings.Contains(r.Request.Prompt, id) || !strings.Contains(r.Request.Prompt, f.Text) {
+				t.Errorf("the round-2 prompt %s does not carry the finding %s (%q):\n%s", r.Key, id, f.Text, r.Request.Prompt)
+			}
+			if !strings.HasSuffix(filepath.Base(r.Request.Worktree), fixed[:12]) {
+				t.Errorf("the round-2 pass %s ran in %s, not a checkout of %s", r.Key, r.Request.Worktree, fixed)
+			}
+		}
+	}
+	for _, key := range []string{"M1/r2/e0/A1", "M1/r2/e0/B1"} {
+		if !seen[key] {
+			t.Errorf("no %s pass of the recheck", key)
+		}
+	}
+	// the close published the candidate: the tip it recorded and the integration branch are the fixed head, which keeps the failed head
+	if lv.Tip != fixed {
+		t.Errorf("the close's tip %q, want the fixed head %q", lv.Tip, fixed)
+	}
+	if tip := l.git(l.repo, "rev-parse", l.target); tip != fixed {
+		t.Errorf("the integration tip %q, want the fixed head %q", tip, fixed)
+	}
+	// the publication is a verified move the official push path accepts (CRW-1490)
+	if proven, err := (&dagsched.Scheduler{Store: l.w.st}).VerifiedMoveOnto(context.Background(), l.target, fixed); err != nil || !proven {
+		t.Fatalf("the repaired close is not a verified move for the official push path: %v %v", proven, err)
+	}
+	// the record of it: one intent naming the verified head and a real verification digest, and one ref_moved of the same batch
+	stages, err := store.IntegrationStagesOfPlan(context.Background(), l.w.st, l.plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	batchOf, digest := "", ""
+	intentSeen, movedSeen := false, false
+	for _, s := range stages {
+		var intent map[string]string
+		if s.Stage == "intent" && json.Unmarshal([]byte(s.Detail), &intent) == nil && intent["verified_head"] == fixed {
+			if intent["integration_ref"] != l.target || intent["verification_digest"] == "" || intent["milestone"] != "M1" || intent["base"] != first {
+				t.Errorf("the repair's intent %v", intent)
+			}
+			intentSeen, batchOf, digest = true, s.BatchID, intent["verification_digest"]
+		}
+		if s.Stage == "ref_moved" && s.Detail == fixed {
+			movedSeen = true
+			if s.BatchID != batchOf {
+				t.Errorf("the ref_moved row's batch %q is not the intent's %q", s.BatchID, batchOf)
+			}
+		}
+	}
+	if !intentSeen || !movedSeen {
+		t.Fatalf("the repair's stage rows %+v, want an intent of the verified head and a ref_moved of the same batch", stages)
+	}
+	// a replay of the same publication is idempotent: the target stays and no second stage row lands. The replaying relay is the
+	// same run, as a resumed process builds it: same run id and nonce, the handoff that run pinned.
+	closes, _ := labRows(l, ops.OpMilestoneClose)
+	if len(closes) != 1 {
+		t.Fatalf("%d close rows, want the one repaired close", len(closes))
+	}
+	rl := l.relayFor(closes[0].RunID+"-replay", l.handoffBytes(nil), 1)
+	rl.RunID, rl.Nonce = closes[0].RunID, closes[0].RunID
+	pinned, err := os.ReadFile(filepath.Join(RunDir(l.w.state, rl.RunID), HandoffFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rl.Handoff = HandoffRef{Path: filepath.Join(RunDir(l.w.state, rl.RunID), HandoffFile), SHA256: sha256Hex(pinned)}
+	rep, err := rl.IntegrateMilestoneRepair(context.Background(), ops.MilestoneRepairRequest{Plan: l.plan, Milestone: "M1", Base: first, Head: fixed, VerificationDigest: digest})
+	if err != nil || rep.Tip != fixed || rep.Moved {
+		t.Fatalf("a replay of the repair's publication: %+v %v", rep, err)
+	}
+	if again, err := store.IntegrationStagesOfPlan(context.Background(), l.w.st, l.plan); err != nil || len(again) != len(stages) {
+		t.Fatalf("the replay wrote %d stage rows, want the same %d: %v", len(again), len(stages), err)
+	}
+	l.git(l.repo, "merge-base", "--is-ancestor", first, fixed)
+	l.git(l.repo, "merge-base", "--is-ancestor", fixed, l.git(l.repo, "rev-parse", l.target))
+	if content := l.git(l.repo, "show", fixed+":node-A-1.txt"); !strings.Contains(content, "close correction") || !strings.HasPrefix(content, l.git(l.repo, "show", first+":node-A-1.txt")) {
+		t.Errorf("the fixed head's node-A-1.txt does not hold the original work plus the correction: %q", content)
+	}
+	// no second stage of per-node checks ran, and the candidate was committed once under the synthetic node
+	if checks := l.unitCheckRowsOf(node); len(checks) != 1 {
+		t.Errorf("%d unit checks of %s, want its one pre-commit check: %+v", len(checks), node, checks)
+	}
+	if commits := syntheticCommits(l); len(commits) != 1 || str(commits[0].Data, "commit") != fixed {
+		t.Errorf("the synthetic commits %+v, want the one commit %s of milestone:M1", commits, fixed)
+	}
+	// the candidate's gate ran before its recheck, and the close after it
+	gates, gateAt := labRows(l, "crw.finalGate")
+	candGate := -1
+	for i, g := range gates {
+		if str(g.Data, "head") == fixed {
+			candGate = i
+		}
+	}
+	if candGate < 0 || gateAt[candGate] > at[1] {
+		t.Errorf("no final gate of the candidate before the second crosscheck: gates %+v at %v, crosschecks at %v", gates, gateAt, at)
+	}
+	if closes, closeAt := labRows(l, ops.OpMilestoneClose); len(closes) != 1 || closeAt[0] < at[1] {
+		t.Errorf("the milestone closed before the recheck: closes %+v at %v", closes, closeAt)
+	}
+}
+
+// TestCloseLeavesSecondNeedsChangesPending (CRW-1473, DV-1490-2): the crosscheck's pass A finds a P1 core_function finding in the
+// integrated range of M1; the close repairs it once in the run (one close-fix executor call), and the same crosscheck re-runs as
+// round 2 on the candidate. A second needs_changes exhausts the run's one correction: no crw.milestoneClose and no crw.reportUp row,
+// no reviewer-final call, and the run ends escalated crosscheck_pending with ask crosscheck_pending (the 자식 hands it to the 부모),
+// its V the LAST crosscheck row's verdict and its fix packet naming the latest finding. The integration target stays at the head the
+// failed check judged: a candidate that still needs changes is never published.
+func TestCloseLeavesSecondNeedsChangesPending(t *testing.T) {
+	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+	f := reviewadapter.Finding{Severity: "P1", Impact: "core_function", File: "node-A-1.txt", Line: 1, Text: "the file breaks the criterion of the milestone"}
+	f2 := reviewadapter.Finding{Severity: "P1", Impact: "core_function", File: "node-A-1.txt", Line: 2, Text: "the correction still breaks the criterion"}
+	needs := func(f reviewadapter.Finding) reviewadapter.Result {
+		return reviewadapter.Result{State: reviewadapter.StateOK, Verdict: reviewadapter.VerdictNeedsChanges, Findings: []reviewadapter.Finding{f}}
+	}
+	l.Crosschecks("M1", 1, 0, "A", 1, needs(f))
+	l.Crosschecks("M1", 2, 0, "A", 1, needs(f2))
+	l.turn = closeFix(l, "A-1")
 	_, v := unitCheckRun(t, l)
 	if v["state"] != "escalated" || v["source"] != "crosscheck" || v["reason"] != "crosscheck_pending" || v["ask"] != "crosscheck_pending" {
 		t.Fatalf("the run's value %v, want escalated crosscheck_pending with ask crosscheck_pending", v)
 	}
-	rows, _ := labRows(l, ops.OpCrosscheck)
-	if len(rows) != 1 || str(rows[0].Data, "state") != ops.CrosscheckStateVerdict {
-		t.Fatalf("crosscheck rows %+v", rows)
+	if n := closeFixCalls(l); n != 1 {
+		t.Errorf("%d close-fix executor calls, want the one correction the run gets", n)
 	}
-	recorded := rows[0].Data["verdict"]
+	rows, _ := labRows(l, ops.OpCrosscheck)
+	if len(rows) != 2 || str(rows[0].Data, "state") != ops.CrosscheckStateVerdict || str(rows[1].Data, "state") != ops.CrosscheckStateVerdict {
+		t.Fatalf("crosscheck rows %+v, want two judged rounds", rows)
+	}
+	recorded := rows[1].Data["verdict"]
 	if rv, _ := recorded.(map[string]any); rv["verdict"] != reviewadapter.VerdictNeedsChanges {
-		t.Fatalf("the crosscheck row's verdict %v", recorded)
+		t.Fatalf("the last crosscheck row's verdict %v", recorded)
 	}
 	if !jsonEqualCLI(t, v["crosscheck"], recorded) {
-		t.Errorf("the run's value carries the crosscheck %v, want the row's verdict %v", v["crosscheck"], recorded)
+		t.Errorf("the run's value carries the crosscheck %v, want the LAST row's verdict %v", v["crosscheck"], recorded)
 	}
 	var esc map[string]any
 	for _, e := range l.events() {
@@ -912,16 +1116,19 @@ func TestCloseDoesNotCloseWhenTheCrosscheckHasAP1Finding(t *testing.T) {
 	}
 	evidence, _ := esc["evidence"].(map[string]any)
 	if !jsonEqualCLI(t, evidence["crosscheck"], recorded) {
-		t.Errorf("the escalation's evidence.crosscheck %v, want the row's verdict %v", evidence["crosscheck"], recorded)
+		t.Errorf("the escalation's evidence.crosscheck %v, want the last row's verdict %v", evidence["crosscheck"], recorded)
 	}
 	fix, _ := v["fix"].(string)
-	for _, want := range []string{id, "crw flow start land-head", "crw flow report-up", "부모"} {
+	for _, want := range []string{reviewadapter.FindingID(f2.File, f2.Text), "crw flow start land-head", "crw flow report-up", "부모"} {
 		if !strings.Contains(fix, want) {
 			t.Errorf("the fix packet lacks %q:\n%s", want, fix)
 		}
 	}
-	if strings.Contains(fix, "start crosscheck") {
-		t.Errorf("the fix packet starts a second crosscheck run:\n%s", fix)
+	// a candidate the second recheck rejected was never published, so it is no verified move for the push path (CRW-1490)
+	if commits := syntheticCommits(l); len(commits) != 1 {
+		t.Errorf("the synthetic commits %+v, want the one repair", commits)
+	} else if proven, err := (&dagsched.Scheduler{Store: l.w.st}).VerifiedMoveOnto(context.Background(), l.target, str(commits[0].Data, "commit")); err != nil || proven {
+		t.Errorf("the rejected candidate is a verified move for the push path: %v %v", proven, err)
 	}
 	for _, op := range []string{ops.OpMilestoneClose, ops.OpReportUp, ops.OpReviewerFinal} {
 		if got, _ := labRows(l, op); len(got) != 0 {
@@ -932,6 +1139,183 @@ func TestCloseDoesNotCloseWhenTheCrosscheckHasAP1Finding(t *testing.T) {
 		if c.Role == "reviewer-final" || strings.HasPrefix(c.Label, "reviewer-final:") || strings.HasPrefix(c.Label, "reflection:") {
 			t.Errorf("the close made the call %s (%s)", c.Label, c.Role)
 		}
+	}
+	if tip := l.git(l.repo, "rev-parse", l.target); tip != str(rows[0].Data, "head") {
+		t.Errorf("the integration tip %q moved off the judged head %q: a candidate that still needs changes was published", tip, str(rows[0].Data, "head"))
+	}
+}
+
+// TestCloseEvidenceMissingAsksAndRechecks (CRW-1490/DV-1490-2): a crosscheck finding that is only missing evidence is not a
+// correction: the close asks its evidence question of an explorer (crw.explore kind evidence at the failed head) and re-runs the
+// SAME crosscheck as round 2 of evidence round 1 on the SAME head, with the answers in the passes' prompts. No executor call and no
+// commit of the synthetic node run. Verified rechecks close; a second needs_changes is the existing crosscheck_pending.
+func TestCloseEvidenceMissingAsksAndRechecks(t *testing.T) {
+	missing := reviewadapter.Finding{Severity: "P2", Impact: "criterion_unmet", File: "node-A-1.txt", Line: 1, Text: "the verification evidence is missing",
+		Kind: reviewadapter.KindEvidenceMissing, EvidenceQuestion: &reviewadapter.EvidenceQuestion{Question: "Which command proves the milestone?", FilesNeeded: []string{"node-A-1.txt"}}}
+	needs := func(f reviewadapter.Finding) reviewadapter.Result {
+		return reviewadapter.Result{State: reviewadapter.StateOK, Verdict: reviewadapter.VerdictNeedsChanges, Findings: []reviewadapter.Finding{f}}
+	}
+	setup := func(t *testing.T) *laneLab {
+		l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+		l.Crosschecks("M1", 1, 0, "A", 1, needs(missing))
+		l.turn = func(c labCall, r fakehost.TurnRequest) (fakehost.TurnPlan, bool) {
+			if c.Role == "explorer" && (strings.HasPrefix(c.Label, "explore:milestone:M1") || strings.HasPrefix(c.Label, "explore:M1")) {
+				return labSay(map[string]any{"answer": "the milestone command passed", "evidence": []string{"go test ./node: PASS"}, "verified": []string{"go test ./node: PASS"},
+					"inferred": []string{}, "unknown": []string{}}), true
+			}
+			return fakehost.TurnPlan{}, false
+		}
+		return l
+	}
+	assertEvidenceClose := func(l *laneLab, res Result) {
+		if n := closeFixCalls(l); n != 0 {
+			t.Errorf("%d close-fix executor calls, want 0 for an evidence-only verdict", n)
+		}
+		if commits := syntheticCommits(l); len(commits) != 0 {
+			t.Errorf("%d commits of the synthetic node, want 0", len(commits))
+		}
+		rows, _ := labRows(l, ops.OpCrosscheck)
+		if len(rows) != 2 {
+			t.Fatalf("%d crosscheck rows, want the failed round and the evidence recheck: %+v", len(rows), rows)
+		}
+		if str(rows[1].Data, "head") != str(rows[0].Data, "head") {
+			t.Errorf("the evidence recheck judged another head: %q -> %q", str(rows[0].Data, "head"), str(rows[1].Data, "head"))
+		}
+		if rows[1].Data["round"] != float64(2) || rows[1].Data["evidence_round"] != float64(1) {
+			t.Errorf("the recheck is not round 2 of evidence round 1: %v", rows[1].Data)
+		}
+		routes := 0
+		for _, e := range l.events() {
+			if e.Kind == engine.KindCall && e.Op == ops.OpExploreRoute && e.Event == engine.EvCompleted && str(e.Data, "kind") == "evidence" {
+				routes++
+			}
+		}
+		if routes != 1 {
+			t.Errorf("%d evidence routes, want the one for the milestone's questions", routes)
+		}
+		for _, r := range l.cc.requests() {
+			if strings.HasPrefix(r.Key, "M1/r2/") {
+				for _, want := range []string{"Which command proves the milestone?", "the milestone command passed", "go test ./node: PASS"} {
+					if !strings.Contains(r.Request.Prompt, want) {
+						t.Errorf("the recheck prompt %s lacks %q:\n%s", r.Key, want, r.Request.Prompt)
+					}
+				}
+			}
+		}
+	}
+	t.Run("verified after the evidence", func(t *testing.T) {
+		l := setup(t)
+		res, _ := unitCheckRun(t, l)
+		l.closed(res)
+		assertEvidenceClose(l, res)
+	})
+	t.Run("a second needs_changes is pending", func(t *testing.T) {
+		l := setup(t)
+		l.Crosschecks("M1", 2, 1, "A", 1, needs(missing))
+		res, v := unitCheckRun(t, l)
+		assertEvidenceClose(l, res)
+		if v["state"] != "escalated" || v["reason"] != "crosscheck_pending" {
+			t.Fatalf("the run's value %v, want escalated crosscheck_pending", v)
+		}
+		for _, op := range []string{ops.OpMilestoneClose, ops.OpReportUp} {
+			if got, _ := labRows(l, op); len(got) != 0 {
+				t.Errorf("%d %s rows over a second needs_changes", len(got), op)
+			}
+		}
+	})
+}
+
+// TestCloseRepairDoesNotOverwriteATargetThatMoved (DV-1490-2): the repair is published by a fenced compare-and-swap from the failed
+// head: when the integration target moves between the recheck and the publication, the candidate is not forced on - the run ends
+// unsettled close_head_moved, nothing closes or is reported, and the target keeps the head that landed meanwhile.
+func TestCloseRepairDoesNotOverwriteATargetThatMoved(t *testing.T) {
+	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+	f := reviewadapter.Finding{Severity: "P1", Impact: "core_function", File: "node-A-1.txt", Line: 1, Text: "the file breaks the criterion of the milestone"}
+	l.Crosschecks("M1", 1, 0, "A", 1, reviewadapter.Result{State: reviewadapter.StateOK, Verdict: reviewadapter.VerdictNeedsChanges, Findings: []reviewadapter.Finding{f}})
+	l.turn = closeFix(l, "A-1")
+	var moved string
+	var once sync.Once
+	l.cc.onCheck = func(key string) {
+		// another candidate lands while the recheck's passes run
+		if !strings.HasPrefix(key, "M1/r2/") {
+			return
+		}
+		once.Do(func() {
+			tree := l.git(l.repo, "rev-parse", l.target+"^{tree}")
+			moved = l.git(l.repo, "commit-tree", tree, "-p", l.target, "-m", "landed meanwhile")
+			l.git(l.repo, "update-ref", "refs/heads/"+l.target, moved)
+		})
+	}
+	res, v := unitCheckRun(t, l)
+	if moved == "" {
+		t.Fatal("the recheck never ran")
+	}
+	if v["state"] != "escalated" && v["state"] != "stop" {
+		if v["state"] == "closed" {
+			t.Fatalf("the run closed over a target that moved: %s", res.Value)
+		}
+	}
+	if got := fmt.Sprint(v["reason"]); got != "close_head_moved" {
+		t.Fatalf("the run's reason %q, want close_head_moved: %s", got, res.Value)
+	}
+	if closes, _ := labRows(l, ops.OpMilestoneClose); len(closes) != 1 || closes[0].Data["moved"] != true {
+		t.Errorf("the close rows over a moved target: %+v, want the one close that answered moved", closes)
+	}
+	if got, _ := labRows(l, ops.OpReportUp); len(got) != 0 {
+		t.Errorf("%d crw.reportUp rows over a moved target", len(got))
+	}
+	if tip := l.git(l.repo, "rev-parse", l.target); tip != moved {
+		t.Errorf("the integration tip %q, want the head that landed meanwhile %q (the repair did not overwrite it)", tip, moved)
+	}
+}
+
+// TestCloseRepairDoesNotPublishAfterFailedVerification (DV-1490-2): the candidate the close's repair committed is gated before it is
+// rechecked: the final gate's verification of the candidate fails, so no second crosscheck runs, the milestone does not close and the
+// integration target stays at the head the failed check judged.
+func TestCloseRepairDoesNotPublishAfterFailedVerification(t *testing.T) {
+	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+	f := reviewadapter.Finding{Severity: "P1", Impact: "core_function", File: "node-A-1.txt", Line: 1, Text: "the file breaks the criterion of the milestone"}
+	l.Crosschecks("M1", 1, 0, "A", 1, reviewadapter.Result{State: reviewadapter.StateOK, Verdict: reviewadapter.VerdictNeedsChanges, Findings: []reviewadapter.Finding{f}})
+	// the lab's verifier fails the second gate head it is asked about (the repair candidate); the gate verifies are the
+	// commanded ones, so node checks are untouched
+	gateHeads := map[string]bool{}
+	l.verifyFail = func(req ops.VerifyRequest) bool {
+		if req.Command == "" || gateHeads[req.Head] {
+			return false
+		}
+		if len(gateHeads) > 0 {
+			return true
+		}
+		gateHeads[req.Head] = true
+		return false
+	}
+	l.turn = closeFix(l, "A-1")
+	res, v := unitCheckRun(t, l)
+	if v["state"] == "closed" {
+		t.Fatalf("the run closed over a candidate its gate failed: %s", res.Value)
+	}
+	if n := closeFixCalls(l); n != 1 {
+		t.Errorf("%d close-fix executor calls, want 1", n)
+	}
+	rows, _ := labRows(l, ops.OpCrosscheck)
+	if len(rows) != 1 {
+		t.Errorf("%d crosscheck rows, want only the failed round: %+v", len(rows), rows)
+	}
+	for _, op := range []string{ops.OpMilestoneClose, ops.OpReportUp} {
+		if got, _ := labRows(l, op); len(got) != 0 {
+			t.Errorf("%d %s rows over an ungated candidate", len(got), op)
+		}
+	}
+	if len(rows) == 1 {
+		if tip := l.git(l.repo, "rev-parse", l.target); tip != str(rows[0].Data, "head") {
+			t.Errorf("the integration tip %q moved off the judged head %q", tip, str(rows[0].Data, "head"))
+		}
+	}
+	// a candidate that failed the gate was never published, so it is no verified move for the push path (CRW-1490)
+	if commits := syntheticCommits(l); len(commits) != 1 {
+		t.Errorf("the synthetic commits %+v, want the one repair", commits)
+	} else if proven, err := (&dagsched.Scheduler{Store: l.w.st}).VerifiedMoveOnto(context.Background(), l.target, str(commits[0].Data, "commit")); err != nil || proven {
+		t.Errorf("the unverified candidate is a verified move for the push path: %v %v", proven, err)
 	}
 }
 
