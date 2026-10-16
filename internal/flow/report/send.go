@@ -10,6 +10,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // SupervisorSend is one notice for an initiative lead's thread.
@@ -61,17 +63,19 @@ type ManageSender struct {
 	// resume of a run in that store): a supervisor notice names it, so the command reads the binding's authorization and the pump tells the
 	// flow rows there. Empty: the configuration's relay.
 	State, Socket string
-	// Dir holds the message files (default: the temporary directory).
+	// Dir holds the message files (default: the one temp function's directory, tmploc.CreateTemp).
 	Dir string
 	Run func(ctx context.Context, program string, args ...string) (stdout []byte, exit int, err error)
 }
 
 func (m ManageSender) run(ctx context.Context, text string, args []string) (SendResult, error) {
-	dir := m.Dir
-	if dir == "" {
-		dir = os.TempDir()
+	var f *os.File
+	var err error
+	if m.Dir == "" {
+		f, err = tmploc.CreateTemp("crw-notice-*.txt")
+	} else {
+		f, err = os.CreateTemp(m.Dir, "crw-notice-*.txt")
 	}
-	f, err := os.CreateTemp(dir, "crw-notice-*.txt")
 	if err != nil {
 		return SendResult{}, err
 	}
