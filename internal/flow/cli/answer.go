@@ -148,7 +148,7 @@ func rowWarnings(row map[string]any) []string {
 }
 
 // applyAnswer judges the claim against the record and the journal and, when it holds, appends the row under the run lock. A legacy
-// issue-child run (legacyRun) is refused under the lock before the claim is judged: nothing is appended to it. A run a run process
+// `child` session run (legacyRun) is refused under the lock before the claim is judged: nothing is appended to it. A run a run process
 // holds is drained first (drainAndTake): the answer is applied only under the lock, once that process let it go, within wait. The
 // decision record is judged as the store holds it after the last wait: `crw relay decision-withdraw` changes a record without the run
 // lock, so a record read before a writer's hold or a drain ended is never the one applied (decisionNow). It returns the exit status
@@ -184,7 +184,7 @@ func (c *command) applyAnswer(st *store.Store, state string, claim Claim, wait t
 		fmt.Fprintf(c.stderr, "crw flow answer: error: %v\n", err)
 		return reply, 2
 	}
-	// a legacy issue-child run is read only (CRW-1415): no answer is appended to it, whether the run is to be resumed after or not
+	// a legacy `child` session run is read only (CRW-1415): no answer is appended to it, whether the run is to be resumed after or not
 	if why := legacyRun(j.Events(), claim.Run, run.Workflow); why != "" {
 		reply.Refusal = &Refusal{Code: RefusedLegacyRun, Detail: why}
 		return reply, 1
@@ -239,7 +239,7 @@ func replyCode(reply AnswerReply) int {
 }
 
 // prejudge judges the claim on a snapshot of the run's journal read without the run lock (the rows without their large payloads: the
-// questions and the applications are flow rows, read whole), as the locked path judges it: a legacy issue-child run, then Judge, on
+// questions and the applications are flow rows, read whole), as the locked path judges it: a legacy `child` session run, then Judge, on
 // the decision record read right then (decisionNow: one withdrawn while the answer waited is refused before anything more is asked).
 // It appends nothing and opens no journal handle (a handle numbers its rows from the rows it loaded, so one opened before a drained
 // process's last rows would fail its append). It answers done with the reply when the answer ends here: a refusal, a replay (OK), or
@@ -387,7 +387,7 @@ func runProcessCommand(cmd string) bool { return cmd == ProcessCommand || cmd ==
 func idOf(r lockRecord) holderID { return holderID{pid: r.PID, since: r.Since, command: r.Command} }
 
 // resumeDetached starts the process of a run again from its journal; a run with nothing left of its spec's budget, and a legacy
-// issue-child run, is refused before (resumeRefused, over the journal in st).
+// `child` session run, is refused before (resumeRefused, over the journal in st).
 func (c *command) resumeDetached(st *store.Store, state, run string) (int, error) {
 	spec, err := ReadSpec(state, run)
 	if err != nil {
@@ -413,7 +413,7 @@ func (c *command) resumeDetached(st *store.Store, state, run string) (int, error
 // control is `crw flow pause RUN` and `crw flow cancel RUN`. The process that holds the run lock is signalled: SIGUSR1 pauses it
 // (the calls in flight end held, and `crw flow resume` goes on with them), SIGTERM ends it (the calls in flight are cancelled and
 // the run finishes cancelled). A run no process holds is cancelled by a finished row written under the lock; a pause of it is
-// refused, since nothing runs. A legacy issue-child run is refused before anything (legacyRefused).
+// refused, since nothing runs. A legacy `child` session run is refused before anything (legacyRefused).
 func (c *command) control(args []string, verb string) int {
 	fs, cm := c.flags()
 	wait := fs.Int("wait", 20, "seconds to wait for the process to end after a cancel (0: do not wait)")
@@ -440,7 +440,7 @@ func (c *command) control(args []string, verb string) int {
 	if err != nil {
 		return c.fail("%v", err)
 	}
-	// a legacy issue-child run is read only (CRW-1415): no finished row, no execution given up, and no signal that makes its process write
+	// a legacy `child` session run is read only (CRW-1415): no finished row, no execution given up, and no signal that makes its process write
 	if code, refused := c.legacyRefused(cm, state, run); refused {
 		return code
 	}

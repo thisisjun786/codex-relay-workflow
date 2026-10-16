@@ -68,7 +68,7 @@ func reportUpCmd(ctx context.Context, args []string, env Environment) int {
 		return failure(env, "report-up", err)
 	}
 	defer st.Close()
-	// a legacy issue-child run is read only (CRW-1415): no report row is written to it
+	// a legacy `child` session run is read only (CRW-1415): no report row is written to it
 	if why, err := legacyOf(ctx, st, statePath, run, ""); err != nil {
 		return failure(env, "report-up", err)
 	} else if why != "" {

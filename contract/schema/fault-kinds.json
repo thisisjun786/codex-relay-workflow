@@ -26,7 +26,7 @@
     },
     "integration_target_moved": {
       "component": "integration",
-      "clears": "the fix and reverification loop once the target is back on a head the relay recorded or the move is accepted; a later push does not clear it, so its blocking notice is not withdrawn before the supervisor is told",
+      "clears": "the fix and reverification loop once the target is back on a head the relay recorded or the move is accepted; a later push does not clear it, so its blocking notice is not withdrawn before the 부모 is told",
       "threshold": null,
       "window": 21600.0
     },

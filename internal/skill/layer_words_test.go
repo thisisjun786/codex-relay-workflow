@@ -33,7 +33,7 @@ func TestSkillTextNamesTheLayers(t *testing.T) {
 	if got["reason"] != "malformed_role" || len(requires) != 1 {
 		t.Fatalf("an unknown role: %v", got)
 	}
-	check("the parent-title malformed_role requirement", requires[0], `["parent", "supervisor", "child"] (자식, 부모, issue child)`)
+	check("the parent-title malformed_role requirement", requires[0], "[\"parent\", \"supervisor\", \"child\"] (자식, 부모, `child` session)")
 
 	report, err := readyReportFor(readyInput{ID: "CRW-SYN", Title: "t", Labels: labelList{"design-first"}})
 	if err != nil {

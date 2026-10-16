@@ -629,7 +629,7 @@ func (s *Scheduler) AgentAcceptanceIntegrated(ctx context.Context, q store.Queri
 }
 
 // AgentExecuted is whether a node of a plan has an agent execution, current or closed: the chain AgentClose closes, holds or replays. A
-// node no release gave an agent execution has none, and so has a node only the relationship side (the retired issue-child path) executed.
+// node no release gave an agent execution has none, and so has a node only the relationship side (the retired `child` session path) executed.
 func AgentExecuted(ctx context.Context, q store.Querier, plan, node string) (bool, error) {
 	_, found, err := agentChainEnd(ctx, q, plan, node)
 	return found, err

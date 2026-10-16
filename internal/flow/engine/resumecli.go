@@ -191,7 +191,7 @@ func resumeCmd(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		}
 	}
 	defer closeSetup()
-	// a legacy issue-child run is refused as one, before the check of its started row: the run of an old issue-lane process that ended
+	// a legacy `child` session run is refused as one, before the check of its started row: the run of an old issue-lane process that ended
 	// before that row has none (CRW-1415)
 	if why := LegacyRun(setup.Journal.Events(), runID, ProgramWorkflow(prog)); why != "" {
 		fmt.Fprintf(stderr, "crw flow resume: error: %s\n", why)

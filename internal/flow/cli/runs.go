@@ -459,7 +459,7 @@ func releasedRow(e engine.Event) bool {
 }
 
 // nodeStarted says whether any process of the run started a node of its milestone: a crw.release released one to an executor, a
-// crw.integrate landed one, or, in an old run, a crw.releaseChild released an issue child (the issue child is retired, CRW-1415, and no
+// crw.integrate landed one, or, in an old run, a crw.releaseChild released a `child` session (the `child` session is retired, CRW-1415, and no
 // new run writes that row; an old run's row is read only). The reading is the lane's results, never the thread or turn rows of the journal.
 func nodeStarted(events []engine.Event) bool {
 	for _, e := range events {
@@ -477,8 +477,8 @@ func nodeStarted(events []engine.Event) bool {
 // ProjectLaneWorkflow is the built-in workflow that runs the issue nodes of a milestone.
 const ProjectLaneWorkflow = "project-lane"
 
-// LegacyIssueLaneWorkflow is an old run's workflow, read only: the issue lane of a child, retired with the issue child (CRW-1415). A run
-// record that names it still reads as a lane run; the run is a legacy issue-child run, not resumed (legacyRun).
+// LegacyIssueLaneWorkflow is an old run's workflow, read only: the issue lane of a child, retired with the `child` session (CRW-1415). A run
+// record that names it still reads as a lane run; the run is a legacy `child` session run, not resumed (legacyRun).
 const LegacyIssueLaneWorkflow = engine.LegacyIssueLaneWorkflow
 
 // laneWorkflows are the workflows whose run is meant to start the nodes of a plan: the built-in project lane and night batch, and an old

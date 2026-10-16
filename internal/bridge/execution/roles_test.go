@@ -222,7 +222,7 @@ func TestRoleErrorNamesTheLayers(t *testing.T) {
 		want  string
 		bare  []layername.Hit
 	}{
-		{"unknown role", doc{"bogus": doc{}}, `execution_policy_unreadable: "bogus" is not a role; supported are ["child", "parent", "supervisor"] (issue child, 자식, 부모)`, nil},
+		{"unknown role", doc{"bogus": doc{}}, "execution_policy_unreadable: \"bogus\" is not a role; supported are [\"child\", \"parent\", \"supervisor\"] (`child` session, 자식, 부모)", nil},
 		{"supervisor declares mcp", doc{"supervisor": doc{"expectation": "record", "mcp": mcpSection()}}, `execution_policy_unreadable: role 'supervisor' (부모) cannot declare "mcp": the 부모's thread is the user's own, so no profile switches anything off in it`, nil},
 		{"supervisor declares pair expectation", doc{"supervisor": doc{"expectation": "pair"}}, "execution_policy_unreadable: role 'supervisor' (부모) expectation must be 'record': its model and effort are the user's own selection, not something the policy pins", nil},
 		{"parent declares record", doc{"parent": doc{"expectation": "record", "model": "m", "reasoningEffort": "e"}}, `execution_policy_unreadable: role "parent" expectation must be 'pair': only 'supervisor' (부모) defers to the recorded authorization, and letting another role do so would exempt it from the role check`, []layername.Hit{{Word: "parent", Offset: 35}}},

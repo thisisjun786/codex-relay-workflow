@@ -142,7 +142,7 @@ func (c *command) next(args []string) int {
 			resumed = true
 			var legacy *legacyRunError
 			if pid, err := c.detachResume(cm, sel.Path, spec); errors.As(err, &legacy) {
-				// a legacy issue-child run is not resumed by any later look (CRW-1415): the refusal is next's answer, not a wait
+				// a legacy `child` session run is not resumed by any later look (CRW-1415): the refusal is next's answer, not a wait
 				return c.fail("%v", err)
 			} else if err != nil {
 				ans.Warnings = append(ans.Warnings, fmt.Sprintf("no process holds run %s and its resume did not start: %v", run, err))
@@ -303,7 +303,7 @@ func nextState(info RunInfo, live bool, steps []engine.Step) string {
 }
 
 // detachResume starts the run's process as `crw flow resume RUN --detach` does and waits until it holds the run. Like that command and
-// `crw flow answer` it asks resumeRefused first (CRW-1390, CRW-1415): a run whose spec's budget is spent, or a legacy issue-child run (a
+// `crw flow answer` it asks resumeRefused first (CRW-1390, CRW-1415): a run whose spec's budget is spent, or a legacy `child` session run (a
 // *legacyRunError, which next answers as its error), is refused with the same words, before a process is started that would take the run
 // lock and end at once.
 func (c *command) detachResume(cm *common, state string, spec Spec) (int, error) {
@@ -615,7 +615,7 @@ func (c *command) dispatched(args []string) int {
 	if _, err := ReadSpec(sel.Path, run); err != nil {
 		return c.fail("%v", err)
 	}
-	// a legacy issue-child run is read only (CRW-1415): no report is put in its inbox, which its resume would journal
+	// a legacy `child` session run is read only (CRW-1415): no report is put in its inbox, which its resume would journal
 	if code, refused := c.legacyRefused(cm, sel.Path, run); refused {
 		return code
 	}

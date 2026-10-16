@@ -659,7 +659,7 @@ func TestSchedRelayAcceptIntegrateCloseOnTempStore(t *testing.T) {
 	}
 }
 
-// TestSchedRelayReleaseChildRefusesUnwired (CRW-1277 g): the run starts no issue child, since a managed child start needs host settings it
+// TestSchedRelayReleaseChildRefusesUnwired (CRW-1277 g): the run starts no `child` session, since a managed child start needs host settings it
 // does not hold: ReleaseChild is an error, never a result the lane would record as a running child.
 func TestSchedRelayReleaseChildRefusesUnwired(t *testing.T) {
 	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
@@ -868,7 +868,7 @@ func TestSchedRelayTargetIsTheShortBranch(t *testing.T) {
 	}
 }
 
-// pastRelationshipExecution gives a node of the lab's plan an execution of the retired relationship (issue-child) path, as an old run's
+// pastRelationshipExecution gives a node of the lab's plan an execution of the retired relationship (`child` session) path, as an old run's
 // child left it in the relay: a dag_node_executions row and no agent execution.
 func (l *laneLab) pastRelationshipExecution(node string) {
 	l.t.Helper()
@@ -878,7 +878,7 @@ func (l *laneLab) pastRelationshipExecution(node string) {
 	}
 }
 
-// TestSchedRelayCloseLeavesARetiredRelationshipExecution (CRW-1415, PR #889 round 2): a node the retired issue-child path once executed
+// TestSchedRelayCloseLeavesARetiredRelationshipExecution (CRW-1415, PR #889 round 2): a node the retired `child` session path once executed
 // (a relationship execution, no agent execution) has no agent execution for Close to close: Close answers nothing closed and no
 // error, writes no agent closure, and does not take the plan's coordinator epoch for it.
 func TestSchedRelayCloseLeavesARetiredRelationshipExecution(t *testing.T) {
@@ -896,7 +896,7 @@ func TestSchedRelayCloseLeavesARetiredRelationshipExecution(t *testing.T) {
 }
 
 // TestChildSizedNodeWithARetiredRelationshipExecutionEscalates (CRW-1415, PR #889 round 2): a run of the current project lane over a plan
-// whose child-sized node the retired issue-child path once executed escalates the node as size_split with detail child_retired, with no
+// whose child-sized node the retired `child` session path once executed escalates the node as size_split with detail child_retired, with no
 // item error and no close refusal, and the other node of the milestone lands.
 func TestChildSizedNodeWithARetiredRelationshipExecutionEscalates(t *testing.T) {
 	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"}, labIssue{Key: "A-2", Milestone: "M1"})

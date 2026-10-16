@@ -10,7 +10,7 @@ import (
 
 // CRW-1353 (CRW-1316 S4, design-1316 sections 13 and 18): the child's skill and the documents it reads describe the session
 // call path and the way a child works. crw-run's default path is a flow run whose steps the child spawns as role subagents
-// (`crw flow next`, spawn_agent, `crw flow dispatched`), and an issue child of a plan with no run is the exception; the child splits work
+// (`crw flow next`, spawn_agent, `crw flow dispatched`), and a `child` session of a plan with no run is the exception; the child splits work
 // and spawns subagents broadly, follows the CXC sequence (architect, design audit, executors in parallel, a reviewer of another
 // family, a fix round, verification, landing, an explorer when needed), chooses the DAG or another way while CRW enforces the
 // order, the gates and the records, and is capped by agents.max_threads; ambiguity goes up as a decision request, never as an
@@ -96,9 +96,9 @@ func TestChildSkillSaysHowTheChildWorks(t *testing.T) {
 }
 
 // TestChildSkillDefaultPathIsTheFlowRun: the opening of crw-run makes the flow run with role subagents the default path, says that a
-// node sized for an issue child starts no issue child (the project lane escalates it as size_split with detail child_retired and the
-// parent asks for a bundle split, CRW-1415), keeps the issue child of a plan with no run the exception, and the rule against a subagent
-// standing in for an issue child stays on that path only.
+// node sized for a `child` session starts no `child` session (the project lane escalates it as size_split with detail child_retired and the
+// parent asks for a bundle split, CRW-1415), keeps the `child` session of a plan with no run the exception, and the rule against a subagent
+// standing in for a `child` session stays on that path only.
 func TestChildSkillDefaultPathIsTheFlowRun(t *testing.T) {
 	text := readRepoText(t, runSkillFile)
 	opening := normalized(text[:strings.Index(text, "\n## ")])
@@ -113,7 +113,7 @@ func TestChildSkillDefaultPathIsTheFlowRun(t *testing.T) {
 		t.Errorf("the opening of crw-run lacks %s", p)
 	}
 	if m := regexp.MustCompile(`(?i)SP-CHILD-1|releases? (that|the) \x60child\x60 session`).FindString(opening); m != "" {
-		t.Errorf("the opening of crw-run says the run starts an issue child (%s), a path the project lane retired", m)
+		t.Errorf("the opening of crw-run says the run starts a `child` session (%s), a path the project lane retired", m)
 	}
 	issue := normalized(sectionOf(text, "Independent implementation tasks"))
 	for _, p := range wordingMissing(issue, []string{
@@ -121,10 +121,10 @@ func TestChildSkillDefaultPathIsTheFlowRun(t *testing.T) {
 		`(?i)a step the run records`,
 		`(?i)for a plan with no flow run`,
 	}) {
-		t.Errorf("the issue child section lacks %s", p)
+		t.Errorf("the `child` session section lacks %s", p)
 	}
 	if m := regexp.MustCompile(`SP-CHILD-[12]`).FindString(issue); m != "" {
-		t.Errorf("the issue child section names the id %s of the retired path", m)
+		t.Errorf("the `child` session section names the id %s of the retired path", m)
 	}
 }
 

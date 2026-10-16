@@ -17,7 +17,7 @@ import (
 // thread title table of crw-canon/references/hierarchy.md, so the Codex app never shows the first prompt sentence
 // as its title. create_thread creates all three: the repository session (relay role supervisor, the table's
 // "[CRW] 부모 · <owner>/<repo>" from the checkout's origin when the caller gives no title), the project session
-// (relay role parent, the caller's title by crw-plan's rule) and an issue child (relay role child, the managed
+// (relay role parent, the caller's title by crw-plan's rule) and a `child` session (relay role child, the managed
 // start's "ISSUE-ID · title"). A naming failure is a warning in the receipt and on stderr, never a refusal.
 
 // namingHost makes the fake host keep the names thread/name/set gives and answer thread/read with them.
@@ -88,7 +88,7 @@ func TestCreatorsNameTheThreadByTheTitleTable(t *testing.T) {
 		{"the repository session from its origin", "supervisor", "", "https://github.com/thisisjun786/codex-relay-workflow.git", "[CRW] 부모 · thisisjun786/codex-relay-workflow"},
 		{"the repository session from an scp origin", "supervisor", "", "git@github.com:thisisjun786/crw-trial.git", "[CRW] 부모 · thisisjun786/crw-trial"},
 		{"the project session by crw-plan's rule", "parent", "[CRW] 실사용 첫 시험 (P-CRW-140)", "", "[CRW] 실사용 첫 시험 (P-CRW-140)"},
-		{"an issue child by the managed start's rule", "child", "CRW-1313 · 스레드 제목을 붙인다", "", "CRW-1313 · 스레드 제목을 붙인다"},
+		{"a `child` session by the managed start's rule", "child", "CRW-1313 · 스레드 제목을 붙인다", "", "CRW-1313 · 스레드 제목을 붙인다"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			b, host := rolesBridge(t)
@@ -159,7 +159,7 @@ func TestANamingFailureWarnsAndRecordsAndNeverRefuses(t *testing.T) {
 			t.Fatalf("no warning on stderr: %q", warnings.String())
 		}
 	})
-	t.Run("a project session or an issue child created without a title", func(t *testing.T) {
+	t.Run("a project session or a `child` session created without a title", func(t *testing.T) {
 		for _, role := range []string{"parent", "child"} {
 			captureTitleWarnings(t)
 			b, host := rolesBridge(t)
@@ -278,7 +278,7 @@ func TestWorktreeCreatorNamesTheThreadByTheTitleTable(t *testing.T) {
 	}{
 		{"the repository session from its origin", "supervisor", "", "git@github.com:thisisjun786/crw-trial.git", "[CRW] 부모 · thisisjun786/crw-trial"},
 		{"the project session by crw-plan's rule", "parent", "[CRW] 실사용 첫 시험 (P-CRW-140)", "", "[CRW] 실사용 첫 시험 (P-CRW-140)"},
-		{"an issue child by the managed start's rule", "child", "CRW-1313 · 스레드 제목을 붙인다", "", "CRW-1313 · 스레드 제목을 붙인다"},
+		{"a `child` session by the managed start's rule", "child", "CRW-1313 · 스레드 제목을 붙인다", "", "CRW-1313 · 스레드 제목을 붙인다"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			b, host := rolesBridge(t)
@@ -314,7 +314,7 @@ func TestAWorktreeNamingFailureWarnsAndRecordsAndNeverRefuses(t *testing.T) {
 		{"the host refuses thread/name/set", "parent", "[CRW] 시험", "title_not_set", true},
 		{"a repository session whose checkout has no origin", "supervisor", "", "title_unset", false},
 		{"a project session created without a title", "parent", "", "title_unset", false},
-		{"an issue child created without a title", "child", "", "title_unset", false},
+		{"a `child` session created without a title", "child", "", "title_unset", false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			warnings := captureTitleWarnings(t)
