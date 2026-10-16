@@ -202,6 +202,41 @@ func TestCloseEscalatesAnAuditMismatchAndKeepsTheThread(t *testing.T) {
 	}
 }
 
+// TestCloseAuditsAnUpperCaseUnitCheckAcceptanceWithoutAMismatch (CRW-1480 item 4): crw.accept takes a unit check whose sha is written in
+// upper case (a sha names the same object in either case), and the close's audit of that acceptance reads the check the same way: the
+// node's check names the tree of the head in upper case, the head is accepted on it, and the close audits the acceptance ok, with no
+// mismatch and no audit_mismatch escalation.
+func TestCloseAuditsAnUpperCaseUnitCheckAcceptanceWithoutAMismatch(t *testing.T) {
+	l := NewLab(t, oneNode()...)
+	upper := 0
+	l.Rewrite(func(ev engine.Event) engine.Event {
+		if ev.Kind == engine.KindCall && ev.Op == ops.OpUnitCheck && ev.Event == engine.EvCompleted && str(ev.Data, "node") == "A" {
+			d := map[string]any{}
+			for k, v := range ev.Data {
+				d[k] = v
+			}
+			for _, key := range []string{"commit", "tree"} {
+				if sha := str(d, key); sha != "" {
+					d[key] = strings.ToUpper(sha)
+					upper++
+				}
+			}
+			ev.Data = d
+		}
+		return ev
+	})
+	got := closeOf(t, l)
+	if upper == 0 {
+		t.Fatal("the unit check of A names no commit or tree to write in upper case")
+	}
+	if got.State != "closed" || got.Audit.OK != 1 || got.Audit.Mismatch != 0 {
+		t.Fatalf("the close of an acceptance on an upper-case unit check: %+v", got)
+	}
+	if reasons := escalationReasons(l); slices.Contains(reasons, "audit_mismatch") {
+		t.Errorf("escalations %v: an upper-case sha of the check is no mismatch", reasons)
+	}
+}
+
 // TestCloseAuditsTheAcceptancesAndArchivesNothing (CRW-1447): the close audits the acceptances of the milestone and archives nothing. A
 // close of a unit-check run writes one crw.audit row before its report and no crw.archive row, and the milestone's result holds the
 // audit and no archive member; an audit mismatch still tells the orchestrator (audit_mismatch), and nothing is archived either.

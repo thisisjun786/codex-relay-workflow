@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/audit"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/reviewadapter"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/roles"
@@ -1841,11 +1842,18 @@ type acceptRows struct {
 	head, base string
 }
 
-func newAcceptRows(t *testing.T) *acceptRows {
+func newAcceptRows(t *testing.T) *acceptRows { t.Helper(); return newAcceptRowsOf(t, "") }
+
+// newAcceptRowsOf is newAcceptRows with node A's plan naming criteria as its criteria digest (the release's, which an acceptance stands
+// on); "" keeps the plan's own.
+func newAcceptRowsOf(t *testing.T, criteria string) *acceptRows {
 	t.Helper()
 	w := newWorld(t)
 	w.relay.plan = planOfNodes(map[string]string{"A": "a1"}, "A")
 	w.relay.plan.Nodes[0].Criteria = []string{"first", "second"}
+	if criteria != "" {
+		w.relay.plan.Nodes[0].CriteriaDigest = criteria
+	}
 	w.ledgered(true, designOf("A"))
 	w.must("release", "plan-1", "A", "M")
 	capture := &acceptCapture{stubRelay: w.relay}
@@ -1965,6 +1973,38 @@ func TestAcceptTakesAUnitCheckWhoseShaIsUpperCase(t *testing.T) {
 		a.unitCheck("c_uc", c.extra)
 		if _, err := a.op("accept", "A", a.head); err != nil || len(a.relay.got) != 1 || a.relay.got[0].ReviewerCall != "c_uc" {
 			t.Errorf("a unit check that names %s: crw.accept %v %+v, want accepted on c_uc", c.what, err, a.relay.got)
+		}
+	}
+}
+
+// TestAuditOfAnUpperCaseUnitCheckAcceptanceIsNoMismatch (CRW-1480 item 4): a sha names the same object in either case, so the audit of
+// an acceptance on a unit check compares the check's commit and tree with the head and the head's tree as crw.accept does. An acceptance
+// on a check that names its commit or its tree in upper case audits with no mismatch: its unit_check_row check is ok (the world records
+// no executor call, so the acceptance as a whole is unobserved, never a mismatch).
+func TestAuditOfAnUpperCaseUnitCheckAcceptanceIsNoMismatch(t *testing.T) {
+	tree := strings.Repeat("e", 40)
+	for _, c := range []struct {
+		what  string
+		extra map[string]any
+	}{
+		{"the commit in upper case", map[string]any{"commit": strings.ToUpper(strings.Repeat("a", 40))}},
+		{"the tree in upper case", map[string]any{"tree": strings.ToUpper(tree)}},
+	} {
+		// the check is under the criteria digest of the node's release, which the acceptance stands on, and its row names its state
+		a := newAcceptRowsOf(t, strings.Repeat("c", 64))
+		a.committed(tree)
+		c.extra["state"] = "ok"
+		a.unitCheck("c_uc", c.extra)
+		if _, err := a.op("accept", "A", a.head); err != nil {
+			t.Fatalf("%s: crw.accept %v", c.what, err)
+		}
+		var aud AuditOutcome
+		if err := json.Unmarshal(a.must("audit", "M"), &aud); err != nil || len(aud.Results) != 1 {
+			t.Fatalf("%s: the audit %+v %v", c.what, aud, err)
+		}
+		r := aud.Results[0]
+		if aud.Mismatch != 0 || r.State == audit.Mismatch || len(r.Checks) == 0 || r.Checks[0].Name != audit.CheckUnitCheck || r.Checks[0].Result != audit.OK {
+			t.Errorf("%s: the audit of the acceptance: mismatch %d, %+v", c.what, aud.Mismatch, r)
 		}
 	}
 }
