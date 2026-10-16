@@ -46,6 +46,11 @@ const (
 	EvSuperseded     = "superseded"
 )
 
+// EvCancelWaiting is the flow row of a run that ends cancelled while ops are in flight (CRW-1573): written once, at the abort and
+// before the run waits for them, it names each op still running as {call_id, op, node}, sorted by call id, so a cancel that
+// cannot end the run within its wait can say what the run is ending. A cancelled run does not resume, so no replay reads it.
+const EvCancelWaiting = "cancel_waiting"
+
 // terminalEvents are the events that end a call; the CallResult status is that of the last one.
 var terminalEvents = map[string]string{
 	EvCompleted:      StatusCompleted,

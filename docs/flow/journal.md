@@ -34,6 +34,12 @@ saw. A row is never updated.
   told.
   A run no process holds whose last end row after its last `started` row is `run/paused` reads `paused`, not `dead`; its resume
   writes a new `started` row. A deadline, a token budget or a quota pause ends with `finished`.
+- A process whose run ends cancelled (`error_kind` `cancelled`: a SIGTERM, `crw flow cancel` of a run it holds) while registered
+  ops (`crw.<name>`) are still running writes one `cancel_waiting` flow row before it waits for them: `calls`, one
+  `{call_id, op, node}` per op in flight (`node` is the op's first argument when that is a string, or its `node` member when it
+  is an object, else `""`), sorted by call id. Each op it names writes its own terminal row after it, and the `finished` row
+  comes last. No op in flight, or another end (a script error, a pause, a deadline or budget stop), writes no such row. A cancelled run does not resume,
+  so no replay reads it.
 - A run no process holds is ended by `crw flow cancel` itself: under the run lock it appends one `finished` row (`status`
   `script_error`, `error_kind` `cancelled`, `by` `operator`, `executions_closed`, `slots_returned`), and `dead: true` only when
   the rows it reads under the lock show a `started` row with no end row after it (a run whose last end is `run/paused`, or a held

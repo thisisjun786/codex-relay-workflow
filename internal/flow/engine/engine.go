@@ -173,6 +173,11 @@ type Engine struct {
 	// inflight counts the goroutines of agent calls that have not written their terminal row; a run reports its end
 	// only after all of them have.
 	inflight sync.WaitGroup
+	// liveOps are the registered ops of this process whose goroutine has not written its terminal row, by call id; a run that
+	// ends cancelled names them in its cancel_waiting row (CRW-1573). An op leaves the set under liveOpsM before it writes its
+	// row, and the row is written under it, so every op the row names writes its own row after it.
+	liveOpsM sync.Mutex
+	liveOps  map[string]liveOp
 	// undelivered holds, by call id, the results a call ended on that the loop has not handed to the script yet; a run
 	// that is aborted reports them with the delivered ones.
 	undeliveredM sync.Mutex
@@ -454,6 +459,11 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 	}
 	if e.fatalErr != nil {
 		res.Status, res.ErrorKind, res.Error = RunScriptError, e.fatalKind, e.fatalErr.Error()
+	}
+	// A cancelled run says which ops it is ending before it waits for them (CRW-1573): a cancel that cannot end the run within
+	// its wait reads this row to name them.
+	if res.ErrorKind == ErrKindCancelled {
+		e.noteCancelWaiting()
 	}
 	// Every call still in flight was cancelled by the abort (or has finished); its terminal row is written before the
 	// run's last one.
