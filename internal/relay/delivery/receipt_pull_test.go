@@ -13,6 +13,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc/tmploctest"
 )
 
 const pullTurn = "pull-turn-1"
@@ -297,7 +298,7 @@ func TestReceiptPullCommandNeedsASocketAndSendsTheCallerIdentity(t *testing.T) {
 	if !errors.As(err, &usage) {
 		t.Fatalf("without --socket the command answers %v, want a usage error", err)
 	}
-	run.socket = "/tmp/relay-test.sock"
+	run.socket = tmploctest.SocketPath(t, "relay-test.sock")
 	var gotCommand string
 	var gotArgs map[string]any
 	old := HostCommand

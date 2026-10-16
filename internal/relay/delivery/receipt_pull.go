@@ -177,7 +177,7 @@ func (d *Service) relationshipCurrent(ctx context.Context, row Row) error {
 		return refuse(PullNotPullable, "the relationship of %s is not active", strconv.Quote(eventID))
 	}
 	if relationship.Parent.TaskID != row.S("recipient_task_id") {
-		return refuse(PullNotPullable, "%s is addressed to %s, which is not the parent of its relationship", strconv.Quote(eventID), strconv.Quote(row.S("recipient_task_id")))
+		return refuse(PullNotPullable, "%s is addressed to %s, which is not the parent (자식) of its relationship", strconv.Quote(eventID), strconv.Quote(row.S("recipient_task_id")))
 	}
 	if event.I("execution_generation") != relationship.Generation {
 		return refuse(PullNotPullable, "%s belongs to generation %d, not the current generation %d", strconv.Quote(eventID), event.I("execution_generation"), relationship.Generation)
@@ -191,7 +191,7 @@ func (d *Service) relationshipCurrent(ctx context.Context, row Row) error {
 func (d *Service) judgePull(ctx context.Context, row Row) error {
 	eventID, recipient := row.S("event_id"), row.S("recipient_task_id")
 	if row.S("kind") != Completion {
-		return refuse(PullNotPullable, "%s is a %s; only a completion is pulled into its parent's turn", strconv.Quote(eventID), strconv.Quote(row.S("kind")))
+		return refuse(PullNotPullable, "%s is a %s; only a completion is pulled into the turn of its parent (자식)", strconv.Quote(eventID), strconv.Quote(row.S("kind")))
 	}
 	if !slices.Contains([]string{Queued, DeferredBusy}, row.S("state")) {
 		return refuse(PullNotPullable, "%s is %s; only a queued or deferred_busy completion is pulled", strconv.Quote(eventID), strconv.Quote(row.S("state")))
@@ -216,7 +216,7 @@ func (d *Service) judgePull(ctx context.Context, row Row) error {
 			return err
 		}
 		if reason == "" {
-			return refuse(PullBehindOlder, "%s waits behind %s, an older delivery to the same parent", strconv.Quote(eventID), strconv.Quote(previous.S("event_id")))
+			return refuse(PullBehindOlder, "%s waits behind %s, an older delivery to the same parent (자식)", strconv.Quote(eventID), strconv.Quote(previous.S("event_id")))
 		}
 	}
 	return nil
