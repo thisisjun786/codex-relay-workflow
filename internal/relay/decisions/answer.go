@@ -151,9 +151,13 @@ func ValidateAnswer(record Record, answer Answer) (Record, error) {
 	answered.AnsweredAt = time.Now().UTC().Format(time.RFC3339Nano)
 	answered.AnsweredBy = answer.By
 	answered.AnsweredVia = answer.Via
+	// The option is the choice decision-apply reads, so it is the stored answer; prose given with it
+	// is the note beside it. A text-only answer stores its text as the answer, as it always has.
 	answered.AnswerText = text
-	if option != "" && text == "" {
+	answered.AnswerNote = ""
+	if option != "" {
 		answered.AnswerText = option
+		answered.AnswerNote = text
 	}
 	// The answer cites a class; it never rewrites the authority of the question it answers. The
 	// stored record keeps the class and the ref it was raised with, so what a question required is

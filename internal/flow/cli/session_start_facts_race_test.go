@@ -38,12 +38,12 @@ func TestOwnerBoundFactInTheFirstStartsWindowWarnsAsTheBindingRefuses(t *testing
 	cfg := filepath.Join(t.TempDir(), "codex")
 	_ = os.MkdirAll(cfg, 0o700)
 	_ = os.WriteFile(filepath.Join(cfg, "config.toml"), []byte("[agents]\nmax_threads = 4\n"), 0o600)
-	td.Getenv = func(k string) (string, bool) {
+	td.Getenv = td.w.withTemp(func(k string) (string, bool) {
 		if k == "CODEX_HOME" {
 			return cfg, true
 		}
 		return "", false
-	}
+	})
 	var preview, second struct {
 		code        int
 		out, errOut string
