@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
+	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/audit"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/reviewadapter"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/acceptance/premerge"
@@ -32,11 +35,28 @@ type AcceptOutcome struct {
 	Replayed       bool   `json:"replayed"`
 }
 
+// AcceptOpts are the options of crw.accept: Carried are the findings the node lane carried past its last unit-check round trip
+// (CRW-1465), each by its id and the crw.unitCheck call that carried it. Each is read from that check's record and joins the premerge
+// record's defects when the check the acceptance rests on does not name it: after a fix of a failed verification that check judges only
+// the fix, and the carried finding would be missing from the record. The carrying check is named because a finding id is a file and
+// a text and no grade: a later check may have reported the same finding at another severity. A finding the named check of the node did
+// not record is an error.
+type AcceptOpts struct {
+	Carried []CarriedFinding `json:"carried"`
+}
+
+// CarriedFinding is a finding the node lane carried: its finding id and the call id of the unit check that carried it.
+type CarriedFinding struct {
+	ID    string `json:"id"`
+	Check string `json:"check"`
+}
+
 func (o *acceptOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResult, error) {
 	var node string
 	var head HeadRef
-	if err := args(req.Args, &node, &head); err != nil {
-		return engine.OpResult{}, fmt.Errorf("crw.accept(node, head): %w", err)
+	var opts AcceptOpts
+	if err := args(req.Args, &node, &head, &opts); err != nil {
+		return engine.OpResult{}, fmt.Errorf("crw.accept(node, head, opts): %w", err)
 	}
 	r := rows(req.Journal.Events())
 	rel, ok := releaseRowOf(r, node)
@@ -115,16 +135,29 @@ func (o *acceptOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResu
 	}
 	var verdict ReviewVerdict
 	var grader premerge.Grader
-	var criteriaDigest, reviewerCall string
+	var criteriaDigest, reviewerCall, basis string
 	switch {
 	case ucAt >= 0:
 		row := r[ucAt]
-		v, err := UnitCheckVerdict(uc, row.CallID, dataStr(ver, "digest"), expectedCriteria(r, node))
+		// the receipt the check read, and whether the tool that judged was given it (CRW-1517); a row with no handed is from before
+		// it was recorded, when every unit check took the prompt
+		var receipt UnitCheckReceipt
+		if rc, ok := row.Data["receipt"].(map[string]any); ok && str(rc, "state") == "accepted" {
+			receipt = UnitCheckReceipt{SHA256: str(rc, "sha256"), Handed: true}
+			if h, has := rc["handed"]; has {
+				b, ok := h.(bool)
+				if !ok {
+					return engine.OpResult{}, &Refusal{"reviewer_not_verified", fmt.Sprintf("unit check %s records a receipt handed %v (%T), not a bool", row.CallID, h, h)}
+				}
+				receipt.Handed = b
+			}
+		}
+		v, err := UnitCheckVerdict(uc, row.CallID, dataStr(ver, "digest"), expectedCriteria(r, node), receipt)
 		if err != nil {
 			return engine.OpResult{}, &Refusal{"reviewer_not_verified", err.Error()}
 		}
 		verdict, grader = v, premerge.Grader{Model: uc.Model, Effort: uc.Effort, PromptDigest: uc.PromptDigest}
-		criteriaDigest, reviewerCall = dataStr(row, "criteria_digest"), row.CallID
+		criteriaDigest, reviewerCall, basis = dataStr(row, "criteria_digest"), row.CallID, audit.BasisUnitCheck
 	case revAt >= 0:
 		var rr ReviewResult
 		if err := json.Unmarshal(resultOf(r[revAt]), &rr); err != nil {
@@ -139,9 +172,21 @@ func (o *acceptOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResu
 			return engine.OpResult{}, &Refusal{"reviewer_missing", "the reviewer call " + rr.Call.CallID + " has no prepared row"}
 		}
 		verdict, grader = v, premerge.Grader{Model: str(prep.Data, "model"), Effort: str(prep.Data, "effort"), PromptDigest: str(prep.Data, "prompt_digest")}
-		criteriaDigest, reviewerCall = rr.CriteriaDigest, rr.Call.CallID
+		criteriaDigest, reviewerCall, basis = rr.CriteriaDigest, rr.Call.CallID, audit.BasisReview
 	default:
 		return engine.OpResult{}, &Refusal{"reviewer_missing", "no verified review or unit check of " + head.Commit + " is recorded for node " + node}
+	}
+	if len(opts.Carried) > 0 {
+		extra, err := carriedDefects(r, node, opts.Carried, verdict.Defects)
+		if err != nil {
+			return engine.OpResult{}, err
+		}
+		verdict.Defects = append(verdict.Defects, extra...)
+		ids := make([]string, 0, len(opts.Carried))
+		for _, c := range opts.Carried {
+			ids = append(ids, c.ID)
+		}
+		verdict.Summary += "; carried " + strings.Join(ids, ", ")
 	}
 	issue := node
 	if is, found, err := issueOf(r, rel, node); err == nil && found {
@@ -188,7 +233,42 @@ func (o *acceptOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResu
 	}
 	pdigest, _ := premerge.Digest(doc)
 	out := AcceptOutcome{AcceptanceID: res.AcceptanceID, Head: head.Commit, PremergeDigest: pdigest, Replayed: res.Replayed}
-	return engine.OpResult{Result: result(out), Data: map[string]any{"node": node, "head": head.Commit, "acceptance_id": res.AcceptanceID, "premerge_digest": pdigest, "plan": plan}}, nil
+	// the row names what the acceptance rests on (basis, and reviewer_call: the reviewer's call or the crw.unitCheck row's), which
+	// the audit of the milestone close reads
+	return engine.OpResult{Result: result(out), Data: map[string]any{"node": node, "head": head.Commit, "acceptance_id": res.AcceptanceID, "premerge_digest": pdigest, "plan": plan,
+		"basis": basis, "reviewer_call": reviewerCall}}, nil
+}
+
+// carriedDefects are the defects of the carried findings that have not a defect among those yet: each is the finding of its id in the
+// record of the unit check that carried it (a completed crw.unitCheck row of the node with that call id, role unit-check, a
+// judgment), as UnitCheckVerdict turns a finding into a defect.
+func carriedDefects(r rows, node string, carried []CarriedFinding, have []Defect) ([]Defect, error) {
+	var out []Defect
+	for _, c := range carried {
+		id := c.ID
+		if slices.ContainsFunc(have, func(d Defect) bool { return d.Ref == id }) || slices.ContainsFunc(out, func(d Defect) bool { return d.Ref == id }) {
+			continue
+		}
+		var found *reviewadapter.Finding
+		if row, ok := r.opRows(OpUnitCheck).last(func(ev engine.Event) bool {
+			return ev.CallID == c.Check && dataStr(ev, "node") == node && dataStr(ev, "role") == execution.AgentUnitCheck
+		}); ok && c.Check != "" {
+			var res reviewadapter.Result
+			if json.Unmarshal(resultOf(row), &res) == nil && res.State == reviewadapter.StateOK {
+				for j := range res.Findings {
+					if res.Findings[j].ID == id {
+						found = &res.Findings[j]
+						break
+					}
+				}
+			}
+		}
+		if found == nil {
+			return nil, fmt.Errorf("crw.accept: node %s: the carried finding %s is not in the record of unit check %q of the node", node, id, c.Check)
+		}
+		out = append(out, Defect{Ref: found.ID, Kind: "other", Severity: found.Severity, Impact: found.Impact, Introduced: true, File: found.File, Line: found.Line, Finding: found.Text})
+	}
+	return out, nil
 }
 
 // issueOf is the DESIGN entry of a node, from the ledger revision the node was released under.

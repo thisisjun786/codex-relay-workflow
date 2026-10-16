@@ -1,6 +1,6 @@
 # Issue boundaries and plan completeness
 
-Here the parent (relay role `parent`) is a relay role, read through [the level table](../../crw-canon/references/hierarchy.md#the-levels).
+Here the parent is a layer of [the level table](../../crw-canon/references/hierarchy.md#the-levels).
 
 Where one implementation issue ends, what it must carry, and how to tell that the split
 is finished. The mapping itself belongs to the shared
@@ -91,7 +91,7 @@ of one identifier break only the merge. So when a split gives two or more issues
 package, each of those issues states the top-level names already used in that package (read from the
 current tree, not from memory) and a naming prefix of its own for what it adds, and each new
 identifier is named in one issue's criteria only: a type or helper that two issues both ask for is
-either a prerequisite issue the others depend on or part of one issue. The parent builds the merge
+either a prerequisite issue the others depend on or part of one issue. The child builds the merge
 before each verdict to catch what still slips through ([build and vet the merged
 tree](../../crw-run/references/merge-readiness.md#build-and-vet-the-merged-tree-before-the-verdict)).
 
@@ -110,7 +110,7 @@ other sections, so the count has something to read; an issue that declares none 
 
 The answer is advisory: it never blocks a dispatch and never exits non-zero on the count alone, and the concept boundary above
 decides, not the count. `ok` changes nothing. `over_line` says the issue is over a baseline, and `over_line_accepted` says
-the same with a `--bundle-reason` recorded in the report, so the parent records why it accepted a bundle over the baseline.
+the same with a `--bundle-reason` recorded in the report, so the child records why it accepted a bundle over the baseline.
 Read the draft as a guess at where the criteria fall apart and apply the boundary rules to each bundle:
 it becomes an issue only with an observable result of its own, verifiable apart or landing after a prerequisite, and the
 closing check records the order edges. A bundle that fails those rules is not an issue. Where the parts cannot pass
@@ -123,14 +123,14 @@ and check every issue a split writes as an issue.
 
 Every implementation issue this skill writes or refines carries one child pair line, beside its size
 statement and under none of the headings the size check reads, so the line is neither counted as a
-criterion nor read as a deliverable. The line records which pair a child runs on for this issue.
+criterion nor read as a deliverable. The line records which pair a `child` session (a code id, not a layer) runs on for this issue.
 [Child pair by issue type](integrations.md#child-pair-by-issue-type) owns the routing table, the form of
 the line, the precedence and the cases the table does not settle; this page only places the duty in the
 plan.
 
 Write the line with the issue, and write it again when a change to the issue changes its type. A split
 writes each new issue its own line, because the parts can differ in type: a port that has an original and
-the new mechanism that replaces its slowest part are one plan and two pairs. A non-PR issue that a child
+the new mechanism that replaces its slowest part are one plan and two pairs. A non-PR issue that a `child` session
 will run, an investigation or an operational check, carries the line too. The read-back of the closing
 check below reads it with the other fields.
 
@@ -138,8 +138,8 @@ Classify the issue when the line is written: tag it by [the kind of work and its
 read the bundle off [the Bundles rows](integrations.md#bundles), and add the tags, the bundle and the
 source after the reason in [the extended line](integrations.md#the-extended-line), refining the tags
 whenever a change to the issue changes the work they describe. The tags come from what the issue states and
-use no result, run or child; where the issue's text does not settle one, amend the issue and do not guess.
-A line in the older form stays valid and is not rewritten for this; the dispatching parent classifies it at
+use no result, run or `child` session; where the issue's text does not settle one, amend the issue and do not guess.
+A line in the older form stays valid and is not rewritten for this; the dispatching child classifies it at
 release ([the record at release](integrations.md#the-record-at-release)). Put the line on a line of its own
 after a blank line, under a heading of its own such as `## Child pair` that is not deeper than the last
 heading the size check reads, so the check does not read it.
@@ -300,14 +300,14 @@ wrong row, and both are fixed here.
 | 24 | A proposed second issue would carry only the remainder of the work, with no result of its own. | 0 new issues; the work stays with the issue that names a deliverable, 0 issues whose only criterion is the rest. | Forbidden: no observable result of its own. |
 | 25 | A prior plan split the work by directory and the directories have since been reorganized. | Issues rematched by deliverable against accepted criteria, 0 issues recreated beside the old ones, 0 splits derived from the new layout. | Convergence: layout is not a deliverable. |
 | 26 | The size check answers `over_line` for an implementation issue and drafts four bundles; two of them can be verified apart and the other two only together. | The concept boundary decides: each bundle that is its own concept may become its own issue, the coupled two stay 1 issue keeping every criterion, order edges where the regions overlap; being verifiable apart permits the split and does not require it; 0 issues written from the draft as given. | Size check: the draft is a guess, the boundary rules decide. |
-| 27 | `over_line` and no bundle can pass verification apart. | 1 issue, 0 splits; the answer, the draft and the reason reported to the user; it dispatches normally, with the `--bundle-reason` recorded when the parent accepts it over the baseline. | Size check: parts that cannot pass apart stay one issue; the answer never blocks. |
+| 27 | `over_line` and no bundle can pass verification apart. | 1 issue, 0 splits; the answer, the draft and the reason reported to the user; it dispatches normally, with the `--bundle-reason` recorded when the child accepts it over the baseline. | Size check: parts that cannot pass apart stay one issue; the answer never blocks. |
 | 28 | The size check answers `ok` for an issue that also needs a change in a second repository. | 2 issues by the repository rule; the answer changes nothing in the boundary rules. | Size check: `ok` changes nothing. |
 | 29 | An issue ports a module to another language, and the original's recorded outputs decide when it is done. | 1 issue with 1 child pair line, Sonnet (reference exists); 0 lines that name a model or an effort. | Record the child pair: the answer comes from a reference. |
 | 30 | A test fails about one run in twenty, and two earlier fixes did not remove the failure. | 1 issue with 1 child pair line, SOL (answer must be found): the cause is unknown and a measurement ends the work. | Record the child pair: the answer has to be found. |
 | 31 | A new mechanism decides what a sandbox may be asked to do, so its core is a permission decision. | 1 issue with 1 child pair line, Sonnet, whose reason names the security rule although the shape says SOL. | Record the child pair: a security judgment at the core goes to Sonnet. |
-| 32 | An issue written before this rule has no child pair line, and the parent is about to dispatch it. | The parent routes it by the table, writes the line on the issue and reads it back, and only then prepares the packet; 0 children created before the line exists. | Record the child pair: an issue with no line. |
+| 32 | An issue written before this rule has no child pair line, and the child is about to dispatch it. | The child routes it by the table, writes the line on the issue and reads it back, and only then prepares the packet; 0 `child` sessions created before the line exists. | Record the child pair: an issue with no line. |
 | 33 | A plan writes an issue that rewrites a skill's procedure under the structure the existing documents already have. | 1 issue with 1 child pair line in the extended form: `answer=reference`, `output=writing`, bundle Sonnet fixed by row 3, axis `reference exists`, source `table`; the size check gives the same decision, counts and regions as for the same body with the older line or with no line. | Record the child pair: classify with the issue. |
 | 34 | An issue reads as a wiring change that an existing pattern decides (`answer=reference`), but two earlier fixes of the same fault did not remove it. | 1 issue with `history=retried`: bundle SOL fixed by row 2 before row 3 is read, axis `answer must be found`; 0 lines that stay Sonnet because the first reading was a wiring change. | Record the child pair: failure history comes before the reference. |
 | 35 | A plan writes an issue for a new report format that nothing outside the issue decides (`output=writing`, `answer=found`). | 1 issue, bundle flexible by row 5, axis `half-half`, pair by the count rule, source `table`; the shape table's third row is not reworded. | Record the child pair: the ambiguous case. |
-| 36 | Two flexible issues are planned in a project with no line yet and no child working. | The first goes to either pair and the pick is recorded; the second goes to the pair the first did not take, because fewer of the project's lines name it. | Record the child pair: the count rule's tie. |
+| 36 | Two flexible issues are planned in a project with no line yet and no `child` session working. | The first goes to either pair and the pick is recorded; the second goes to the pair the first did not take, because fewer of the project's lines name it. | Record the child pair: the count rule's tie. |
 | 37 | Two planned issues each add a new file to one Go package, and both would declare a `tokenize` helper. | 2 issues, no order edge for the files alone; each states the names already used in the package and a prefix of its own, and the shared helper is either 1 prerequisite issue both depend on or part of 1 issue; 0 criteria that name one identifier in two issues. | Decide the boundary: sibling issues in one package. |

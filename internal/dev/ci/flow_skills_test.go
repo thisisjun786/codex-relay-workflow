@@ -61,7 +61,8 @@ func flowOwnershipProblems(section string) []string {
 	for _, p := range wordingMissing(flat, []string{
 		`(?i)the executor and an oversized (issue )?child start no PABCD state machine`,
 		`(?i)the standalone PABCD rules are unchanged`,
-		`(?i)reviewer-final does not replace the pre-build design audit`,
+		`(?i)the crosscheck does not replace the pre-build design audit`,
+		`(?i)crosscheck[^.]*another (model|engine) family than (every|each|the) author`,
 		`(?i)another model family than the architect`,
 		`(?i)before any executor starts`,
 		`(?i)needs_changes[^.]*returns to the architect`,
@@ -70,14 +71,14 @@ func flowOwnershipProblems(section string) []string {
 		problems = append(problems, "the section lacks "+p)
 	}
 	// The order of the C4 procedure is the order of its numbered steps: DESIGN, then the audit, then the candidate review of each issue,
-	// then the final gate with reviewer-final.
+	// then the final gate with the crosscheck (CRW-1473: the milestone close runs the crosscheck in place of reviewer-final).
 	var steps []string
 	for _, line := range lines(section) {
 		if numberedStep.MatchString(line) {
 			steps = append(steps, normalized(line))
 		}
 	}
-	wantSteps := [][]string{{"architect DESIGN"}, {"pre-build design audit"}, {"candidate review"}, {"final gate", "reviewer-final"}}
+	wantSteps := [][]string{{"architect DESIGN"}, {"pre-build design audit"}, {"candidate review"}, {"final gate", "crosscheck"}}
 	if len(steps) != len(wantSteps) {
 		problems = append(problems, "the high-risk procedure has "+strconv.Itoa(len(steps))+" numbered steps, want 4")
 	} else {
@@ -99,7 +100,7 @@ func TestFlowControlOwnershipTableWording(t *testing.T) {
 	}
 	// The skill that classifies the work carries the same order for a C4 issue, so the two readers agree.
 	dev := normalized(readRepoText(t, "plugins/crw/skills/crw-dev/SKILL.md"))
-	for _, want := range []string{"independent pre-build design audit by the critic, of a different model family than the architect, before any executor starts", "reviewer-final does not replace the pre-build design audit"} {
+	for _, want := range []string{"independent pre-build design audit by the critic, of a different model family than the architect, before any executor starts", "the crosscheck does not replace the pre-build design audit"} {
 		if !strings.Contains(dev, want) {
 			t.Errorf("crw-dev/SKILL.md lacks %q", want)
 		}
@@ -124,7 +125,7 @@ func TestFlowControlOwnershipTableWording(t *testing.T) {
 		good := "## Who owns control in a flow-managed run\n\n| Control | Owner |\n|---|---|\n| Phases | the run |\n| Audit | the run |\n| Evidence | the run |\n\n" +
 			"The executor and an oversized child start no PABCD state machine. The standalone PABCD rules are unchanged.\n\n" +
 			"1. The architect DESIGN.\n2. The pre-build design audit, by the critic, of another model family than the architect, before any executor starts; needs_changes returns to the architect and a replan is audited again.\n" +
-			"3. The candidate review of each issue.\n4. After integration the final gate and reviewer-final. Reviewer-final does not replace the pre-build design audit.\n"
+			"3. The candidate review of each issue.\n4. After integration the final gate, then the crosscheck over the integrated range by a review engine of another model family than every author. The crosscheck does not replace the pre-build design audit.\n"
 		if p := flowOwnershipProblems(sectionOf(good, "Who owns control in a flow-managed run")); len(p) > 0 {
 			t.Fatalf("the good text is reported: %v", p)
 		}
@@ -137,7 +138,10 @@ func TestFlowControlOwnershipTableWording(t *testing.T) {
 				return strings.Replace(s, "start no PABCD state machine", "start the PABCD state machine", 1)
 			},
 			"final replaces": func(s string) string {
-				return strings.Replace(s, "Reviewer-final does not replace", "Reviewer-final replaces", 1)
+				return strings.Replace(s, "The crosscheck does not replace", "The crosscheck replaces", 1)
+			},
+			"crosscheck of the authors' family": func(s string) string {
+				return strings.Replace(s, "of another model family than every author", "of the authors' model family", 1)
 			},
 			"audit after run": func(s string) string {
 				return strings.Replace(s, "before any executor starts", "after the executors", 1)
@@ -189,9 +193,9 @@ func runSectionProblems(section string, relay map[string]bool) []string {
 		`(?i)milestone ends .?incomplete`,
 		`(?i)out-of-band [^.]*transition[^.]*(is )?(raised|goes) (to the manager )?as an escalation`,
 		`(?i)` + "`crw flow resume`",
-		// A node sized for an issue child starts no issue child (CRW-1415): the project lane escalates it as size_split with detail
+		// A node sized for a `child` session starts no `child` session (CRW-1415): the project lane escalates it as size_split with detail
 		// child_retired, the parent asks for a bundle split, and the thread sends no task packet for it.
-		`(?i)starts? no issue child`,
+		`(?i)starts? no \x60child\x60 session`,
 		"`size_split`",
 		"`child_retired`",
 		`(?i)bundle split`,
@@ -200,10 +204,10 @@ func runSectionProblems(section string, relay map[string]bool) []string {
 		problems = append(problems, "the section lacks "+p)
 	}
 	if m := regexp.MustCompile("(?i)releases? the (issue )?child of an oversized issue|crw\\.releaseChild|`issue-lane`").FindString(flat); m != "" {
-		problems = append(problems, "the section says the run starts an issue child ("+m+"), a path the project lane retired")
+		problems = append(problems, "the section says the run starts a `child` session ("+m+"), a path the project lane retired")
 	}
 	if regexp.MustCompile(`(?i)is the path of an oversized issue`).MatchString(flat) {
-		problems = append(problems, "the section sends an oversized issue to the dispatch of an issue child, which a run does not use")
+		problems = append(problems, "the section sends an oversized issue to the dispatch of a `child` session, which a run does not use")
 	}
 	// A thread never hands a decision up through a command the binary does not have.
 	if strings.Contains(flat, "crw manage decisions") {
@@ -244,7 +248,7 @@ func TestRunProjectNeverClaimsRunEpoch(t *testing.T) {
 			"The thread handles only escalations. " +
 			"It never claims the coordinator epoch of a plan a run holds with `dag-coordinator-claim`: the run's next write is `stale_coordinator_epoch` and the milestone ends `incomplete`. " +
 			"An out-of-band transition is raised as an escalation. A dead run is taken again with `crw flow resume`. " +
-			"A node sized for an issue child starts no issue child: the project lane escalates it as `size_split` with detail `child_retired`, the parent asks for a bundle split, and the thread sends no task packet for it.\n"
+			"A node sized for a `child` session starts no `child` session: the project lane escalates it as `size_split` with detail `child_retired`, the parent asks for a bundle split, and the thread sends no task packet for it.\n"
 		fixture := map[string]bool{"dag-coordinator-claim": true}
 		if p := runSectionProblems(sectionOf(good, "Run a milestone with a flow run"), fixture); len(p) > 0 {
 			t.Fatalf("the good text is reported: %v", p)
@@ -376,17 +380,17 @@ func TestPlanSizeFieldsAndOrchestrationWording(t *testing.T) {
 		`(?i)the concept boundary decides`,
 		"`over_line_accepted`", `(?i)bundle reason`,
 		"`size_split`", "`region_order_missing`",
-		// a run starts no issue child (CRW-1415): a node that reaches it as `child` is escalated, and the planner splits instead
-		"`child_retired`", `(?i)bundle split`, `(?i)starts? no issue child`,
+		// a run starts no `child` session (CRW-1415): a node that reaches it as `child` is escalated, and the planner splits instead
+		"`child_retired`", `(?i)bundle split`, `(?i)starts? no \x60child\x60 session`,
 		`(?i)no model name and no effort`,
 		fmt.Sprintf(`(?i)a name, at most %d issues`, compileMaxGroup(t)),
 	}); len(missing) > 0 {
 		t.Errorf("Set the size fields lacks: %s\n%s", strings.Join(missing, "\n  "), fields)
 	}
-	// the size fields send no node to an issue child: no planner or architect is told to set `child`
+	// the size fields send no node to a `child` session: no planner or architect is told to set `child`
 	for _, retired := range []string{"(?i)gets `size_fit` `child`", "(?i)may set `child`", `(?i)coordinates an issue-lane run`, `(?i)a child is for an issue that needs a coordinator`, `(?i)or send it to a child`} {
 		if m := regexp.MustCompile(retired).FindString(fields); m != "" {
-			t.Errorf("Set the size fields still sends a node to the retired issue child: %q", m)
+			t.Errorf("Set the size fields still sends a node to the retired `child` session: %q", m)
 		}
 	}
 	orchestration := normalized(sectionOf(plan, "Write the Orchestration section of the project"))
@@ -517,15 +521,15 @@ func TestPlanKeyDocsNameTheMilestoneKey(t *testing.T) {
 	}
 }
 
-// A task packet belongs to an issue child of a plan with no run. A flow run starts no issue child (CRW-1415): a node sized for one goes up
+// A task packet belongs to a `child` session of a plan with no run. A flow run starts no `child` session (CRW-1415): a node sized for one goes up
 // as a `size_split` escalation with detail `child_retired` and the repository session asks for a bundle split; the nodes a run releases get no packet from
 // the thread and start no PABCD state machine.
 func taskPacketScopeProblems(intro string) []string {
 	flat := normalized(intro)
 	var problems []string
 	for _, p := range wordingMissing(flat, []string{
-		`(?i)packets? (below )?(is|are) for an issue child of a plan with no run`,
-		`(?i)starts? no issue child`,
+		`(?i)packets? (below )?(is|are) for an? \x60child\x60 session of a plan with no run`,
+		`(?i)starts? no \x60child\x60 session`,
 		"`size_split`",
 		"`child_retired`",
 		`(?i)bundle split`,
@@ -550,7 +554,7 @@ func TestTaskPacketIsForAPlanWithNoRun(t *testing.T) {
 	if problems := taskPacketScopeProblems(intro); len(problems) > 0 {
 		t.Errorf("task-packet.md introduction:\n  %s\n%s", strings.Join(problems, "\n  "), normalized(intro))
 	}
-	good := "The packets are for an issue child of a plan with no run. A flow run starts no issue child: a node sized for one goes up as a `size_split` escalation with detail `child_retired` and the repository session asks for a bundle split. A node a run releases gets no packet from the thread and starts no PABCD state machine ([control](../../crw-canon/references/flow.md#who-owns-control-in-a-flow-managed-run))."
+	good := "The packets are for a `child` session of a plan with no run. A flow run starts no `child` session: a node sized for one goes up as a `size_split` escalation with detail `child_retired` and the repository session asks for a bundle split. A node a run releases gets no packet from the thread and starts no PABCD state machine ([control](../../crw-canon/references/flow.md#who-owns-control-in-a-flow-managed-run))."
 	if p := taskPacketScopeProblems(good); len(p) > 0 {
 		t.Fatalf("the good text is reported: %v", p)
 	}

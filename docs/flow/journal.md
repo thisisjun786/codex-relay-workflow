@@ -13,8 +13,9 @@ of a `flow_calls` row and the `seq` of a `flow_events` row, so reading a run bac
 saw. A row is never updated.
 
 - A dispatch intent (`prepared`, `thread_requested`, `fork_requested`, `turn_requested`, `interrupt_requested`, and the
-  `step_published` row of a session call) is committed in a transaction of its own before `Append` returns, and so before the
-  request it announces is sent (for a session call, before its step file and packet are written). The rows that wait before it
+  `step_published` and `evidence_placed` rows of a session call) is committed in a transaction of its own before `Append` returns,
+  and so before the request it announces is sent (for a session call, before its step file and packet are written, and before a
+  flow evidence record is written under the directory an `evidence_placed` row names). The rows that wait before it
   are committed first, in their own transaction, so the order on disk is the order of the run.
 - Every other row is written by the one run process in a batch transaction. It waits in memory until the next intent, the end
   of a call (its terminal row), the run's `started` and end rows (`finished`, or `run/paused`), or `Flush`, and is committed then, in order. A crash
@@ -27,10 +28,22 @@ saw. A row is never updated.
   still buffered, so the error is read again after it: a run whose last write failed ends with the journal's error, not as completed
   or paused.
 - A process ends the run with one KindRun end row. It is `finished` (`status`, `error_kind`, and `outcome` when a completed script
-  returned a milestone state, [script.md](script.md)) unless the operator paused the run (`crw flow pause`) and it would have ended
-  completed: then it is a `run/paused` row (`status` `paused`, `by`, `reason`) and no `finished` row, and no completion is told.
+  returned a milestone state, [script.md](script.md)) unless the operator paused the run (`crw flow pause`, `by` `operator`) or
+  an answer drained it (`crw flow answer` to a run a process holds, `by` `answer`) and it would have ended completed: then it is a
+  `run/paused` row (`status` `paused`, and the `by` and `reason` of the last such ask) and no `finished` row, and no completion is
+  told.
   A run no process holds whose last end row after its last `started` row is `run/paused` reads `paused`, not `dead`; its resume
   writes a new `started` row. A deadline, a token budget or a quota pause ends with `finished`.
+- A run no process holds is ended by `crw flow cancel` itself: under the run lock it appends one `finished` row (`status`
+  `script_error`, `error_kind` `cancelled`, `by` `operator`, `executions_closed`, `slots_returned`), and `dead: true` only when
+  the rows it reads under the lock show a `started` row with no end row after it (a run whose last end is `run/paused`, or a held
+  run, had no process because it ended, not because its process died). The member records what the cancel saw; readers derive
+  the state of a run from its rows and do not read the `dead` member. A cancel that finds the run over under the lock appends
+  nothing, so two cancels of one run write one end row, and still gives up the executions the ended run released and did not end
+  (their slots go back), as a cancel of a run it read over from the start does.
+- A binary before CRW-1487 knows no `run/paused` end: it reads a run that ended paused as `dead` (it resumes nothing; its pump
+  raises `run_dead` after `run_dead_seconds`, [reporting.md](reporting.md)). A rollback past CRW-1487 leaves such runs to be
+  resumed (`crw flow resume`) or cancelled by hand; a binary cannot be fixed after the fact.
 - `flow_runs` holds the identity of the run: the workflow, the digests of the script, its helpers and its arguments, and what the
   caller gives the journal (`Identity`: the plan and its revision, the actor task, the epoch nonce, the run it resumes). It is
   written with the first `started` row; a resumed run reuses it: a journal that is opened again (`journal.Open` with no `Identity`,
@@ -63,6 +76,10 @@ saw. A row is never updated.
   before the place was recorded carries neither: its turn takes the place its step recorded, the `repair` member every
   `step_published` row has (the task turn 1, the repair 2), a later turn at that place replacing the earlier one, so an older journal
   is read from recorded members too and never from its held rows or k ([script.md](script.md#attempts-restarts-and-continuations)).
+- A session call's `evidence_placed` row (`detail_json`: `evidence_assignment`, `evidence_cwd`, `attempt`, `marker`) names a
+  directory the engine is about to write the step's flow evidence record under when no other row of the call's newest generation
+  names it (CRW-1496). It has no column of its own and no reader of a call's state counts it; the release and the restore read the
+  directories from it.
 
 - A command that writes into a run which may be alive (`report-up`, `report-ack`, `report-delivered`;
   [reporting.md](reporting.md)) is not the run's process and numbers its `flow_events` rows from `engine.ForeignSeqBase` (`1 << 40`).
@@ -140,6 +157,13 @@ as such:
   recorded commit, the pending tree P of a build or fix journaled after that commit, or the P_held of an executor call held after
   it. A call is proven when the snapshot is its own P (or an earlier call's, which leaves the later calls unproven). A snapshot
   that is none of them breaks the proof from the latest build or fix after the last valid commit.
+- A call of a retired attempt (the node went on in a fresh worktree: a tier step, a rebuild) is judged without its worktree, which is
+  never read. A call that a recorded commit of the node made in that attempt covers, by the rule above over that attempt's calls, is
+  proven while the current `HEAD` descends from that commit (its work is in the history the node goes on from) and not otherwise. A
+  call no recorded commit covers left only uncommitted work, which a fresh attempt of the node prepared after it abandoned (a fresh
+  attempt starts at the node's last commit and takes none of an earlier attempt's working files: the node lane's tier step before
+  any commit, a rebuild after a checked fix): nothing reads its effect again, and it is proven as the recorded fact it is. A call of
+  an attempt no fresh one followed is the current attempt's.
 - A worktree a resume restored (below) holds the pending tree P of the last build or fix of the replayed prefix. It is the node's
   current worktree from the call that adopts it on, and it proves the calls of the prefix - the call P belongs to and the calls
   before it, which ran in the worktree of an earlier attempt - while its files are P.
@@ -153,15 +177,81 @@ as such:
 
 **Other effects.** Verify: a record of the same head and command that ran (`crw.verify`); a verification that could not run (the verifier is missing, it left no
 record) is asked again on a resume. The base it names is the merge-base of the head and the integration tip, the commit the node's
-work grew from, which the acceptance of the head uses too. A node released as a child or a split keeps its release row (`crw.release`). Review: a record of the same head and
+work grew from, which the acceptance of the head uses too. A failed verification's row and result carry `failed_tests`, one entry
+for each step of its record that failed and gives a reason (not a step skipped after an earlier failure): `job`, `step`, the `tests` (`--- FAIL: <Test>`) and `packages` (`FAIL\t<pkg>`)
+its reason names and `tail`, the last 20 lines of the reason (at most 2048 bytes); a reason with no such line has no test and no
+package, only the tail. The member is additive (a row without it names no failed test), and the executor's fix packet and a fresh
+thread's packet render it (CRW-1469). A node released as a child or a split keeps its release row (`crw.release`). Review: a record of the same head and
 criteria digest (`crw.review`). Accept: the recorded acceptance is active, not stale, of the same head (the relay says which).
 Integrate: the recorded batch commit is an ancestor of the integration ref; the target moving on keeps it an ancestor. Gate: a
 passing record of the current integration head, the same command set (the plan's required commands joined with `;`) and the same
 range (`crw.finalGate`; its row holds the judgement of each piece of evidence, fresh, missing or stale, and the gate row of a head the
 target has left is not replayed: the gate judges the new head). Reviewer-final: a record of the same integration range and criteria
-digest (`crw.reviewerFinal`). The test evidence of the gate is a `crw.verify` row with no node (the verification of the integrated head,
+digest (`crw.reviewerFinal`; the shipped close makes none, its review is the crosscheck below). The test evidence of the gate is a `crw.verify` row with no node (the verification of the integrated head,
 which names the milestone), and the QA evidence a `crw.qaReceipt` row (it holds the identity of the tree the capture call ended in, which the completed row of a QA call records as `qa_source`); each is judged fresh by the identity of the head it stands on
 (`source.Compare`).
+
+**Unit check.** A row `crw.unitCheck` is one unit check of a node's work, run by the run itself (the op runs the review tool through
+the review adapter; no agent call, no reviewer thread). Its data: `node`; `mode` (`uncommitted`: the changes the judged executor call left in
+the node's worktree, or `committed`: the range `base..commit` checked out in it); `call` (the executor call it judged, uncommitted mode) or
+`commit` and `base` (committed mode); `round` and `final` as the lane passed them; `execution_id` and `criteria_digest` of the node's release
+row; `tree` (the fingerprint the check saw, the snapshot `crw.commit` commits as its `tree`); `role` `unit-check`; `state`, `verdict` and
+`findings` (their count); `retried` and `first_state` `invalid` when an invalid answer was asked once more and the second record kept;
+`fallback_from` (the name of the first profile, such as `codex-review`), `fallback_state` (`quota`), `fallback_model` and, when that
+quota came on the retry of an invalid answer, `fallback_retried`, when the first tool's quota was spent and the check was asked once more
+of the fallback profile (Bugbot; `retried` and `first_state` are then about the fallback's calls, and the first profile's record is the
+result's `fallback`); `hold` (`unit_check_quota`, `unit_check_no_answer`, or `receipt_missing`, `receipt_unverified`, `receipt_not_copied` when the executor's
+evidence receipt could not be read) when the lane is to hold the node; `receipt` (the executor's evidence receipt as the check read it:
+`state` `accepted` with its `sha256`, `copy` and `ignored`, or, when the backend could not copy it to the step bus or the copy cannot be
+read, with the `path` it was read from in place of the copy (where the hook accepted it, the bytes still hashing to the `sha256`) and the
+`copy_error`; an accepted receipt also names `handed`, true when the tool that judged (the row's `result`) was given the prompt that
+holds the receipt and false for the Codex review profiles, which take no prompt (`crw.accept` then names the receipt as read and kept,
+not handed to the tool; a row with no `handed` was written when every unit check took the prompt and reads as handed); `not_assigned` when the call was given none, or `no_executor` for a committed check); and `result`, the `reviewadapter.Result` of the call that answered last (state, verdict, findings with their line-free ids, engine family, model, effort, guide
+revision, prompt digest, both fingerprints), with `fallback`, the first profile's quota record, when the check fell back. `crw.accept` and the relay take a row of role `unit-check` whose result state is `ok` and that is
+on the head (its `commit`, or its `tree` equal to the head's tree) as the judgment of the head. A check that was not run names no role: when
+the worktree is no longer the judged call's pending tree the row has `state` `tree_moved`, `tree_moved` true, `pending_tree` and `tree`
+(the tool is not run, since `crw.commit` commits the pending tree); when the worktree's `HEAD` is not the commit the node's attempt is
+at (the `start` the judged call's row records under `executor_head_moved`, else the start of the attempt's worktree or the node's last
+`crw.commit` since), as when the executor committed its work itself on any backend, the row has `state` `head_moved` and `head_moved`
+(`start`, `head`), since the uncommitted changes are not the change `crw.commit` commits on that start; a committed check whose checkout is not the commit's tree has
+`state` `tree_moved`, `commit_tree` and `tree`; a check whose tool judged another tree than the one the op snapped for it (the worktree
+changed after the snap, before the call or before the retry of an invalid answer: the tool's fingerprint, or the worktree after the call,
+is not the snapped tree) is no judgment either and has `state` `tree_moved`, `tree_moved` true, the snapped tree (`commit_tree`, or
+`pending_tree`) and the `tree` it saw; a check during which the worktree's `HEAD` moved (it is read before and after each call, also one
+that failed, the first and the retry of an invalid answer; a commit of the same tree moves it too, and empties the uncommitted diff the tool reads) is
+no judgment either and has `state` `head_moved`, `head_moved` (`start`, the `HEAD` the check is of, and `head`) and the snapped tree
+(`commit_tree`, or `pending_tree`); and a receipt that could not be read leaves `receipt` and `hold` with no
+`tree` and no `commit`; neither reader takes such a row. A check is proven unless its row names a `hold`: a resume runs the check that held the
+node again (it asks the tool, or reads the receipt, again), and the hold itself is the `crw.hold` row the lane writes after it (`source` `unit_check`), as for a
+verification that could not run. An error of the tool's runner (a bad request, a fingerprint that could not be taken) writes no row.
+
+**Crosscheck.** A row `crw.crosscheck` is one round of the crosscheck of a milestone at its close (CRW-1473), run by the run itself: the
+op runs the review engine through the review adapter, as the unit check does, with no agent call and no reviewer thread. Its data:
+`milestone`, `plan`, `head` (the head of the gate the close passed), `round` (1: the op serves round 1 only, and a prior verdict or another
+round is refused `crosscheck_prior_invalid`), `evidence_round` (0), `state` (`verdict`, `held`, `refused`, `failed`, `no_verdict`),
+`reason` (of a refused, failed or no_verdict round), `detail`, `hold` (of a held round: `crosscheck_quota` and `crosscheck_no_answer` when a
+pass gave no judgment, `crosscheck_receipt_missing`, `crosscheck_receipt_unverified`, `crosscheck_receipt_not_copied` and
+`crosscheck_receipt_mismatch` with the `node` when an executor receipt could not be handed over), `engine_family` and `model` once an engine
+was chosen, `passes` (each attempt of each pass: `pass` `A` or `B`, `attempt`, `state`, `verdict` (the pass's own word, `verified` or
+`needs_changes`, of an `ok` answer; absent for an attempt that gave none), `elapsed_ms`, `model`, `prompt_digest`, `voided`
+for an attempt that read no repository, `retried` for the one retry of an invalid answer, `detail`), `cleanup` when a checkout could not be
+removed, and `verdict`, the verdict V of a round that judged (null otherwise): the word (`verified` or `needs_changes`; `verified` only
+when no merged finding blocks and every pass's own `verdict` is verified), the merged
+`findings`, `carried` and `follow_ups` (the findings that do not block, by id and as one line each), `guide_rev`, `engine_family`,
+`engine_families`, `model`, `round`, `evidence_round`, `milestone`, `plan`, `head`, `base`, `run`, `author_families` and `authors` (each
+author with its `source` `role` or `call`, its `name`, `model` and `family`), `receipts` (each node's receipt `state` and `sha256`),
+`receipts_file` and `receipts_sha256`, and `passes`. A crosscheck is proven (`ops.CrosscheckProof`) by a completed row of the same
+milestone, head, round and evidence round with a state other than held; a row of another head is no proof, and a held row proves
+nothing, so a resume runs the round again.
+
+**Close.** A row `crw.milestoneClose` is the close of a milestone over its evidence `{gate, crosscheck}`: the gate that passed and the
+crosscheck's V. The op refuses, writing no completed row (reason `close_unverified`), evidence whose `crosscheck` is not a verified V of
+the gate's milestone and head, evidence with no `crosscheck` whose `final` (the reviewer-final review of a journal of a close made before
+the crosscheck) is not a verified verdict, and evidence with neither. The row names the range, the tip the close judged and whether the
+target moved on after the gate (`moved`); the answer carries the gate, the crosscheck V (`crosscheck`, null when absent) and `final` as
+they were given. The report of the close (`crw.reportUp`) stores a body that names the integrated range and, one line each, `Final gate:`,
+`Crosscheck:` (V on one line), `Reflection:` (the reflection's alignment: `ALIGNED`, `MISALIGNED` or `NOT_ASSESSED`), `Final review:` and
+`Audit:`, with `none` for a piece the close did not make ([reporting.md](reporting.md)).
 
 **The design ledger and the signals.** A row `crw.designLedger` is a revision of the milestone's ledger (`revision`, `digest`, `design`, `answers`,
 `architect_call` and `architect_handle`, the `signal` that made it, `base_tip` - the head the DESIGN ran at: for `r0` the start commit of the architect's call-private checkout as the architect's `prepared` row records it (reached through `resume_of` from a design fix that went on in that directory), never the integration tip read after the audit, and `""` when no placement recorded one; for a later revision the head its re-plan pinned - and `slices`, the slice digest of every node of the plan it was made
@@ -176,10 +266,17 @@ digest), `attempt` (`live:<n>` for a recorded signal that could not replay, `n` 
 **Audit.** A row `crw.audit` (the call row of the audit, written by `crw.audit` in a run and by `crw flow audit` beside it) holds the
 audit results of acceptances: `results`, each with the acceptance id, the node, the head, the reviewer call, the thread and turn it read,
 the checks and the state (`ok`, `mismatch`, `unobserved`). The newest row that audits an acceptance decides whether it passed
-(`audit.Passed`); a reviewer thread is archived only for an acceptance that passed (`crw.archive`).
+(`audit.Passed`); a reviewer thread is archived only for an acceptance that passed (`crw.archive`). The completed `crw.accept` row names what the acceptance rests
+on: `basis` (`review`, or `unit_check`) and `reviewer_call` (the reviewer's call, or the call of the `crw.unitCheck` row), besides
+`node`, `head`, `acceptance_id`, `premerge_digest` and `plan`; an older row names neither and is audited on the newest verified
+`crw.review` of its head. An acceptance on a unit check rests on no reviewer thread: its audit checks that row (`unit_check_row`: a
+completed check of the node with role `unit-check`, state `ok`, verdict `verified` over no blocking finding, on the head by its `commit` or by the head's recorded tree, under the
+criteria digest of the node's release) and the executor pair, reads nothing from the host and names no thread, and `crw.archive`
+neither archives nor keeps anything for it. A land-head acceptance has no executor call, so its executor pair and its result are
+`unobserved`.
 
-**Recording calls.** `escalate`, `reportUp`, `hold`, `tierStep`, `spawnDecision`, `stepRecord`, `exploreRoute`, `exploreRecord`, `designAudit`, `designLedger`, `qaReceipt`, `qaCapture`, `reviewerFinal`, `audit`, `archive`, `replanSignals`, `currentDesign`, `reflection`, `signalBind`, `signalDone`, `signalClose`, `designHead` and `releasedPlans` only record a fact. `releaseChild` was the old project lane's start of a node's issue child; no
-script calls it and no lane installs it now (CRW-1415). A run whose journal holds a `crw.releaseChild` row is a legacy issue-child run, and
+**Recording calls.** `escalate`, `reportUp`, `hold`, `tierStep`, `spawnDecision`, `stepRecord`, `exploreRoute`, `exploreRecord`, `designAudit`, `designLedger`, `qaReceipt`, `qaCapture`, `reviewerFinal`, `audit`, `archive`, `replanSignals`, `currentDesign`, `reflection`, `signalBind`, `signalDone`, `signalClose`, `designHead` and `releasedPlans` only record a fact. `releaseChild` was the old project lane's start of a node's `child` session (a code id, not a layer); no
+script calls it and no lane installs it now (CRW-1415). A run whose journal holds a `crw.releaseChild` row is a legacy `child`-session run, and
 it is not resumed: the current lane sends a node sized for a child up as a `size_split` escalation at the position where the old lane
 decided and started the child, so a resume would not replay that start - it would escalate the node live, leave the child running and run
 every later position of the parent's path live. `engine.Run` refuses the resume of such a run before it writes a row (and the resume of a
@@ -189,7 +286,7 @@ write to the run's journal, or make its process write, refuses it with `legacy_i
 process holds the run or not: `crw flow cancel` (no finished row, no execution given up), `crw flow pause`, `crw flow recover`, `crw flow
 dispatched` (no report in the run's inbox), `crw flow answer` and `crw flow report-up`; `crw flow audit` prints its results and records no
 row. The delivery bookkeeping of a report already on record (`crw flow report-ack`, `crw flow report-delivered`) records the delivery and
-not the run's progress, and is kept. The refusal names the legacy issue-child path and the `crw.releaseChild` row. The run's records stay
+not the run's progress, and is kept. The refusal names the legacy `child`-session path and the `crw.releaseChild` row. The run's records stay
 read only: `crw flow show`, the summary and the run readers read them. A call with a completed row
 of its own operation at its call id is not sent again (a completed call of another operation at the same position, such as an
 agent call of the earlier script, is not its record), whatever else is true; a call without one is executed live under the same call id and the same idempotent

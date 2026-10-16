@@ -18,7 +18,7 @@ Each kind of worktree has one owner; the other skills point here and do not take
 |---|---|---|
 | Codex-app managed worktree: one per thread under `$CODEX_HOME/worktrees` | `crw-worktree-guardian` | this skill |
 | Branch hygiene: stale branches, removing an attached worktree, local garbage collection | `crw-dev-devops` | [branch lifecycle](../crw-dev-devops/references/branch-lifecycle.md) and [local GC](../crw-dev-devops/references/local-gc.md) |
-| The workspace of a run: the checkouts a child assigns to its issue children | `crw-run` | [Check who already owns the workspace](../crw-run/SKILL.md#check-who-already-owns-the-workspace) |
+| The workspace of a run: the checkouts a child assigns to its `child` sessions | `crw-run` | [Check who already owns the workspace](../crw-run/SKILL.md#check-who-already-owns-the-workspace) |
 
 ## 1. Three namespaces (WG-CONCEPT-01)
 

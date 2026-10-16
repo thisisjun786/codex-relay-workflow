@@ -1,15 +1,16 @@
 import { RECEIPT, DESIGN, DESIGN_AUDIT, REFLECTION } from 'crw:lib/schemas'
 import { install } from 'crw:lib/lane'
+import { reportClose } from 'crw:lib/close'
 import { answeredQuestions, architectPacket, auditFindings, designAnswersPacket, designAuditPacket, designFixPacket, reflectionPacket, replanPacket, packet, answerPacket, fixPacket } from 'crw:lib/packets'
 export const meta = { name: 'project-lane', description: 'Run the issues of a milestone: background explorers, architect, design audit by the critic, explorers, one lane per issue node, milestone close and report', phases: ['explore', 'design', 'build', 'milestone'], args: { plan: 'string', milestone: 'string', cap: 'number' } }
 
 // The project lane. Explorers first read the repository for each node of the milestone (the background questions, CRW-1466), the
 // milestone is designed once by its architect over what they found, the DESIGN is audited by the critic, of another model family,
-// before any executor starts, every issue node then runs its own lane (an executor, the run's commit and verification, an
-// independent review, the land), and the milestone is closed over what the lanes integrated. Every fact a lane uses comes from
-// the journal: the plan of its issue from the design revision it was released under (crw.issuePlan), the evidence of its tier
-// from the calls it made. The operations are the host's (internal/flow/ops); the composites (crw.dag, crw.review, crw.land, ...)
-// come from crw:lib/lane.
+// before any executor starts, every issue node then runs its own lane (an executor, the unit check of its uncommitted work by a
+// review tool of another model family, run in Go with no reviewer agent, the run's commit and verification, the land), and the
+// milestone is closed over what the lanes integrated. Every fact a lane uses comes from the journal: the plan of its issue from the
+// design revision it was released under (crw.issuePlan), the evidence of its tier from the calls and checks it made. The operations
+// are the host's (internal/flow/ops); the composites (crw.dag, crw.land, ...) come from crw:lib/lane.
 install(crw)
 
 // The caps of the design loop (one auditedDesign: the DESIGN it starts from, its audit rounds and the architect's fixes; CRW-1327).
@@ -24,8 +25,6 @@ install(crw)
 const AUDIT_ROUNDS = 3
 const DESIGN_TOKEN_CAP = 5000000
 const DESIGN_TOKEN_WARN = 0.8
-// the research continuations a node gets on one tier (SP-EXPL-2); after them the node escalates as a scope question
-const RESEARCH_PER_TIER = 2
 
 const ms = await crw.milestone(args.plan, args.milestone)
 // the commands of the issues' done conditions (CRW-1382): the design-stage explorer runs each once and records the exit code and the tests
@@ -218,6 +217,21 @@ async function lane(n, rel, sig) {
 
 // The lane of one issue node. It reads no variable of the script that another lane may have changed: its facts are the plan of
 // its release revision and the results of its own calls.
+//
+// The node's work is judged by its unit check before the run commits it (CRW-1465): crw.unitCheck runs the review tool in Go over the
+// executor's uncommitted changes (no reviewer agent is called). A check with any finding goes back to the same executor thread to be
+// fixed, at most UNIT_CHECK_ROUNDS round trips on a tier; the findings of a check after them are carried, before any tier step: only
+// non-blocking ones and the node lands with them (premerge defects that need no disposition: crw.land hands their ids and the checks
+// that carried them to crw.accept, and `carried` is in the lane result), a blocking one and the node escalates (ask land, unit_check_carried) with the carried ids.
+// While round trips are left, the tier evidence (SP-TIER-1, where only a check that rules needs_changes is a reviewed round with a
+// finding) steps the tier before a fix. A check the tool gave no judgment in (quota, no answer) or that had no executor receipt to hand
+// over holds the node (crw.hold, source unit_check), and a resume runs the check again; any other check that judged nothing (the
+// worktree or its HEAD moved, the tool failed, an invalid answer twice) escalates as a configuration question. The checked tree is then
+// committed, verified and landed; a failed verification goes back to the same thread and its fix is checked again. So a commit holds
+// only checked work: a fresh thread (a tier step, a rebuild) starts at the node's last commit, and the uncommitted trees of the attempt
+// it leaves are abandoned there (the packet carries their last findings and receipt); a resume replays the calls that made them, whose
+// effect nothing reads again (ops.Prover).
+const UNIT_CHECK_ROUNDS = 2
 async function nodeLane(n, rel, sig) {
   const node = n.id
   const plan = await crw.issuePlan(node)
@@ -233,17 +247,26 @@ async function nodeLane(n, rel, sig) {
   const ev = crw.evidence(node)
   let tier = 'executor'
   let step = null
-  let notes = []
-  let researched = 0
+  // the unit-check fix round trips of the tier
+  let fixes = 0
+  // the finding ids carried past the last round trip, kept to the land: a later check of a verification fix judges only that fix, so
+  // crw.land hands them to the acceptance with the check that carried each (carriedBy), which reads it from that check's record into
+  // the premerge record
+  let carried = []
+  const carriedBy = {}
   let ex = null
   let head = null
+  // the node's last state (CRW-1469): the findings of its last unit check (none after a check that found nothing), its last
+  // verification and the summary of its last receipt, all from the node's own calls and checks. A fresh thread has none of the turns
+  // before it, so its packet carries them; the first build has none.
+  const last = { findings: [], ci: null, receipt: null }
 
-  // a fresh executor thread of the tier: the first build, the rebuild after a null_model, the executor-t1 build
+  // a fresh executor thread of the tier: the first build, the rebuild after a refusal or a null_model, the executor-t1 build
   async function start(label, checkpoint) {
     await crw.spawnDecision('EXEC_1', 'spawn', { node, role: tier, tier, inputs: { label } })
     const opts = { agentType: tier, node, schema: RECEIPT, label }
     if (step && tier === 'executor-t1') opts.stepDecision = step.id
-    return agent.call(packet(node, plan, checkpoint, notes), opts)
+    return agent.call(packet(node, plan, checkpoint, last), opts)
   }
   ex = await start('build:' + node + ':' + tier, null)
 
@@ -251,17 +274,20 @@ async function nodeLane(n, rel, sig) {
     const s = crw.classify(ex)
     // the RECEIPT of the call is a trigger of the signal path
     sig.receipt(ex)
+    if (ex.output && ex.output.summary) last.receipt = { summary: ex.output.summary }
     ev.executor(tier, ex.callId, s)
     if (s === 'superseded') return { node, state: 'superseded', call: ex.callId }
     if (s === 'research') {
-      // SP-EXPL-2: the question is answered and the SAME executor thread goes on; a research request is never a tier step
+      // SP-EXPL-2: the question is answered and the SAME executor thread goes on; a research request is never a tier step. The
+      // research continuations of the tier are counted by crw.exploreRoute alone (spawned and reused alike, CRW-1470): past them
+      // the route is escalate, and its reason (research_cap) is the detail
       const asked = await crw.explore('research', [{ id: ex.callId, question: ex.output.research_question, scope: '', files_needed: null }], { node, tier, regions: plan.regions })
       if (asked.failed) {
         await crw.hold(node, { reason: asked.failed.reason || asked.failed.status, call: asked.failed.callId, source: 'explorer' })
         return { node, state: 'held', reason: asked.failed.reason, call: asked.failed.callId }
       }
-      if (asked.escalate.length > 0 || ++researched > RESEARCH_PER_TIER) {
-        const esc = await crw.escalate(node, { reason: 'blocked_scope', call: ex.callId, detail: 'research_cap' })
+      if (asked.escalate.length > 0) {
+        const esc = await crw.escalate(node, { reason: 'blocked_scope', call: ex.callId, detail: asked.escalate[0].reason })
         return { node, state: 'escalated', reason: 'blocked_scope', call: ex.callId, escalation: esc.id }
       }
       ex = await agent.call(answerPacket(asked.answers), { resume: ex, schema: RECEIPT, label: 'research:' + node + ':' + tier + ':r' + round })
@@ -296,38 +322,67 @@ async function nodeLane(n, rel, sig) {
         continue
       }
     } else {
-      // ready or self_failed: the run judges the worktree, never the executor's report
-      head = await crw.commit(node, ex, plan.regions)
-      const ci = await crw.verify(node, head)
-      if (!ci.ran) {
-        await crw.hold(node, { reason: 'verify_unavailable', call: ex.callId, source: 'verify' })
-        return { node, state: 'held', reason: 'verify_unavailable', detail: ci.error }
+      // ready or self_failed: the run judges the worktree, never the executor's report. The unit check reads the uncommitted
+      // changes the call left (the tree crw.commit will commit); final: no fix round can follow it on this tier.
+      const uc = await crw.unitCheck(node, ex, { round, final: fixes >= UNIT_CHECK_ROUNDS })
+      if (uc.hold) {
+        await crw.hold(node, { reason: uc.hold, call: ex.callId, source: 'unit_check' })
+        return { node, state: 'held', reason: uc.hold, source: 'unit_check', call: ex.callId }
       }
-      ev.verification(tier, head.commit, ci.pass, ci.digest)
-      let verdict = null
-      if (ci.pass) {
-        const rv = await crw.review(node, plan, head, ci, { round, notes })
-        if (rv.state !== 'verdict') return crw.reviewHalt(node, rv)
-        verdict = rv.verdict
-        if (verdict.verdict === 'verified') {
-          const landed = await crw.land(node, { head, ci, review: rv })
-          if (landed.state === 'landed') return landed
+      if (uc.state !== 'ok') {
+        const esc = await crw.escalate(node, { reason: 'unit_check_' + uc.state, call: ex.callId, ask: 'configuration', detail: uc.detail || '' })
+        return { node, state: 'escalated', reason: 'unit_check_' + uc.state, call: ex.callId, escalation: esc.id }
+      }
+      const found = uc.findings || []
+      last.findings = found
+      ev.unitCheck(tier, uc.check_id, uc.verdict, found.map((f) => f.id))
+      let stepDue = false
+      if (found.length > 0) {
+        if (fixes >= UNIT_CHECK_ROUNDS) {
+          // the findings after the last round trip are carried, before any tier step: a blocking one does not land
+          for (const f of found) {
+            if (!carried.includes(f.id)) {
+              carried.push(f.id)
+              carriedBy[f.id] = uc.check_id
+            }
+          }
+          if (uc.verdict !== 'verified') {
+            const esc = await crw.escalate(node, { reason: 'unit_check_carried', call: ex.callId, ask: 'land', evidence: { carried, check: uc.check_id },
+              detail: found.map((f) => f.id + ' ' + f.file + ' ' + f.text).join(' | ') })
+            return { node, state: 'escalated', reason: 'unit_check_carried', call: ex.callId, carried, escalation: esc.id }
+          }
+        } else if (ev.tierStepDue(tier)) {
+          // the tier evidence stands while round trips are left: the executor-t1 starts at the node's last commit, which holds only
+          // checked work, and this tree, whose findings are not answered, stays in the attempt the step leaves
+          stepDue = true
+        } else {
+          // every finding goes back to the executor's own thread
+          fixes++
+          ex = await agent.call(fixPacket(node, { verdict: uc.verdict, findings: found }, null, null, ex.output), { resume: ex, schema: RECEIPT, label: 'fix:' + node + ':' + tier + ':r' + round })
+          continue
+        }
+      }
+      if (!stepDue) {
+        head = await crw.commit(node, ex, plan.regions)
+        const ci = await crw.verify(node, head)
+        if (!ci.ran) {
+          await crw.hold(node, { reason: 'verify_unavailable', call: ex.callId, source: 'verify' })
+          return { node, state: 'held', reason: 'verify_unavailable', detail: ci.error }
+        }
+        ev.verification(tier, head.commit, ci.pass, ci.digest)
+        last.ci = ci
+        if (ci.pass) {
+          const landed = await crw.land(node, carried.length ? { head, ci, carried: carried.map((id) => ({ id, check: carriedBy[id] })) } : { head, ci })
+          if (landed.state === 'landed') return carried.length ? Object.assign(landed, { carried }) : landed
           if (landed.reason === EPOCH_LOST) return { node, state: 'stopped', reason: EPOCH_LOST, detail: landed.detail }
           const esc = await crw.escalate(node, { reason: landed.reason || 'land_refused', detail: landed.detail || '', ask: 'land' })
           return { node, state: 'escalated', reason: landed.reason, escalation: esc.id }
         }
-        ev.review(tier, rv.call.callId, verdict.verdict, rv.findings.map((f) => f.digest))
-        const found = await crw.exploreEvidence(node, verdict, { tier, regions: plan.regions, head: head.commit })
-        if (found.failed) {
-          await crw.hold(node, { reason: found.failed.reason || found.failed.status, call: found.failed.callId, source: 'explorer' })
-          return { node, state: 'held', reason: found.failed.reason, call: found.failed.callId }
+        if (!ev.tierStepDue(tier)) {
+          // fix the verification on the executor's own thread; its work is checked again before the next commit
+          ex = await agent.call(fixPacket(node, null, ci, null, ex.output), { resume: ex, schema: RECEIPT, label: 'fix:' + node + ':' + tier + ':r' + round })
+          continue
         }
-        notes = notes.concat(found.answers.filter((a) => a.answer))
-      }
-      if (!ev.tierStepDue(tier)) {
-        // fix on the executor's own thread
-        ex = await agent.call(fixPacket(node, verdict, ci, notes, ex.output), { resume: ex, schema: RECEIPT, label: 'fix:' + node + ':' + tier + ':r' + round })
-        continue
       }
     }
     // SP-TIER-1 evidence stands on the tier: one step to executor-t1, and no step after it
@@ -338,7 +393,7 @@ async function nodeLane(n, rel, sig) {
     }
     step = await crw.tierStep(node, ev.evidence(tier))
     tier = 'executor-t1'
-    researched = 0
+    fixes = 0
     ex = await start('build:' + node + ':' + tier, step.checkpoint)
   }
 }
@@ -369,11 +424,14 @@ try {
 
 async function closeAndReport() {
   phase('milestone')
-  // The close: the final gate over the integrated head (test evidence, and the QA receipt for a driven surface), reviewer-final over
-  // the range with the passed gate as its input, and the close recorded over the tip it judged. A gate that fails or cannot be settled
-  // ends the milestone here, and reviewer-final does not run (crw:lib/close).
+  // The close: the final gate over the integrated head (test evidence, and the QA receipt for a driven surface), the crosscheck over the
+  // range with the passed gate as its input (two passes of a review engine of another model family than every author, run by the host),
+  // and the close recorded over the tip it judged. A gate that fails or cannot be settled ends the milestone here, and the crosscheck does
+  // not run; a crosscheck that does not verify the range ends it too, and nothing is closed, reflected on or reported (crw:lib/close).
+  // The halt carries what the close's stop does: the ask, the crosscheck's V in the escalation's evidence and in the run's value, and the
+  // fix packet the 자식 hands on.
   const closed = await crw.closeMilestone(ms)
-  if (closed.state !== 'closed') return crw.milestoneHalt(ms, closed.source, closed.status, closed.reason, closed.call)
+  if (closed.state !== 'closed') return crw.milestoneHalt(ms, closed.source, closed.status, closed.reason, closed.call, { ask: closed.ask, evidence: closed.evidence, fix: closed.fix, detail: closed.detail })
   // The architect's reflection (SP-ARCH-3): the next turn of its thread, at the integrated head the gate pinned, in a read-only checkout
   // of it. A call that did not complete is not ALIGNED: held and unknown hold the milestone, everything else escalates.
   const current = await crw.currentDesign(ms.id)
@@ -381,20 +439,21 @@ async function closeAndReport() {
   const reflected = await agent.call(reflectionPacket(ms, current, closed), { resume: current.handle, schema: REFLECTION, head: closed.gate.head, label: 'reflection:' + ms.id })
   const reflection = await crw.reflection(ms.id, closed.gate, reflected)
   if (reflection.state !== 'verdict') return crw.milestoneHalt(ms, 'reflection', reflection.state, reflection.reason, reflected.callId)
-  // A reason to re-plan stands whatever the alignment says: the numbers of the signals, and the alignments the close found.
-  const due = await crw.replanSignals(ms.id, { phase: 'close', final: closed.final.alignment, reflection: reflection.alignment })
+  // A reason to re-plan stands whatever the alignment says: the numbers of the signals, and the alignment the reflection found.
+  const due = await crw.replanSignals(ms.id, { phase: 'close', reflection: reflection.alignment })
+  // The closed milestone is audited, archived and reported before any re-plan: the reviews the acceptances rest on are audited against
+  // the reviewer threads on the host before any of them is archived, and the report carries the gate, the crosscheck and the reflection.
+  const reported = await reportClose(ms, closed, reflection.alignment)
   if (due.due) {
     // at the close every node has run: the whole DESIGN names none unstarted
     const out = await replan('close', 0, due, closed.gate.head, reflection.misaligned, [])
     if (out.state !== 'revised') return out.result
     // the correction issues are the orchestrator's: crw-add-issue and a plan revision, planned in the revision the architect just made
     const esc = await crw.escalate(null, { reason: 'replan_correction', detail: 'revision ' + out.revision + ' of milestone ' + ms.id + ' after ' + due.reasons.join(', '), ask: 'correction_issues' })
-    return { state: 'replanned', milestone: ms.id, lanes, tip: closed.tip, revision: out.revision, reasons: due.reasons, escalation: esc.id, final: closed.final.alignment, reflection: reflection.alignment }
+    return { state: 'replanned', milestone: ms.id, lanes, tip: closed.tip, revision: out.revision, reasons: due.reasons, escalation: esc.id, report: reported.report.report_id,
+      crosscheck: closed.crosscheck.verdict, reflection: reflection.alignment }
   }
-  await crw.spawnDecision('ARCH_2', 'skip', { reason: 'no_replan_signal', inputs: { milestone: ms.id, revision: due.revision, plan_mismatch: due.plan_mismatch, slice_change: due.slice_change.changed, final: closed.final.alignment, reflection: reflection.alignment } })
-  // The reviews the acceptances rest on are audited against the reviewer threads on the host before any of them is archived.
-  const settled = await crw.settleReviews(ms)
-  const report = await crw.reportUp(ms.id, Object.assign({}, closed.close, { audit: settled.audit }))
-  return { state: 'closed', milestone: ms.id, lanes, tip: closed.tip, report: report.report_id, gate: closed.gate.state, final: closed.final.alignment, reflection: reflection.alignment,
-    audit: { ok: settled.audit.ok, mismatch: settled.audit.mismatch, unobserved: settled.audit.unobserved }, archived: settled.archive.archived.length }
+  await crw.spawnDecision('ARCH_2', 'skip', { reason: 'no_replan_signal', inputs: { milestone: ms.id, revision: due.revision, plan_mismatch: due.plan_mismatch, slice_change: due.slice_change.changed, reflection: reflection.alignment } })
+  return { state: 'closed', milestone: ms.id, lanes, tip: closed.tip, report: reported.report.report_id, gate: closed.gate.state, crosscheck: closed.crosscheck.verdict, reflection: reflection.alignment,
+    audit: { ok: reported.audit.ok, mismatch: reported.audit.mismatch, unobserved: reported.audit.unobserved }, archived: reported.archive.archived.length }
 }

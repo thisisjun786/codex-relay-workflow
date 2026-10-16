@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/layername"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
@@ -49,7 +50,7 @@ func (r Reader) Read(ctx context.Context, s *store.Store, receiver string, packe
 func (r Reader) readStore(ctx context.Context, s *store.Store, receiver, role string, region, ledger any, fields, sources *Obj, notes *[]string) error {
 	answer := func(k string, v any, source string) { Set(fields, k, v); Set(sources, k, source) }
 	if role != "parent" && role != "child" {
-		*notes = append(*notes, "the relay store keeps no relationship row for a "+role+", so a packet sent to one is read back through the supervisor channel, not here")
+		*notes = append(*notes, "the relay store keeps no relationship row for a "+role+layername.Gloss(role)+", so a packet sent to one is read back through the 부모 channel, not here")
 		return nil
 	}
 	held, e := s.All(ctx, "SELECT * FROM relationships WHERE "+role+"_task_id = ? ORDER BY updated_at DESC, relationship_id", receiver)

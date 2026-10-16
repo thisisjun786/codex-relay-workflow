@@ -207,6 +207,34 @@ func (g *GitHub) Comment(ctx context.Context, ref Ref, header, text string) erro
 	return err
 }
 
+// HasComment is whether some comment of the issue or pull request has header as its first line: the comment is the header
+// alone, or the header and a line break (LF or CRLF) and more. A header inside the text, or a first line that is longer than
+// the header, does not match. It reads every page of the comments (an answer that cannot be read is an error, never false), so
+// a caller that looks before it posts again sees the comments that a crashed run wrote.
+func (g *GitHub) HasComment(ctx context.Context, ref Ref, header string) (bool, error) {
+	if err := g.checkRef(ref); err != nil {
+		return false, err
+	}
+	if err := checkHeader(header); err != nil {
+		return false, err
+	}
+	var comments []struct {
+		Body string `json:"body"`
+	}
+	query := url.Values{"per_page": {pageSize}}
+	if err := getAll(ctx, g, "tracking: list comments of "+ref.String(),
+		g.repoURL("/issues/"+strconv.Itoa(ref.Number)+"/comments", query), &comments); err != nil {
+		return false, err
+	}
+	for _, c := range comments {
+		first, _, _ := strings.Cut(c.Body, "\n")
+		if strings.TrimSuffix(first, "\r") == header {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // Close closes the issue as completed or not planned.
 func (g *GitHub) Close(ctx context.Context, ref Ref, reason CloseReason) error {
 	if err := g.checkRef(ref); err != nil {

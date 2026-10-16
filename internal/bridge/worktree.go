@@ -249,7 +249,7 @@ func (b *Bridge) CreateWorktreeThread(ctx context.Context, in CreateWorktree) (l
 		} else if receipt["status"] == "failed" {
 			receipt["initialPrompt"] = map[string]any{"state": "rejected"}
 		}
-	}})
+	}, nil})
 	return result, err
 }
 

@@ -120,6 +120,21 @@ func lookPathIn(name, pathEnv string) string {
 	return ""
 }
 
+// GoEnv are the environment entries that make the configured Go root the go of a command whose inherited PATH is pathEnv: the
+// root's bin first on PATH, GOROOT the root, and GOTOOLCHAIN local, so no other toolchain is selected or fetched. They are the
+// entries the verifier's command gets (Command), and the ones every agent call of a flow run is given (CRW-1488). Nil when no Go
+// root is set.
+func (t VerifierTools) GoEnv(pathEnv string) []string {
+	if t.GoRoot == "" {
+		return nil
+	}
+	path := filepath.Join(t.GoRoot, "bin")
+	if pathEnv != "" {
+		path += string(os.PathListSeparator) + pathEnv
+	}
+	return []string{"PATH=" + path, "GOROOT=" + t.GoRoot, "GOTOOLCHAIN=local"}
+}
+
 // VerifierCommand is how a verifier starts crw-dev: the program and the arguments before `ci local ...`, the environment entries
 // set over the inherited environment (nil: inherited as it is), a note when a tool comes from PATH because nothing configured it,
 // and a hint a verifier adds to the reason a start that fails gives.
@@ -140,12 +155,7 @@ func (t VerifierTools) Command(tree, pathEnv string) (VerifierCommand, error) {
 	}
 	var cmd VerifierCommand
 	if t.GoRoot != "" {
-		bin := filepath.Join(t.GoRoot, "bin")
-		path := bin
-		if pathEnv != "" {
-			path += string(os.PathListSeparator) + pathEnv
-		}
-		cmd.Env = []string{"PATH=" + path, "GOROOT=" + t.GoRoot, "GOTOOLCHAIN=local"}
+		cmd.Env = t.GoEnv(pathEnv)
 		cmd.Hint = fmt.Sprintf("verifier.go_root in %s is %s, whose bin/go is the go the verifier runs", where, t.GoRoot)
 	}
 	switch t.Mode() {

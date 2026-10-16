@@ -1,6 +1,6 @@
 # Explaining a design
 
-Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](hierarchy.md#the-levels).
+The sessions in this document are named by [the level table](hierarchy.md#the-levels): the parent is the repository session, the child is the project session, and a `child` session (a code id, not a layer) is no layer.
 
 Use this when the request is to understand or review a system rather than to plan one: what a
 component is for, whether an existing owner can be left where it is, how the parts fit together,
@@ -148,17 +148,17 @@ authority, the read-back duty and the ownership rules for those writes stay in
 For the person running work across tasks, the result is this: when a task stops without saying
 whether it finished, somebody finds out in that moment instead of when the work is missed later.
 
-Request, work, completion signal, delivery, verification. A parent assigns an issue to a child
-task. The child does the work in its own checkout. At the end of a response turn the host invokes a
-Stop hook, which reads whether the child recorded anything for that turn. The relay carries what
-the child recorded to whoever waits for it. The parent verifies the result against the issue's
-criteria. The hook never decides that the child is finished; it decides whether the child said
+Request, work, completion signal, delivery, verification. A child (project session) assigns an issue to a `child` session
+task. The `child` session does the work in its own checkout. At the end of a response turn the host invokes a
+Stop hook, which reads whether the `child` session recorded anything for that turn. The relay carries what
+the `child` session recorded to whoever waits for it. The child (project session) verifies the result against the issue's
+criteria. The hook never decides that the `child` session is finished; it decides whether the `child` session said
 anything at all, which is a fact about a record rather than about an intention.
 
 State, with a writer and a restorer for each piece. Three stores, and they fail differently.
 
 The marker root holds what each party declared. Its writers are split by party: the coordinator
-writes the assignment's own facts, a child writes only under its own session, the child's hook
+writes the assignment's own facts, a `child` session writes only under its own session, the `child` session's hook
 process writes only its own hook directory, and the relay daemon writes none of it and reads none
 of it. It sits outside both the source checkout and the relay's database. Retention belongs to
 whoever owns that root, and [the hook contract](../../crw-run/references/hook-contract.md) says
@@ -184,7 +184,7 @@ ledger and recovery reads a ledger that never saw the earlier attempts, so it ca
 or repeat one. Nothing rebuilds it, and nobody is responsible for restoring it, which is why the
 two settings are worth a sentence in any explanation of this system.
 
-The coordination summary is written by the parent into the tracking repository, and GitHub keeps and
+The coordination summary is written by the child (project session) into the tracking repository, and GitHub keeps and
 restores it as its own service, which makes it the only piece here whose recovery is somebody
 else's job entirely. Raw run records are private receipts written by whoever ran the thing, kept
 outside this repository, and restored from no backup this explanation knows of. The defaults and
@@ -192,10 +192,10 @@ the one-store-per-operating-scope rule belong to
 [the relay reference](../../crw-run/references/relay.md), named here rather than copied. What a
 given run actually resolved is a receipt value, and this explanation has none.
 
-What refuses. Skill text refuses nothing. The sandbox profile the child was created with is the
+What refuses. Skill text refuses nothing. The sandbox profile the `child` session was created with is the
 boundary that holds. The hook can hold a turn only where it is registered, trusted, invoked and
 running in hold mode, and the default installation is observe mode, in which every block is
-downgraded to a release and nothing is held. Holding is permitted only where the held child could
+downgraded to a release and nothing is held. Holding is permitted only where the held `child` session could
 not have forged the facts the decision read. The rules are in
 [the hook contract](../../crw-run/references/hook-contract.md); what matters here is that a hook
 appearing in a configuration file has established none of it.

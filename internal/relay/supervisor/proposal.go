@@ -298,6 +298,9 @@ const (
 	unaddressedReleasedReason = "the hierarchy names this message's endpoints again, so the " + store.SupervisorHoldUnaddressed + " hold is released"
 	// supersededReleasedReason is the journal reason of a message whose proposal is owed through it again.
 	supersededReleasedReason = "what this message is for is owed through it again, so the " + store.SupervisorHoldSuperseded + " hold is released"
+	// acknowledgedNewerStatementReason is the staging answer for an acknowledged park kept through a
+	// newer statement that is not owed now: the park keeps the statement its recipient acknowledged.
+	acknowledgedNewerStatementReason = "this fact is already staged and its recipient's acknowledgement parked it; a newer statement of it is not owed through it now, so the message keeps the statement its recipient acknowledged"
 )
 
 func (c *Channel) holdSuperseded(ctx context.Context, id, requestID string, attemptNo int64, at, detail, owner string) error {
@@ -305,10 +308,31 @@ func (c *Channel) holdSuperseded(ctx context.Context, id, requestID string, atte
 	if err := c.Store.SettleSupervisorAttempt(ctx, requestID, "withheld_pre_send", "no", 1, sql.NullString{}, record, at); err != nil {
 		return err
 	}
-	if _, err := c.Store.SettleSupervisorMessage(ctx, id, "queued", sql.NullFloat64{}, sql.NullString{String: store.SupervisorHoldSuperseded, Valid: true}, at, "sending", attemptNo, sql.NullString{String: owner, Valid: true}); err != nil {
+	// The hold rule's derive entry: superseded_by_report is set only on a message with no hold, and
+	// only that set journals supervisor_message_superseded, so the newest such row stays the one of
+	// the write that set the hold the message carries (holdKindOf). A message that came to carry a
+	// hold while it was sending is settled and keeps it, and nothing is journaled.
+	current, err := c.Get(ctx, id)
+	if err != nil {
 		return err
 	}
-	_, err := c.Store.Q(ctx).ExecContext(ctx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_superseded',?,?)", at, id, pyjson.Dumps(contract.OrderedObject{{Key: "requestId", Value: requestID}, {Key: "detail", Value: detail}}, pyjson.Options{}))
+	kind, err := holdKindOf(ctx, c.Store, current)
+	if err != nil {
+		return err
+	}
+	verdict, _, err := holdDecision(kind, holdChange{Entry: entryDerive}, nil)
+	if err != nil {
+		return err
+	}
+	var hold sql.NullString
+	if verdict == holdSet {
+		hold = sql.NullString{String: store.SupervisorHoldSuperseded, Valid: true}
+	}
+	moved, err := c.Store.SettleSupervisorMessage(ctx, id, "queued", sql.NullFloat64{}, hold, at, "sending", attemptNo, sql.NullString{String: owner, Valid: true})
+	if err != nil || !moved || verdict != holdSet {
+		return err
+	}
+	_, err = c.Store.Q(ctx).ExecContext(ctx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_superseded',?,?)", at, id, pyjson.Dumps(contract.OrderedObject{{Key: "requestId", Value: requestID}, {Key: "detail", Value: detail}}, pyjson.Options{}))
 	return err
 }
 
@@ -336,8 +360,19 @@ func (c *Channel) reopenAddressed(ctx context.Context, row store.SupervisorMessa
 	})
 }
 
-func (c *Channel) reopenProposal(ctx context.Context, row store.SupervisorMessagesRow, at string) error {
-	return c.Store.Compose(ctx, func(tx context.Context, _ *sql.Conn) error {
+// reopenProposal asks the hold rule (holdDecision) whether a message held superseded_by_report is
+// released, as entry: restage when its obligation is staged again or the daemon attempts it,
+// send_by_id when an attempt named it. It answers the rule's verdict and reason, and writes only a
+// release the rule answers: an acknowledged park of the same statement is kept by a restage and
+// nothing is written or journaled. ifOwed asks refreshProposal, which may restate the packet, as the
+// release it allows would; a release the rule answers outright restates the packet first too, and
+// keeps the hold when the proposal is no longer owed (dev's rule for those cells). A release because
+// the hierarchy names another recipient is written by the staging's re-address, which asks the rule
+// itself, so nothing is written here. A send by id whose endpoints moved is answered as the refusal
+// relation_owner_drift: a send by id never re-addresses.
+func (c *Channel) reopenProposal(ctx context.Context, row store.SupervisorMessagesRow, at string, entry holdEntry) (verdict holdVerdict, why string, err error) {
+	verdict = holdKeep
+	err = c.Store.Compose(ctx, func(tx context.Context, _ *sql.Conn) error {
 		live, err := c.Get(tx, row.MessageID)
 		if err != nil || live.HoldReason.String != store.SupervisorHoldSuperseded {
 			return err
@@ -346,15 +381,44 @@ func (c *Channel) reopenProposal(ctx context.Context, row store.SupervisorMessag
 		if err != nil {
 			return err
 		}
-		if r.Recipient != live.RecipientTaskID {
-			return nil
-		}
-		_, err = c.refreshProposal(tx, live, r, at, 0)
-		if refusal := new(Refusal); errors.As(err, refusal) && refusal.Reason == "superseded_revision" {
-			return nil
-		}
+		kind, err := holdKindOf(tx, c.Store, live)
 		if err != nil {
 			return err
+		}
+		change := holdChange{Entry: entry, SameRecipient: r.Recipient == live.RecipientTaskID, SameSender: r.Sender == live.SenderTaskID}
+		if kind == holdAcknowledged && entry == entryRestage && change.SameRecipient {
+			if change.SameStatement, err = c.staysTheSameStatement(tx, live, r, at); err != nil {
+				return err
+			}
+		}
+		asked := false
+		owed := func() (bool, error) {
+			asked = true
+			_, err := c.refreshProposal(tx, live, r, at, 0)
+			if refusal := new(Refusal); errors.As(err, refusal) && refusal.Reason == "superseded_revision" {
+				return false, nil
+			}
+			return err == nil, err
+		}
+		verdict, why, err = holdDecision(kind, change, owed)
+		if err != nil {
+			return err
+		}
+		switch {
+		case verdict == holdKeep && why == sendByIDDriftReason:
+			return Refusal{"relation_owner_drift", why}
+		case verdict != holdRelease:
+			return nil
+		case !change.SameRecipient:
+			return nil
+		}
+		if !asked {
+			if owes, err := owed(); err != nil || !owes {
+				if err == nil {
+					verdict, why = holdKeep, "what the message is for is not owed through it any more"
+				}
+				return err
+			}
 		}
 		result, err := c.Store.Q(tx).ExecContext(tx, "UPDATE supervisor_messages SET hold_reason=NULL,next_eligible_at=NULL,updated_at=? WHERE message_id=? AND hold_reason='"+store.SupervisorHoldSuperseded+"' AND "+store.SupervisorUnsentSQL(""), at, row.MessageID)
 		if err != nil {
@@ -368,6 +432,84 @@ func (c *Channel) reopenProposal(ctx context.Context, row store.SupervisorMessag
 		_, err = c.Store.Q(tx).ExecContext(tx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_reopened',?,?)", at, row.MessageID, detail)
 		return err
 	})
+	if err != nil {
+		return holdKeep, "", err
+	}
+	return verdict, why, nil
+}
+
+// staysTheSameStatement reports whether what would be staged for row now, addressed through r, says
+// what the stored row says (statementKey, plan-r3 section 1). The fresh side is composed the way
+// staging composes it: an event's message from its newest raising obligation and the newest work
+// report, an omission's from the reading it froze. A direct message and a fault notice are never
+// recomposed from anything that moves, so the stored statement is the one that would be sent. A
+// row whose event no longer raises its obligation, or whose packet cannot be composed now, is not the
+// same statement (the rule then asks whether it is owed, and refreshProposal answers that).
+func (c *Channel) staysTheSameStatement(ctx context.Context, row store.SupervisorMessagesRow, r Resolution, at string) (same bool, err error) {
+	defer evidence.RecoverPython(&err)
+	var columns statementColumns
+	var fresh Packet
+	switch {
+	case IsDirectKind(row.ObligationKind) || row.ObligationKind == store.SupervisorNoticeObligationKind:
+		return true, nil
+	case row.EventID.Valid:
+		o, err := c.newestRaising(ctx, row)
+		if err != nil || o == nil || o.ID != row.ObligationID {
+			return false, err
+		}
+		eventID, _ := o.Basis["eventId"].(string)
+		report, err := currentReport(ctx, c.Store, eventID)
+		if err != nil {
+			return false, err
+		}
+		if fresh, err = c.composeReading(ctx, *o, r, at, nil); err != nil {
+			return false, composeRefusalIsNotSame(err)
+		}
+		columns = obligationStatementColumns(*o, report.submission)
+	case row.ObligationKind == "unreported" && row.Reading.Valid:
+		reading := map[string]any{}
+		decoder := json.NewDecoder(strings.NewReader(row.Reading.String))
+		decoder.UseNumber()
+		if err := decoder.Decode(&reading); err != nil {
+			return false, err
+		}
+		// staging hands a frozen reading back with its generation as an integer (stageUnsentWithReadings)
+		if generation, ok := reading["executionGeneration"].(json.Number); ok {
+			n, err := generation.Int64()
+			if err != nil {
+				return false, err
+			}
+			reading["executionGeneration"] = n
+		}
+		o := ObservationObligation(reading)
+		if o == nil {
+			return true, nil
+		}
+		if fresh, err = c.composeReading(ctx, *o, r, at, reading); err != nil {
+			return false, composeRefusalIsNotSame(err)
+		}
+		columns = obligationStatementColumns(*o, 0)
+	default:
+		return true, nil
+	}
+	stored, err := rowStatementKey(row)
+	if err != nil {
+		return false, err
+	}
+	now, err := freshStatementKey(columns, fresh)
+	if err != nil {
+		return false, err
+	}
+	return stored == now, nil
+}
+
+// composeRefusalIsNotSame lets a refusal to compose the message now read as a statement that is not
+// the same, and passes any other error on.
+func composeRefusalIsNotSame(err error) error {
+	if refusal := new(Refusal); errors.As(err, refusal) {
+		return nil
+	}
+	return err
 }
 
 func (c *Channel) loadSettings(ctx context.Context, task string) (*delivery.TaskSettings, error) {

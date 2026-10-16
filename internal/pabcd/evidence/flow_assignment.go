@@ -33,6 +33,16 @@ import (
 // `crw-flow-op: <op>` line of that very op, so the block copied into another step's message is refused, and a child whose transcript
 // shows no packet cannot claim it by citing the id. Its claim records the turn and the digest of the receipt bytes, so the
 // acceptance path reads back exactly what the hook accepted (AcceptedReceipt), and a repair turn of the same child claims again.
+//
+// A record is checked before it is reused (CRW-1496). The engine writes the record of a dispatch again whenever it republishes or
+// recovers the step, and the id is the same each time. An open, unclaimed record is kept only while it is still the contract a claim
+// would accept for the tree now (treeMatch, the tree half of the claim's own check): a call worktree that was removed and made
+// again at the same path has a new inode, and one reset to a commit that does not descend from the recorded HEAD has an unrelated
+// history, so the old record would refuse every receipt of the child. Such a record is replaced in place under the record's lock. A
+// claimed record is the claiming child's contract and is kept as it is. A git that gives no answer is an error, never a mismatch or
+// an empty Head, so a failing git holds the call and never drops a record's ancestry check; and the claim judges the receipt again
+// under the record's lock against the record it holds, so a record replaced between the judgement and the claim never takes a
+// receipt older than itself.
 
 // AssignmentOriginFlow is the Origin of an assignment the flow engine recorded.
 const AssignmentOriginFlow = "flow"
@@ -56,7 +66,8 @@ func FlowAssignmentID(owner, run, call, op string) string {
 
 // NewFlowAssignment builds the flow record of one dispatch for the owner session: worktree is the call worktree (an absolute path
 // to an existing directory, stored by its real path with its device, inode and git HEAD now), op the step's crw-flow-op marker and
-// id its FlowAssignmentID. The record is not yet written (PersistNew or EnsureFlowAssignment does that).
+// id its FlowAssignmentID. A git that gives no answer for HEAD is an error, never an empty Head (gitHeadOf). The record is not yet
+// written (PersistNew or EnsureFlowAssignment does that).
 func NewFlowAssignment(sessionID, id, worktree, op string, now time.Time) (Assignment, error) {
 	switch {
 	case sessionID == "":
@@ -72,15 +83,22 @@ func NewFlowAssignment(sessionID, id, worktree, op string, now time.Time) (Assig
 	if err != nil {
 		return Assignment{}, fmt.Errorf("flow worktree %s: %w", worktree, err)
 	}
+	head, err := gitHeadOf(real)
+	if err != nil {
+		return Assignment{}, fmt.Errorf("flow worktree %s: %w", worktree, err)
+	}
 	return Assignment{Version: flowAssignmentVersion, ID: id, SessionID: sessionID, Mode: AssignTree, Root: real, RootDev: dev,
-		RootIno: ino, Head: gitHead(real), CreatedAt: now.UTC().Format(time.RFC3339Nano), Status: AssignmentOpen,
+		RootIno: ino, Head: head, CreatedAt: now.UTC().Format(time.RFC3339Nano), Status: AssignmentOpen,
 		Origin: AssignmentOriginFlow, Op: op}, nil
 }
 
-// EnsureFlowAssignment writes the flow assignment a under cwd, or reuses the record its id already has: a recovered, republished or
-// adopted step derives the same id, and its record, open or already claimed by a child that stopped before the restart, is the
-// contract that child was dispatched with. The recorded value is returned. A record of that id for another session, root or op, or
-// one that cannot be read or is neither open nor claimed, is an error: the caller holds the call.
+// EnsureFlowAssignment writes the flow assignment a under cwd, or keeps the record its id already has when that record is still the
+// contract: a recovered, republished or adopted step derives the same id. A claimed record is the contract of the child that claimed
+// it (it may have stopped before the restart) and is returned as it is, never rewritten. An open, unclaimed record is reused only
+// while its tree still matches (treeMatch: the same real path, device and inode as the tree now, and a recorded Head that is an
+// ancestor of HEAD now); one that does not is replaced by a under the record's lock (replaceOpen). The returned value is always the
+// record on disk. A record of that id for another session, root or op, one that cannot be read or is neither open nor claimed, one
+// whose tree git gives no answer for, and a replacement that would drop its recorded HEAD are errors: the caller holds the call.
 func EnsureFlowAssignment(cwd string, a Assignment) (Assignment, error) {
 	if a.Origin != AssignmentOriginFlow || !recordShapeValid(a) {
 		return Assignment{}, errors.New("not a flow evidence assignment")
@@ -100,6 +118,14 @@ func EnsureFlowAssignment(cwd string, a Assignment) (Assignment, error) {
 		return Assignment{}, fmt.Errorf("the flow evidence assignment %s is recorded for root %s op %s, not root %s op %s", a.ID, rec.Root, rec.Op, a.Root, a.Op)
 	case rec.Status != AssignmentOpen && rec.Status != AssignmentClaimed:
 		return Assignment{}, fmt.Errorf("the flow evidence assignment %s is %s", a.ID, rec.Status)
+	case rec.Status == AssignmentOpen && rec.AgentID == "":
+		ok, err := treeMatch(rec)
+		if err != nil {
+			return Assignment{}, fmt.Errorf("the tree of the flow evidence assignment %s cannot be checked: %w", a.ID, err)
+		}
+		if !ok {
+			return a.replaceOpen(cwd)
+		}
 	}
 	return rec, nil
 }
@@ -147,11 +173,17 @@ func flowReceiptClaim(a Assignment, transcriptPath, receipt string) (string, boo
 }
 
 // flowClaimUpdate is the claim's change of a flow record: under the record's lock it checks that the record is still the flow
-// contract that was judged (origin, root and op), reads the receipt bytes again and records their digest with turnID. A receipt that
-// cannot be read there refuses the claim.
+// contract that was judged (origin, root and op) and judges the receipt again against the record it holds there, with the very
+// check the judgement made (assignedReceiptValid: the tree's real path, device and inode, the recorded HEAD's ancestry, and a
+// receipt no older than the record's CreatedAt). The record may have been replaced since the judgement (replaceOpen, CRW-1496): a
+// receipt is claimed only under the contract it satisfies. It then reads the receipt bytes again and records their digest with
+// turnID. A receipt that fails there or cannot be read refuses the claim.
 func flowClaimUpdate(judged Assignment, turnID string) func(*Assignment) bool {
 	return func(next *Assignment) bool {
 		if next.Origin != AssignmentOriginFlow || next.Root != judged.Root || next.Op != judged.Op {
+			return false
+		}
+		if next.Mode != AssignTree || !assignedReceiptValid(*next, FlowReceiptPath(*next)) {
 			return false
 		}
 		raw, ok := readFlowReceipt(*next)
@@ -165,8 +197,8 @@ func flowClaimUpdate(judged Assignment, turnID string) func(*Assignment) bool {
 }
 
 // readFlowReceipt reads the fixed receipt of a: the tree must still be the one recorded, the file must lie inside its real
-// .crw/evidence, be a non-empty regular file that is not a link, and fit in flowReceiptLimit. It is opened without following a link
-// and without blocking.
+// .crw/evidence, be a non-empty regular file that is not a link, no older than a's CreatedAt (a receipt older than the record it is
+// read for is another contract's), and fit in flowReceiptLimit. It is opened without following a link and without blocking.
 func readFlowReceipt(a Assignment) ([]byte, bool) {
 	real, dev, ino, err := treeIdentity(a.Root)
 	if err != nil || real != a.Root || dev != a.RootDev || ino != a.RootIno {
@@ -181,7 +213,11 @@ func readFlowReceipt(a Assignment) ([]byte, bool) {
 		return nil, false
 	}
 	defer f.Close()
-	if info, err := f.Stat(); err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
+	created, err := time.Parse(time.RFC3339Nano, a.CreatedAt)
+	if err != nil {
+		return nil, false
+	}
+	if info, err := f.Stat(); err != nil || !info.Mode().IsRegular() || info.Size() == 0 || info.ModTime().Before(created) {
 		return nil, false
 	}
 	raw, err := io.ReadAll(io.LimitReader(f, flowReceiptLimit+1))

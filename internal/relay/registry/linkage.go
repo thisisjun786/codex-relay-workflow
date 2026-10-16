@@ -185,7 +185,7 @@ func (l linkage) projectRefusal(ctx context.Context, x *row, project string) (bo
 	}
 	if x.ParentTask == x.ChildTask {
 		return false, &linkRefusal{reason: contract.RefusalScopeCycle,
-			detail:    "relationship " + pyvalue.StrRepr(x.ID) + " has the same task as 자식 and issue child, which is a self-link rather than a level",
+			detail:    "relationship " + pyvalue.StrRepr(x.ID) + " has the same task as 자식 and `child` session, which is a self-link rather than a level",
 			scopeKind: scopeIssue, scopeKey: x.Issue, incumbent: x.ParentTask, challenger: x.ChildTask}, nil
 	}
 	owners, err := l.liveOwners(ctx, scopeProject, project, roleParent)
@@ -560,7 +560,7 @@ func (l linkage) applyRelationshipStatus(ctx context.Context, rid, status, previ
 func (r *Registry) BindScope(ctx context.Context, role, key string, endpoint Endpoint) (contract.OrderedObject, error) {
 	kind, known := roleScope[role]
 	if !known {
-		return nil, refuse(contract.RefusalScopeRoleMismatch, "a role is one of child (issue child), parent (자식), supervisor (부모), not %s", strconv.Quote(role))
+		return nil, refuse(contract.RefusalScopeRoleMismatch, "a role is one of child (`child` session), parent (자식), supervisor (부모), not %s", strconv.Quote(role))
 	}
 	for _, check := range []struct{ value, what string }{{key, "a scope key"}, {endpoint.TaskID, "a task id"}, {endpoint.HostID, "a host id"}} {
 		if err := exact(check.value, check.what); err != nil {

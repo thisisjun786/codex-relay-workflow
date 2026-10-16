@@ -57,11 +57,18 @@ func largeBlobTestWrite(t *testing.T, r *fixtureRepo, name string, data []byte) 
 	}
 }
 
+// largeBlobTestTitle is the title largeBlobTestCommit gives a commit with this message. It follows
+// the commit-title rule (CRW-1511), so a passing run prints no title warning. A refusal quotes the
+// commit title, so every assertion on a quoted title builds it here and cannot go stale on a prefix.
+func largeBlobTestTitle(message string) string {
+	return "CRW-1: " + message
+}
+
 // largeBlobTestCommit commits everything with a message of its own, so a refusal can be told
 // which commit it names.
 func largeBlobTestCommit(r *fixtureRepo, message string) string {
 	r.git("add", "-A")
-	r.git("commit", "-qm", message)
+	r.git("commit", "-qm", largeBlobTestTitle(message))
 	return largeBlobTestRev(r, "HEAD")
 }
 
@@ -95,7 +102,7 @@ func TestLargeBlob_a_new_file_over_the_limit_is_refused(t *testing.T) {
 	expectEqual(t, "stdout", got.stdout, "")
 	largeBlobTestContains(t, "refusal", got.stderr,
 		"testdata/oracle.json: 2097153 bytes, over the 2 MiB (2097152 bytes) limit",
-		"brought in by commit "+largeBlobTestShort(r, "HEAD")+` "add oracle"`,
+		"brought in by commit "+largeBlobTestShort(r, "HEAD")+` "CRW-1: add oracle"`,
 		"regenerate a generated input deterministically in the test that uses it",
 		"hash and count",
 		largeBlobTestList,
@@ -154,13 +161,16 @@ func TestLargeBlob_a_blob_only_in_an_intermediate_commit_is_refused(t *testing.T
 	largeBlobTestWrite(t, r, "testdata/big.bin", largeBlobTestPayload(largeBlobTestLimit+1, 'b'))
 	added := largeBlobTestCommit(r, "add big")
 	r.git("rm", "-q", "testdata/big.bin")
-	largeBlobTestCommit(r, "drop big")
+	dropped := largeBlobTestCommit(r, "drop big")
 	got := largeBlobTestValidate(t, r.root, "pull_request", base)
 	expectEqual(t, "intermediate: exit", got.code, 1)
 	largeBlobTestContains(t, "intermediate", got.stderr, "testdata/big.bin: 2097153 bytes",
-		"brought in by commit "+largeBlobTestShort(r, added)+` "add big"`)
-	if strings.Contains(got.stderr, `"drop big"`) {
-		t.Errorf("the deleting commit is named:\n%s", got.stderr)
+		"brought in by commit "+largeBlobTestShort(r, added)+` "CRW-1: add big"`)
+	// The refusal quotes a title as `"<title>"` after the short id; the deleting commit is named by neither.
+	for _, named := range []string{`"` + largeBlobTestTitle("drop big") + `"`, "commit " + largeBlobTestShort(r, dropped)} {
+		if strings.Contains(got.stderr, named) {
+			t.Errorf("the deleting commit is named (%s):\n%s", named, got.stderr)
+		}
 	}
 
 	// Only the merge commit holds the blob: its conflict resolution is where it came in.
@@ -178,7 +188,7 @@ func TestLargeBlob_a_blob_only_in_an_intermediate_commit_is_refused(t *testing.T
 	got = largeBlobTestValidate(t, m.root, "push", mbase)
 	expectEqual(t, "merge only: exit", got.code, 1)
 	largeBlobTestContains(t, "merge only", got.stderr, "resolved.bin: 2097153 bytes",
-		"brought in by commit "+largeBlobTestShort(m, merge)+` "merge with a big resolution"`)
+		"brought in by commit "+largeBlobTestShort(m, merge)+` "CRW-1: merge with a big resolution"`)
 
 	// Merged in from another branch: the branch's own commit brought it.
 	n, nbase := largeBlobTestRepo(t)
@@ -193,7 +203,7 @@ func TestLargeBlob_a_blob_only_in_an_intermediate_commit_is_refused(t *testing.T
 	got = largeBlobTestValidate(t, n.root, "push", nbase)
 	expectEqual(t, "merged in: exit", got.code, 1)
 	largeBlobTestContains(t, "merged in", got.stderr, "branch.bin: 2097153 bytes",
-		"brought in by commit "+largeBlobTestShort(n, own)+` "branch adds big"`)
+		"brought in by commit "+largeBlobTestShort(n, own)+` "CRW-1: branch adds big"`)
 }
 
 // A blob the base already holds is not new: one left by an earlier commit passes when the base is
@@ -212,7 +222,7 @@ func TestLargeBlob_a_blob_already_in_the_base_history_is_not_new(t *testing.T) {
 	got := largeBlobTestValidate(t, r.root, "", "")
 	expectEqual(t, "full history: exit", got.code, 1)
 	largeBlobTestContains(t, "full history", got.stderr, "testdata/old.bin: 2097153 bytes",
-		"brought in by commit "+largeBlobTestShort(r, first)+` "old big"`)
+		"brought in by commit "+largeBlobTestShort(r, first)+` "CRW-1: old big"`)
 
 	// A later, small commit after a base that holds the blob: the range is clean.
 	s, _ := largeBlobTestRepo(t)
@@ -501,7 +511,7 @@ func TestLargeBlob_git_display_configuration_does_not_change_the_verdict(t *test
 		got := largeBlobTestValidate(t, root.root, "", "")
 		expectEqual(t, name+": root blob refused: exit", got.code, 1)
 		largeBlobTestContains(t, name+": root blob", got.stderr, "testdata/root.bin: 2097153 bytes",
-			"brought in by commit "+largeBlobTestShort(root, "HEAD")+` "root with a big file"`)
+			"brought in by commit "+largeBlobTestShort(root, "HEAD")+` "CRW-1: root with a big file"`)
 		list(root, "testdata/root.bin")
 		got = largeBlobTestValidate(t, root.root, "", "")
 		expectEqual(t, name+": root blob allow-listed", got.code, 0)
@@ -522,7 +532,7 @@ func TestLargeBlob_git_display_configuration_does_not_change_the_verdict(t *test
 		got = largeBlobTestValidate(t, m.root, "push", base)
 		expectEqual(t, name+": merge-only blob refused: exit", got.code, 1)
 		largeBlobTestContains(t, name+": merge-only blob", got.stderr, "resolved.bin: 2097153 bytes",
-			"brought in by commit "+largeBlobTestShort(m, merge)+` "merge with a big resolution"`)
+			"brought in by commit "+largeBlobTestShort(m, merge)+` "CRW-1: merge with a big resolution"`)
 		list(m, "resolved.bin")
 		got = largeBlobTestValidate(t, m.root, "push", base)
 		expectEqual(t, name+": merge-only blob allow-listed", got.code, 0)
@@ -541,5 +551,29 @@ func TestWorkflow_the_validate_job_passes_the_range_base(t *testing.T) {
 	}
 	if !regexp.MustCompile(`(?m)^          fetch-depth: 0$`).MatchString(body) {
 		t.Error("the validate job does not fetch full history")
+	}
+}
+
+// A pass names the commit titles of its range that fall outside the title rule (CRW-1511), one warning
+// line each after the blob summary; a refusal prints no warning, and a conforming title is silent.
+func TestLargeBlob_a_pass_names_the_titles_outside_the_rule(t *testing.T) {
+	r, base := largeBlobTestRepo(t)
+	largeBlobTestWrite(t, r, "small.txt", []byte("small"))
+	largeBlobTestCommit(r, "a conforming title")
+	largeBlobTestWrite(t, r, "other.txt", []byte("other"))
+	r.git("add", "-A")
+	r.git("commit", "-qm", "an unconforming title")
+	short := largeBlobTestShort(r, "HEAD")
+	expectEqual(t, "pass", largeBlobTestValidate(t, r.root, "pull_request", base),
+		result{0, validated + largeBlobTestSince(base) + commitTitleWarning(short, "an unconforming title"), ""})
+
+	largeBlobTestWrite(t, r, "big.bin", largeBlobTestPayload(largeBlobTestLimit+1, 'a'))
+	r.git("add", "-A")
+	r.git("commit", "-qm", "another unconforming title")
+	got := largeBlobTestValidate(t, r.root, "pull_request", base)
+	expectEqual(t, "refusal: exit", got.code, 1)
+	expectEqual(t, "refusal: stdout", got.stdout, "")
+	if strings.Contains(got.stderr, "warning:") {
+		t.Errorf("a refusal prints a title warning:\n%s", got.stderr)
 	}
 }

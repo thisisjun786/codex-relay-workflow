@@ -604,7 +604,7 @@ func (r *SchedRelay) ReleaseStands(ctx context.Context, plan, node, execution st
 	return r.Sched.AgentAcceptanceIntegrated(ctx, q, acc.Agent)
 }
 
-// ReleaseChild releases a node the architect sized for a child as an issue child (SP-CHILD-1, CRW-1285): dagsched.Release, the managed
+// ReleaseChild releases a node the architect sized for a child as a `child` session (SP-CHILD-1, CRW-1285): dagsched.Release, the managed
 // start of dag-release, under the task that runs the run, with the request the run holds the inputs of (as Release: the base from the
 // plan's target, the rule version, the criteria of the node's issue, the pinned handoff, the run's directory) and the host settings of
 // the run's --child-host document: the parent's and the child's host and settings, and the child's title (the managed start prefixes the
@@ -923,7 +923,7 @@ func (r *SchedRelay) IntegrationTip(ctx context.Context, plan string) (string, e
 
 // Close is AgentClose (CRW-1277 f): the node's current execution is closed (a node given up or cancelled returns its slot in the same
 // transaction) or held. A node the relay never gave an agent execution has nothing to close: a node never released, and a node only the
-// retired relationship (issue-child) path executed, whose execution is no agent's and stays as the relay holds it (CRW-1415, PR #889
+// retired relationship (`child` session) path executed, whose execution is no agent's and stays as the relay holds it (CRW-1415, PR #889
 // round 2: AgentClose refused such a node disposition_conflict, and the escalation that asked the close ended with an error).
 func (r *SchedRelay) Close(ctx context.Context, req ops.CloseRequest) (ops.CloseResult, error) {
 	if req.Plan == "" {

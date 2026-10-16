@@ -1,6 +1,6 @@
 # What a message has to carry, once the envelope has said what it is
 
-Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels).
+The sessions in this document are named by [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels): the parent is the repository session, the child is the project session, and a `child` session (a code id, not a layer) is no layer.
 
 `relay-envelope/1` answers which relation a message belongs to, which direction it travels,
 what the recipient owes because it arrived, and how far it got. It stops there on purpose.
@@ -9,40 +9,42 @@ be judged against, that a correction without the generation it opens produces a 
 relay then refuses, or that a resume omitting the workflow has dropped the one field no
 transport carries.
 
-`packets.py` is the other half. `relay-packet/1`, for the parent-child relation and for what a
-parent owes the level above; a supervisor's instruction downward is still carried by the
+`packets.py` is the other half. `relay-packet/1`, for the relation between a child and its `child` session and for what a
+child owes the level above; the parent's instruction downward is still carried by the
 envelope alone. `receiver.py` is what the receiver reads for itself before it acts on one.
 
 ## Sixteen occasions, not two
 
-The envelope shipped with one purpose in each direction, so five different child reports and
-six different parent messages rendered as two words. A blocked turn and a candidate offered
+The envelope shipped with one purpose in each direction, so five different `child` session reports and
+six different messages from the child to its `child` session rendered as two words. A blocked turn and a candidate offered
 for review both said completion; the message that STARTS the work had no name at all.
 
 | Direction | Purpose | Kind | Required beyond the envelope |
 |---|---|---|---|
-| parent to child | assignment | request | issue, criteriaDigest, policy, callback, body |
-| parent to child | revision_request | request | issue, generation, criteriaDigest, callback, artifact, body, evidence |
-| parent to child | resume | request | issue, policy, callback, artifact |
-| parent to child | receipt_confirmation | notification | issue, correlationId |
-| parent to child | acceptance | notification | issue, criteriaDigest, artifact |
-| parent to child | integration_result | notification | issue, artifact |
-| child to parent | completion | request | issue, generation, criteriaDigest, artifact, evidence |
-| child to parent | review_ready | request | issue, generation, criteriaDigest, artifact, evidence |
-| child to parent | blocked | request | issue, evidence |
+| child to `child` session | assignment | request | issue, criteriaDigest, policy, callback, body |
+| child to `child` session | revision_request | request | issue, generation, criteriaDigest, callback, artifact, body, evidence |
+| child to `child` session | resume | request | issue, policy, callback, artifact |
+| child to `child` session | receipt_confirmation | notification | issue, correlationId |
+| child to `child` session | acceptance | notification | issue, criteriaDigest, artifact |
+| child to `child` session | integration_result | notification | issue, artifact |
+| `child` session to child | completion | request | issue, generation, criteriaDigest, artifact, evidence |
+| `child` session to child | review_ready | request | issue, generation, criteriaDigest, artifact, evidence |
+| `child` session to child | blocked | request | issue, evidence |
+| `child` session to child | decision_request | decision | issue, decision, evidence |
+| `child` session to child | progress | notification | issue |
+| child to parent | completion | notification | issue, generation, evidence |
+| child to parent | blocked | notification | issue, evidence |
 | child to parent | decision_request | decision | issue, decision, evidence |
-| child to parent | progress | notification | issue |
-| parent to supervisor | completion | notification | issue, generation, evidence |
-| parent to supervisor | blocked | notification | issue, evidence |
-| parent to supervisor | decision_request | decision | issue, decision, evidence |
-| parent to supervisor | fault_notice | notification | evidence (issue when the fault sits under one) |
-| parent to supervisor | fault_decision | decision | decision, evidence (issue when the fault sits under one) |
+| child to parent | fault_notice | notification | evidence (issue when the fault sits under one) |
+| child to parent | fault_decision | decision | decision, evidence (issue when the fault sits under one) |
+
+The directions are named by the sessions at their two ends. The code stores them under the role ids of the relationship: `parent_to_child` is the child to its `child` session, `child_to_parent` the `child` session to its child, and `parent_to_supervisor` the child to the parent.
 
 The restraint is load-bearing in two rows. An **assignment** does not require a generation,
-because a newly created child's registration needs a task id creation has not returned yet
+because a newly created `child` session's registration needs a task id that creation has not returned yet
 and the assignment is what gets sent before it exists; demanding one would refuse every
 legitimate first dispatch. A **progress** note requires nothing but the issue, because
-demanding a head from a child with nothing to show yet is how a plausible value gets made up.
+demanding a head from a `child` session with nothing to show yet is how a plausible value gets made up.
 
 A **fault notice** and a **fault decision** do not require an issue. A fault can be about a
 project and no issue - a managed start that never produced a relationship - and demanding one
@@ -54,10 +56,10 @@ claim about an issue.
 A **resume** requires the policy for the opposite reason. Model, effort, sandbox and approval
 travel as settings and a receipt reads them back. The workflow has no transport field
 anywhere, so a message that does not say it has not deferred it - it has dropped it, and the
-compacted child it reaches resumes under whatever it still happens to remember.
+compacted `child` session it reaches resumes under whatever it still happens to remember.
 
 A **revision request** requires its body and its evidence, because a correction that says
-nothing about what it corrects is a correction the child answers from memory. The body is read
+nothing about what it corrects is a correction the `child` session answers from memory. The body is read
 against the correction form below rather than against DISPATCH-TASK-01, and the evidence is
 where the reproduction or the review finding it rests on can be read.
 
@@ -73,7 +75,7 @@ row that admits anything. That occasion is carried by the envelope alone.
 
 **The correction form.** A revision request's body carries five sections, each a line-anchored
 heading with something under it: `VIOLATED CRITERION` (the original criterion the work does not
-meet), `WHAT CHANGED` (what is different from what the child was working to), `FIX SCOPE` (the
+meet), `WHAT CHANGED` (what is different from what the `child` session was working to), `FIX SCOPE` (the
 bounded part to change), `PRESERVE` (the work and evidence that stay), and `REVERIFY AND RETURN`
 (what to check again and when to hand back). The link to the request being corrected is the
 envelope subject, and the reproduction or review basis is the evidence field. A body missing a
@@ -81,20 +83,20 @@ section is refused naming it, exactly as an assignment missing a DISPATCH-TASK-0
 
 The relay's own revision request, the one a `needs_changes` verdict opens, carries the same five
 sections, so the verdict path and a packet describe one correction. Both relay renderers build
-them from the verdict record and, where a work report is recorded, the parent's review:
+them from the verdict record and, where a work report is recorded, the child's review:
 `FIX SCOPE` is exactly the findings ruled `needs_changes`, a finding ruled `verified` stays
 under `PRESERVE`, and one ruled `unverified` is evidence `REVERIFY AND RETURN` asks for. What
 that record cannot answer, such as a verdict naming no criterion or a finding given no
 disposition or no note, is written where it belongs as not recorded, never left out.
-The verdict record keeps a finding's id and note as the parent gave them, so each is held to its
-own line, its line breaks shown as ` / `. Parent text that begins a line and would read as a
+The verdict record keeps a finding's id and note as the child gave them, so each is held to its
+own line, its line breaks shown as ` / `. Text from the child that begins a line and would read as a
 section heading (a finding id such as `FIX SCOPE`, an unresolved item, an evidence check) is
 quoted, so no section opens twice.
 
 **The callback.** An object of `taskId`, `model` and `effort`: where to answer, and the pair the
 task being answered is currently authorized to run. It is an object because the pair is what
-goes stale. A parent whose model the user changed on 2026-09-23 runs another pair from then on,
-and a packet still naming the old one must not pass; a string such as "parent task X" could not
+goes stale. A child whose model the user changed on 2026-09-23 runs another pair from then on,
+and a packet still naming the old one must not pass; a string such as "child task X" could not
 be compared at all. Agreeing with the answered task's record is not enough: that record keeps
 the pair it was recorded with until something re-records it, so the receiver also judges it
 against the current role policy for that task's role (`refusedCallbackPolicies`), and a
@@ -107,7 +109,7 @@ workflow means for activation; the workflow text is never parsed to infer one. I
 to refuse a contradiction: a workflow naming the loop (`crw-loop`, or the `CXC Loop` spelling that recorded packets and CXC hosts still carry) with any mode but `loop` is refused.
 
 **The first assignment.** Before creation there is no relationship to name, since its id is
-derived from the child's task id. The one identity that exists before creation and that
+derived from the `child` session's task id. The one identity that exists before creation and that
 registration binds to the relationship is the dispatch request id, so a first assignment names
 that dispatch as its relation and states its recipient as an absence. A receiver compares it
 with the dispatch that opened its current generation and reads the recipient from its own
@@ -124,7 +126,7 @@ and not a commit is inherited by the next push to it.
 
 A `locator` carries a path and a digest. It exists so a research, design or verification
 assignment has something true to put in the field. Before it, the only shape available was a
-pull request, so a child with no repository change either invented one or left the field
+pull request, so a `child` session with no repository change either invented one or left the field
 empty. A locator is never compared against a head and is never asked for one.
 
 ## Three dispositions, and the middle one is the point
@@ -149,7 +151,7 @@ key has a definite nothing: `relationRevision` holding null says the relationshi
 so it has no link and no revision, and a packet stating a revision for it is refused while one
 stating none agrees. A scoped relationship's link revision moves with every returning
 registration, so a packet from an earlier tenure is refused as `superseded_relation`. An
-unscoped one has no such mark: once it has returned to its child, a packet that states
+unscoped one has no such mark: once it has returned to its `child` session, a packet that states
 neither a revision nor a generation cannot be told from one sent in an earlier tenure and is
 a gap. A generation is compared whenever a packet states one, required or not, so a sender
 binds any packet to its generation by stating it. The same holds for every compared field a
@@ -172,7 +174,7 @@ left a gap. A resume that keeps the mode and names another workflow is refused.
 
 `refused_settings` is worth naming separately. A model and effort pair the record holds as
 refused for this role is a settings answer, not a provider failure, and it is not worked
-around by creating a second child.
+around by creating a second `child` session.
 
 ## The receiver's own reading
 
@@ -196,14 +198,14 @@ unread.
 |---|---|
 | the receiver's own role id | the receiver (`--receiver`) |
 | relationId, the other task, issue, relationStatus, generation | `relationships` |
-| dispatchRequestId | `generations`, the current generation; read for every parent-child packet, so a reading without it (or not a dispatch id) is a gap |
-| tenureGeneration, tenureDispatchRequestId | the registry's journal of registrations and the `generations` row that registration opened; read for every parent-child packet stating a policy, whose mode and workflow belong to the current tenure |
+| dispatchRequestId | `generations`, the current generation; read for every packet between a child and its `child` session, so a reading without it (or not a dispatch id) is a gap |
+| tenureGeneration, tenureDispatchRequestId | the registry's journal of registrations and the `generations` row that registration opened; read for every packet between a child and its `child` session stating a policy, whose mode and workflow belong to the current tenure |
 | relationRevision | `scope_links` through the relationship's project link, only while that link is live, has no successor and still joins this relationship's two tasks (otherwise a gap); null when unscoped |
 | criteriaDigest | `canonical_criteria`, a managed set with one digest |
-| policy | `authorized_settings` of the child: model, effort, the sandbox policy with its declared defaults, and the approval policy |
-| callback | the relationship's parent and its `authorized_settings` |
-| refusedPolicies | the role policy (`rolepolicy.check_record`) for the child's bound role |
-| refusedCallbackPolicies | the role policy for the parent's bound role, against the parent's recorded pair |
+| policy | `authorized_settings` of the `child` session: model, effort, the sandbox policy with its declared defaults, and the approval policy |
+| callback | the project session of the relationship and its `authorized_settings` |
+| refusedPolicies | the role policy (`rolepolicy.check_record`) for the `child` session's bound role |
+| refusedCallbackPolicies | the role policy for the project session's bound role, against the project session's recorded pair |
 | mode | the receiver's reception ledger (below) |
 | repository, prNumber, headSha, artifactPath, artifactDigest | only `--observation` |
 
@@ -301,7 +303,7 @@ and read by nothing else. It names its receiver and a version, and a ledger nami
 receiver is refused rather than read. It keeps each answered message id beside the content
 digest and disposition it got, whether any check told the receiver to act on it, whether the
 receiver has recorded acting on it, and, once an assignment is accepted, the mode and workflow
-that assignment gave, for the current tenure. A tenure is one registration of the child on
+that assignment gave, for the current tenure. A tenure is one registration of the `child` session on
 the relationship - the initial one, or a returning one after a supersession, which reuses the
 relationship id - and is identified by the dispatch of the generation that registration
 opened, read from the registry's journal of registrations (`relationship_registered`,
@@ -311,7 +313,7 @@ the generation rows, which answer the same question on their own: only a returni
 registration writes a generation without a reason, so the latest such generation at or below
 the current one (or generation 1) is where they say the tenure began. Where the two disagree
 the tenure is unread; a reopening record that is missing or damaged is never taken as proof
-that the child did not return. Revision generations open under their own dispatches inside a tenure, so the mode and
+that the `child` session did not return. Revision generations open under their own dispatches inside a tenure, so the mode and
 workflow hold through a correction; a returning registration begins a new tenure, the
 earlier one's mode and workflow are then unread, and the new tenure's assignment defines and
 replaces them. Writes happen under a lock
@@ -350,7 +352,7 @@ with `previousDisposition` and `applied` beside it. The same id asking for somet
 downgraded. Without a ledger the answer says `repeat: unchecked` and `act` is false whatever
 the disposition, because a repeat cannot be told from a first arrival.
 
-**Why this step is the boundary.** No relay code path carries a parent-child packet. The relay
+**Why this step is the boundary.** No relay code path carries a packet between a child and its `child` session. The relay
 renders its own messages from stored rows and checks their currency when they are acknowledged
 and claimed; a `relay-packet/1` reaches its receiver as text inside a prompt - the creation
 prompt, a steer, a send. So the reception boundary is the receiver's documented step, and that
@@ -376,7 +378,7 @@ stands, and the earlier disposition is reported beside it.
 ## Seven states, and two of them are never held by the store
 
 The envelope's five stages are about one message getting somewhere. These seven are about the
-assignment, and they run past the message into what the parent then did and what Linear ended
+assignment, and they run past the message into what the child then did and what Linear ended
 up holding.
 
 | State | Answered by |
@@ -408,18 +410,18 @@ conditional, and `unmeasurableClaims` those it cannot answer at all. Neither pro
 
 ## Activation is three facts, not one
 
-The prompt naming a workflow, the child having actually armed it, and a host goal being
+The prompt naming a workflow, the `child` session having actually armed it, and a host goal being
 active are produced by three different parties and none implies another.
 `activation_class` reads the triple into the classes the crw-run reference already names,
 L0 through L6. Two of those are not defects: L5 is working and L6 is an unknown.
 
 The mode decides which facts can answer, and the reading carries the mode it was read under.
-A coordination parent holds a native goal and no implementation FSM **by design**, and an
+A child in coordination mode holds a native goal and no implementation FSM **by design**, and an
 authorised non-Loop assignment arms neither, so both answer `not_applicable` rather than
 absent. A loop reading answering `not_applicable` is refused, a reading whose mode differs from
 the packet's policy is refused, and the mode itself is compared with the receiver's reading as
-above. A parent that holds no reading of a child's mode gets such a report back unavailable;
-it reads the child's activation from the child's own goalplan under dispatch verification, not
+above. A child that holds no reading of a `child` session's mode gets such a report back unavailable;
+it reads the `child` session's activation from the `child` session's own goalplan under dispatch verification, not
 from the packet.
 
 ## Scope of these claims

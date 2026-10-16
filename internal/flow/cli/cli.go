@@ -22,7 +22,7 @@ const Usage = `usage: crw flow start WORKFLOW [--args JSON | --args-file FILE] [
        crw flow ps [--all] [--json]
        crw flow show RUN [--json]
        crw flow watch RUN [--after SEQ] [--wait N] [--limit M] [--follow] [--json]
-       crw flow answer --decision D --run RUN --node N --question Q --revision V [--no-resume]
+       crw flow answer --decision D --run RUN --node N --question Q --revision V [--wait S] [--no-resume]
        crw flow pause RUN
        crw flow cancel RUN
        crw flow resume RUN [SCRIPT] [--detach]

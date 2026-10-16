@@ -1,9 +1,9 @@
 # Official Codex worktree verification
 
-Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](../../crw-canon/references/hierarchy.md#the-levels).
+The sessions in this document are named by [the level table](../../crw-canon/references/hierarchy.md#the-levels): the parent is the repository session, the child is the project session, and a `child` session (a code id, not a layer) is no layer.
 
 Read before proposing the official Codex managed worktree as a creation path for
-child tasks, or before recording a verdict about it. This reference owns the probe
+`child` session tasks, or before recording a verdict about it. This reference owns the probe
 procedure, the evidence format and the judgment rule. It does not select a default
 creation path, and it does not restate bridge launch or the relay procedure, which
 stay in [bridge.md](bridge.md) and [relay.md](relay.md).
@@ -224,7 +224,7 @@ it.
 A managed worktree keeps its git metadata in the source repository rather than in
 the checkout, so editing a file and recording a commit touch different filesystem
 locations that a sandbox can treat differently. Measure every permission profile you
-would actually give a child, because the outcome differs between them and a single
+would actually give a `child` session, because the outcome differs between them and a single
 profile's result does not describe the path.
 
 The measurements in this section come from the command-line surface. The worktree was
@@ -234,7 +234,7 @@ named in each paragraph below; the resume went through the App Server transport.
 of them was produced on a client surface, so none may be transferred to one, and none
 of them describes a different feature configuration.
 
-Measured there with a broad profile, full access and approvals never: the child
+Measured there with a broad profile, full access and approvals never: the `child` session
 created a commit inside the managed worktree, and after being resumed it created a
 further commit and published that new commit to a remote. Its approval policy and
 sandbox mode were unchanged across the resume. Under that profile, on that host, the
@@ -256,23 +256,23 @@ published from the same path. Record the write, commit and push outcomes separat
 with the profile in force, because they fail independently and a success in one says
 nothing about the others. The portable requirement is effective write permission to
 every git path the delivery actually needs, demonstrated by producing the artifact
-under the profile the child will really run with, rather than inferred from a granted
+under the profile the `child` session will really run with, rather than inferred from a granted
 parent directory.
 
 
 ## Loop activation inside a managed worktree
 
-Whether a child can run its normal workflow inside a managed worktree is a separate
+Whether a `child` session can run its normal workflow inside a managed worktree is a separate
 question from whether the checkout is correct, and it is easy to answer wrongly,
 because the setup artifacts appear before any work does.
 
-Measured 2026-09-22 on the command-line surface, Codex 0.154.0, for a real issue child
+Measured 2026-09-22 on the command-line surface, Codex 0.154.0, for a real `child` session
 created with `codex exec --enable worktrees --worktree` and left to run its own
-workflow. It activated: an `active` row in the host goal store keyed on the child's
-thread id and carrying the child's OWN objective; a registered goalplan under the
+workflow. It activated: an `active` row in the host goal store keyed on the `child` session's
+thread id and carrying the `child` session's OWN objective; a registered goalplan under the
 worktree's `goalplans/<slug>/` with its work phases and criteria; an
 accepted transition row in that worktree's `ledger.jsonl`; and the
-orchestrate call exiting zero in the child's rollout. The checkout's own
+orchestrate call exiting zero in the `child` session's rollout. The checkout's own
 state tree is where all of it lands, and none of it appeared in the source
 checkout. That tree is `.crw/`.
 
@@ -287,15 +287,15 @@ and none of them is:
   own, without entering any phase.
 
 This round observed exactly that trap: 31 seconds before the real transition, the
-child's session file already read a populated slug with `loopArmSeen` true while the
+`child` session's session file already read a populated slug with `loopArmSeen` true while the
 phase was still `IDLE` and orchestration was inactive. A predicate built on those
-fields alone would have recorded activation for a child that had not yet started.
+fields alone would have recorded activation for a `child` session that had not yet started.
 All four stay required. The last two carry the weight, because an accepted transition
 row and an exit-zero orchestrate call are the only ones of the four the three cheap
 signals cannot produce; check those first, then confirm the active goal row and the
 bound goalplan are genuinely there rather than assuming they followed. Dropping either
-of that last pair is how a verifier ends up certifying a child that registered a plan and
-never ran it. Treat a child's own written claim of activation as a lead to check rather
+of that last pair is how a verifier ends up certifying a `child` session that registered a plan and
+never ran it. Treat a `child` session's own written claim of activation as a lead to check rather
 than proof.
 
 ## Evidence to capture
@@ -314,7 +314,7 @@ Keep raw receipts outside the repository and record only the shape here.
 - The observed task title, recorded apart from the project association above. A title,
   including the product-family prefix
   [Set the app presentation and record](../../crw-plan/references/integrations.md#set-the-app-presentation-and-record)
-  gives a project parent, is presentation and settles no association in either
+  gives a project session, is presentation and settles no association in either
   direction, and a later title-only change is checked by re-reading this same record
   rather than by trusting that the rename touched nothing else.
 - Worktree listing from the source repository, and the resolved checkout path.
@@ -324,7 +324,7 @@ Keep raw receipts outside the repository and record only the shape here.
   what the gate actually consumes, and each snapshot must cover all four fixture states,
   the staged change, the unstaged change, the ordinary untracked file and the ignored
   file. Proving the source was untouched says nothing about what was copied into the
-  child. Without the new-checkout snapshot, isolation stays unverified.
+  `child` session. Without the new-checkout snapshot, isolation stays unverified.
 - The INTENDED value of every field that verdict consumes, recorded before creation
   from the request, alongside the actual thread record fields at creation and again
   after resume. Without that baseline a wrong value that stays wrong reads as
@@ -364,7 +364,7 @@ Keep raw receipts outside the repository and record only the shape here.
 - Relay receipts for every leg the verdict consumes, not only the outer ones:
   relationship and generation, the issue identity and scope reference the relationship
   was registered under, using the fields the registration contract actually stores, the
-  relay's own parent and child settings records, which are separate from the thread's
+  relay's own child and `child` session settings records, which are separate from the thread's
   creation and resume settings and are consumed by the same verdict, the criteria digest
   the review was bound to, the resume
   result, the emitted event with its revision
@@ -413,7 +413,7 @@ observation it was built on while the citation stayed put.
 
 Doing this to an already-written evidence set is worth the hour. Applied to 34 cells here,
 33 anchored on the first pass and one did not, which was the interesting one: the claim
-that the parent manufactured its own receipt turned out to rest on a single field in the
+that the child manufactured its own receipt turned out to rest on a single field in the
 receipt file rather than on any phrase in the claim. Anchoring forced that to be said
 explicitly instead of left as a resemblance between two paragraphs.
 
@@ -452,7 +452,7 @@ new managed checkout under the configured worktree root and distinct from the so
 checkout, compared against the root read before creation; for the owner, ownership by
 the newly created task and by no other. Check each property against what creation
 actually resolved, then require exact equality between those resolved values and the
-ones seen after resume. A resume that moves the child back to the source checkout defeats
+ones seen after resume. A resume that moves the `child` session back to the source checkout defeats
 the isolation the worktree exists for while every other field stays put, and that is
 what this catches. Unchanged is not sufficient on
 its own: a task created on an unintended branch that stays on it still fails. A default that happens to match is not
@@ -460,8 +460,8 @@ preservation. Confirm an explicit override separately from the inherited default
 
 **Relay round trip.** Passes when the officially created task keeps a stable native
 identifier in the same store, accepts a resume through the relay transport, carries
-its recorded settings, exposes its artifacts, and completes the sequence of child
-delivery, parent acknowledgement, verdict, correction and re-verification. Staged is
+its recorded settings, exposes its artifacts, and completes the sequence of `child` session
+delivery, child acknowledgement, verdict, correction and re-verification. Staged is
 not delivered. When delivery stalls, diagnose it with the
 delivery preconditions below rather than recording only that it was not delivered. Test the minimum number of round trips the decision needs.
 
@@ -475,29 +475,29 @@ task unless the evidence is preserved outside it.
 
 ### What the command-line path does and does not carry, measured 2026-09-22
 
-A real issue child was created on this path and supervised to a pull request, and the
+A real `child` session was created on this path and supervised to a pull request, and the
 informative part was that its first turn died rather than finished. Record these as CLI
 facts. None of them is a relay leg, and under a DIRECT assignment with no relay
 registration the relay round trip stays unverified whatever these show.
 
-- A turn that dies EMITS NOTHING. When the child's turn failed on a provider capacity
+- A turn that dies EMITS NOTHING. When the `child` session's turn failed on a provider capacity
   error, the `-o` last-message file was left empty, no final agent message was written,
   and `turn.completed` never appeared. Any handoff convention that lives in the final
-  message, including a status sentinel, is lost exactly when the parent most needs it.
-  Put the child's running state in a file outside the checkout and treat the final
+  message, including a status sentinel, is lost exactly when the child most needs it.
+  Put the `child` session's running state in a file outside the checkout and treat the final
   message as a convenience.
-- The parent is never told. There is no wake and no notification; the parent learns by
+- The child is never told. There is no wake and no notification; the child learns by
   polling. Distinguish the three states it must tell apart — a live process whose
   rollout is still growing, a dead one, and a live one that has stopped progressing —
   because only the first is safe to leave alone.
 - What survives is the durable state, and it is enough to recover from: the thread row
   with its model, effort, approval mode and working directory intact, the managed
-  checkout, the branch and every commit, plus whatever the child wrote outside the
+  checkout, the branch and every commit, plus whatever the `child` session wrote outside the
   checkout. What is lost is the final message and any in-flight subagent result.
-- The host goal is moved to `blocked` automatically when the turn fails, and the child
-  CANNOT restore it: the goal tool accepts only complete or blocked. A resumed child
+- The host goal is moved to `blocked` automatically when the turn fails, and the `child` session
+  CANNOT restore it: the goal tool accepts only complete or blocked. A resumed `child` session
   therefore works under a goal it cannot return to active. Expect that, and do not read
-  it as the child having given up.
+  it as the `child` session having given up.
 
 ### The create and resume surfaces do not accept the same flags
 
@@ -565,7 +565,7 @@ busy. Both conditions are recorded distinctly and both concern recipient readine
 the evidence does not show independent underlying causes, and it does not establish
 which process performed the checks or owns sending.
 
-The practical consequence for a child task: settings completeness is not recipient
+The practical consequence for a `child` session task: settings completeness is not recipient
 readiness. Here, the relay recorded the recipient as not loaded, left deliverability
 unknown, and withheld sending. Capture, separately: whether the
 emitting turn was observed terminal, whether a delivery entry exists, the recorded
@@ -582,21 +582,21 @@ receipt. Naming the leg that stopped is the result; "not delivered" is not.
    there and is not restated here. Receipt: the relationship identifier, the identity
    and scope reference it was registered under, and the recorded settings for each side.
 2. Bind the criteria the review will be judged against. Receipt: the criteria digest.
-3. Have the child emit its outcome with the artifact. Receipt: event identifier,
+3. Have the `child` session emit its outcome with the artifact. Receipt: event identifier,
    revision hash, artifact manifest and the stage reached.
 4. Establish the emitting turn's terminal status through a host connection. Receipt:
    the terminal proof and the observed turn status.
 5. Deliver to the recipient. Receipt: delivery state, attempt count, dispatch
    evidence, and the recipient lifecycle recorded at that moment.
-6. Have the parent claim and acknowledge. Receipt: the claim result, the
-   acknowledgement proof over the parent's own turn, and the acknowledgement record.
+6. Have the child claim and acknowledge. Receipt: the claim result, the
+   acknowledgement proof over the child's own turn, and the acknowledgement record.
 7. Record a verdict. Receipt: the settled verdict and its per-criterion dispositions.
-8. For a correction, open the next generation and have the SAME child re-emit.
+8. For a correction, open the next generation and have the SAME `child` session re-emit.
    Receipt: the new generation, the superseded revision and the new head.
 9. Re-verify the new head. Receipt: the settled verdict against the current revision.
 
 Identify the recipient before starting, and use a recipient that is genuinely
-reachable. A parent that is itself mid-turn, or a task recorded as not loaded, will
+reachable. A child that is itself mid-turn, or a task recorded as not loaded, will
 stop the sequence for a reason that has nothing to do with the worktree under test.
 
 ## Retention differs by owner
@@ -735,14 +735,14 @@ new checkout must contain none of the fixture's uncommitted state, neither the s
 change, the unstaged change, the ordinary untracked file, nor the gitignored private
 file, unless that propagation was deliberately requested for this path. A run that
 altered the source, that copied a private file, or that carried any uncommitted work
-into the child's checkout fails the gate whatever the other verdicts say. The first two
+into the `child` session's checkout fails the gate whatever the other verdicts say. The first two
 are confidentiality and isolation failures; the third is worse in a default creation
-path, because a child that starts from a contaminated baseline can commit source work
+path, because a `child` session that starts from a contaminated baseline can commit source work
 nobody asked it to touch.
 
-Adoption also requires the child to actually produce its delivery artifact under the
+Adoption also requires the `child` session to actually produce its delivery artifact under the
 permissions it will really run with, and to produce it again after a resume. When
 delivery includes publishing, require the newly created commit to reach the remote,
 not merely a push that republished an existing one. A relay round trip that carries a
-diff can pass while a child that owes commits cannot make them, so the delivery
+diff can pass while a `child` session that owes commits cannot make them, so the delivery
 capability is a separate gate rather than something the round trip implies.

@@ -1,6 +1,6 @@
 # Dispatch surfaces — thread or subagent
 
-Here the parent (relay role `parent`) is a relay role, read through [the level table](../../crw-canon/references/hierarchy.md#the-levels).
+The sessions in this document are named by [the level table](../../crw-canon/references/hierarchy.md#the-levels): the child is the project session, and a `child` session (a code id, not a layer) is no layer.
 
 Read before choosing how to fan work out. This file owns the choice between
 surfaces for unmanaged work; a CRW-managed lane is chosen first by
@@ -16,23 +16,23 @@ the task packet, the assignment record the relay holds for it, or the DAG node
 
 - **Managed** — a tracking issue or a DAG node, whether the relay already holds an assignment for it
   or not. An issue with no assignment yet is not unmanaged: its first lane is a managed one. A
-  managed issue or node is one of two things, and the choice is the plan of [the child](../../crw-canon/references/hierarchy.md#the-levels) (project session, relay role `parent`), not this file's:
+  managed issue or node is one of two things, and the choice is the plan of [the child](../../crw-canon/references/hierarchy.md#the-levels) (project session), not this file's:
   - a flow executor call of the child's run, the default path: the run releases the node to the
     relay's DAG scheduler and publishes the executor's step, the child spawns that step's role
     subagent (a leaf) as `crw flow next` names it and reports it with `crw flow dispatched`, and the
     call, its commits, its review and its acceptance are rows of the run's journal and the DAG records
     ([the flow commands](../../crw-canon/references/flow.md), [the spawn policy](../../crw-canon/references/spawn-policy.md)).
-  - an issue child (relay role `child`), only for a plan with no flow run: started and resumed
-    through `crw-run` on the exception path of one oversized issue (SP-CHILD-1), with the managed
+  - a `child` session, only for a plan with no flow run: started and resumed
+    through `crw-run` on the exception path of one oversized issue, with the managed
     start, the DAG release and their bridge recovery, pair/profile, capacity and receipt rules. A
-    node a flow run's architect sizes for a child starts no issue child: the project lane escalates
+    node a flow run's architect sizes for a child starts no `child` session: the project lane escalates
     it as `size_split` with detail `child_retired`. It is never a desktop `create_thread` lane.
 
   Either way the relay refuses a second active or paused assignment of the same issue and a release
   past capacity; those answers are followed, not routed around by creating a thread by hand. The
   child's own thread spawns the run's role subagents for the steps `crw flow next` hands it, and helpers
   of its own for its judgment (recorded, SP-NAT-1); it edits no node's directory. The implementation of
-  an issue is its run's executor call or its issue child's, and a step's subagent is a leaf that spawns
+  an issue is its run's executor call or its `child` session's, and a step's subagent is a leaf that spawns
   nothing. The manifest of
   managed lanes is a read-only projection of the relay assignments and DAG records (and, for a run,
   its journal), not a second file to keep. A goal-free parent is resumed by relay delivery
@@ -74,12 +74,14 @@ only a disjoint checkout and returns a patch or evidence to the coordinator:
 create a managed worktree, then give its absolute path to a subagent. The
 subagent's native cwd still inherits the coordinator's; the packet must require
 that path as the shell workdir on every command. Workers do not acquire their
-own goal or PABCD state. Different workers must use different worktrees. The
-SubagentStop gate reads `.crw/evidence` under the coordinator's native cwd, so a receipt
-the worker writes under its assigned tree is not accepted there: have the worker write its
-receipt under the native cwd's `.crw/evidence` and report that absolute path. Only where the
-runtime in use reads the tree the dispatch assigned (the evidence-location change of the 10-10
-review) is a receipt in the assigned tree accepted.
+own goal or PABCD state. Different workers must use different worktrees. When the
+dispatch assigns a tree, the SubagentStop gate reads the receipt under that tree: the
+packet carries the line `CRW-WORKTREE: <path>`, the spawn hook records it as an evidence
+assignment (CRW-1115), and the worker writes its receipt under `<that tree>/.crw/evidence/`
+and reports the absolute path. A dispatch with no assignment still writes its receipt under
+the native cwd's `.crw/evidence`. For a flow executor the engine makes the assignment and
+the parent does nothing: the spawn message, the packet and the block reason name the one
+file `<P>/.crw/evidence/<id>.md` in the call worktree P (CRW-1482).
 
 Say which one you are creating, in those words, before you create it.
 

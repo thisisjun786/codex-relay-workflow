@@ -1,6 +1,6 @@
 # The session host: reading role subagents
 
-A session call (CRW-1316) runs a role call as a subagent [the child](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels) (project session, relay role `parent`) spawns with `spawn_agent` (multi-agent V1).
+A session call (CRW-1316) runs a role call as a subagent that [the child](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels) (project session) spawns with `spawn_agent` (multi-agent V1).
 The run does not start that thread; it reads it on the host. `internal/flow/sessionhost` is that reader. It goes through the
 App Server client (`internal/bridge/appserver`), keeps plain types, and imports neither the engine nor a backend: the engine
 defines the interface it consumes.

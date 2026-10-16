@@ -8,7 +8,10 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/reviewadapter"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/script"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/acceptance/premerge"
 )
 
 // packetText runs a script that imports from crw:lib/packets and returns the packet text it returns.
@@ -232,5 +235,187 @@ func TestArchitectPacketNamesTheHeadOfTheBackgroundFindings(t *testing.T) {
 	exp := packetText(t, "explorer-head-packet", "explorerPacket", "explorerPacket('background', { question: 'background of n1', files_needed: ['a.go'] }, { milestone: 'M1', head: 'head0' })")
 	if !strings.Contains(exp, "READ AT: head0") {
 		t.Errorf("the background explorer packet does not name its head:\n%s", exp)
+	}
+}
+
+// packetPlan is the plan of an issue node as crw.issuePlan gives it to the executor's packet.
+const packetPlan = "{ issue: 'CRW-1', title: 'first', revision: 'r0', design_digest: 'sha256:d0', approach: 'guard the store', regions: ['a.go'], " +
+	"tests_first: ['TestGuard'], done_condition: 'go test ./a', criteria: ['the guard holds'], decisions: [{ id: 'D1', change: 'split the store' }], answers: [] }"
+
+// TestPacketWithoutLastStateIsUnchanged (CRW-1469): the executor's packet of a node with no last state (the first build, or a fresh
+// thread of a node that has had no unit check, verification or receipt yet) is the packet it was, byte for byte: no last argument, an
+// undefined one and the empty state of the node lane give the same text, with and without a checkpoint, and none of the LAST
+// sections is rendered. A receipt with no summary is no last receipt.
+func TestPacketWithoutLastStateIsUnchanged(t *testing.T) {
+	const body = "ROLE: executor. Node n1 (CRW-1: first).\n\n" +
+		"DESIGN REVISION: r0 sha256:d0\n\n" +
+		"APPROACH:\nguard the store\n\n" +
+		"EDIT REGIONS:\n- a.go\n\n" +
+		"TESTS FIRST:\n- TestGuard\n\n" +
+		"DONE CONDITION:\ngo test ./a\n\n" +
+		"CRITERIA:\n- c1: the guard holds\n\n" +
+		"DECISIONS:\n- D1: split the store"
+	const checkpoint = "\n\nCHECKPOINT (a fresh tier takes over; the worktree starts at this head):\n- head: h1\n- tree: t1"
+	const tail = "\n\nAnswer with RECEIPT when you are done. Edit files only under the absolute path P of your worktree."
+	for _, row := range []struct{ name, cp, last, want string }{
+		{"no-last", "null", "", body + tail},
+		{"undefined-last", "null", ", undefined", body + tail},
+		{"empty-last", "null", ", { findings: [], ci: null, receipt: null }", body + tail},
+		{"receipt-without-summary", "null", ", { findings: [], ci: null, receipt: { summary: null } }", body + tail},
+		{"checkpoint-no-last", "{ head: 'h1', tree: 't1' }", "", body + checkpoint + tail},
+		{"checkpoint-empty-last", "{ head: 'h1', tree: 't1' }", ", { findings: [], ci: null, receipt: null }", body + checkpoint + tail},
+	} {
+		got := packetText(t, "executor-packet-"+row.name, "packet", "packet('n1', "+packetPlan+", "+row.cp+row.last+")")
+		if got != row.want {
+			t.Errorf("%s: the packet\n%q\nwant\n%q", row.name, got, row.want)
+		}
+	}
+}
+
+// TestPacketRendersTheLastState (CRW-1469): a fresh thread's packet carries the node's last state: the findings of the last unit check
+// as the fix packet names them, the last verification with its command and failures (or that it passed), and the summary of the last
+// receipt, each in its own section, before the checkpoint.
+func TestPacketRendersTheLastState(t *testing.T) {
+	last := "{ findings: [{ id: 'f_1', severity: 'P2', impact: 'core_function', file: 'a.go', line: 3, text: 'the guard is missing' }], " +
+		"ci: { pass: false, command: 'crw-dev ci local', failures: ['validate/tests: failed'], summary: 'validate/tests: failed' }, receipt: { summary: 'wrote the guard' } }"
+	got := packetText(t, "executor-packet-last", "packet", "packet('n1', "+packetPlan+", { head: 'h1', tree: 't1' }, "+last+")")
+	for _, want := range []string{
+		"\n\nLAST FINDINGS (",
+		"\n- [P2] f_1 a.go:3 the guard is missing",
+		"\n\nLAST VERIFICATION FAILED (crw-dev ci local):\n- validate/tests: failed",
+		"\n\nLAST RECEIPT (",
+		"): wrote the guard",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the packet lacks %q:\n%s", want, got)
+		}
+	}
+	if i, j := strings.Index(got, "LAST FINDINGS"), strings.Index(got, "CHECKPOINT"); i < 0 || j < 0 || i > j {
+		t.Errorf("the last state does not come before the checkpoint:\n%s", got)
+	}
+	passed := packetText(t, "executor-packet-last-pass", "packet", "packet('n1', "+packetPlan+", null, { findings: [], ci: { pass: true, command: 'crw-dev ci local', failures: [], summary: 'pass' }, receipt: null })")
+	if !strings.Contains(passed, "\n\nLAST VERIFICATION PASSED (crw-dev ci local)") || strings.Contains(passed, "LAST FINDINGS") || strings.Contains(passed, "LAST RECEIPT") {
+		t.Errorf("the packet of a passed last verification:\n%s", passed)
+	}
+}
+
+// TestFixPacketTextIsKept (CRW-1469): the fix packet builds its unit-check, verification and receipt sections from the helpers the
+// executor's packet shares, and its text is the one it was, so a resumed fix call has the input digest it was recorded with.
+func TestFixPacketTextIsKept(t *testing.T) {
+	uc := packetText(t, "fix-packet-uc", "fixPacket", "fixPacket('A', { verdict: 'needs_changes', findings: [{ id: 'f_1', severity: 'P2', file: 'a/x.go', line: 7, text: 'the loop never ends' }] }, null, null, { summary: 'wrote the loop' })")
+	if want := "ROLE: executor. Node A: fix what the run found, in the same worktree, and answer with RECEIPT again.\n\n" +
+		"UNIT CHECK (needs_changes; fix every finding):\n- [P2] f_1 a/x.go:7 the loop never ends\n\n" +
+		"A finding you cannot fix without an answer: answer needs_research with the question, and the run answers it on this thread.\n\n" +
+		"YOUR LAST RECEIPT: wrote the loop"; uc != want {
+		t.Errorf("the unit-check fix packet\n%q\nwant\n%q", uc, want)
+	}
+	ci := packetText(t, "fix-packet-ci", "fixPacket", "fixPacket('A', null, { pass: false, command: 'crw-dev ci local', failures: [], summary: 'validate/tests: failed' }, null, { summary: null })")
+	if want := "ROLE: executor. Node A: fix what the run found, in the same worktree, and answer with RECEIPT again.\n\n" +
+		"VERIFICATION FAILED (crw-dev ci local):\n- validate/tests: failed"; ci != want {
+		t.Errorf("the verification fix packet\n%q\nwant\n%q", ci, want)
+	}
+}
+
+// TestFixPacketNamesTheFailedTestsOfTheVerification (CRW-1469, CRW-1488 item 16): a failed verification whose result names the failed
+// tests of its record (failed_tests: by failed step, the tests, the packages and the last lines of its output) renders them in the fix
+// packet after the failures, and in the LAST VERIFICATION of a fresh thread's packet; a step that names no test shows its output only.
+// A failed verification with no failed_tests, as every one recorded before them, renders the text it did.
+func TestFixPacketNamesTheFailedTestsOfTheVerification(t *testing.T) {
+	const ci = "{ pass: false, command: 'crw-dev ci local', failures: ['go-product/tests: failed', 'validate/lint: failed'], summary: 'go-product/tests: failed; validate/lint: failed', " +
+		"failed_tests: [{ job: 'go-product', step: 'tests', tests: ['TestGuard', 'TestStore/empty'], packages: ['example.com/m/store'], tail: '--- FAIL: TestGuard (0.01s)\\nFAIL\\texample.com/m/store\\t0.1s' }, " +
+		"{ job: 'validate', step: 'lint', tests: [], packages: [], tail: 'a.go:3: undefined: x' }] }"
+	const steps = "FAILED TESTS (each failed step of the verification record: its tests, its packages and the last lines of its output):\n" +
+		"- go-product/tests: TestGuard, TestStore/empty (packages example.com/m/store)\n" +
+		"    --- FAIL: TestGuard (0.01s)\n    FAIL\texample.com/m/store\t0.1s\n" +
+		"- validate/lint: no test named\n" +
+		"    a.go:3: undefined: x"
+	fix := packetText(t, "fix-packet-failed-tests", "fixPacket", "fixPacket('A', null, "+ci+", null, null)")
+	if want := "ROLE: executor. Node A: fix what the run found, in the same worktree, and answer with RECEIPT again.\n\n" +
+		"VERIFICATION FAILED (crw-dev ci local):\n- go-product/tests: failed\n- validate/lint: failed\n\n" + steps; fix != want {
+		t.Errorf("the fix packet\n%q\nwant\n%q", fix, want)
+	}
+	fresh := packetText(t, "executor-packet-failed-tests", "packet", "packet('n1', "+packetPlan+", null, { findings: [], ci: "+ci+", receipt: null })")
+	if !strings.Contains(fresh, "\n\nLAST VERIFICATION FAILED (crw-dev ci local):\n- go-product/tests: failed\n- validate/lint: failed\n\n"+steps+"\n\n") {
+		t.Errorf("the fresh thread's packet lacks the failed tests:\n%s", fresh)
+	}
+	for _, none := range []string{"", ", failed_tests: []"} {
+		old := packetText(t, "fix-packet-no-failed-tests", "fixPacket", "fixPacket('A', null, { pass: false, command: 'crw-dev ci local', failures: ['validate/tests: failed'], summary: 'validate/tests: failed'"+none+" }, null, null)")
+		if want := "ROLE: executor. Node A: fix what the run found, in the same worktree, and answer with RECEIPT again.\n\n" +
+			"VERIFICATION FAILED (crw-dev ci local):\n- validate/tests: failed"; old != want {
+			t.Errorf("a verification without failed tests (%q): the fix packet\n%q\nwant\n%q", none, old, want)
+		}
+	}
+}
+
+// TestCrosscheckRuleIsOneTableForPacketOpAndClose (CRW-1473, CRW-1480 item 2): the crosscheck has one close rule, and the packet, the op
+// and the close say the same one. Both passes' packets hold ops.CrosscheckRule word for word (and the lens of their own pass), and for
+// each severity P0-P3 crossed with every impact and none, ops.CrosscheckVerdictOf rules needs_changes exactly when premerge.Blocks and
+// carries the finding otherwise. The close part is TestCloseFollowsTheCrosscheckRule (ops/finalgate_test.go): a close over that one
+// finding closes exactly when V is verified.
+func TestCrosscheckRuleIsOneTableForPacketOpAndClose(t *testing.T) {
+	const g = "{ milestone: 'M1', head: 'h9', base: 'b0', range: 'b0..h9', decisions: [{ id: 'D1', nodes: ['n1'], change: 'split the store' }] }"
+	for pass, lens := range map[string]string{"A": "PASS A (coverage)", "B": "PASS B (bug hunt)"} {
+		packet := packetText(t, "crosscheck-packet-"+pass, "crosscheckPacket", "crosscheckPacket(ms, "+g+", '"+pass+"', {})")
+		for _, want := range []string{ops.CrosscheckRule, lens, "Review the changes between b0 and h9", "HEAD: h9", "D1 (nodes n1): split the store"} {
+			if !strings.Contains(packet, want) {
+				t.Errorf("the crosscheck packet of pass %s lacks %q:\n%s", pass, want, packet)
+			}
+		}
+	}
+	for _, sev := range []string{"P0", "P1", "P2", "P3"} {
+		for _, impact := range append(slices.Clone(premerge.Impacts), "") {
+			f := reviewadapter.Finding{ID: "f1", Severity: sev, Impact: impact, File: "a.go", Line: 1, Text: "t"}
+			verdict, carried := ops.CrosscheckVerdictOf([]reviewadapter.Finding{f})
+			blocks := premerge.Blocks(sev, impact)
+			if (verdict == reviewadapter.VerdictNeedsChanges) != blocks || (len(carried) == 1) == blocks {
+				t.Errorf("%s/%q: CrosscheckVerdictOf %s carried %v, premerge.Blocks %v", sev, impact, verdict, carried, blocks)
+			}
+		}
+	}
+}
+
+// TestCrosscheckFixPacketNamesTheRouteOfTheFix (CRW-1473): the fix packet of a crosscheck that needs changes names the blocking
+// findings by id (not the carried ones), the range as a git diff command over their files, the criteria, and the route of part A: a
+// correction issue of the milestone, a new executor subagent on a branch from the integration tip, the land through land-head, and
+// the report of the verdict up to the 부모.
+func TestCrosscheckFixPacketNamesTheRouteOfTheFix(t *testing.T) {
+	const v = "{ verdict: 'needs_changes', round: 1, head: 'h9', base: 'b0', carried: ['f2'], findings: [" +
+		"{ id: 'f1', severity: 'P1', impact: 'core_function', file: 'a.go', line: 3, text: 'the store loses a row' }, " +
+		"{ id: 'f2', severity: 'P3', impact: 'minor_separable', file: 'b.go', line: 1, text: 'a nit' }] }"
+	packet := packetText(t, "crosscheck-fix-packet", "crosscheckFixPacket", "crosscheckFixPacket(ms, "+v+")")
+	for _, want := range []string{"f1 [P1/core_function] a.go:3 the store loses a row", "git diff b0..h9 -- a.go", "correction issue of milestone M1 naming these finding ids: f1",
+		"a new executor subagent", "crw flow start land-head", "crw flow report-up", "부모"} {
+		if !strings.Contains(packet, want) {
+			t.Errorf("the fix packet lacks %q:\n%s", want, packet)
+		}
+	}
+	for _, gone := range []string{"f2", "b.go", "start crosscheck"} {
+		if strings.Contains(packet, gone) {
+			t.Errorf("the fix packet names %q:\n%s", gone, packet)
+		}
+	}
+}
+
+// TestLandFixPacketNamesTheFindingsTheRangeAndTheNextRound (CRW-1490): the fix packet of a land-head run whose unit check needs changes
+// names every finding of the check by its severity, id, file, line and text, the range of the land as a git diff command, the
+// criteria of the node, and the route of the fix: a new executor subagent fixes the head, and a new land-head run of the node lands it
+// with the next fix round, its args written out with the authors of the head, placeholders for the fixed head and the fixer's thread,
+// and the handoff a start of land-head needs.
+func TestLandFixPacketNamesTheFindingsTheRangeAndTheNextRound(t *testing.T) {
+	const n = "{ id: 'n1', issue: 'CRW-1', title: 'first', criteria: ['the store keeps every row'] }"
+	const findings = "[{ id: 'f1', severity: 'high', file: 'a.go', line: 3, text: 'the store loses a row' }, { id: 'f2', severity: 'low', file: 'b.go', line: 1, text: 'a nit' }]"
+	packet := packetText(t, "land-fix-packet", "landFixPacket", "landFixPacket("+n+", "+findings+", { commit: 'h9', base: 'b0' }, { plan: 'P', milestone: 'M1', fix_round: 2, authors: ['t-author'] })")
+	for _, want := range []string{
+		"LAND FIX of node n1 (CRW-1: first)", "at h9 needs changes",
+		"- [high] f1 a.go:3 the store loses a row", "- [low] f2 b.go:1 a nit",
+		"RANGE: git diff b0..h9",
+		"CRITERIA OF THE NODE:\n- c1: the store keeps every row",
+		"a new executor subagent fixes this head",
+		"`crw flow start land-head --args '" + `{"plan":"P","milestone":"M1","issue":"CRW-1","head":"<the fixed head>","authors":["t-author","<the fixer subagent thread>"],"fix_round":2}` +
+			"' --handoff <the plan's handoff file>`",
+	} {
+		if !strings.Contains(packet, want) {
+			t.Errorf("the land fix packet lacks %q:\n%s", want, packet)
+		}
 	}
 }

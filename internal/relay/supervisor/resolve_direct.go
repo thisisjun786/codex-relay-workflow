@@ -71,7 +71,7 @@ func (c *Channel) resolveInitiative(ctx context.Context, key string, grade Grade
 		for i, one := range held {
 			candidates[i] = one.Get("taskId")
 		}
-		return Resolution{}, Refusal{"duplicate_scope_owner", "the store scope has more than one live supervisor above " + where + "; this sender will not choose between them: " + pythonRepr(candidates)}
+		return Resolution{}, Refusal{"duplicate_scope_owner", "the store scope has more than one live 부모 above " + where + "; this sender will not choose between them: " + pythonRepr(candidates)}
 	}
 	if len(held) == 0 {
 		return Resolution{}, Refusal{"unregistered_scope", "no management seat stands above " + where + " and the store has no seat, so there is nobody to tell; the message waits"}

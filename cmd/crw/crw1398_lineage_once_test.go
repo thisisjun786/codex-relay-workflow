@@ -45,7 +45,7 @@ func TestCRW1398AMidWalkRelayReadFailureDoesNotClaimTheOnceMarker(t *testing.T) 
 	failS2 = false
 	mu.Unlock()
 	out = f.answerFrom(s1, s3, rollouts[s3], f.parent, push)
-	if w, warned := guardWarning(out); !warned || !strings.Contains(w, "통합은 부모·통합기 몫") {
+	if w, warned := guardWarning(out); !warned || !strings.Contains(w, "통합은 자식·통합기 몫") {
 		t.Fatalf("B: %q; want the child's warning for a push to dev", out)
 	}
 	if n := len(f.records()); n != 2 {

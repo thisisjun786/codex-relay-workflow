@@ -1,6 +1,6 @@
 # Agent execution: the readers of the frozen tables
 
-Here the child (relay role `child`) is a relay role, read through [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels).
+The sessions in this document are named by [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels): the child is the project session, and a `child` session (a code id, not a layer), which is no layer, is the session a relationship node runs in (an agent node has none).
 
 An agent node (R04) is released on the agent surface of `dag-release` and its rows are in `dag_agent_executions` and `dag_agent_closures` (and, from R05, `dag_agent_acceptances` and `dag_agent_integration_stages`). Nothing of it is ever written into a frozen table (`dag_releases`, `dag_node_executions`, `dag_acceptances`, `dag_verified_heads`, `dag_integration_stages`, `dag_acceptance_premerge`, `dag_acceptance_verifications`), so a reader of those tables that answers a question about a NODE sees only the relationship side of it. This page classifies every such reader, so the readers that look on both sides (`executionOf`, `releaseOf`, `acceptanceOf`, `agentIntegratedAt`, in `internal/relay/dagsched/agent_union.go`) have the list, and a reader that nobody classified fails a test.
 
@@ -23,20 +23,21 @@ The set is the non-test Go files of `internal/relay` and `internal/manage` that 
 | `internal/manage/capacity_signals.go` | `caller` | `R06` | n/a | reads the zone tables of capacity_branches.go through branchZoneTables and follows it |
 | `internal/manage/checkpoint.go` | `node-scoped-release+node-scoped-acceptance` | `R06` | yes | the checkpoint counts the integrations of relationships and of agent acceptances (dagsched.CurrentAcceptance, AgentAcceptanceIntegrated), each with its instant |
 | `internal/manage/dagreview.go` | `node-scoped-release` | `R06` | yes | the review takes a node's release, executions and stage from the scheduler's reading, which lists an agent node's executions; nothing of its own reads a frozen table for a node |
-| `internal/manage/dagreview_store.go` | `node-scoped-release+node-scoped-acceptance` | `R06` | yes | the review store reads the current acceptances and the observations of either side; the executions that tie a child to the plan are relationships' (an agent node has no child) |
+| `internal/manage/dagreview_store.go` | `node-scoped-release+node-scoped-acceptance` | `R06` | yes | the review store reads the current acceptances and the observations of either side; the executions that tie a `child` session to the plan are relationships' (an agent node has no `child` session) |
 | `internal/manage/improve.go` | `caller` | `R06` | n/a | the improvement run: calls improveRunCollect and improveRunRoadmap |
 | `internal/manage/improve_collect.go` | `caller` | `R06` | n/a | collects the measurements of a plan through Scheduler.Measure (measure.go) |
 | `internal/manage/improve_run.go` | `caller` | `R06` | n/a | calls improveRunCollect |
 | `internal/manage/pump_signals.go` | `caller` | `R06` | n/a | the pump signals call DagReview (dagreview.go) and capacityEvaluate |
 | `internal/manage/relayread.go` | `node-scoped-release` | `R06` | yes | the manage read of a plan is the scheduler's Progress, which reads both sides; the selection of relationships by plan is relationship-scoped (an agent node has none) |
 | `internal/relay/acceptance/stand.go` | `node-scoped-acceptance` | `R06` | yes | the head an acceptance stands on (standOf): OwnOfAgent is what an agent acceptance stands on, itself; no base refresh is recorded for it |
-| `internal/relay/adapter/cli.go` | `caller` | `R06` | n/a | calls Channel.Attempt (supervisor/send.go) |
+| `internal/relay/adapter/cli.go` | `caller` | `R06` | n/a | calls Channel.Attempt (`supervisor/send.go`) |
 | `internal/relay/childcleanup/command.go` | `caller` | `R06` | n/a | the cleanup command runs the gate of gate.go through Execute |
 | `internal/relay/childcleanup/gate.go` | `relationship-scoped` | `R06` | n/a | asks ExecutionIntegrated of a relationship's merged mark, not of a node |
 | `internal/relay/cli/daemon.go` | `caller` | `R06` | n/a | calls Daemon.Tick (daemon/daemon.go) |
-| `internal/relay/cli/registry.go` | `caller` | `R06` | n/a | registers the daemon and supervisor commands (daemonCommand, supervisorSelectCommand, supervisorStageCommand, supervisorStandingCommand) |
-| `internal/relay/cli/supervisor.go` | `caller` | `R06` | n/a | the supervisor commands call Channel.SelectEvent, Stage, StageStandingWithObservations, StageWithReading and StatusAnswer |
-| `internal/relay/daemon/daemon.go` | `caller` | `R06` | n/a | the tick calls Channel.AutoSend (supervisor/autosend.go) |
+| `internal/relay/cli/registry.go` | `caller` | `R06` | n/a | registers the daemon and supervisor-channel commands (daemonCommand, supervisorSelectCommand, supervisorStageCommand, supervisorStandingCommand) |
+| `internal/relay/cli/reportup.go` | `caller` | `R06` | n/a | report-up calls Channel.StageDirect (`supervisor/direct.go`) |
+| `internal/relay/cli/supervisor.go` | `caller` | `R06` | n/a | the supervisor-channel commands call Channel.SelectEvent, Stage, StageStandingWithObservations, StageWithReading and StatusAnswer |
+| `internal/relay/daemon/daemon.go` | `caller` | `R06` | n/a | the tick calls Channel.AutoSend (`supervisor/autosend.go`) |
 | `internal/relay/dagsched/accept.go` | `agent-writer` | `R05` | n/a | dag-accept: the agent path reads the current agent execution and writes the agent acceptance row |
 | `internal/relay/dagsched/accept_agent.go` | `agent-writer` | `R05` | n/a | the agent path of dag-accept: the reviewer verdict and the author pairs of the run (flow_calls), the commit proof read from git, the pre-merge and verification bodies stored in the agent acceptance row |
 | `internal/relay/dagsched/accept_commit.go` | `relationship-scoped` | `R06` | n/a | the commit acceptance of a relationship; agents use accept_agent |
@@ -66,10 +67,10 @@ The set is the non-test Go files of `internal/relay` and `internal/manage` that 
 | `internal/relay/dagsched/integration_stale.go` | `node-scoped-acceptance` | `R06` | yes | the nodes of a pushed head whose acceptance no longer stands: the marked rows of agent acceptances beside the relationship's, and the node's current acceptance of either side |
 | `internal/relay/dagsched/integration_target.go` | `agent-writer` | `R05` | n/a | the integration target check of dag-integrate-push (CRW-1301): reads the batch-level intent and ref_moved rows only (node_id empty), the intent bases and moved heads of an integration ref, the same for a batch of either side |
 | `internal/relay/dagsched/integration_target_check.go` | `agent-writer` | `R05` | n/a | the one-shot check of the recorded integration targets (CRW-1304): compares the remote head with the batch-level intent bases and moved heads of the target's integration ref (node_id empty), the same for a batch of either side |
-| `internal/relay/dagsched/integration_target_receive.go` | `agent-writer` | `R05` | n/a | the receive and acknowledgement comparison of the stored target observation with the child's baselineRevision (CRW-1302): the same batch-level rows through recordedTargetHeads, no node-level row |
+| `internal/relay/dagsched/integration_target_receive.go` | `agent-writer` | `R05` | n/a | the receive and acknowledgement comparison of the stored target observation with the `child` session's baselineRevision (CRW-1302): the same batch-level rows through recordedTargetHeads, no node-level row |
 | `internal/relay/dagsched/integration_target_record.go` | `agent-writer` | `R05` | n/a | the record of the integration target (CRW-1304): only asks whether a batch recorded the integration ref, through the batch-level rows (node_id empty) |
 | `internal/relay/dagsched/invalidation.go` | `node-scoped-acceptance+agent-lifecycle` | `R06,R07` | yes | reads stale acceptances of either side (R06); the route of an agent node is agent_correction (R07) |
-| `internal/relay/dagsched/landingresult.go` | `node-scoped-release+node-scoped-acceptance` | `R06` | yes | the results a parent records after a landing: a node that ever had a head or an execution on either side can be stated about |
+| `internal/relay/dagsched/landingresult.go` | `node-scoped-release+node-scoped-acceptance` | `R06` | yes | the results the child (project session) records after a landing: a node that ever had a head or an execution on either side can be stated about |
 | `internal/relay/dagsched/lifecycle.go` | `node-scoped-acceptance` | `R06` | yes | pause, cancel and archive of a node read its acceptance of either side, and the acceptances its manifest rests on |
 | `internal/relay/dagsched/liveheads.go` | `node-scoped-release` | `R06` | yes | the heads of the nodes that are running: an agent node's accepted head while its execution stands, else the HEAD of the worktree its execution records; the base of its manifest |
 | `internal/relay/dagsched/livesweep.go` | `node-scoped-release` | `R06` | yes | the conflict sweep of the running nodes: the checkout is also one an agent acceptance of the plan was proved in |
@@ -92,14 +93,14 @@ The set is the non-test Go files of `internal/relay` and `internal/manage` that 
 | `internal/relay/dagsched/regions.go` | `caller` | `R06` | n/a | DeclareRegions asks stateOf whether a node holds its regions |
 | `internal/relay/dagsched/release.go` | `agent-writer` | `R04` | n/a | ReleaseAgent; the relationship release refuses live_agent_execution |
 | `internal/relay/dagsched/release_recovery.go` | `node-scoped-release` | `R06` | yes | skips agent rows: an agent execution is not a managed recovery target (OpenReleaseNodes, dag-release-close), and the manifest it rests on is relied on |
-| `internal/relay/dagsched/revalidation.go` | `agent-lifecycle` | `R07` | n/a | the SAME-child rule applies to relationship nodes only; an agent node's next attempt is another execution row |
+| `internal/relay/dagsched/revalidation.go` | `agent-lifecycle` | `R07` | n/a | the rule that a result goes back to the same `child` session applies to relationship nodes only; an agent node's next attempt is another execution row |
 | `internal/relay/dagsched/stagnation.go` | `node-scoped-acceptance` | `R06` | yes | the stagnation counter of a node reads its acceptance of either side |
 | `internal/relay/dagsched/targets.go` | `node-scoped-acceptance` | `R06` | yes | nodeTargets: where a node's accepted head has to land, for an acceptance of either side (an agent acceptance is a commit acceptance) |
 | `internal/relay/dagsched/withdraw.go` | `relationship-scoped` | `R06` | n/a | withdraws a generation of a relationship |
 | `internal/relay/delivery/ack.go` | `relationship-scoped` | `R06` | n/a | delivery acknowledgement records the verified head of a relationship |
 | `internal/relay/delivery/cli.go` | `caller` | `R06` | n/a | delivery commands call Ack.RecordVerdict (ack.go) and the receive path |
 | `internal/relay/delivery/receive.go` | `caller` | `R06` | n/a | a received verdict is recorded through PreparedVerdict.Record (ack.go) |
-| `internal/relay/delivery/sync.go` | `relationship-scoped` | `R06` | n/a | asks whether a plan runs the relationship (a dag_node_executions row of that relationship on a node dag_nodes still holds live) to skip the sync_outbox row of its verdict (the summary outbox carries it), and which confirmed summary entry carries a verdict (PlanSummaryCarriesVerdict: the relationship's dag_node_executions binding to any version of the node, the entry made at a plan revision where the node was live; read by the supervisor's discharge) |
+| `internal/relay/delivery/sync.go` | `relationship-scoped` | `R06` | n/a | asks whether a plan runs the relationship (a dag_node_executions row of that relationship on a node dag_nodes still holds live) to skip the sync_outbox row of its verdict (the summary outbox carries it), and which confirmed summary entry carries a verdict (PlanSummaryCarriesVerdict: the relationship's dag_node_executions binding to any version of the node, the entry made at a plan revision where the node was live; read by the supervisor channel's discharge) |
 | `internal/relay/integrate/cli.go` | `caller` | `R05,R06` | n/a | dag-integrate and its readers call Scheduler.IntegrateBatch (integration_batch.go, R05), StaleIntegratedNodes (integration_stale.go), VerifiedMoveOnto (integration_push.go), CheckIntegrationTarget (integration_target.go, CRW-1301), RecordTarget and RecordPushRead (integration_target_record.go, CRW-1304) |
 | `internal/relay/integrate/target_cli.go` | `caller` | `R05` | n/a | dag-integration-target-record and dag-integration-target-check call Scheduler.RecordTarget and CheckRecordedTargets (integration_target_record.go, integration_target_check.go, CRW-1304) |
 | `internal/relay/mergeturn/check.go` | `relationship-scoped` | `R06` | n/a | the merge turn refuses an under-correction relationship |
@@ -118,6 +119,7 @@ The set is the non-test Go files of `internal/relay` and `internal/manage` that 
 | `internal/relay/store/dag_zone.go` | `store` | `R04,R05` | n/a | the zone ledger: DDL, appended by R04 and R05 |
 | `internal/relay/store/domain_rows.go` | `store` | `R06` | n/a | frozen row types for port parity; unchanged |
 | `internal/relay/supervisor/autosend.go` | `caller` | `R06` | n/a | calls Channel.StageWithReading, attempt and standing |
+| `internal/relay/supervisor/direct.go` | `caller` | `R06` | n/a | calls Channel.refreshProposal (proposal.go) |
 | `internal/relay/supervisor/notice.go` | `caller` | `R06` | n/a | calls Channel.attempt (send.go) |
 | `internal/relay/supervisor/obligation.go` | `relationship-scoped` | `R06` | n/a | Reportable asks delivery.PlanSummaryCarriesVerdict whether the confirmed summary entry of a plan relationship carries the verdict of an event; it names a relationship, not a node |
 | `internal/relay/supervisor/proposal.go` | `relationship-scoped` | `R06` | n/a | ReportableCurrent asks delivery.PlanSummaryCarriesVerdict, as Reportable does |

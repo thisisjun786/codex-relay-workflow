@@ -153,7 +153,7 @@
   {"flag":"--observation","kind":"append","help":"a reporting-observation/1 file from reporting-show. With --project, repeat once per reading; on its own it is the obligation a turn left by ending without reporting"},
   {"flag":"--recipient","help":"the supervisor you believe this goes to. A disagreement with the linkage is refused rather than resolved by picking one"}],"groups":[{"options":["--event","--project"]}]},
 {"name":"supervisor-send","summary":"one attempt at one staged message, through the same host rules a delivery obeys. A busy recipient is never interrupted, and a held, backed-off or already-sent message answers sent: false without reaching the host","options":[
-  {"flag":"--message","required":true}]},
+  {"flag":"--message","required":true,"help":"the staged message to attempt, by id. A send by id releases a superseded_by_report hold (a supervisor-acknowledge park or a derived hold) and sends the message only while what it is for is still owed, and otherwise sends nothing and leaves the hold; it never re-addresses: when the hierarchy moved the message's sender or recipient it answers relation_owner_drift and writes nothing; staging it again where it came from re-addresses it (supervisor-stage --event or --project for an event's or an omission's report, the sender's own report again for a direct message) and the next send goes"}]},
 {"name":"supervisor-read","summary":"the recipient answering a message. The proof is sha256(messageId|your own turn id), which the delivered bytes cannot contain, so an echo cannot produce it; nothing authenticates the caller, so answering from your own turn is an instruction rather than a checked property","options":[
   {"flag":"--message","required":true},
   {"flag":"--turn","required":true,"help":"your own turn id"},
@@ -1085,9 +1085,16 @@
   {"flag":"--verdict-file","required":true,"help":"a JSON object of the verdict command's options: verdict, criterion, finding, criteria, restoration, reason, expect-criteria-digest, verified-head"}]},
 {"name":"supervisor-list","summary":"one recipient's supervisor messages in the order the channel sends them, with counts by state, hold, project and obligation kind (CRW-1486). Reads only, through the read-only store","options":[
   {"flag":"--recipient","required":true,"help":"the task the messages are addressed to"},
-  {"flag":"--project","help":"only this project's messages"},
+  {"flag":"--project","help":"only this project's messages; none lists the messages with no project (and a project named none)"},
   {"flag":"--state","choices":["unsent","all"],"help":"unsent (the default): queued, deferred busy or withheld before a send; all: every state"},
   {"flag":"--hold","help":"only messages carrying this hold word, or none for messages with no hold"}]},
+{"name":"supervisor-acknowledge","summary":"parks a recipient's old notifications without a turn each (CRW-1500): an unsent message with no hold that no attempt may have sent is held superseded_by_report, with one supervisor_message_superseded journal row naming supervisor-acknowledge and the actor, all in one transaction. A decision, a fault notice and a message being sent are never parked; each message left is reported with its reason. Staging the same statement again leaves a parked message parked, whether the daemon's staging pass, the sender repeating its report or a rotated sender session stages it; it is released when its content changes while it is still owed (a work report corrected in place or resubmitted, a report sent again with other text), when it is re-addressed to another recipient, or when it is sent by its message id while it is still owed","options":[
+  {"flag":"--recipient","required":true,"help":"the task the messages are addressed to"},
+  {"flag":"--actor","required":true,"help":"the task that acknowledges them, written into each journal row"},
+  {"flag":"--all-informational","kind":"true","help":"every message no send of which has settled whose kind reports something finished (completion, flow_completion, flow_milestone_report, lead_report); a block, an escalation and every other kind is left not_informational"},
+  {"flag":"--message","kind":"append","help":"a message id to park, whatever its notification kind; repeat for several"},
+  {"flag":"--project","help":"with --all-informational: only this project's messages"},
+  {"flag":"--staged-before","help":"with --all-informational: only messages staged before this ISO 8601 time (with its offset, such as 2026-10-13T12:50:00Z)"}],"groups":[{"required":true,"options":["--all-informational","--message"]}]},
 {"name":"job","commands":true,"summary":"workspace-local background jobs"},
 {"name":"job run","summary":"run [--note TEXT] [--json] -- <command...>","options":[{"flag":"--note"},{"flag":"--json","kind":"true"}]},
 {"name":"job list","options":[{"flag":"--json","kind":"true"}]},

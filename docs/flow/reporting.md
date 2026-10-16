@@ -148,7 +148,7 @@ See [dag-outbox.md](../relay/dag-outbox.md).
 ## Milestone reports and project-level reports
 
 `crw.reportUp` closes a milestone: the report goes to the parent. Its body names the integrated range and the evidence of the
-close (the final gate, the review of reviewer-final and the audit of the reviews, CRW-1206; a piece the close did not make is `none`).
+close (the final gate, the crosscheck's verdict and the reflection's alignment, CRW-1473, then the review of reviewer-final, which a close that runs the crosscheck does not make, and the audit of the reviews, CRW-1206; a piece the close did not make is `none`).
 The project's orchestrator lifts a project-level blocker or a decision request the initiative decides:
 
 ```
@@ -158,7 +158,7 @@ crw flow report-up --kind project_blocked|project_decision_request|jun_decision_
 What an agent node cannot do or decide is not reported by the node: its RECEIPT is classified by the run, the run escalates, the
 escalation reaches the child's thread, and the child reports up.
 
-A run meant to start the nodes of a plan (a run of `project-lane` or `night-batch`, an old run of an issue child's lane, or a run whose
+A run meant to start the nodes of a plan (a run of `project-lane` or `night-batch`, an old run of a `child` session's lane, or a run whose
 arguments name a `plan`) that finished `completed` and started no node is `blocked` in `crw flow show` and `ps` (no `crw.release` released a node, no child was
 released, nothing landed, and items of its joins threw: [script.md](script.md)). When it finishes so, the run itself reports
 `project_blocked` to the parent, through the same writer, recipient and delivery as `crw flow report-up`: the subject is `no node

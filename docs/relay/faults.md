@@ -1,8 +1,8 @@
 # Operational faults
 
-Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels).
+The sessions in this document are named by [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels): the parent is the repository session, the child is the project session, and a `child` session (a code id, not a layer) is no layer.
 
-When the machinery between a child, its parent and the supervisor breaks, somebody has to
+When the machinery between a `child` session, the child above it and the parent above that breaks, somebody has to
 notice. Until now that somebody was the user: they read a stalled project, asked what had
 happened, and then asked for an issue to be filed. This removes both steps. The daemon reads
 the breakages this store can already see, converges every repeated observation of one breakage
@@ -432,7 +432,7 @@ times, outcome and error; `attempts(publication, *, limit)` returns them.
   because it says nothing about the settings that were refused; three refusals for one reason are
   repetition whatever waited between them. A streak that ended is never counted again. Signature
   `{relationship, errorCode}`, occurrence key `refused:<journal seq>`. `managed_start_failed`: the host
-  answered a managed start and the relay attached no child (broken; signature `{issueKey,
+  answered a managed start and the relay attached no `child` session (broken; signature `{issueKey,
   receiptStatus}`, so a rejection and a partial start are different faults). The answer is read
   where it actually lives. `managed.ManagedStart` records a receipt only for an ACCEPTED creation,
   so for an armed request with no receipt the answer is the newest creation-stage row it
@@ -440,17 +440,17 @@ times, outcome and error; `attempts(publication, *, limit)` returns them.
   a reason `creation_failed`, `creation_unknown`, `creation_identity_unobserved` or
   `creation_settings_unverified` is an answer after a create was attempted, and its suffix is the
   status. The last two come after the host ACCEPTED the creation - its receipt named an unusable
-  identity, or settings that did not match the request - so the incident says a child may exist
+  identity, or settings that did not match the request - so the incident says a `child` session may exist
   that the relay could not attach, never that none was published. The incident states only what
-  the answer establishes: a child the journaled answer names (the `retainedChildTaskId` a partial
+  the answer establishes: a `child` session the journaled answer names (the `retainedChildTaskId` a partial
   creation left) is named and said not to be attached; `unknown` - the managed start's own
-  classification of a receipt it could not read as accepted or failed - says whether a child was
+  classification of a receipt it could not read as accepted or failed - says whether a `child` session was
   created is not established; only a journaled answer whose receipt named no thread says so. A
   recorded receipt that is not accepted still decides where one exists, and is stated as the
   registry's stored status whatever it names, never as the host's answer or a journaled one: the
-  registry keeps a child id only for a receipt it accepts and stores an accepted one missing its
+  registry keeps a `child` session id only for a receipt it accepts and stores an accepted one missing its
   thread or standby id as `partial` with none, so from that row neither what the host answered
-  nor whether it created a child is established. The record a fault publishes says it clears on
+  nor whether it created a `child` session is established. The record a fault publishes says it clears on
   exactly what `still_present` reads: an accepted receipt, attaching, or a newer creation-stage
   answer. The newest creation-stage row is found through the partial index
   `journal_managed_creation`, which holds only those rows, so it is one probe however many rows
@@ -493,10 +493,10 @@ times, outcome and error; `attempts(publication, *, limit)` returns them.
   `MANAGED_READINGS_PER_SWEEP` (8) per tick in a rotation over the settlements: each settled
   turn once, of a relationship still on its managed start's generation, never the standby
   (bootstrap) turn. The call is the one `reporting-show` makes - the selection, marker root,
-  workspace, hashed assignment, child session and turn - and writes nothing. An observer error is
+  workspace, hashed assignment, `child` session and turn - and writes nothing. An observer error is
   a `managed_reading_failed` gap.
-  In the daemon's `supervisor.OmissionObserver`, an absent child claim alone does not make a
-  managed turn unmeasured. An intact intent, child binding and relationship marker must match a
+  In the daemon's `supervisor.OmissionObserver`, an absent `child` session claim alone does not make a
+  managed turn unmeasured. An intact intent, `child` session binding and relationship marker must match a
   unique attached start, the selected store, workspace, dispatch hash and current generation;
   the exact business turn must be admitted and independently settled. With no claim or
   disposition, that admission supplies the evidence for the existing omission classifier even
@@ -562,7 +562,7 @@ follow it too.
   or failed for good) and `resolved`. A notification is `pending`, `reserved`, `uncertain` (a
   lapsed reservation), `delivered`, or `withdrawn` - a blocking one of a fault that withdrew before
   anything carried it (invariant 5), raised again if its cause returns. `notifications(*, limit)` lists pending ones with their
-  eligibility: a paused, cancelled or archived relationship withholds one; a parent recipient
+  eligibility: a paused, cancelled or archived relationship withholds one; a project-session recipient
   that is uncontactable or unmeasured withholds one; a spent `notification` budget holds one.
 - `raise_notification(fault_id, *, reason, ref)` lets a caller raise its own decision (for
   example an incident awaiting classification, or an owner or project hold). It is idempotent per
@@ -587,8 +587,8 @@ follow it too.
   as `waiting`. It is not an eligibility rule, and it runs inside the reservation's write: it may
   read the store, and must neither open a transaction nor call a host.
   `notification_waiting(id, *, reason)` keeps such a reason on a pending notification, writing
-  only when it changes. Eligibility's answer names the relationship and parent it is about and
-  the parent's contact reading, so a deliverer that finds it unmeasured can measure it; the rule
+  only when it changes. Eligibility's answer names the relationship and the project session it is about and
+  that session's contact reading, so a deliverer that finds it unmeasured can measure it; the rule
   is unchanged.
   `notifications(*, state=None, limit, after=None)` lists any state - pending with eligibility,
   reserved and uncertain with their id and `deliveryKey` - so a process that lost a reservation
@@ -623,7 +623,7 @@ Tables, all new because this store has no migration path: `fault_target_projects
 
 ## What a fault is
 
-A fault is the machinery failing to do its job. It is not a child failing at its task: a child
+A fault is the machinery failing to do its job. It is not a `child` session failing at its task: a `child` session
 that reports `blocked` has worked correctly, and
 [supervision](../../internal/relay/supervisor) owns deciding what the level above is
 owed about it. A fault is the layer below that — the turn that settled without reporting at
@@ -631,7 +631,7 @@ all, the deliveries that will not leave the queue for one recipient, the Linear 
 exhausted their attempts against one document, the anchor nobody has successfully polled. Each
 is invisible in the product's own vocabulary, which is why they reached the user as silence.
 
-The two paths stay apart on purpose. A supervisor obligation asks *has the level above been
+The two paths stay apart on purpose. An obligation to the parent (`supervisor-obligation/1`) asks *has the level above been
 told*; a fault asks *is this system working*. An unreported turn raises both, and they are not
 the same record: one is discharged when the coordination document carries the outcome, the
 other when the reason the turn could not report has been fixed and reverified.
@@ -704,9 +704,9 @@ call. Three readers, each in its own process, record it, and the evidence of an 
 recorded ([CRW-1301](dag-scheduler.md)); `check` when the one-shot `dag-integration-target-check`,
 which cron, the coordinator or the integrator runs and the daemon never does, reads the remote of a
 recorded target and finds a head outside the heads recorded for its integration ref
-([CRW-1304](dag-scheduler.md)); and `receive` when the acknowledgement of a child's event finds the
+([CRW-1304](dag-scheduler.md)); and `receive` when the acknowledgement of a `child` session's event finds the
 head that command or the push stored on a recorded target outside the recorded heads and different
-from the child's baseline, without a network call ([CRW-1302](dag-scheduler.md)). The same remote head
+from the `child` session's baseline, without a network call ([CRW-1302](dag-scheduler.md)). The same remote head
 is one occurrence whichever reader sees it, so a second reader adds no second blocking notice. The
 process that records it registers it, as routing registers the product classes, so the ledger itself
 still reads no git ref and makes no network call.
@@ -969,18 +969,18 @@ as a note when the warning appears or changes. A daemon given no ledger ticks ex
 before.
 
 It cannot own the other half. The relay holds no Linear credential by design, so the write is
-performed by the process that does — the coordination parent, or an operator running the
+performed by the process that does — the child in coordination mode, or an operator running the
 commands below. Until that consumer runs, a published fault is a queued publication, and this
 module says exactly that rather than implying an issue exists.
 
 ### Who tells the level above (criterion 7)
 
-The relay daemon does, on its tick, through the supervisor upward channel its reports already
+The relay daemon does, on its tick, through the upward direction of the supervisor channel its reports already
 use (`faultnotice.NoticeDeliverer`, run by `RelayDaemon._report_upward` after the reports when the
 daemon has a fault ledger). The ledger raises the notifications - `blocking` when a broken fault
 opens, `decision` when a write becomes uncertain or fails for good or a caller raises one,
 `resolved` - and still decides whether each may go: its eligibility (the assignment's pause,
-cancellation or archive, and whether its parent can be contacted) and its product's budget, at
+cancellation or archive, and whether the project session above it can be contacted) and its product's budget, at
 reservation. The channel decides how it goes: who the level above is, whether that task may be
 woken, the re-check where the transport starts (I-247) and what a lost answer means. The
 deliverer is the seam between them and owns no rule. Each tick it:
@@ -990,14 +990,14 @@ deliverer is the seam between them and owns no rule. Each tick it:
   (its budget unit given back); a send that may have landed stays uncertain and is never
   repeated - only a verified `supervisor-read` settles it;
 - reads, without writing, a page of pending notifications (rotating across ticks) and asks
-  whether any can go now, measuring a parent whose contact eligibility could not read (the host
-  observation delivery itself records; a parent the host cannot answer about is its own
+  whether any can go now, measuring a child whose contact eligibility could not be read (the host
+  observation delivery itself records; a child the host cannot answer about is its own
   notifications' reason to wait, and the pass goes on) and keeping on a notification why it
   waits, only when that changes;
 - when something can go, reserves - at most what the reports left of the pass's per-tick send
   cap, `max_supervisor_sends_per_tick`, where a report attempt that raised after its transport
   started counts as sent - (`reserve_notifications` with its `deliverable` predicate),
-  stages each reserved notification as one supervisor message keyed by its `deliveryKey`,
+  stages each reserved notification as one message of the supervisor channel keyed by its `deliveryKey`,
   attempts it and settles it: `ack_notification` on the channel's recorded dispatch,
   `fail_notification` only when the channel proves nothing was sent (the message is then parked
   until its next reservation), and nothing when a send may have landed - the lease lapses to
@@ -1022,10 +1022,10 @@ before its relationship existed, or one whose scope names another project than i
 relationship - the project its scope names, when that project key is a plain identifier
 (`notice_facts`' anchor `project:<key>`). A relationship of another project neither
 addresses a notice nor holds it back: it is another project's assignment, and its level above
-and its wishes are that project's. Either way the project's live parent sends
-and the initiative-scoped supervisor receives, exactly as a report does. A project-addressed notice has
+and its wishes are that project's. Either way the project's live child sends
+and the parent that holds the initiative scope receives, exactly as a report does. A project-addressed notice has
 no relationship whose pause or contact applies, so the ledger's eligibility lets it through and
-the channel's own rules decide the rest: the supervisor's archive, pause or limit withholds it
+the channel's own rules decide the rest: the recipient's archive, pause or limit withholds it
 without a wake, as it withholds a report. A notice says what the fault is - purpose `fault_notice` (blocking,
 resolved) or `fault_decision`, class, severity, state, product, the notification's kind and
 reason, the issue once published, the fault id - and points at `fault-show` on this store; the

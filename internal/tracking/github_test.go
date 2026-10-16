@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/tracking/trackingfake"
 )
 
 var bg = context.Background()
@@ -193,6 +195,150 @@ func TestCommentRefusesAHeaderThatIsNotOneBracketedLine(t *testing.T) {
 	}
 }
 
+func TestHasCommentFindsAHeaderOnTheFirstLine(t *testing.T) {
+	const header = "[dev queue · 20261015T120000Z-1]"
+	ref := Ref{Repo: "o/r", Number: 10}
+	comment := func(body string) map[string]any { return map[string]any{"id": 1, "body": body} }
+	for name, c := range map[string]struct {
+		bodies []string
+		want   bool
+	}{
+		"header alone":                     {[]string{header}, true},
+		"header and text":                  {[]string{header + "\n\nresult: pushed"}, true},
+		"header and text with CRLF":        {[]string{header + "\r\n\r\nresult: pushed"}, true},
+		"header after other comments":      {[]string{"[a · b]\n\nx", "plain", header + "\n\nt"}, true},
+		"no comments":                      {nil, false},
+		"header only inside the text":      {[]string{"first line\n" + header}, false},
+		"header only inside a longer line": {[]string{"see " + header + " above"}, false},
+		"first line longer than header":    {[]string{header + " more\n\nt"}, false},
+		"header is a prefix of a tag":      {[]string{"[dev queue · 20261015T120000Z-12]\n\nt"}, false},
+		"another header":                   {[]string{"[dev queue · 20261015T120000Z-2]"}, false},
+		"empty body":                       {[]string{""}, false},
+	} {
+		f := newFake(t)
+		var list []any
+		for _, b := range c.bodies {
+			list = append(list, comment(b))
+		}
+		if list == nil {
+			list = []any{}
+		}
+		f.reply("GET /repos/o/r/issues/10/comments", 200, list)
+		got, err := newClient(t, f).HasComment(bg, ref, header)
+		if err != nil || got != c.want {
+			t.Errorf("%s: HasComment = %v, %v; want %v", name, got, err, c.want)
+		}
+		reqs := f.requests()
+		if len(reqs) != 1 || reqs[0].Method != "GET" || reqs[0].RawQuery != "per_page=100" {
+			t.Errorf("%s: requests = %+v; want one GET with per_page=100", name, reqs)
+		}
+	}
+
+	t.Run("paginates", func(t *testing.T) {
+		f := newFake(t)
+		f.handle("GET /repos/o/r/issues/10/comments", func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Query().Get("page") == "" {
+				next := f.srv.URL + "/repos/o/r/issues/10/comments?per_page=100&page=2"
+				w.Header().Set("Link", `<`+next+`>; rel="next"`)
+				writeJSON(w, 200, []any{comment("plain")})
+				return
+			}
+			writeJSON(w, 200, []any{comment(header + "\n\nt")})
+		})
+		if got, err := newClient(t, f).HasComment(bg, ref, header); err != nil || !got {
+			t.Errorf("HasComment across pages = %v, %v; want true", got, err)
+		}
+		if n := len(f.requests()); n != 2 {
+			t.Errorf("%d requests; want 2 pages", n)
+		}
+	})
+
+	t.Run("refuses a bad ref or header before any request", func(t *testing.T) {
+		f := newFake(t)
+		g := newClient(t, f)
+		for _, r := range []Ref{{Repo: "o/r", Number: 0}, {Repo: "o/r", Number: -1}} {
+			if _, err := g.HasComment(bg, r, header); !errors.Is(err, ErrInvalidRef) {
+				t.Errorf("HasComment(%v) error = %v; want ErrInvalidRef", r, err)
+			}
+		}
+		if _, err := g.HasComment(bg, Ref{Repo: "x/y", Number: 1}, header); !errors.Is(err, ErrOtherRepository) {
+			t.Errorf("HasComment(other repo) error = %v; want ErrOtherRepository", err)
+		}
+		for _, h := range []string{"", "no brackets", "[a · b]\nmore", "[a]", "[a · b]\r"} {
+			if got, err := g.HasComment(bg, ref, h); !errors.Is(err, ErrInvalidHeader) || got {
+				t.Errorf("HasComment(header %q) = %v, %v; want false, ErrInvalidHeader", h, got, err)
+			}
+		}
+		if n := len(f.requests()); n != 0 {
+			t.Errorf("%d requests sent for refused input", n)
+		}
+	})
+
+	t.Run("a server error is an error, not false", func(t *testing.T) {
+		f := newFake(t)
+		f.reply("GET /repos/o/r/issues/10/comments", 500, map[string]any{"message": "boom"})
+		if got, err := newClient(t, f).HasComment(bg, ref, header); err == nil || got {
+			t.Errorf("HasComment on 500 = %v, %v; want false and an error", got, err)
+		}
+	})
+
+	t.Run("a second page that fails fails the lookup", func(t *testing.T) {
+		f := newFake(t)
+		f.handle("GET /repos/o/r/issues/10/comments", func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Query().Get("page") == "" {
+				next := f.srv.URL + "/repos/o/r/issues/10/comments?per_page=100&page=2"
+				w.Header().Set("Link", `<`+next+`>; rel="next"`)
+				writeJSON(w, 200, []any{comment("plain")})
+				return
+			}
+			writeJSON(w, 502, map[string]any{"message": "bad gateway"})
+		})
+		if got, err := newClient(t, f).HasComment(bg, ref, header); err == nil || got {
+			t.Errorf("HasComment with a failing page 2 = %v, %v; want false and an error", got, err)
+		}
+	})
+}
+
+func TestTrackingFakeAnswersGETComments(t *testing.T) {
+	srv := trackingfake.New(t, "o/r")
+	g, err := NewGitHub("o/r", StaticToken(trackingfake.Token), WithBaseURL(srv.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []int{1, 2} {
+		if _, err := g.OpenPullRequest(bg, NewPullRequest{Head: "h" + itoa(n), Base: "dev", Title: "t", Issues: []Ref{{Repo: "o/r", Number: 5}}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := g.Comment(bg, Ref{Repo: "o/r", Number: 1}, "[a · one]", "x"); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Comment(bg, Ref{Repo: "o/r", Number: 2}, "[a · two]", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Comment(bg, Ref{Repo: "o/r", Number: 1}, "[a · three]", ""); err != nil {
+		t.Fatal(err)
+	}
+	for header, want := range map[string]bool{"[a · one]": true, "[a · three]": true, "[a · two]": false} {
+		if got, err := g.HasComment(bg, Ref{Repo: "o/r", Number: 1}, header); err != nil || got != want {
+			t.Errorf("pull 1 HasComment(%s) = %v, %v; want %v", header, got, err, want)
+		}
+	}
+	if got, err := g.HasComment(bg, Ref{Repo: "o/r", Number: 99}, "[a · one]"); !errors.Is(err, ErrNotFound) || got {
+		t.Errorf("HasComment(unknown pull) = %v, %v; want false, ErrNotFound", got, err)
+	}
+	srv.DropComments(1)
+	if got, err := g.HasComment(bg, Ref{Repo: "o/r", Number: 1}, "[a · one]"); err != nil || got {
+		t.Errorf("after DropComments(1): pull 1 HasComment = %v, %v; want false", got, err)
+	}
+	if got, err := g.HasComment(bg, Ref{Repo: "o/r", Number: 2}, "[a · two]"); err != nil || !got {
+		t.Errorf("after DropComments(1): pull 2 HasComment = %v, %v; want true (only pull 1 is dropped)", got, err)
+	}
+	if c := srv.Comments(2); len(c) != 1 {
+		t.Errorf("pull 2 comments = %q; want one", c)
+	}
+}
+
 func TestCloseSendsStateAndReason(t *testing.T) {
 	f := newFake(t)
 	f.reply("PATCH /repos/o/r/issues/10", 200, issueJSON(10, "x", "closed", nil))
@@ -258,11 +404,12 @@ func TestEveryOperationNamesTheRepositoryItWasMadeFor(t *testing.T) {
 	g := newClient(t, f)
 	other := Ref{Repo: "x/y", Number: 1}
 	calls := map[string]func() error{
-		"Milestone": func() error { _, _, err := g.Milestone(bg, other); return err },
-		"Issue":     func() error { _, err := g.Issue(bg, other); return err },
-		"Comment":   func() error { return g.Comment(bg, other, "[a · b]", "t") },
-		"Close":     func() error { return g.Close(bg, other, Completed) },
-		"AddLabel":  func() error { return g.AddLabel(bg, other, "l") },
+		"Milestone":  func() error { _, _, err := g.Milestone(bg, other); return err },
+		"Issue":      func() error { _, err := g.Issue(bg, other); return err },
+		"Comment":    func() error { return g.Comment(bg, other, "[a · b]", "t") },
+		"HasComment": func() error { _, err := g.HasComment(bg, other, "[a · b]"); return err },
+		"Close":      func() error { return g.Close(bg, other, Completed) },
+		"AddLabel":   func() error { return g.AddLabel(bg, other, "l") },
 	}
 	for name, call := range calls {
 		if err := call(); !errors.Is(err, ErrOtherRepository) {
@@ -357,11 +504,12 @@ func TestACancelledContextSendsNothing(t *testing.T) {
 func operations(g *GitHub) map[string]func() error {
 	ref := Ref{Repo: "o/r", Number: 10}
 	return map[string]func() error{
-		"Milestone": func() error { _, _, err := g.Milestone(bg, Ref{Repo: "o/r", Number: 3}); return err },
-		"Issue":     func() error { _, err := g.Issue(bg, ref); return err },
-		"Comment":   func() error { return g.Comment(bg, ref, "[a · b]", "t") },
-		"Close":     func() error { return g.Close(bg, ref, Completed) },
-		"AddLabel":  func() error { return g.AddLabel(bg, ref, "l") },
+		"Milestone":  func() error { _, _, err := g.Milestone(bg, Ref{Repo: "o/r", Number: 3}); return err },
+		"Issue":      func() error { _, err := g.Issue(bg, ref); return err },
+		"Comment":    func() error { return g.Comment(bg, ref, "[a · b]", "t") },
+		"HasComment": func() error { _, err := g.HasComment(bg, ref, "[a · b]"); return err },
+		"Close":      func() error { return g.Close(bg, ref, Completed) },
+		"AddLabel":   func() error { return g.AddLabel(bg, ref, "l") },
 	}
 }
 
@@ -375,7 +523,7 @@ func failEverything(f *fakeGitHub, status int, header map[string]string, body an
 	}
 	for _, route := range []string{
 		"GET /repos/o/r/milestones/3", "GET /repos/o/r/issues", "GET /repos/o/r/issues/10", "GET /repos/o/r/issues/10/sub_issues",
-		"POST /repos/o/r/issues/10/comments", "PATCH /repos/o/r/issues/10", "POST /repos/o/r/issues/10/labels",
+		"GET /repos/o/r/issues/10/comments", "POST /repos/o/r/issues/10/comments", "PATCH /repos/o/r/issues/10", "POST /repos/o/r/issues/10/labels",
 	} {
 		f.handle(route, h)
 	}

@@ -56,9 +56,20 @@ func jsonProfile() Profile {
 	return JSONProfile("fake", []string{"fake-tool"}, "grok-4.7-medium", "medium")
 }
 
+// The range a request of a ranged profile (the committed mode) names in the tests: the commits 3f2a91c.. and 8be04d7.. the committed
+// fixtures name.
+const (
+	rangeBase = "3f2a91c0d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9"
+	rangeHead = "8be04d7a1b2c3d4e5f60718293a4b5c6d7e8f901"
+)
+
 func request(t *testing.T, p Profile) Request {
 	t.Helper()
-	return Request{Profile: p, Worktree: t.TempDir(), Prompt: "review the uncommitted changes", Schema: AnswerSchema, Limit: time.Minute, GuideRev: "guide-r1"}
+	req := Request{Profile: p, Worktree: t.TempDir(), Prompt: "review the uncommitted changes", Schema: AnswerSchema, Limit: time.Minute, GuideRev: "guide-r1"}
+	if p.Ranged {
+		req.Base, req.Head = rangeBase, rangeHead
+	}
+	return req
 }
 
 func check(t *testing.T, p Profile, f fakeRun) Result {
@@ -333,7 +344,7 @@ func TestAdapterRecordsTheEngineFamilyAndGuideRev(t *testing.T) {
 	if err := json.Unmarshal(raw, &keys); err != nil {
 		t.Fatal(err)
 	}
-	for _, k := range []string{"state", "detail", "verdict", "findings", "engine_family", "model", "effort", "guide_rev", "prompt_digest", "fingerprint_before", "fingerprint_after", "elapsed_ms"} {
+	for _, k := range []string{"state", "detail", "verdict", "findings", "engine_family", "model", "effort", "guide_rev", "prompt_digest", "fingerprint_before", "fingerprint_after", "elapsed_ms", "cache_read_tokens", "commands"} {
 		if _, ok := keys[k]; !ok {
 			t.Fatalf("the record has no %q: %s", k, raw)
 		}
@@ -613,7 +624,7 @@ func TestExecRunKillsLeftoverChildrenAfterTheToolExits(t *testing.T) {
 }
 
 // bugbotNoBugsFixture is a real cursor-agent envelope of a clean Bugbot review
-// (/state/crw/crw-lane-b1-issue-child/evidence/bugbot-U1a-r2.json.raw.json, the ids and usage trimmed).
+// (the bugbot-U1a-r2.json.raw.json evidence of the b1 lane, the ids and usage trimmed).
 const bugbotNoBugsFixture = `{"type":"result","subtype":"success","is_error":false,"duration_ms":289515,"duration_api_ms":289515,"result":"I'll review only the uncommitted changes. Checking the review tool schema, then starting the Bugbot review.Bugbot found no bugs."}` + "\n"
 
 // bugbotNoBugsScopeFixture is a real cursor-agent envelope of a clean Bugbot review that names its scope after the sentence
@@ -857,4 +868,375 @@ func TestBugbotNoBugsTakesTheScopePhrase(t *testing.T) {
 			wantState(t, check(t, BugbotProfile(), fakeRun{stdout: bugbotEnvelope(t, text)}), StateInvalid)
 		})
 	}
+}
+
+// TestBugbotCommittedProfileReadsTheRangeScope (CRW-1468): the committed-mode profile is the same Bugbot call as BugbotProfile, but
+// its clean-answer reader takes the scope phrases of a committed range that name the requested range ("in the changes between <base>
+// and <head>", "in <base>..<head>") and refuses the uncommitted, staged or working-tree scope, in the scope phrase or anywhere in the
+// prose outside the tables (a range check that reviewed the working tree reviewed the clean checkout, not the range), and a clean
+// sentence that names no range; BugbotProfile keeps refusing "committed"; a findings table reads the same in both. A range named by
+// symbolic refs (HEAD~1..HEAD, a branch) is refused: the request names its range by commit ids.
+func TestBugbotCommittedProfileReadsTheRangeScope(t *testing.T) {
+	committed, uncommitted := BugbotCommittedProfile(), BugbotProfile()
+	if committed.Name == uncommitted.Name || !slices.Equal(committed.Argv, uncommitted.Argv) || committed.Model != uncommitted.Model ||
+		committed.Effort != uncommitted.Effort || committed.Family != uncommitted.Family || !slices.Equal(committed.QuotaTexts, uncommitted.QuotaTexts) || committed.Answer == nil ||
+		!committed.Ranged || uncommitted.Ranged {
+		t.Fatalf("the committed profile %+v is not the Bugbot call of %+v under its own name", committed, uncommitted)
+	}
+	for _, text := range []string{
+		"Bugbot found no bugs in the changes between 3f2a91c and 8be04d7.",
+		"Bugbot found no bugs in the changes between 3f2a91c0d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9 and 8be04d7.",
+		"Bugbot found no bugs in the changes from 3f2a91c to 8be04d7!",
+		"Bugbot found no bugs in the diff between `3f2a91c` and `8be04d7`.",
+		"Bugbot found no bugs in the commits between 3f2a91c and 8be04d7.",
+		"Bugbot found no bugs in 3f2a91c..8be04d7.",
+		"Bugbot found no bugs in `3f2a91c..8be04d7`.",
+		"Bugbot found no bugs in the range 3f2a91c..8be04d7.",
+		"Bugbot found no bugs in the diff 3f2a91c..8be04d7.",
+		"Bugbot found no bugs in the changes between 3f2a91c and 8be04d7 (git diff 3f2a91c..8be04d7).",
+		"BUGBOT FOUND NO BUGS IN THE CHANGES BETWEEN 3F2A91C AND 8BE04D7.",
+	} {
+		t.Run("committed clean: "+text, func(t *testing.T) {
+			res := check(t, committed, fakeRun{stdout: bugbotEnvelope(t, text)})
+			wantState(t, res, StateOK)
+			if res.Verdict != VerdictVerified || len(res.Findings) != 0 {
+				t.Fatalf("result = %+v", res)
+			}
+		})
+	}
+	for _, text := range []string{
+		// a clean sentence that names no range of commits (or "the base" and "the head", which name none) ties the answer to no range:
+		// it may be about any (TestBugbotCommittedReaderTakesOnlyTheRequestedRange)
+		"Bugbot found no bugs.",
+		"Bugbot found no bugs in the changes between the base and the head.",
+		"Bugbot found no bugs in the committed changes.",
+		"I'll review the changes between 3f2a91c and 8be04d7.Bugbot found no bugs in the committed changes.",
+		"Bugbot found no bugs on the diff.",
+		"Bugbot found no bugs in the uncommitted changes.",
+		"Bugbot found no bugs in the working tree.",
+		"Bugbot found no bugs on the working-tree diff.",
+		"Bugbot found no bugs in the working tree code.",
+		"Bugbot found no bugs for the uncommitted files.",
+		"I'll review only the uncommitted changes. Checking the review tool schema, then starting the Bugbot review.Bugbot found no bugs.",
+		"I'll review the working tree.Bugbot found no bugs in the committed changes.",
+		"Bugbot found no bugs in the staged changes.",
+		"I reviewed the staged changes.Bugbot found no bugs.",
+		"I reviewed the unstaged changes.Bugbot found no bugs in the committed changes.",
+		"Nothing is in the staging area.Bugbot found no bugs.",
+		"Bugbot found no bugs in the changes between 3f2a91c and 8be04d7 it reviewed.",
+		"Bugbot found no bugs in the changes between 3f2a91c and the files it could open.",
+		"Bugbot found no bugs in the first 40 files.",
+		"Bugbot found no bugs in HEAD..HEAD.",
+		"Bugbot found no bugs in the changes between HEAD~1 and HEAD.",
+		"Bugbot found no bugs in the changes between main and 8be04d7.",
+		"Bugbot found no bugs in origin/main..8be04d7.",
+		"Bugbot found no bugs in the changes between 3f2a91 and 8be04d7.",
+		"Bugbot found no bugs in the changes between 3f2a91c and 8be04d7?",
+		"It skipped 74 changed files.Bugbot found no bugs in the changes between 3f2a91c and 8be04d7.",
+		"Bugbot found no bugs in the changes between 3f2a91c and 8be04d7.\n\nThe review then crashed before it covered the tests.",
+	} {
+		t.Run("committed not an answer: "+text, func(t *testing.T) {
+			wantState(t, check(t, committed, fakeRun{stdout: bugbotEnvelope(t, text)}), StateInvalid)
+		})
+	}
+	t.Run("the real uncommitted clean reviews are no committed answer", func(t *testing.T) {
+		wantState(t, check(t, committed, fakeRun{stdout: bugbotNoBugsFixture}), StateInvalid)
+		wantState(t, check(t, committed, fakeRun{stdout: bugbotNoBugsScopeFixture}), StateInvalid)
+		wantState(t, check(t, uncommitted, fakeRun{stdout: bugbotNoBugsFixture}), StateOK)
+		wantState(t, check(t, uncommitted, fakeRun{stdout: bugbotNoBugsScopeFixture}), StateOK)
+	})
+	for _, text := range []string{
+		"Bugbot found no bugs in the committed changes.",
+		"Bugbot found no bugs in the changes between 3f2a91c and 8be04d7.",
+		"Bugbot found no bugs in 3f2a91c..8be04d7.",
+	} {
+		t.Run("uncommitted not an answer: "+text, func(t *testing.T) {
+			wantState(t, check(t, uncommitted, fakeRun{stdout: bugbotEnvelope(t, text)}), StateInvalid)
+		})
+	}
+	t.Run("a findings table reads the same in both", func(t *testing.T) {
+		// the committed answer names the range it was asked about; the tables are the same
+		table := "\n\n| Severity | Location (file:line) | Finding |\n| --- | --- | --- |\n" +
+			"| medium | internal/quote/quote.go:25 | An empty string panics with an index out of range. |\n" +
+			"| low | internal/quote/quote.go:12 | The helper name does not say what it returns. |"
+		a := check(t, committed, fakeRun{stdout: bugbotEnvelope(t, "Bugbot found 2 findings in the changes between 3f2a91c and 8be04d7."+table)})
+		b := check(t, uncommitted, fakeRun{stdout: bugbotEnvelope(t, "Bugbot found 2 findings."+table)})
+		wantState(t, a, StateOK)
+		wantState(t, b, StateOK)
+		if a.Verdict != VerdictNeedsChanges || a.Verdict != b.Verdict || len(a.Findings) != 2 || !slices.Equal(a.Findings, b.Findings) {
+			t.Fatalf("committed %+v\nuncommitted %+v", a, b)
+		}
+	})
+	t.Run("a committed findings table whose prose names the working tree is no answer", func(t *testing.T) {
+		wantState(t, check(t, committed, fakeRun{stdout: bugbotEnvelope(t, bugbotTable)}), StateInvalid)
+		wantState(t, check(t, uncommitted, fakeRun{stdout: bugbotEnvelope(t, bugbotTable)}), StateOK)
+	})
+	t.Run("a committed error envelope is the tool's report", func(t *testing.T) {
+		b, err := json.Marshal(map[string]any{"type": "result", "subtype": "error", "is_error": true, "result": "You've hit your usage limit."})
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantState(t, check(t, committed, fakeRun{stdout: string(b) + "\n"}), StateQuota)
+	})
+}
+
+// checkRange is check of a committed range: the request names base..head, as crw.unitCheck's committed mode does.
+func checkRange(t *testing.T, p Profile, base, head string, f fakeRun) Result {
+	t.Helper()
+	req := request(t, p)
+	req.Base, req.Head = base, head
+	res, err := Adapter{Run: f.run, Fingerprint: hashFiles}.Check(t.Context(), req)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	return res
+}
+
+// TestBugbotCommittedReaderTakesOnlyTheRequestedRange (CRW-1468): the committed reader is given the range the request asks about and
+// reads an answer as the judgment of that range only. A clean answer whose sentence names another range (a narrower B..C of the
+// requested A..C, or another pair of commits), or that names no range at all, is no answer (invalid), and so is an answer whose prose
+// names another range anywhere outside the findings tables; the requested range, by its commit ids or their prefixes, reads clean.
+func TestBugbotCommittedReaderTakesOnlyTheRequestedRange(t *testing.T) {
+	const base, head = "1111111aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "2222222bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	committed := BugbotCommittedProfile()
+	for _, text := range []string{
+		"Bugbot found no bugs in the changes between 3f2a91c and 8be04d7.",
+		"Bugbot found no bugs in 9999999..aaaaaaa.",
+		"Bugbot found no bugs.",
+		"Bugbot found no bugs in the committed changes.",
+		"Bugbot found no bugs in the changes between 1111111 and 3333333.",
+		"Bugbot found no bugs in the changes between 3333333 and 2222222.",
+		"Bugbot found no bugs in the changes between 2222222 and 1111111.",
+		"Bugbot found no bugs in the changes between the base and the head.",
+		"I reviewed 3333333..2222222.Bugbot found no bugs in the changes between 1111111 and 2222222.",
+		"I'll review the changes between 1111111 and 2222222.Bugbot found no bugs in the committed changes.",
+	} {
+		t.Run("not the requested range: "+text, func(t *testing.T) {
+			wantState(t, checkRange(t, committed, base, head, fakeRun{stdout: bugbotEnvelope(t, text)}), StateInvalid)
+		})
+	}
+	for _, text := range []string{
+		"Bugbot found no bugs in the changes between 1111111 and 2222222.",
+		"Bugbot found no bugs in the changes between " + base + " and " + head + ".",
+		"Bugbot found no bugs in 1111111aa..2222222bb.",
+		"Bugbot found no bugs in the changes between `1111111` and `2222222` (git diff 1111111..2222222).",
+	} {
+		t.Run("the requested range: "+text, func(t *testing.T) {
+			res := checkRange(t, committed, base, head, fakeRun{stdout: bugbotEnvelope(t, text)})
+			wantState(t, res, StateOK)
+			if res.Verdict != VerdictVerified || len(res.Findings) != 0 {
+				t.Fatalf("result = %+v", res)
+			}
+		})
+	}
+	table := "\n\n| Severity | Location (file:line) | Finding |\n| --- | --- | --- |\n| low | internal/quote/quote.go:12 | The helper name does not say what it returns. |"
+	t.Run("a findings table of the requested range", func(t *testing.T) {
+		res := checkRange(t, committed, base, head, fakeRun{stdout: bugbotEnvelope(t, "Bugbot found 1 finding in the changes between 1111111 and 2222222."+table)})
+		wantState(t, res, StateOK)
+		if len(res.Findings) != 1 {
+			t.Fatalf("result = %+v", res)
+		}
+	})
+	for _, prose := range []string{"Bugbot found 1 finding.", "Bugbot found 1 finding in the changes between 3333333 and 2222222."} {
+		t.Run("a findings table of no range or another: "+prose, func(t *testing.T) {
+			wantState(t, checkRange(t, committed, base, head, fakeRun{stdout: bugbotEnvelope(t, prose+table)}), StateInvalid)
+		})
+	}
+	t.Run("a request of the committed profile that names no range is refused", func(t *testing.T) {
+		req := request(t, committed)
+		req.Base, req.Head = "", ""
+		if _, err := (Adapter{Run: fakeRun{stdout: bugbotEnvelope(t, "Bugbot found no bugs.")}.run, Fingerprint: hashFiles}).Check(t.Context(), req); err == nil ||
+			!strings.Contains(err.Error(), "names none") {
+			t.Fatalf("Check of a committed profile with no range: %v", err)
+		}
+	})
+}
+
+// TestMergeFindingsKeepsTheHigherSeverityAndTheBlockingImpact: MergeFindings merges the findings of several lists (the two passes of
+// a crosscheck round) into one finding per id: the first copy's file, line and text, the higher severity, and a blocking impact over
+// a non-blocking or empty one, whichever list holds which copy. Findings of other ids keep their order, and the inputs are not changed.
+func TestMergeFindingsKeepsTheHigherSeverityAndTheBlockingImpact(t *testing.T) {
+	id := FindingID("a.go", "The loop never ends")
+	minor := Finding{ID: id, Severity: "P3", Impact: "minor_separable", File: "a.go", Line: 3, Text: "The loop never ends"}
+	core := Finding{ID: id, Severity: "P1", Impact: "core_function", File: "a.go", Line: 40, Text: "the loop  never ends"}
+	other := Finding{ID: FindingID("b.go", "naming"), Severity: "P3", File: "b.go", Line: 1, Text: "naming"}
+	for _, c := range []struct {
+		name  string
+		a, b  []Finding
+		first Finding
+	}{
+		{"the minor copy first", []Finding{minor}, []Finding{core, other}, minor},
+		{"the blocking copy first", []Finding{core, other}, []Finding{minor}, core},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			a, b := slices.Clone(c.a), slices.Clone(c.b)
+			got := MergeFindings(a, b)
+			merged := c.first
+			merged.Severity, merged.Impact = "P1", "core_function"
+			want := []Finding{merged, other}
+			if !slices.Equal(got, want) {
+				t.Fatalf("merged = %+v\nwant %+v", got, want)
+			}
+			if !slices.Equal(a, c.a) || !slices.Equal(b, c.b) {
+				t.Fatalf("MergeFindings changed its inputs: %+v %+v", a, b)
+			}
+		})
+	}
+	t.Run("an empty impact takes the other copy's", func(t *testing.T) {
+		bare := Finding{ID: id, Severity: "P2", File: "a.go", Line: 3, Text: "The loop never ends"}
+		got := MergeFindings([]Finding{bare}, []Finding{minor})
+		if len(got) != 1 || got[0].Severity != "P2" || got[0].Impact != "minor_separable" || got[0].Line != 3 {
+			t.Fatalf("merged = %+v", got)
+		}
+		got = MergeFindings([]Finding{minor}, []Finding{bare})
+		if len(got) != 1 || got[0].Severity != "P2" || got[0].Impact != "minor_separable" {
+			t.Fatalf("merged = %+v", got)
+		}
+	})
+	t.Run("no findings is an empty list", func(t *testing.T) {
+		if got := MergeFindings(nil, []Finding{}); got == nil || len(got) != 0 {
+			t.Fatalf("merged = %#v, want an empty list", got)
+		}
+	})
+}
+
+// meteredProfile is a tool that prints {"answer": <document or null>, "usage": {"cache": N, "commands": M}} (usage absent when the
+// tool reports none), with a usage reader and the floors 100000 cached tokens, 3 commands and 60 s.
+func meteredProfile() Profile {
+	return Profile{
+		Name: "metered", Argv: []string{"fake-tool"}, Model: "gpt-6-astra", Effort: "high", QuotaTexts: []string{"usage limit"},
+		Answer: func(stdout []byte, _ Request) ([]byte, error) {
+			var out struct {
+				Answer json.RawMessage `json:"answer"`
+			}
+			if err := json.Unmarshal(stdout, &out); err != nil {
+				return nil, err
+			}
+			if string(out.Answer) == "null" {
+				return nil, nil
+			}
+			return out.Answer, nil
+		},
+		Usage: func(stdout []byte) (Usage, bool) {
+			var out struct {
+				Usage *struct {
+					Cache    int64 `json:"cache"`
+					Commands int   `json:"commands"`
+				} `json:"usage"`
+			}
+			if json.Unmarshal(stdout, &out) != nil || out.Usage == nil {
+				return Usage{}, false
+			}
+			return Usage{CacheRead: out.Usage.Cache, Commands: out.Usage.Commands}, true
+		},
+		MinCacheRead: 100000, MinCommands: 3, MinElapsed: 60 * time.Second,
+	}
+}
+
+// meteredOutput is what meteredProfile's tool prints: answer (a JSON document, or "null" for a blank one) and, when cache >= 0, the
+// usage it reports.
+func meteredOutput(answer string, cache int64, commands int) string {
+	if cache < 0 {
+		return `{"answer":` + answer + `}`
+	}
+	return fmt.Sprintf(`{"answer":%s,"usage":{"cache":%d,"commands":%d}}`, answer, cache, commands)
+}
+
+// checkFor runs one check of p on f whose call takes d on a fake clock.
+func checkFor(t *testing.T, p Profile, f fakeRun, d time.Duration) Result {
+	t.Helper()
+	clock := time.Date(2026, 10, 16, 4, 0, 0, 0, time.UTC)
+	calls := 0
+	now := func() time.Time {
+		calls++
+		if calls == 1 {
+			return clock
+		}
+		return clock.Add(d)
+	}
+	res, err := Adapter{Run: f.run, Fingerprint: hashFiles, Now: now}.Check(t.Context(), request(t, p))
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	return res
+}
+
+// TestAdapterVoidsAPassThatReadNoRepository: a profile with floors (cached tokens, commands, elapsed time) turns an answer that would
+// be ok into not_read when the call ran shorter than its floor, reported no usage, read fewer cached tokens or ran fewer commands
+// than the floor: such a pass read no repository and has no verdict. The record keeps the elapsed time and the usage the tool
+// reported in every state; a profile without floors is never voided, and the states before ok keep their order.
+func TestAdapterVoidsAPassThatReadNoRepository(t *testing.T) {
+	valid := `{"verdict":"verified","findings":[]}`
+	t.Run("a shallow pass is not read", func(t *testing.T) {
+		res := checkFor(t, meteredProfile(), fakeRun{stdout: meteredOutput(valid, 2304, 1)}, 20*time.Second)
+		wantState(t, res, StateNotRead)
+		if res.ElapsedMS != 20000 || res.CacheReadTokens != 2304 || res.Commands != 1 {
+			t.Fatalf("elapsed %d ms, cache read %d, commands %d; want 20000, 2304, 1", res.ElapsedMS, res.CacheReadTokens, res.Commands)
+		}
+		for _, n := range []string{"2304 tokens", "1 commands", "20 s"} {
+			if !strings.Contains(res.Detail, n) {
+				t.Fatalf("detail %q does not name %q", res.Detail, n)
+			}
+		}
+		if res.Verdict != "" || res.Findings != nil {
+			t.Fatalf("a void pass carries a verdict: %+v", res)
+		}
+	})
+	t.Run("a pass over every floor is ok", func(t *testing.T) {
+		res := checkFor(t, meteredProfile(), fakeRun{stdout: meteredOutput(valid, 150000, 4)}, 70*time.Second)
+		wantState(t, res, StateOK)
+		if res.ElapsedMS != 70000 || res.CacheReadTokens != 150000 || res.Commands != 4 || res.Verdict != VerdictVerified {
+			t.Fatalf("result = %+v", res)
+		}
+	})
+	t.Run("each floor alone voids the pass", func(t *testing.T) {
+		for name, c := range map[string]struct {
+			cache    int64
+			commands int
+			d        time.Duration
+		}{
+			"too few cached tokens": {99999, 4, 70 * time.Second},
+			"too few commands":      {150000, 2, 70 * time.Second},
+			"too short":             {150000, 4, 59 * time.Second},
+		} {
+			t.Run(name, func(t *testing.T) {
+				res := checkFor(t, meteredProfile(), fakeRun{stdout: meteredOutput(valid, c.cache, c.commands)}, c.d)
+				wantState(t, res, StateNotRead)
+				if res.CacheReadTokens != c.cache || res.Commands != c.commands || res.ElapsedMS != c.d.Milliseconds() {
+					t.Fatalf("result = %+v", res)
+				}
+			})
+		}
+	})
+	t.Run("no usage is not read", func(t *testing.T) {
+		res := checkFor(t, meteredProfile(), fakeRun{stdout: meteredOutput(valid, -1, 0)}, 70*time.Second)
+		wantState(t, res, StateNotRead)
+		if res.CacheReadTokens != 0 || res.Commands != 0 || res.ElapsedMS != 70000 || !strings.Contains(res.Detail, "no usage") {
+			t.Fatalf("result = %+v", res)
+		}
+	})
+	t.Run("a profile without floors is never voided and still records the usage", func(t *testing.T) {
+		p := meteredProfile()
+		p.MinCacheRead, p.MinCommands, p.MinElapsed = 0, 0, 0
+		res := checkFor(t, p, fakeRun{stdout: meteredOutput(valid, 2304, 1)}, 20*time.Second)
+		wantState(t, res, StateOK)
+		if res.ElapsedMS != 20000 || res.CacheReadTokens != 2304 || res.Commands != 1 {
+			t.Fatalf("result = %+v", res)
+		}
+		res = checkFor(t, p, fakeRun{stdout: meteredOutput(valid, -1, 0)}, 20*time.Second)
+		wantState(t, res, StateOK)
+	})
+	t.Run("the states before ok keep their order and record the usage", func(t *testing.T) {
+		res := checkFor(t, meteredProfile(), fakeRun{stdout: meteredOutput("null", 2304, 1)}, 20*time.Second)
+		wantState(t, res, StateNoAnswer)
+		if res.ElapsedMS != 20000 || res.CacheReadTokens != 2304 || res.Commands != 1 {
+			t.Fatalf("result = %+v", res)
+		}
+		res = checkFor(t, meteredProfile(), fakeRun{stdout: meteredOutput(`{"verdict":"approve","findings":[]}`, 2304, 1)}, 20*time.Second)
+		wantState(t, res, StateInvalid)
+		res = checkFor(t, meteredProfile(), fakeRun{stdout: meteredOutput(valid, 2304, 1), touch: "x.go"}, 20*time.Second)
+		wantState(t, res, StateWorktreeChanged)
+		res = checkFor(t, meteredProfile(), fakeRun{exit: 1, stderr: "usage limit"}, 20*time.Second)
+		wantState(t, res, StateQuota)
+	})
 }

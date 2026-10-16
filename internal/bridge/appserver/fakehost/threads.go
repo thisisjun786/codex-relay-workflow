@@ -123,13 +123,15 @@ type ThreadView struct {
 	Ephemeral             bool
 	DeveloperInstructions string
 	Config                map[string]any
-	StartParams           map[string]any
-	ForkedFromID          string
-	ParentThreadID        string
-	Source                string
-	Archived              bool
-	CreatedAt             int64
-	Turns                 []TurnView
+	// Layer is the override layer the host built when it last loaded the thread (ServerOverrides, then the loading request's config).
+	Layer          map[string]any
+	StartParams    map[string]any
+	ForkedFromID   string
+	ParentThreadID string
+	Source         string
+	Archived       bool
+	CreatedAt      int64
+	Turns          []TurnView
 	// Subagent marks a thread Spawn made; AgentRole, Nickname and RolloutPath are its agentRole, agentNickname and path.
 	Subagent                         bool
 	AgentRole, Nickname, RolloutPath string
@@ -172,15 +174,18 @@ type threadState struct {
 	ephemeral bool
 	dev       string
 	config    map[string]any
-	start     map[string]any
-	forkedOf  string
-	parent    string
-	source    string
-	archived  bool
-	created   int64
-	turns     []*turnState
-	active    *turnState
-	used      int64
+	// layer is the thread's override layer as the host built it when it last loaded the thread (overrideLayer): the server's own
+	// overrides, then the config of the start, fork or cold resume that loaded it.
+	layer    map[string]any
+	start    map[string]any
+	forkedOf string
+	parent   string
+	source   string
+	archived bool
+	created  int64
+	turns    []*turnState
+	active   *turnState
+	used     int64
 	// The subagent fields (subagents.go): a thread Spawn made, its agentRole, agentNickname, rollout path (Thread.path) and
 	// spawn depth. unloadIdle makes the thread notLoaded when its turn ends; unloaded is that state (a restart sets it for
 	// every thread, a resume or a new turn clears it).
@@ -207,6 +212,7 @@ type Threads struct {
 
 	onTurn       func(TurnRequest) TurnPlan
 	onStart      func(params map[string]any) map[string]any
+	serverOver   []Override
 	readback     func(ThreadView) (model, effort *string)
 	dropAll      bool
 	interrupted  []string
@@ -399,7 +405,7 @@ func (th *threadState) view() ThreadView {
 	v := ThreadView{ID: th.id, Cwd: th.cwd, Model: th.model, Effort: th.effort, Sandbox: th.sandbox, Ephemeral: th.ephemeral,
 		DeveloperInstructions: th.dev, Config: th.config, StartParams: th.start, ForkedFromID: th.forkedOf,
 		ParentThreadID: th.parent, Source: th.source, Archived: th.archived, CreatedAt: th.created,
-		Subagent: th.subagent, AgentRole: th.agentRole, Nickname: th.nickname, RolloutPath: th.rolloutPath}
+		Subagent: th.subagent, AgentRole: th.agentRole, Nickname: th.nickname, RolloutPath: th.rolloutPath, Layer: cloneLayer(th.layer)}
 	for _, tu := range th.turns {
 		v.Turns = append(v.Turns, TurnView{ID: tu.id, Status: tu.status, Text: tu.text, ClientID: tu.clientID, Params: tu.params})
 	}
@@ -482,6 +488,7 @@ func (t *Threads) create(c *Conn, params map[string]any) *threadState {
 		effort: configString(config, "model_reasoning_effort"), sandbox: str(params, "sandbox"),
 		dev: str(params, "developerInstructions"), config: config, start: params, created: t.createdAt(), source: "appServer",
 	}
+	th.layer = overrideLayer(t.serverOver, config)
 	th.ephemeral, _ = params["ephemeral"].(bool)
 	if th.model == "" {
 		th.model = "gpt-fake-default"
@@ -601,6 +608,12 @@ func (t *Threads) handleResume(c *Conn, raw json.RawMessage) Reply {
 		return errorReply(map[string]any{"code": -32600, "message": "thread not found: " + str(params, "threadId")})
 	}
 	t.subscribe(th.id, c)
+	if th.unloaded {
+		// a cold resume loads the thread again from the current configuration and this request's config only: the overrides of the
+		// request that created it are not restored (Codex 0.154 thread_resume_inner, load_for_cwd)
+		config, _ := params["config"].(map[string]any)
+		th.layer = overrideLayer(t.serverOver, config)
+	}
 	th.unloaded = false
 	exclude, _ := params["excludeTurns"].(bool)
 	return Reply{Result: t.startResponse(th, !exclude)}
@@ -884,6 +897,9 @@ func (t *Threads) handleTurnStart(c *Conn, raw json.RawMessage) Reply {
 	tu.items = append(tu.items, user)
 	th.turns = append(th.turns, tu)
 	th.active = tu
+	if th.unloaded {
+		th.layer = overrideLayer(t.serverOver, nil)
+	}
 	th.unloaded = false
 	object := tu.object(false)
 	t.mu.Unlock()

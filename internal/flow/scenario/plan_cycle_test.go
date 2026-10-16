@@ -27,10 +27,8 @@ func planCycleWorld(t *testing.T) *Lab {
 		change("two")
 		return nil
 	})
-	lab.On("^review:A:r1$", func(*Call) *fakehostPlan {
-		change("one")
-		return nil
-	})
+	// at A's unit check, after its build (where its review was before CRW-1465)
+	lab.UnitChecks("A", UnitCheck{Do: func() { change("one") }})
 	return lab
 }
 

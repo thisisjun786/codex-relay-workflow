@@ -179,7 +179,7 @@ type CloseResult struct {
 	State        string `json:"state"`
 }
 
-// ChildRequest is the request of a managed child start. The lane no longer releases issue children (CRW-1415); the type is kept for
+// ChildRequest is the request of a managed child start. The lane no longer releases `child` sessions (CRW-1415); the type is kept for
 // schedrelay.go until bundle S.
 type ChildRequest struct {
 	Plan, Node, RunID string
@@ -245,7 +245,7 @@ type VerifyRequest struct {
 }
 
 // VerifyOutcome is the verification of a head: the command that ran, whether it passed, the digest of the
-// verification-record/1 it left and the record itself, and the steps that failed.
+// verification-record/1 it left and the record itself, and the steps that failed with the tests they name.
 type VerifyOutcome struct {
 	Pass     bool
 	Command  string
@@ -260,6 +260,10 @@ type VerifyOutcome struct {
 	// verification-record/1, CRW-1328); nil is a record that does not say, which is unknown, never zero. Zero is the warning
 	// no_tests_run of the crw.verify row and the final gate; Pass is the record's either way.
 	TestPackagesRun *int
+	// FailedTests are the failed steps of the record that give a reason, each with the tests and the packages its reason names and
+	// the last lines of it (failedSteps, CRW-1469); none for a verification that passed. The crw.verify row and result carry them as
+	// failed_tests.
+	FailedTests []FailedStep
 }
 
 // WarnNoTestsRun is the warning of a verification whose record says it ran no test (CRW-1328): recorded, never a failure.
@@ -277,11 +281,14 @@ type CloseRange struct {
 }
 
 // CloseOutcome is what the milestone close judged: the final gate over the integrated head, the review of reviewer-final that took
-// the gate as its input, and the audit of the nodes' reviews that ran before the reviewer threads were archived.
+// the gate as its input (a close made before the crosscheck), the audit of the nodes' reviews that ran before the reviewer threads
+// were archived, the crosscheck's verdict V (CRW-1473) and the alignment the reflection of the close answered.
 type CloseOutcome struct {
-	Gate  json.RawMessage `json:"gate"`
-	Final json.RawMessage `json:"final"`
-	Audit json.RawMessage `json:"audit"`
+	Gate       json.RawMessage `json:"gate"`
+	Final      json.RawMessage `json:"final"`
+	Audit      json.RawMessage `json:"audit"`
+	Crosscheck json.RawMessage `json:"crosscheck"`
+	Reflection string          `json:"reflection"`
 }
 
 // Threads is the host as the close reads and archives the reviewer threads of the nodes (CRW-1206): thread/turns/list and

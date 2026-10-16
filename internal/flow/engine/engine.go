@@ -100,6 +100,8 @@ type Config struct {
 	// the subagents it spawns, instead of starting threads through Backend. The run's started row records the backend
 	// (`backend`), and a resume on the other backend is refused.
 	Session *SessionConfig
+	// Tools are the repository tools the configuration names (CRW-1488), given to every agent call the run starts; nil gives none.
+	Tools *RepositoryTools
 }
 
 // SnapshotRequest is a call as the input snapshot sees it.
@@ -295,7 +297,7 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 		if recorded := RecordedBackend(cfg.Journal.Events(), cfg.RunID); recorded != backend && hasStarted(cfg.Journal.Events(), cfg.RunID) {
 			return nil, fmt.Errorf("engine: run %s was started on the %s backend and cannot be resumed on the %s backend: resume it with the backend its started row records", cfg.RunID, recorded, backend)
 		}
-		// a legacy issue-child run is refused before anything is written as well (CRW-1415): its old child records stay read only; a run
+		// a legacy `child` session run is refused before anything is written as well (CRW-1415): its old child records stay read only; a run
 		// resumed as the retired issue lane is one even before its first row (LegacyRun)
 		if why := LegacyRun(cfg.Journal.Events(), cfg.RunID, workflow); why != "" {
 			return nil, fmt.Errorf("engine: %s", why)

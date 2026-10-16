@@ -9,25 +9,15 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/reviewadapter"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/acceptance/premerge"
 )
 
 // The tests of the correction round after the pre-merge evaluation of bb50b215 (CRW-1201 d1 to d7). Each is red on that head.
 
-// verdictOver is a verdict over the criteria with the ids, every one met (or none, for needs_changes).
-func verdictOver(verified bool, ids ...string) map[string]any {
-	v := Verdict(verified)
-	var crit []any
-	for _, id := range ids {
-		crit = append(crit, map[string]any{"id": id, "met": verified, "evidence": "read the head for " + id})
-	}
-	v["criteria"] = crit
-	return v
-}
-
-// d1: another landing moves the integration target while a node is being reviewed. The verification and the acceptance of the node
-// stand on one base, and it is an ancestor of the node's head: the commit its worktree grew from, not whatever the target is at when
-// each step looks.
+// d1: another landing moves the integration target while a node is between its verification and its acceptance (where its review
+// was before the unit check, CRW-1465). The verification and the acceptance of the node stand on one base, and it is an ancestor of
+// the node's head: the commit its worktree grew from, not whatever the target is at when each step looks.
 func TestLandingWhileReviewKeepsOneAncestorBase(t *testing.T) {
 	nodes := []NodeSpec{
 		{ID: "A", Issue: "CRW-A", Title: "issue A", Regions: []string{"a/"}},
@@ -35,7 +25,12 @@ func TestLandingWhileReviewKeepsOneAncestorBase(t *testing.T) {
 	}
 	l := NewLab(t, nodes...)
 	start := l.Tip()
-	l.On("^review:B:r1$", func(*Call) *fakehostPlan { l.AdvanceIntegration("outside.txt"); return nil })
+	var advanced sync.Once
+	l.OnRow(func(ev engine.Event) {
+		if ev.Kind == engine.KindCall && ev.Op == ops.OpVerify && ev.Event == engine.EvCompleted && str(ev.Data, "node") == "B" {
+			advanced.Do(func() { l.AdvanceIntegration("outside.txt") })
+		}
+	})
 	got := mustRun(t, l)
 	if got.State != "closed" {
 		t.Fatalf("state %q: %+v; escalations %v", got.State, got, l.FlowRows(engine.EvEscalation))
@@ -83,11 +78,8 @@ func landingBeforeVerifyLab(t *testing.T) (*Lab, string) {
 			aOnce.Do(func() { close(aLanded) })
 		}
 	})
-	l.On("^review:A:r1$", func(*Call) *fakehostPlan {
-		p := Say(Verdict(true))
-		p.Gate = bStarted
-		return &p
-	})
+	// A's unit check answers once B's executor has started
+	l.UnitChecks("A", UnitCheck{Gate: bStarted})
 	l.On("^build:B:executor$", func(c *Call) *fakehostPlan {
 		c.Edit()
 		bOnce.Do(func() { close(bStarted) })
@@ -236,35 +228,34 @@ func TestVerifierBackAfterResumeVerifiesAgain(t *testing.T) {
 	}
 }
 
-// d3: the explorer of an evidence question reads the committed head the reviewer asked about, not the integration base.
-func TestEvidenceExplorerReadsTheCommittedHead(t *testing.T) {
+// d3: the unit check reads the work it judges (CRW-1465): the checker is given the node's worktree with the executor's work
+// uncommitted in it, and the tree it saw is the tree of the commit the run makes after it, the head the acceptance stands on.
+func TestUnitCheckReadsTheUncommittedWorkTheCommitRecords(t *testing.T) {
 	l := NewLab(t, oneNode()...)
-	reviews(l, "A", Verdict(false, EvidenceDefect("e1", "does the retry loop stop at the deadline?", "node-A.txt")), Verdict(true))
-	var seen struct{ cwd, file string }
-	l.On("^explore:A:", func(c *Call) *fakehostPlan {
-		seen.cwd = c.Cwd
-		_, err := l.gitErr(c.Cwd, "cat-file", "-e", "HEAD:node-A.txt")
-		if err == nil {
-			seen.file = "present"
-		}
-		return nil
-	})
+	var seen struct{ dir, status string }
+	l.UnitChecks("A", UnitCheck{Do: func() {
+		calls := l.Checker.Calls("A")
+		seen.dir = calls[len(calls)-1].Request.Worktree
+		seen.status = l.GitIn(seen.dir, "status", "--porcelain", "--", "node-A.txt")
+	}})
 	got := mustRun(t, l)
 	if got.State != "closed" {
 		t.Fatalf("state %q", got.State)
 	}
-	commits := l.Rows("crw.commit")
-	if len(commits) == 0 {
-		t.Fatal("no commit row")
+	commits, checks := l.Rows("crw.commit"), l.Rows(ops.OpUnitCheck)
+	if len(commits) != 1 || len(checks) != 1 {
+		t.Fatalf("%d commits and %d unit checks, want one of each", len(commits), len(checks))
 	}
-	head := str(commits[0].Data, "commit")
-	exp := callNamed(t, l, l.Labels()[slices.IndexFunc(l.Labels(), func(s string) bool { return strings.HasPrefix(s, "explore:A:") })])
-	prep := l.Prepared(exp.ID)
-	if str(prep.Data, "head") != head {
-		t.Errorf("the explorer call names head %q, the reviewed head is %s", str(prep.Data, "head"), head)
+	build := callNamed(t, l, "build:A:executor")
+	alloc, _ := l.Prepared(build.ID).Data["allocation"].(map[string]any)
+	if seen.dir == "" || seen.dir != str(alloc, "path") {
+		t.Errorf("the checker read %q, the node's worktree is %v", seen.dir, alloc["path"])
 	}
-	if seen.file != "present" {
-		t.Errorf("the explorer's worktree %q does not hold the head's file node-A.txt: it was made at the integration base", seen.cwd)
+	if !strings.Contains(seen.status, "node-A.txt") {
+		t.Errorf("the checker's worktree does not hold the executor's uncommitted work (status %q)", seen.status)
+	}
+	if tree := str(commits[0].Data, "tree"); tree == "" || str(checks[0].Data, "tree") != tree || str(checks[0].Data, "call") != build.ID {
+		t.Errorf("the check saw tree %q of call %q; the commit records tree %q of %s", str(checks[0].Data, "tree"), str(checks[0].Data, "call"), tree, build.ID)
 	}
 }
 
@@ -310,36 +301,36 @@ func TestChildSizedNodeEscalatesOnceAcrossAResume(t *testing.T) {
 	}
 }
 
-// d5: a verified verdict names every criterion of the node's plan once. One that leaves a criterion out is no verdict (the reviewer
-// is asked once more on a fresh thread, then the node escalates); one that names an id twice, or an id the plan does not have, is
-// the same.
+// d5: the acceptance names every criterion of the node's plan once. On a unit check (CRW-1465) the check judges the change against the
+// plan's criteria and crw.accept assembles a premerge record over each of them; a check that gives no verdict - an invalid answer,
+// asked once more with the same request and invalid again - is no basis for an acceptance: the node escalates as a configuration
+// question and nothing reaches the relay.
 func TestVerdictMustCoverEveryCriterionOnce(t *testing.T) {
-	for name, answer := range map[string]map[string]any{
-		"one of two": verdictOver(true, "c1"),
-		"twice":      verdictOver(true, "c1", "c1"),
-		"unknown":    verdictOver(true, "c1", "c3"),
-	} {
-		t.Run(name, func(t *testing.T) {
-			nodes := []NodeSpec{{ID: "A", Issue: "CRW-A", Title: "issue A", Regions: []string{"a/"}, Criteria: []string{"first criterion", "second criterion"}}}
-			l := NewLab(t, nodes...)
-			reviews(l, "A", answer)
-			got := mustRunIncomplete(t, l)
-			if state, reason := laneOf(t, got, "A"); state != "escalated" || reason != "reviewer_null_model" {
-				t.Fatalf("lane A: %s %s", state, reason)
-			}
-			if len(l.Relay.Accepts) != 0 || len(l.Relay.Landed) != 0 {
-				t.Errorf("an incomplete verdict reached the acceptance: %+v", l.Relay.Accepts)
-			}
-			if n := len(l.CallsOf("reviewer")); n != 2 {
-				t.Errorf("%d review calls, want the first and the one more on a fresh thread", n)
-			}
-		})
-	}
 	nodes := []NodeSpec{{ID: "A", Issue: "CRW-A", Title: "issue A", Regions: []string{"a/"}, Criteria: []string{"first criterion", "second criterion"}}}
+	t.Run("invalid twice", func(t *testing.T) {
+		l := NewLab(t, nodes...)
+		l.UnitChecks("A", UnitCheck{State: reviewadapter.StateInvalid}, UnitCheck{State: reviewadapter.StateInvalid})
+		got := mustRunIncomplete(t, l)
+		if state, reason := laneOf(t, got, "A"); state != "escalated" || reason != "unit_check_invalid" {
+			t.Fatalf("lane A: %s %s", state, reason)
+		}
+		if len(l.Relay.Accepts) != 0 || len(l.Relay.Landed) != 0 {
+			t.Errorf("a check with no verdict reached the acceptance: %+v", l.Relay.Accepts)
+		}
+		if n := len(l.Checker.Calls("A")); n != 2 {
+			t.Errorf("%d unit checks, want the first and the one more with the same request", n)
+		}
+		esc := l.FlowRows(engine.EvEscalation)
+		if len(esc) != 1 || str(esc[0].Data, "ask") != "configuration" {
+			t.Errorf("escalations %+v", esc)
+		}
+	})
 	l := NewLab(t, nodes...)
-	reviews(l, "A", verdictOver(true, "c1", "c2"))
 	if got := mustRun(t, l); got.State != "closed" {
-		t.Fatalf("a verdict over both criteria: %+v", got)
+		t.Fatalf("a check over both criteria: %+v", got)
+	}
+	if calls := l.Checker.Calls("A"); len(calls) != 1 || !strings.Contains(calls[0].Request.Prompt, "c1: first criterion") || !strings.Contains(calls[0].Request.Prompt, "c2: second criterion") {
+		t.Errorf("the unit check was not given both criteria: %+v", calls)
 	}
 	rec, err := premerge.Decode(l.Relay.Accepts[0].Premerge)
 	if err != nil || len(rec.Criteria) != 2 {
@@ -366,7 +357,7 @@ func TestAdmissionFollowsTheEditRegionsOfTheDesign(t *testing.T) {
 	}
 	labels := l.Labels()
 	a, b := slices.Index(labels, "build:A:executor"), slices.Index(labels, "build:B:executor")
-	if a < 0 || b < 0 || b < slices.Index(labels, "review:A:r1") {
+	if a < 0 || b < 0 || b < a {
 		t.Errorf("calls %v: B's executor started before A's lane ended although both edit shared/", labels)
 	}
 	var aLanded engine.Event

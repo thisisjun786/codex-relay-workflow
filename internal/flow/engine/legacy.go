@@ -6,19 +6,19 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/script"
 )
 
-// OpLegacyReleaseChild is the operation with which the old project lane started a node's issue child. The issue-child path is retired
+// OpLegacyReleaseChild is the operation with which the old project lane started a node's `child` session. The `child` session path is retired
 // (CRW-1415): no script calls it and no lane installs it, and the rows an old run wrote with it are read only.
 const OpLegacyReleaseChild = "crw.releaseChild"
 
-// LegacyIssueLaneWorkflow is the workflow of an old issue child's run: the issue lane, retired with the issue child (CRW-1415).
+// LegacyIssueLaneWorkflow is the workflow of an old `child` session's run: the issue lane, retired with the `child` session (CRW-1415).
 const LegacyIssueLaneWorkflow = "issue-lane"
 
-// legacyChildRole is the role of the spawn decision the old project lane recorded right before it started a node's issue child
+// legacyChildRole is the role of the spawn decision the old project lane recorded right before it started a node's `child` session
 // (crw.spawnDecision CHILD_2): the current lane records no decision of that role.
 const legacyChildRole = "child"
 
-// LegacyIssueChild says why a run is not resumed ("" when nothing in its journal stops it). A run is a legacy issue-child run when
-//   - its journal holds a crw.releaseChild row: the old project lane started a node's issue child;
+// LegacyIssueChild says why a run is not resumed ("" when nothing in its journal stops it). A run is a legacy `child` session run when
+//   - its journal holds a crw.releaseChild row: the old project lane started a node's `child` session;
 //   - the old lane released a node as a child (a completed crw.release row of kind child) and recorded the child's spawn decision (a
 //     crw.spawnDecision row of role child) for it: it started the child right after, and a process that ended between the start and
 //     the crw.releaseChild row left none. The current lane releases a node sized for a child the same way and records no such decision
@@ -41,10 +41,10 @@ func LegacyIssueChild(events []Event, runID string) string {
 		}
 		switch {
 		case ev.Kind == KindRun && ev.Event == "started" && rowStr(ev.Data, "workflow") == LegacyIssueLaneWorkflow:
-			return fmt.Sprintf("run %s is a legacy issue-child run: it was started as the %s workflow of the retired issue-child path (CRW-1415), which no longer exists; %s", runID, LegacyIssueLaneWorkflow, legacyReadOnly)
+			return fmt.Sprintf("run %s is a legacy `child` session run: it was started as the %s workflow of the retired `child` session path (CRW-1415), which no longer exists; %s", runID, LegacyIssueLaneWorkflow, legacyReadOnly)
 		case ev.Kind != KindCall:
 		case ev.Op == OpLegacyReleaseChild:
-			return fmt.Sprintf("run %s is a legacy issue-child run: its journal holds a %s row (call %s, node %s) of the retired issue-child path (CRW-1415), which the current project lane does not replay; %s", runID, OpLegacyReleaseChild, ev.CallID, nodeOr(rowStr(ev.Data, "node")), legacyReadOnly)
+			return fmt.Sprintf("run %s is a legacy `child` session run: its journal holds a %s row (call %s, node %s) of the retired `child` session path (CRW-1415), which the current project lane does not replay; %s", runID, OpLegacyReleaseChild, ev.CallID, nodeOr(rowStr(ev.Data, "node")), legacyReadOnly)
 		case ev.Event != EvCompleted:
 		case ev.Op == opRelease && rowStr(ev.Data, "kind") == legacyChildRole:
 			if node := rowStr(ev.Data, "node"); !childRelease[node] {
@@ -57,21 +57,21 @@ func LegacyIssueChild(events []Event, runID string) string {
 	}
 	for _, ev := range released {
 		if node := rowStr(ev.Data, "node"); childSpawn[node] {
-			return fmt.Sprintf("run %s is a legacy issue-child run: the old project lane released node %s as an issue child (crw.release call %s, kind child) and decided the child's spawn, the start of the retired issue-child path (CRW-1415), which the current project lane does not replay; %s", runID, nodeOr(node), ev.CallID, legacyReadOnly)
+			return fmt.Sprintf("run %s is a legacy `child` session run: the old project lane released node %s as a `child` session (crw.release call %s, kind child) and decided the child's spawn, the start of the retired `child` session path (CRW-1415), which the current project lane does not replay; %s", runID, nodeOr(node), ev.CallID, legacyReadOnly)
 		}
 	}
 	return ""
 }
 
 // LegacyRun is LegacyIssueChild with the workflow the run is resumed or written to as (its spec's, or its script's meta.name): a run that
-// names LegacyIssueLaneWorkflow is a legacy issue-child run even when its journal holds no row yet, as the run of an old issue-lane process
+// names LegacyIssueLaneWorkflow is a legacy `child` session run even when its journal holds no row yet, as the run of an old issue-lane process
 // that ended after its spec was written and before its started row (CRW-1415, PR #889 round 2).
 func LegacyRun(events []Event, runID, workflow string) string {
 	if why := LegacyIssueChild(events, runID); why != "" {
 		return why
 	}
 	if workflow == LegacyIssueLaneWorkflow {
-		return fmt.Sprintf("run %s is a legacy issue-child run: its spec or its script names the %s workflow of the retired issue-child path (CRW-1415), which no longer exists; %s", runID, LegacyIssueLaneWorkflow, legacyReadOnly)
+		return fmt.Sprintf("run %s is a legacy `child` session run: its spec or its script names the %s workflow of the retired `child` session path (CRW-1415), which no longer exists; %s", runID, LegacyIssueLaneWorkflow, legacyReadOnly)
 	}
 	return ""
 }
@@ -87,7 +87,7 @@ func ProgramWorkflow(prog *script.Program) string {
 // opSpawnDecision is the op of a spawn decision's row (internal/flow/ops).
 const opSpawnDecision = "crw.spawnDecision"
 
-// legacyReadOnly is what the refusal of a legacy issue-child run says of it.
+// legacyReadOnly is what the refusal of a legacy `child` session run says of it.
 const legacyReadOnly = "the run is not resumed and nothing is written to it; its records stay read only (crw flow show and the summary read them)"
 
 func nodeOr(node string) string {

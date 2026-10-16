@@ -1,6 +1,6 @@
 # Journal tail and receive
 
-Here the parent (relay role `parent`) is a relay role, read through [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels).
+The sessions in this document are named by [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels): the parent is the repository session, the child is the project session, and a `child` session (a code id, not a layer) is no layer.
 
 Two relay commands let a process that works inside a delivery turn follow the relay and finish a
 review in one call: `journal-tail`, an awaitable read of the journal, and `receive`, which composes
@@ -75,7 +75,7 @@ last answer; one call with `--wait` is the cheap way to idle until something hap
 crw relay [--state DIR] [--socket PATH] receive --event E --ack-turn T --verdict-file F
 ```
 
-`receive` is `claim`, `ack` and `verdict` run one after another in one process, for a parent that
+`receive` is `claim`, `ack` and `verdict` run one after another in one process, for a child (project session) that
 already holds the review it is going to rule. `--ack-turn` is the caller's own turn id. It is the turn
 the claim is made from, the turn the acknowledgement is proved from and the turn the verdict is ruled
 from. `--verdict-file` is a JSON object whose keys are the `verdict` command's options:
@@ -97,7 +97,7 @@ anything after the JSON document are usage errors.
   turn or the host, so `receive` over such an event answers from the record, with or without a socket.
 * **With a socket** the acknowledgement is verified against the host exactly as `ack --socket` does
   it (the delivery is confirmed through the acknowledging turn first). Without one the
-  first acknowledgement of an event is recorded as the parent's intent (unverified) and the verdict
+  first acknowledgement of an event is recorded as the project session's intent (unverified) and the verdict
   that follows is refused `not_acknowledged`. A settled acknowledgement, and a verdict already on
   record, are returned as they are, so a repeated `receive` of a finished event succeeds offline.
 * **Before the store is opened or anything is written**, `receive` reads what the three commands would read

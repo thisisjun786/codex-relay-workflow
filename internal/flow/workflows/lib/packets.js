@@ -17,7 +17,11 @@
 // comes to the same refusal of crw.designLedger. CRW-1366 changed the answers again (each carries the origin of its route) and their
 // route lines, and asks an authority question in its audit round: a run that recorded its open questions under the earlier binary
 // runs crw.exploreRecord live again on a resume and, where the packet or the asks differ, the ask and design-audit:r1, and a run
-// past its design audit comes to the same refusal of crw.designLedger. The
+// past its design audit comes to the same refusal of crw.designLedger. CRW-1469 gives the packet of a fresh executor thread the
+// node's last state (packet's last: LAST FINDINGS, LAST VERIFICATION, LAST RECEIPT): the first build of a node has none and its packet
+// is the one it was, but a rebuild (after a refusal or a null_model) or the executor-t1 build of a node that had a unit-check finding,
+// a verification or a receipt before it has another packet than an earlier binary built, so a resume over a journal recorded under
+// the earlier text runs that call live again, and the rest of the node's path after it; the fix packet's text is kept. The
 // role overlays (internal/flow/roles/*.md) are no packet: they are the developer instructions a thread starts with, part of no input
 // digest, so a change of them re-runs nothing; a turn on a thread started earlier runs under the instructions that thread was
 // started with, and a new thread or a fork takes the new text. TestResumeAfterPromptTextChange pins both.
@@ -341,7 +345,53 @@ export function explorerPacket(kind, route, ctx, ends) {
   return parts.join('\n\n')
 }
 
-export function packet(node, plan, checkpoint, notes) {
+// findingLines are the findings of a unit check, each by its severity, id, file, line and text: the executor's packet and the fix
+// packet name them alike.
+function findingLines(findings) {
+  return list(findings.map((f) => '[' + f.severity + '] ' + f.id + ' ' + f.file + ':' + f.line + ' ' + f.text))
+}
+
+// findingsSection renders the findings of a unit check under title; no findings, no section.
+function findingsSection(title, findings) {
+  if (!findings || findings.length === 0) return ''
+  return section(title, findingLines(findings))
+}
+
+// ciSection renders a verification under the prefix: passed with its command, or failed with its command and its failures (its
+// summary when it names none), then the failed tests its record names (failed_tests, CRW-1469: by failed step, its tests, its
+// packages and the last lines of its output); no verification, no section. A failed verification with no failed tests, as every one
+// recorded before them, renders the text it did.
+function ciSection(prefix, ci) {
+  if (!ci) return ''
+  if (ci.pass) return prefix + ' PASSED (' + ci.command + ')'
+  const failed = section(prefix + ' FAILED (' + ci.command + ')', list(ci.failures && ci.failures.length ? ci.failures : [ci.summary]))
+  if (!Array.isArray(ci.failed_tests) || ci.failed_tests.length === 0) return failed
+  return failed + '\n\n' + section('FAILED TESTS (each failed step of the verification record: its tests, its packages and the last lines of its output)',
+    ci.failed_tests.map(failedStepLine))
+}
+
+// failedStepLine is one failed step of a verification: its job and step, the tests it names (or that it names none) with their
+// packages, and the last lines of its output indented under it.
+function failedStepLine(s) {
+  const tests = s.tests && s.tests.length ? s.tests.join(', ') : 'no test named'
+  const packages = s.packages && s.packages.length ? ' (packages ' + s.packages.join(', ') + ')' : ''
+  const tail = s.tail ? '\n' + s.tail.split('\n').map((l) => '    ' + l).join('\n') : ''
+  return '- ' + s.job + '/' + s.step + ': ' + tests + packages + tail
+}
+
+// receiptSection renders the summary of a receipt under title; a receipt with no summary, no section.
+function receiptSection(title, receipt) {
+  if (!receipt || !receipt.summary) return ''
+  return title + ': ' + receipt.summary
+}
+
+// packet is the first turn of a fresh executor thread of a node: the first build, a rebuild after a refusal or a null_model, the
+// executor-t1 build. last is the node's last state, which the node lane keeps (CRW-1469): {findings, ci, receipt}, the findings of the
+// last unit check (none after a check that found nothing), the last verification and the last receipt of the node. A fresh thread
+// has none of the turns of the thread before it, so the packet carries each that is there; with none (the first build) the packet is
+// the one it was before CRW-1469. The old reviewer path, which an earlier run replays, passes its explorer notes (an array) in that
+// place: the packet carries them as FINDINGS OF THE EXPLORER, the text it was before CRW-1469.
+export function packet(node, plan, checkpoint, last) {
   const parts = [
     'ROLE: executor. Node ' + node + ' (' + plan.issue + ': ' + plan.title + ').',
     'DESIGN REVISION: ' + plan.revision + ' ' + plan.design_digest,
@@ -353,8 +403,17 @@ export function packet(node, plan, checkpoint, notes) {
     section('DECISIONS', plan.decisions.map((d) => '- ' + d.id + ': ' + d.change)),
   ]
   if (plan.answers && plan.answers.length) parts.push(section('ANSWERS TO THE OPEN QUESTIONS OF THE DESIGN', plan.answers.map((a) => '- ' + a.question + (a.answer ? '\n  ' + a.answer : ''))))
-  const n = notesSection(notes)
-  if (n) parts.push(n)
+  if (Array.isArray(last)) {
+    const n = notesSection(last)
+    if (n) parts.push(n)
+  } else {
+    const was = last || {}
+    for (const s of [
+      findingsSection('LAST FINDINGS (the last unit check of this node found these in the work of a thread before yours; the work you hand over must answer each)', was.findings),
+      ciSection('LAST VERIFICATION', was.ci),
+      receiptSection('LAST RECEIPT (the summary of the last receipt of this node, from a thread you do not continue)', was.receipt),
+    ]) if (s) parts.push(s)
+  }
   if (checkpoint) {
     parts.push(section('CHECKPOINT (a fresh tier takes over; the worktree starts at this head)', [
       '- head: ' + checkpoint.head, '- tree: ' + checkpoint.tree,
@@ -371,16 +430,25 @@ export function answerPacket(answers) {
   ].join('\n\n')
 }
 
+// fixPacket is the next turn of the executor's thread when the run found something to fix: a failed verification (ci), or a verdict.
+// The verdict is a unit check's (crw.unitCheck, CRW-1465: {verdict, findings}, each finding by its id, severity, file, line and text),
+// which has no defects or criteria of a reviewer's VERDICT, or, on the old reviewer path an earlier run replays, a reviewer's VERDICT.
+// notes are the explorer findings of that old path (the node lane passes none). The unit-check, verification and receipt sections are
+// the helpers the executor's packet shares (findingsSection, ciSection, receiptSection), and the text is the one it was before them.
 export function fixPacket(node, verdict, ci, notes, receipt) {
   const parts = ['ROLE: executor. Node ' + node + ': fix what the run found, in the same worktree, and answer with RECEIPT again.']
-  if (ci && !ci.pass) parts.push(section('VERIFICATION FAILED (' + ci.command + ')', list(ci.failures.length ? ci.failures : [ci.summary])))
-  if (verdict) {
+  if (ci && !ci.pass) parts.push(ciSection('VERIFICATION', ci))
+  if (verdict && Array.isArray(verdict.findings) && !Array.isArray(verdict.defects)) {
+    parts.push(section('UNIT CHECK (' + verdict.verdict + '; fix every finding)', findingLines(verdict.findings)))
+    parts.push('A finding you cannot fix without an answer: answer needs_research with the question, and the run answers it on this thread.')
+  } else if (verdict) {
     parts.push(section('REVIEW (' + verdict.verdict + ')', verdict.defects.map((d) => '- [' + d.severity + '/' + d.kind + '] ' + d.ref + ' ' + d.file + ':' + d.line + ' ' + d.finding)))
     parts.push(section('CRITERIA NOT MET', list(verdict.criteria.filter((c) => !c.met).map((c) => c.id + ': ' + c.evidence), 'none')))
   }
   const n = notesSection(notes)
   if (n) parts.push(n)
-  if (receipt && receipt.summary) parts.push('YOUR LAST RECEIPT: ' + receipt.summary)
+  const r = receiptSection('YOUR LAST RECEIPT', receipt)
+  if (r) parts.push(r)
   return parts.join('\n\n')
 }
 
@@ -477,6 +545,77 @@ export function finalPacket(ms, g) {
     // the approved DESIGN lives in the journal's ledger, not in the checkout this reviewer reads: its decisions are the comparison
     // source of the alignment judgement
     section('DESIGN DECISIONS (the approved DESIGN of this milestone; name a decision by its id in the drift)', decisionLines(g.decisions)),
-    'Answer with VERDICT_FINAL: the verdict, one entry of criteria for each criterion c1, c2, ... above, the defects, and the alignment of the integrated range with the DESIGN DECISIONS above (ALIGNED, MISALIGNED with the drift you saw, or NOT_ASSESSED). verified means every criterion is met and no defect of P0 to P2 stands.',
+    'Answer with VERDICT_FINAL: the verdict, one entry of criteria for each criterion c1, c2, ... above, the defects, and the alignment of the integrated range with the DESIGN DECISIONS above (ALIGNED, MISALIGNED with the drift you saw, or NOT_ASSESSED). verified means every criterion is met and no defect blocks. The impact of each defect is one of core_function, safety_or_data, permission_boundary, criterion_unmet, regression_introduced, minor_separable: a defect of P0 to P2 blocks whatever its impact, and of the impacts only minor_separable does not block. A final verdict of verified over a defect that blocks is refused as no verdict.',
+  ].join('\n\n')
+}
+
+// CROSSCHECK_RULE is the one close rule of the crosscheck, word for word as ops.CrosscheckRule says it (the packet test compares them).
+const CROSSCHECK_RULE = 'The impact of each finding is one of core_function, safety_or_data, permission_boundary, criterion_unmet, regression_introduced, minor_separable: ' +
+  'a finding of P0 to P2 blocks whatever its impact, and of the impacts only minor_separable does not block. ' +
+  'The milestone closes only on a verified crosscheck: verified means no finding blocks; a finding that does not block is carried as a follow-up.'
+
+// The lens of each pass of a crosscheck round.
+const CROSSCHECK_LENS = {
+  A: 'PASS A (coverage): judge every criterion and every design decision above, met or not, each with its evidence from the range (a file and line, or what you ran and saw). A criterion or a decision the range does not meet is a finding.',
+  B: 'PASS B (bug hunt): hunt for the defects the range introduces - wrong results, broken edge cases, lost or exposed data, a permission boundary crossed, a regression of what worked before - each with its file and line.',
+}
+
+// The crosscheck pass (CRW-1473): the text of one pass of a crosscheck round over the integrated range of a milestone whose final gate
+// passed. The host runs the review engine in Go (crw.crosscheck) and adds the EXECUTOR RECEIPTS section; the packet names the scope,
+// the criteria, the decisions of the approved DESIGN, the lens of the pass and the close rule. opts ({prior, evidence}) is for the later
+// rounds; round 1 reads neither.
+export function crosscheckPacket(ms, g, pass, opts) {
+  return [
+    'CROSSCHECK pass ' + pass + ' of milestone ' + ms.id + ' (' + ms.title + '), after its final gate passed. Review the changes between ' + g.base + ' and ' + g.head + ': the integrated range, not the issues one by one. Your directory is a checkout of the head; read it and change no file.',
+    'HEAD: ' + g.head + '\nBASE: ' + g.base + '\nRANGE: ' + g.range,
+    section('CRITERIA OF THE MILESTONE', criteriaList(ms.criteria)),
+    section('DESIGN DECISIONS (the approved DESIGN of this milestone)', decisionLines(g.decisions)),
+    CROSSCHECK_LENS[pass] || CROSSCHECK_LENS.B,
+    CROSSCHECK_RULE,
+    'Answer with one JSON document: the verdict (verified or needs_changes) and the findings, each with its severity (P0 to P3), impact, file, line and text. A verdict of verified over a finding that blocks is refused as no answer.',
+  ].join('\n\n')
+}
+
+// The fix packet of a crosscheck that needs changes (CRW-1473): what the 자식 gives a new executor subagent, and the route the fix
+// takes. Every node of the milestone has landed, so the fix lands as a correction node of a new plan revision through land-head, and
+// the verdict goes up to the 부모 with the landed head. The run itself calls no executor. The findings that block are those V does
+// not carry.
+export function crosscheckFixPacket(ms, v) {
+  const carried = v.carried || []
+  const blocking = (v.findings || []).filter((f) => !carried.includes(f.id))
+  const files = []
+  for (const f of blocking) if (f.file && !files.includes(f.file)) files.push(f.file)
+  return [
+    'CROSSCHECK FIX of milestone ' + ms.id + ' (' + ms.title + '): the crosscheck of round ' + v.round + ' at ' + v.head + ' needs changes, and the milestone stays open.',
+    section('BLOCKING FINDINGS', list(blocking.map((f) => f.id + ' [' + f.severity + '/' + (f.impact || 'none') + '] ' + f.file + ':' + f.line + ' ' + f.text))),
+    'RANGE: git diff ' + v.base + '..' + v.head + (files.length ? ' -- ' + files.join(' ') : ''),
+    section('CRITERIA OF THE MILESTONE', criteriaList(ms.criteria)),
+    section('ROUTE (every node of the milestone has landed: the fix is a correction node of a new plan revision)', [
+      '- register a correction issue of milestone ' + ms.id + ' naming these finding ids: ' + (blocking.map((f) => f.id).join(', ') || 'none') + ' (crw-add-issue, a plan revision)',
+      '- a new executor subagent fixes it on a branch from the integration tip',
+      '- land the correction node with `crw flow start land-head`',
+      '- then report this verdict and the landed head up to the 부모 (`crw flow report-up`)',
+    ]),
+  ].join('\n\n')
+}
+
+// The fix packet of a land-head run whose unit check needs changes (CRW-1490): what the 자식 gives a new executor subagent to fix the
+// head it landed, and the land of the fix. The gate-only lane fixes nothing and the land gave the node's release back, so the fix is a
+// new head made outside a run, landed by a new land-head run of the same node with the next fix round. n is the node, findings the
+// check's findings (each by id, file, line and text), head the land's head ({commit, base}) and next the land of the fix ({plan,
+// milestone, fix_round, authors}). The fix branches from this head, so the range of its land holds this head's work too: the authors of
+// the fix's land are this land's authors and the fixer's thread, so the check stays independent of every author of the range.
+export function landFixPacket(n, findings, head, next) {
+  const authors = (next.authors || []).concat(['<the fixer subagent thread>'])
+  const fixArgs = { plan: next.plan, milestone: next.milestone, issue: n.issue || n.id, head: '<the fixed head>', authors, fix_round: next.fix_round }
+  return [
+    'LAND FIX of node ' + n.id + ' (' + (n.issue || n.id) + (n.title ? ': ' + n.title : '') + '): the unit check of the committed range at ' + head.commit + ' needs changes, and the node did not land.',
+    section('FINDINGS', findingLines(findings || [])),
+    'RANGE: git diff ' + head.base + '..' + head.commit,
+    section('CRITERIA OF THE NODE', criteriaList(n.criteria)),
+    section('ROUTE (the gate-only lane fixes nothing; the land gave the node\'s release back)', [
+      '- a new executor subagent fixes this head on a branch from it, outside any run',
+      '- land it with `crw flow start land-head --args \'' + JSON.stringify(fixArgs) + '\' --handoff <the plan\'s handoff file>`, the fixed head, the fixer\'s thread and the handoff of the plan\'s current revision in place of the placeholders; keep the authors of this head',
+    ]),
   ].join('\n\n')
 }

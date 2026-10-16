@@ -30,6 +30,10 @@ type Channel struct {
 	skipPreflightRate bool
 	beforeStageLock   func()
 	clockISO          func() string
+	// onReadEntry, a test hook, is told the hold-rule entry of every attempt read (attemptRun.read),
+	// once per read, at its start and whatever the message's hold: send_by_id for an attempt that
+	// named the message, restage for the daemon's.
+	onReadEntry func(holdEntry)
 }
 
 type Resolution struct {
@@ -152,7 +156,7 @@ func (c *Channel) withStoreSeat(ctx context.Context, reading map[string]any, whe
 		for i, one := range held {
 			candidates[i] = one.Get("taskId")
 		}
-		return nil, Refusal{"duplicate_scope_owner", "the store scope has more than one live supervisor above " + where + "; this sender will not choose between them: " + pythonRepr(candidates)}
+		return nil, Refusal{"duplicate_scope_owner", "the store scope has more than one live 부모 above " + where + "; this sender will not choose between them: " + pythonRepr(candidates)}
 	}
 	if len(held) == 0 {
 		return reading, nil

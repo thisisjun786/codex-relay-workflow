@@ -2,8 +2,9 @@
 // role id written where a person reads a layer. The layers and their names are the table of
 // plugins/crw/skills/crw-canon/references/hierarchy.md "The levels": the relay role id `supervisor`
 // is the 부모 (the repository session), the relay role id `parent` is the 자식 (the project session),
-// and the relay role id `child` is an issue child, no layer. The role ids stay as they are in stored
-// rows, flags, wire fields and refusal codes; the text a person reads names the layer (CRW-1432).
+// and the relay role id `child` is named by its id, a `child` session, which is no layer. The role ids
+// stay as they are in stored rows, flags, wire fields and refusal codes; the text a person reads names
+// the layer (CRW-1432).
 //
 // Name, Gloss, Typed and ListGloss build that text. Find is the matcher the ci ratchet
 // (internal/dev/ci role_words_test.go) and the package tests share, so both count the same words.
@@ -17,7 +18,7 @@ import (
 )
 
 // Name is the layer name a person reads for a relay role id: supervisor is 부모, parent is 자식,
-// child is "issue child". Any other id is returned unchanged.
+// child is "`child` session". Any other id is returned unchanged.
 func Name(roleID string) string {
 	switch roleID {
 	case "supervisor":
@@ -25,7 +26,7 @@ func Name(roleID string) string {
 	case "parent":
 		return "자식"
 	case "child":
-		return "issue child"
+		return "`child` session"
 	}
 	return roleID
 }
@@ -40,11 +41,11 @@ func Gloss(roleID string) string {
 }
 
 // Typed is a role id where a person types or reads it as a value, with its layer name:
-// "supervisor (부모)", "parent (자식)", "child (issue child)".
+// "supervisor (부모)", "parent (자식)", "child (`child` session)".
 func Typed(roleID string) string { return roleID + Gloss(roleID) }
 
 // ListGloss is the layer names of a list of role ids in the given order, written after the list's
-// own spelling: " (issue child, 자식)" for ["child", "parent"]; "" for an empty list.
+// own spelling: " (`child` session, 자식)" for ["child", "parent"]; "" for an empty list.
 func ListGloss(roleIDs []string) string {
 	if len(roleIDs) == 0 {
 		return ""
@@ -70,11 +71,16 @@ var roleWords = []string{"supervisors", "supervisor", "parents", "parent"}
 // case, a trailing 's counted as the same hit. A word counts only on its own: the character before
 // it is not a letter, digit, '_', '-' or '=', and the one after it is not a letter, digit, '_', '='
 // or a '.' followed by a letter (a field path). A following '-' ends the word (parent-authored is a
-// hit) except in parent-class, a decision class.
+// hit) except in parent-class, a decision class, and parent-title, a skill command.
+//
+// A command name that 1.0 keeps is no layer (CRW-1477): the lower-case supervisor or parent that is
+// the command word right after "crw <family> " (crw manage supervisor register), where crw stands
+// alone and family is one of crwFamilies, is not counted. The running text around such a command is
+// (crw manage the supervisor, crw manage supervisor's seat, the supervisor section).
 //
 // Not counted: a typed role id (supervisor (부모), parent (자식)); a quoted role id followed by its
 // layer name ('parent' (자식), "parent" (자식)); a quoted role list followed by its ListGloss
-// (['child', 'parent'] (issue child, 자식), ["child","parent"] (issue child, 자식)); a flag value
+// (['child', 'parent'] (`child` session, 자식), ["child","parent"] (`child` session, 자식)); a flag value
 // (--role supervisor); and the git senses first parent, second parent, parent revision(s), parent
 // commit(s), parent %d and has %d parent(s). A wrong layer name after a role id is a hit. A possessive
 // names a layer's own thing, so it is a hit after a flag and before revision, commit or %d (the
@@ -190,7 +196,10 @@ func exempt(text string, i int, word string, end int) bool {
 	if flagValue(text[:i]) {
 		return true
 	}
-	if lower == "parent" && hasWordPrefix(rest, "-class") {
+	if (word == "supervisor" || word == "parent") && commandWord(text[:i]) {
+		return true
+	}
+	if lower == "parent" && (hasWordPrefix(rest, "-class") || hasWordPrefix(rest, "-title")) {
 		return true
 	}
 	if lower != "parent" && lower != "parents" {
@@ -206,6 +215,33 @@ func exempt(text string, i int, word string, end int) bool {
 	}
 	before := strings.ToLower(text[:i])
 	return strings.HasSuffix(before, "has %d ") && (before == "has %d " || !wordChar(lastRune(before[:len(before)-len("has %d ")])))
+}
+
+// crwFamilies are the crw command families that take a command word (cmd/crw's listed modes
+// without help and version).
+var crwFamilies = map[string]bool{
+	"relay": true, "bridge": true, "hook": true, "skill": true, "doctor": true, "install": true,
+	"review": true, "manage": true, "gui": true, "config": true, "tools": true, "recall": true,
+	"pabcd": true, "role": true, "provider": true, "map": true, "flow": true,
+}
+
+// commandWord is whether before ends with "crw <family> ", crw standing alone (not after a letter,
+// digit, '_' or '-') and family one of crwFamilies, so the word that follows is the family's command.
+func commandWord(before string) bool {
+	if !strings.HasSuffix(before, " ") {
+		return false
+	}
+	name := before[:len(before)-1]
+	k := strings.LastIndexByte(name, ' ')
+	if k < 0 || !crwFamilies[name[k+1:]] || !strings.HasSuffix(name[:k], "crw") {
+		return false
+	}
+	rest := name[:k-len("crw")]
+	if rest == "" {
+		return true
+	}
+	r := lastRune(rest)
+	return !wordChar(r) && r != '-'
 }
 
 // hasWordPrefix is whether rest starts with next (any ASCII case) and next ends a word there.

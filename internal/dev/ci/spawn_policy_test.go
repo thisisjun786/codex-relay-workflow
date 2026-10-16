@@ -29,7 +29,7 @@ var (
 	spawnRuleID     = regexp.MustCompile(`\b` + spawnRuleIDForm + `\b`)
 	spawnRuleRowKey = regexp.MustCompile("^`(" + spawnRuleIDForm + ")`$")
 
-	// retiredSpawnRules are rule ids rules.go keeps only so that old decision rows stay readable (CRW-1418: the issue-child path
+	// retiredSpawnRules are rule ids rules.go keeps only so that old decision rows stay readable (CRW-1418: the `child` session path
 	// is retired, a node sized `child` goes up as a `size_split` escalation). The page has no row for them and does not name them.
 	retiredSpawnRules = map[string]bool{"SP-CHILD-1": true, "SP-CHILD-2": true}
 )

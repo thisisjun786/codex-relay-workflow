@@ -53,7 +53,7 @@ func (h ChildHost) Problem() string {
 		return "the child host settings name no " + strings.Join(missing, ", ")
 	}
 	if h.Parent.HostID != h.Child.HostID {
-		return fmt.Sprintf("the parent's host %s is not the child's %s: a managed start supports one local host", h.Parent.HostID, h.Child.HostID)
+		return fmt.Sprintf("the 자식's host %s is not the `child` session's %s: a managed start supports one local host", h.Parent.HostID, h.Child.HostID)
 	}
 	return ""
 }

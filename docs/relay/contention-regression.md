@@ -1,6 +1,6 @@
 # Contention and failure-recovery regression map
 
-Here the parent (relay role `parent`) is a relay role, read through [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels).
+The sessions in this document are named by [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels): the child is the project session, and the parent or child process of a test is no layer.
 
 What each required scenario is proven by, which proof already existed, and which one
 this work added. A row that reuses earlier evidence names it so nobody re-derives it;
@@ -41,10 +41,10 @@ reproduce.
 | 2 | Daemon exit and restart, and connection loss, around emit, delivery and acknowledgement, recovered from the persisted waiting records | `test_ack_reconcile.py` RestartRecovery; `test_delivery.py` RestartPreservation; `test_enqueue_durability.py` EnqueueDurability; `test_daemon.py` ReconcileGate; `test_wp1_regressions.py` TransactionRecovery; `test_ack_reconcile.py` VerdictAtomicity | `test_failure_recovery.py` | mixed |
 | 3 | Guard timeout, guard error, and the block limit reached, with no infinite repetition and work processed after recovery | `test_guard.py` Bounds, FailureSeparation; `test_guard_property.py` FailureIsNotANormalState | `test_failure_recovery.py` | mixed |
 | 4 | needs_changes continuing into the next generation of the same accountable task, with duplicate, out-of-order and late events causing no additional execution | `test_anchor_binding.py` AnchorBinding; `test_supersession.py` PreSendSupersession; `test_receipts.py` GenerationAndScopeRefusals; `test_rereview_deadlock.py` ReReviewIsReachable | none; met by reuse | injected |
-| 5 | Two parents from different repositories and Linear projects on one shared store: acknowledgement and revision driven concurrently, completion intake and outbox claim checked sequentially | `test_delivery.py` CrossAssignmentDelivery; `test_fairness.py` SharedChildTurns; `test_sync_outbox.py` Readback, ClaimFencing | `test_multi_parent_isolation.py` | injected |
-| 6 | One parent busy, failing or at its retry limit, and one paused, cancelled or archived, while the other keeps progressing | `test_fairness.py` DeliveryFairness; `test_delivery.py` Bounds, HostLifecycle | `test_multi_parent_isolation.py` | injected |
+| 5 | Two children (project sessions) from different repositories and Linear projects on one shared store: acknowledgement and revision driven concurrently, completion intake and outbox claim checked sequentially | `test_delivery.py` CrossAssignmentDelivery; `test_fairness.py` SharedChildTurns; `test_sync_outbox.py` Readback, ClaimFencing | `test_multi_parent_isolation.py` | injected |
+| 6 | One child busy, failing or at its retry limit, and one paused, cancelled or archived, while the other keeps progressing | `test_fairness.py` DeliveryFairness; `test_delivery.py` Bounds, HostLifecycle | `test_multi_parent_isolation.py` | injected |
 | 7 | Daemon run-limit exit and restart, duplicate startup on the same and on a different store, and an assignment outliving four hours | `test_daemon.py` Bounds, Instance; `test_service.py` Ownership, FourHourBoundary; `test_cli.py` ContestedSocket | `test_operational_scale.py` | mixed |
-| 8 | A declared parent and child count and event volume, measured for queue depth, ticks to drain and send ceilings | none; new ground | `test_operational_scale.py` | mixed |
+| 8 | A declared count of children and of `child` sessions, and an event volume, measured for queue depth, ticks to drain and send ceilings | none; new ground | `test_operational_scale.py` | mixed |
 
 Criterion 4 is the one row with no new test. `test_anchor_binding.py` already drives
 needs_changes into the next generation through real entry points with no test-side
@@ -85,7 +85,7 @@ being wrong.
 Criterion 5 is narrower than the issue's wording and the row now says so. Two of the four
 paths run from two threads: acknowledgement and `record_verdict`. Completion intake and
 the outbox claim and completion run sequentially, and the reused classes beside them are
-sequential too. What the concurrent pair establishes is that two parents settling at once
+sequential too. What the concurrent pair establishes is that two children settling at once
 keep their own event, relationship, generation and recipient; what the sequential pair
 establishes is that a job cannot be completed against another project's document or under
 another job's claim token. Neither is a contended outbox, and calling it one would be the
@@ -154,7 +154,7 @@ What each one waits on:
 - `test_stop_adapter.py` runs the Stop adapter's console entry point as a real process, because
   exit 2 is the host's blocking code and only a real exit status can show that it never returns one.
 - `test_daemon_cadence.py` measures a real run spending its deadline polling.
-- `test_supervisor_live_findings.py` runs one line a supervisor report renders as a real
+- `test_supervisor_live_findings.py` runs one line a supervisor-channel report renders as a real
   process with PATH pointing nowhere, because whether a line runs as rendered is a property of
   a process that starts, not of the string: the live host's PATH named a relay without the
   command the line asked for (CRW-215 live finding F3).
@@ -188,7 +188,7 @@ back the other two, and nobody here reads back the outbox job. That is the whole
 
 ## Scale, stated as a bound rather than a guarantee
 
-Criterion 8 declares its parent count and event volume as module constants, so a report
+Criterion 8 declares its child count and event volume as module constants, so a report
 quotes a number read from source. The suite records the queue depth, the ticks needed to
 drain it and the per-tick send ceiling that produced it, and the ceiling is derived from
 `RetryPolicy` rather than written down. That is a measurement of this harness on one

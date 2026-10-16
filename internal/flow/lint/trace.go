@@ -30,6 +30,7 @@ func traceDiagnostics(res *engine.Result, events []engine.Event, policy *engine.
 	labels := map[string]int{}
 	lastAuthor := map[string]string{} // path -> model family of the last author call
 	phases := map[string]uint8{}      // path and node -> lifecycle phase set
+	checked := map[string]bool{}      // path and node -> a unit check holds for the node's current tree
 	decided := map[string]bool{}      // path and step id -> crw.tierStep returned it on the path
 	for _, e := range events {
 		if e.Kind != engine.KindCall {
@@ -63,13 +64,21 @@ func traceDiagnostics(res *engine.Result, events []engine.Event, policy *engine.
 			if c.continuation {
 				if c.family == "executor" {
 					lastAuthor[c.path] = c.modelFamily
+					// A continuation of an executor thread changes the tree a unit check saw: of its node, or, when the
+					// row names none, of any node of the path.
+					for key := range checked {
+						if key == c.path+"\x00"+c.node || c.node == "" && strings.HasPrefix(key, c.path+"\x00") {
+							delete(checked, key)
+						}
+					}
 				}
 				continue
 			}
 			if c.family == "executor" {
 				lastAuthor[c.path] = c.modelFamily
 				key := c.path + "\x00" + c.node
-				phases[key] = traceEvent(phases[key], pBuilt, c.path, &out)
+				phases[key] = traceEvent(phases[key], false, buildEvent, c.path, &out)
+				delete(checked, key)
 			}
 		case e.Event == engine.EvRefused:
 			reason, _ := e.Data["reason"].(string)
@@ -84,9 +93,29 @@ func traceDiagnostics(res *engine.Result, events []engine.Event, policy *engine.
 				add(RuleCallRefused, e.Label, "the call %q was refused with %s: %s", e.Label, reason, detail)
 			}
 		case strings.HasPrefix(e.Op, "crw.") && e.Event == engine.EvCompleted:
-			if ev := lifecycleOp(strings.TrimPrefix(e.Op, "crw.")); ev != 0 {
+			op := strings.TrimPrefix(e.Op, "crw.")
+			kind, _ := e.Data["kind"].(string)
+			released, _ := e.Data["released"].(bool)
+			le := lifecycleEvent(op, op == "release" && kind == "land" && released)
+			// a unit check checks the node only when the tool judged the tree: role unit-check, state ok and a verdict. A check held
+			// for the tool's quota or a blank answer has the role too, and a check that was not run has none
+			if le.check {
+				role, _ := e.Data["role"].(string)
+				state, _ := e.Data["state"].(string)
+				verdict, _ := e.Data["verdict"].(string)
+				if role != execution.AgentUnitCheck || state != "ok" || verdict == "" {
+					le = lifeEvent{}
+				}
+			}
+			if le.from != 0 {
 				key := e.Path + "\x00" + eventNode(e)
-				phases[key] = traceEvent(phases[key], ev, e.Path, &out)
+				phases[key] = traceEvent(phases[key], checked[key], le, e.Path, &out)
+				switch le {
+				case unitCheckEvent:
+					checked[key] = true
+				case landReleaseEvent:
+					delete(checked, key)
+				}
 			}
 		}
 	}
@@ -135,20 +164,25 @@ func eventNode(e engine.Event) string {
 }
 
 // traceEvent applies one lifecycle event of a path to its phase set, as the static walk does; a path that has seen no
-// event starts at the build.
-func traceEvent(phases, ev uint8, path string, out *[]Diagnostic) uint8 {
+// event starts before the build. checked says whether a unit check holds for the node's current tree (a land is legal
+// from verified then); a unit check leaves the phase set where it is, its caller sets the flag.
+func traceEvent(phases uint8, checked bool, le lifeEvent, path string, out *[]Diagnostic) uint8 {
 	if phases == 0 {
 		phases = pInit
 	}
-	if phases&legalFrom[ev] == 0 {
-		rule, msg := RuleLifecycleOrder, fmt.Sprintf("%s ran on path %s while the node was %s: the order is build, rounds of commit, verify, review, then land", eventNames[ev], path, phaseList(phases))
+	ev := le.to
+	if phases&landFrom(le, checked) == 0 {
+		rule, msg := RuleLifecycleOrder, fmt.Sprintf("%s ran on path %s while the node was %s: the order is build, rounds of commit, verify, review (a unit check before the commit or after the verify), then land", le.name, path, phaseList(phases))
 		switch {
 		case ev == pLanded && phases == pLanded:
 			rule, msg = RuleLandTwice, fmt.Sprintf("crw.land ran a second time on path %s", path)
 		case ev == pLanded:
-			rule, msg = RuleLandWithoutReview, fmt.Sprintf("crw.land ran on path %s while the node was %s, without a completed review", path, phaseList(phases))
+			rule, msg = RuleLandWithoutReview, fmt.Sprintf("crw.land ran on path %s while the node was %s, without a completed review or a unit check of the head", path, phaseList(phases))
 		}
 		*out = append(*out, Diagnostic{Rule: rule, Message: msg, Source: sourceTrace})
+	}
+	if le.check {
+		return phases
 	}
 	return ev
 }
