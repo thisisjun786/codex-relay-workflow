@@ -54,6 +54,12 @@ type UpRequest struct {
 	Body               []byte
 	// Plan is the plan the run pinned; empty reads it from the run record.
 	Plan string
+	// Question, Revision and Node name the run's question a project_decision_request lifts (`crw flow report-up --question`, CRW-1574):
+	// the escalation id, its revision among the asks of its node and ask, and its node ("" for a milestone's ask). The report row carries
+	// them only when Question is set; they take no part in the report id.
+	Question string
+	Revision int
+	Node     string
 }
 
 // UpResult is what a report-up came to.
@@ -149,6 +155,10 @@ func (w *Writer) Up(ctx context.Context, req UpRequest) (UpResult, error) {
 			"body_digest": digest, "body_path": path, "logical_id": res.LogicalID,
 			"recipient_state": rec.State, "recipient_thread": rec.Thread, "recipient_initiative": rec.InitiativeKey, "recipient_project": rec.ProjectKey,
 			"recipient_reason": rec.Reason, "recipient_detail": rec.Detail,
+		}
+		if req.Question != "" {
+			// written only for a report that names its question (CRW-1381 convention: a member a row without it never had)
+			payload["question"], payload["revision"], payload["node"] = req.Question, req.Revision, req.Node
 		}
 		// the report row first: whatever happens to the delivery, the report is on record
 		if _, _, err := w.Rows.AppendOnce(ctx, NewRow{Kind: KindReport, Payload: payload}, "report_id"); err != nil {
