@@ -603,7 +603,7 @@ func TestRunClaimsPlanEpochAndStopsWhenLost(t *testing.T) {
 
 // TestSchedRelayAcceptIntegrateCloseOnTempStore (CRW-1277 f): over a temporary store and git, a milestone's nodes are accepted on the agent
 // path (the relay reads the head from the node's worktree, judges the pre-merge and verification records and the review the run recorded by
-// a reviewer of another family) and integrated by the dag-integrate wiring onto the target branch, which the observation marks integrated;
+// a separate reviewer call) and integrated by the dag-integrate wiring onto the target branch, which the observation marks integrated;
 // the acceptance and the integration answer again as replays; AcceptState and ReleaseStands read them; a node given up is closed with its
 // slot, a hold closes nothing, and a node never released has nothing to close.
 func TestSchedRelayAcceptIntegrateCloseOnTempStore(t *testing.T) {

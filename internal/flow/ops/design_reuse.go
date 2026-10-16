@@ -193,7 +193,7 @@ func (o *designReuseOp) Run(ctx context.Context, req engine.OpRequest) (engine.O
 		})
 		var approved AuditResult
 		if !ok || json.Unmarshal(resultOf(audit), &approved) != nil || approved.State != AuditApproved || approved.CandidateDigest != cand.digest() ||
-			dataStr(audit, "critic_call") == "" || att.SourceRevision == "" || independent(dataStr(audit, "critic_model"), []string{dataStr(audit, "architect_model")}) != "" {
+			dataStr(audit, "critic_call") == "" || att.SourceRevision == "" {
 			att.Reason, att.Detail = ReuseNotApproved, "the revision has no approved independent audit of its own"
 			out.Attempts = append(out.Attempts, att)
 			continue
@@ -227,8 +227,7 @@ func reusedDesign(r rows, ms string) (engine.Event, DesignReuseResult, bool) {
 	if json.Unmarshal(resultOf(row), &d) != nil || !d.Reused || d.Milestone != ms {
 		return engine.Event{}, DesignReuseResult{}, false
 	}
-	if d.SourceRun == "" || d.SourceRevision == "" || d.SourceAuditCall == "" || d.Digest == "" || d.MilestoneDigest == "" ||
-		independent(d.CriticModel, []string{d.ArchitectModel}) != "" {
+	if d.SourceRun == "" || d.SourceRevision == "" || d.SourceAuditCall == "" || d.Digest == "" || d.MilestoneDigest == "" {
 		return engine.Event{}, DesignReuseResult{}, false
 	}
 	return row, d, true

@@ -85,10 +85,8 @@ func TestRoleModelsFactNamesTheUndecidedPart(t *testing.T) {
 	}
 }
 
-// CRW-1434: the role_models fact reads the critic too. The design audit refuses a critic of the architect's model family
-// (independence_refused), so a table that gives the critic the architect's family warns; the critic is no review of an executor's
-// work, so only the architect is compared with it.
-func TestRoleModelsFactWarnsOfACriticOfTheArchitectsFamily(t *testing.T) {
+// Model-family overlap is not a role-pair configuration warning.
+func TestRoleModelsFactDoesNotWarnForSameFamily(t *testing.T) {
 	isolateGit(t)
 	w := newWorld(t)
 	roleModels := func(table *engine.Policy) Fact {
@@ -107,11 +105,10 @@ func TestRoleModelsFactWarnsOfACriticOfTheArchitectsFamily(t *testing.T) {
 	c := same.Roles["critic"]
 	c.Pair = same.Roles["architect"].Pair
 	same.Roles["critic"] = c
-	family := execution.ModelFamily(c.Pair.Model)
 	f := roleModels(same)
-	if f.Level != LevelWarn || !strings.Contains(f.Reading, "critic and architect are both "+family) || strings.Contains(f.Reading, "critic and executor") ||
-		!strings.Contains(f.Reason, "design audit") {
-		t.Fatalf("role_models of a critic of the architect's family: %+v", f)
+	if f.Level != LevelPass || strings.Contains(f.Reading, "family") || strings.Contains(f.Reason, "design audit") ||
+		!strings.Contains(f.Reading, "critic "+c.Pair.Model+"/"+c.Pair.Effort) {
+		t.Fatalf("role_models of same-family roles: %+v", f)
 	}
 }
 

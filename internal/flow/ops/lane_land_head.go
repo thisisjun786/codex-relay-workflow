@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 )
 
@@ -23,13 +22,12 @@ import (
 //   - the head is resolved in the run's repository and checked out, detached, in a worktree of the run's own (LandRoot), which the row
 //     names and the execution's worktree handle points at, so the relay reads the head from git there;
 //   - the authors are the threads the child names, each read back from the host (thread/read: the configured pair). No executor call is
-//     invented: the observed pairs are the row's, crw.review judges the reviewer's family against them, and the release records the pair
-//     on the node's execution row (author_model, author_effort), which the relay's acceptance judges against.
+//     invented: every observed pair stays on the row, and the release records a representative pair on the node's execution row
+//     (author_model, author_effort). Models and model families do not restrict the separate review (CRW-1515).
 //
-// The refusals are input errors only (no head, a head git cannot resolve, authors of more than one model family, whose pairs one
-// execution row cannot hold): released false with the reason, nothing written at the relay. A named thread whose pair cannot be read back,
-// no named thread, and paths outside the node's regions are warnings of the row; with any named thread not read back, or none named, the
-// independence gate refuses the review (independence_unproven), and nothing else stops the land.
+// Input errors (no head, a head git cannot resolve) return released false with the reason and write nothing at the relay.
+// A named thread whose pair cannot be read back, no named thread, and paths outside the node's regions are warnings of the row.
+// Missing author metadata and mixed model families do not block the separate tool review (CRW-1515).
 
 // LandOpts are the head and the authors a land release names.
 type LandOpts struct {
@@ -63,7 +61,7 @@ type LandHead struct {
 const (
 	ReasonLandHeadMissing      = "land_head_missing"
 	ReasonLandHeadUnresolved   = "land_head_unresolved"
-	ReasonLandAuthorsMixed     = "land_author_families_mixed"
+	ReasonLandAuthorsMixed     = "land_author_families_mixed" // legacy record reason, no longer emitted
 	ReasonLandNodeHeld         = "land_node_held"
 	WarnLandAuthorsUnnamed     = "land_authors_unnamed"
 	WarnLandAuthorUnobserved   = "land_author_unobserved"
@@ -89,7 +87,7 @@ func (l *Lane) readAuthors(ctx context.Context, threads []string) ([]LandAuthor,
 	out := make([]LandAuthor, 0, len(threads))
 	var warnings []string
 	if len(threads) == 0 {
-		warnings = append(warnings, WarnLandAuthorsUnnamed+": the land names no author thread, so no author pair is observed and the review cannot be shown independent")
+		warnings = append(warnings, WarnLandAuthorsUnnamed+": the land names no author thread, so no author pair is observed")
 	}
 	for _, id := range threads {
 		a := LandAuthor{Thread: id}
@@ -154,20 +152,15 @@ func (o *releaseOp) landRelease(ctx context.Context, req engine.OpRequest, plan,
 		return refusedInput(ReasonLandHeadUnresolved, fmt.Sprintf("git resolves no commit %q in %s", land.Head, o.l.d.Repo))
 	}
 	authors, warnings := o.l.readAuthors(ctx, land.Authors)
-	families := map[string]bool{}
 	var pair *LandAuthor
 	for i := range authors {
 		if a := authors[i]; a.Observed {
-			families[execution.ModelFamily(a.Model)] = true
 			if pair == nil {
 				pair = &authors[i]
 			}
 		}
 	}
 	data["head"], data["head_named"], data["authors"] = commit, land.Head, authors
-	if len(families) > 1 {
-		return refusedInput(ReasonLandAuthorsMixed, fmt.Sprintf("the author threads ran on %d model families: the node's execution records one author pair, so a head of several families is landed as one land per family's work", len(families)))
-	}
 	// the plan the run read (its crw.milestone row) is the one the land stands on, compared with the relay's now as every release does
 	m, err := o.l.liveMilestone(ctx, plan, ms)
 	if err != nil {
@@ -281,7 +274,7 @@ func (o *releaseOp) landRelease(ctx context.Context, req engine.OpRequest, plan,
 // landAuthorsObserved reports whether every author thread a land release named was read back: the authors list of a completed
 // crw.release row of the kind land (rel.Data["authors"], []LandAuthor). A land that names no author, or one whose pair was not
 // observed, is not observed: an in-run fix adds an executor call the run did read, but that call cannot establish the authorship of
-// the original head, so the independence gate keeps the land unproven (CRW-1490).
+// the original head. This fact remains visible in acceptance evidence without blocking it (CRW-1515).
 func landAuthorsObserved(rel engine.Event) bool {
 	raw, err := json.Marshal(rel.Data["authors"])
 	if err != nil {

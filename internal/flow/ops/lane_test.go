@@ -263,8 +263,8 @@ func TestLedgerAndReleaseNeedAnApprovedAudit(t *testing.T) {
 	}
 }
 
-// An audit that was not made by an independent critic is not an approval: the model family of the auditor differs from the
-// architect's, a call that did not complete is not an audit, and an approval over a P1 finding is no approval.
+// A completed critic verdict is independent of the model family (CRW-1515).
+// A call that did not complete is not an audit, and an approval over a P1 finding is no approval.
 func TestDesignAuditIndependence(t *testing.T) {
 	w := newWorld(t)
 	design, _ := json.Marshal(designOf("A"))
@@ -275,10 +275,10 @@ func TestDesignAuditIndependence(t *testing.T) {
 		_ = json.Unmarshal(w.must("designAudit", "M", 1, cand, arch, aud), &r)
 		return r
 	}
-	if r := state(call("a", "completed", "claude-opus", nil), call("r", "completed", "claude-sonnet", approved)); r.State != StateRefused || r.Reason != "independence_refused" {
+	if r := state(call("a", "completed", "claude-opus", nil), call("r", "completed", "claude-sonnet", approved)); r.State != AuditApproved || r.Reason != "" {
 		t.Errorf("same family: %+v", r)
 	}
-	if r := state(call("a", "completed", "claude-opus", nil), call("r", "completed", "", approved)); r.State != StateRefused || r.Reason != "independence_unproven" {
+	if r := state(call("a", "completed", "claude-opus", nil), call("r", "completed", "", approved)); r.State != AuditApproved || r.Reason != "" {
 		t.Errorf("unread pair: %+v", r)
 	}
 	if r := state(call("a", "completed", "claude-opus", nil), call("r", "held", "gpt-x", nil)); r.State != StateHeld {
@@ -292,10 +292,8 @@ func TestDesignAuditIndependence(t *testing.T) {
 	}
 }
 
-// TestDesignAuditStillRefusesAnArchitectFamilyCritic (CRW-1452): the design audit is the critic's call now, and its independence is
-// still judged by the model families of the two calls' configured pairs, never by the role: a critic on the architect's family is
-// refused (independence_refused), and the same critic on another family is an approval that names the critic as the auditor.
-func TestDesignAuditStillRefusesAnArchitectFamilyCritic(t *testing.T) {
+// The critic's completed audit names its role regardless of the architect's model family (CRW-1515).
+func TestDesignAuditAcceptsAnArchitectFamilyCritic(t *testing.T) {
 	w := newWorld(t)
 	design, _ := json.Marshal(designOf("A"))
 	cand := Candidate{Design: design, Answers: json.RawMessage(`[]`)}
@@ -309,7 +307,7 @@ func TestDesignAuditStillRefusesAnArchitectFamilyCritic(t *testing.T) {
 		_ = json.Unmarshal(w.must("designAudit", "M", 1, cand, arch, critic), &r)
 		return r
 	}
-	if r := audit("claude-opus", "claude-sonnet"); r.State != StateRefused || r.Reason != "independence_refused" || r.Critic.Role != "critic" {
+	if r := audit("claude-opus", "claude-sonnet"); r.State != AuditApproved || r.Reason != "" || r.Critic.Role != "critic" {
 		t.Errorf("a critic of the architect's family: %+v", r)
 	}
 	if r := audit("claude-opus", "gpt-6.1-sol"); r.State != AuditApproved || r.Critic.Role != "critic" || r.Architect.Role != "architect" {
@@ -4454,7 +4452,7 @@ func reuseDecision(t *testing.T, w *world) DesignReuseResult {
 func TestDesignReuseRequiresStandingApproval(t *testing.T) {
 	base := sourceRunEvents(t, true, designOf("A"))
 	ledgerIdx, ledgerRow := rowOf(base, OpDesignLedger)
-	auditIdx, auditRow := rowOf(base, OpDesignAudit)
+	_, auditRow := rowOf(base, OpDesignAudit)
 	for _, c := range []struct {
 		name   string
 		events func() []engine.Event
@@ -4482,16 +4480,6 @@ func TestDesignReuseRequiresStandingApproval(t *testing.T) {
 		{"a ledger that never stood", func() []engine.Event {
 			return sourceRunEvents(t, false, designOf("A"))
 		}, ReuseMissing},
-		{"a critic of the architect's family", func() []engine.Event {
-			evs := cloneEvents(t, base)
-			evs[auditIdx].Data["critic_model"] = "claude-y"
-			return evs
-		}, ReuseNotApproved},
-		{"an audit that names no architect model", func() []engine.Event {
-			evs := cloneEvents(t, base)
-			evs[auditIdx].Data["architect_model"] = ""
-			return evs
-		}, ReuseNotApproved},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			w := reuseWorld(t, DesignRun{Run: "run-source", Events: c.events()})

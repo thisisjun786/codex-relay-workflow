@@ -9,7 +9,6 @@ import (
 	"path"
 	"strings"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 )
 
@@ -90,22 +89,8 @@ func (c Candidate) digest() string {
 	return digestOf(map[string]any{"design": design, "answers": answers})
 }
 
-// independent reports why a call of the family of critic is not an independent second opinion of the models: "" when its
-// model family differs from every one of theirs, else the closed reason. A pair that was never read back proves nothing.
-func independent(critic string, authors []string) string {
-	if critic == "" || len(authors) == 0 {
-		return "independence_unproven"
-	}
-	for _, a := range authors {
-		if a == "" || execution.ModelFamily(a) == execution.ModelFamily(critic) {
-			return engine.ReasonIndependenceRefused
-		}
-	}
-	return ""
-}
-
 // designAuditOp is crw.designAudit(milestone, round, candidate, architectCall, auditCall): the record of the independent audit of
-// a DESIGN. The auditor is the critic, of another model family than the architect; only an approved audit lets the DESIGN into the
+// a DESIGN. The critic reviews in its own context; an observed shared thread warns without refusing (CRW-1515). Only an approved audit lets the DESIGN into the
 // ledger, and the executors start only on a ledger revision. A call that did not complete is not an audit: held and unknown hold
 // the milestone, refused escalates, null_model asks the auditor again once, superseded stops.
 type designAuditOp struct{ l *Lane }
@@ -121,6 +106,7 @@ type AuditResult struct {
 	Summary         string         `json:"summary"`
 	Critic          Brief          `json:"critic"`
 	Architect       Brief          `json:"architect"`
+	Warnings        []string       `json:"warnings,omitempty"`
 }
 
 func (o *designAuditOp) Run(_ context.Context, req engine.OpRequest) (engine.OpResult, error) {
@@ -149,10 +135,6 @@ func (o *designAuditOp) Run(_ context.Context, req engine.OpRequest) (engine.OpR
 		if audit.Findings == nil {
 			res.Findings = []AuditFinding{}
 		}
-		if why := independent(call.Meta.ConfiguredPair.Model, []string{arch.Meta.ConfiguredPair.Model}); why != "" {
-			res.State, res.Reason = StateRefused, why
-			break
-		}
 		res.State = audit.Verdict
 	case "null_model":
 		res.State, res.Reason = StateNullModel, call.Reason
@@ -168,6 +150,11 @@ func (o *designAuditOp) Run(_ context.Context, req engine.OpRequest) (engine.OpR
 	data := map[string]any{
 		"milestone": ms, "round": round, "candidate_digest": res.CandidateDigest, "state": res.State, "reason": res.Reason,
 		"critic_call": call.CallID, "architect_call": arch.CallID, "critic_model": call.Meta.ConfiguredPair.Model, "architect_model": arch.Meta.ConfiguredPair.Model,
+	}
+	if call.Meta.ThreadID != "" && call.Meta.ThreadID == arch.Meta.ThreadID {
+		res.Warnings = []string{"review_same_thread"}
+		data["warnings"] = res.Warnings
+		data["critic_thread"], data["architect_thread"] = call.Meta.ThreadID, arch.Meta.ThreadID
 	}
 	if broken != nil && (res.State == AuditApproved || res.State == AuditNeedsChanges) {
 		res.State = AuditNeedsChanges

@@ -53,7 +53,7 @@ func childWorkingWayProblems(section string) []string {
 		`(?i)splits? the work`,
 		`(?i)in parallel`,
 		`(?i)decides? the next step (from|by) (the|their) results?`,
-		`(?i)architect[^.]*critic's design check[^.]*executors? in parallel[^.]*reviewer of another (model )?family[^.]*fix round[^.]*verification[^.]*land`,
+		`(?i)architect[^.]*critic's design check[^.]*executors? in parallel[^.]*unit check[^.]*separately invoked review tool[^.]*fix round[^.]*verification[^.]*land`,
 		`(?i)explorer[^.]*(when|whenever) (it is )?needed`,
 		`(?i)the child (decides|chooses) whether (to use )?the DAG`,
 		`(?i)CRW enforces the order, the gates and the records`,
@@ -63,7 +63,7 @@ func childWorkingWayProblems(section string) []string {
 		`(?i)pull request`,
 		`(?i)lands? (each|one) node`,
 		"CRW-1355",
-		`(?i)independence_refused`,
+		`(?i)legacy[^.]*independence_refused`,
 		"verification-record/1",
 	}) {
 		problems = append(problems, "the section lacks "+p)

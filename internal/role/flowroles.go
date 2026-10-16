@@ -49,8 +49,7 @@ func storeRole(r RoleName) bool { return validRole(r) || flowOnlyRole(r) || reti
 
 // flowCompiledDefaults are the pairs a flow-only key takes when the store holds no usable entry for it (an entry in mode default
 // is undecided instead). They are never the executor's or the reviewer's pair, so a tier step to executor-t1 stays a step to
-// another pair. The critic's is a gpt pair at xhigh: a model family other than the architect's, which is what the design audit's
-// independence is judged by.
+// another pair. The critic's default is a gpt pair at xhigh; its model family does not restrict the design audit (CRW-1515).
 var flowCompiledDefaults = map[RoleName][2]string{
 	ExecutorT1: {"anthropic/claude-sonnet-5-5", "xhigh"},
 	Critic:     {"gpt-6.1-sol", "xhigh"},

@@ -1061,7 +1061,7 @@ func (l *Lab) Archived() []string { return l.Threads.Archived() }
 
 // The lab's unit checker stands in for the review tool the shipped lane runs before every commit of a node (crw.unitCheck): the lane
 // gives it the request the op built, and it answers a record without running a tool. Its default answer is a verified check with no
-// finding by Bugbot's pair (engine family grok, model grok-4.7-medium, effort medium), of another family than the lab's executors; a
+// finding by Bugbot's pair (engine family grok, model grok-4.7-medium, effort medium), recorded as review provenance; a
 // scenario scripts the answers of a node's checks in order (UnitChecks), and a scripted answer's Do runs before it answers, where a
 // scenario hooked the reviewer of the node before. The node is read from the prompt (the op's prompt names it).
 

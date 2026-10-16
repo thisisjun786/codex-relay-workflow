@@ -34,7 +34,7 @@ const (
 	RuleInl3 = "SP-INL-3" // compile, commit, verification, premerge assembly, accept and integrate are code steps
 	RuleInl4 = "SP-INL-4" // the child is never woken for one issue's event; it is woken for a step of its run
 
-	// RuleAudit is the design audit of the F08 body: a reviewer of another model family than the architect audits the DESIGN
+	// RuleAudit is the design audit of the F08 body: a critic in a separate review context audits the DESIGN
 	// before the first executor starts.
 	RuleAudit = "SP-AUD-1"
 )

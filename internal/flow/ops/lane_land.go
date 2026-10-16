@@ -185,7 +185,9 @@ func (o *acceptOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResu
 		return engine.OpResult{}, &Refusal{"reviewer_missing", "no verified review or unit check of " + head.Commit + " is recorded for node " + node}
 	}
 	if dataStr(rel, "kind") == "land" && !landAuthorsObserved(rel) {
-		return engine.OpResult{}, &Refusal{"independence_unproven", "the original land authors were not all observed; a repair executor cannot establish authorship of the original head"}
+		// Keep the original authors' missing readback visible; a later repair does not fill it in.
+		// It is provenance, not a model-family gate (CRW-1515).
+		verdict.Summary += "; original land author metadata was not fully observed"
 	}
 	if len(opts.Carried) > 0 {
 		extra, err := carriedDefects(r, node, opts.Carried, verdict.Defects)

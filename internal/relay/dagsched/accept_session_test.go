@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"testing"
-
-	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 )
 
 // CRW-1331 (CRW-1316 §4): the rows of a session call, as the flow journal stores them: prepared (backend session), step_published,
@@ -96,12 +94,13 @@ func TestAgentAcceptOnSessionRows(t *testing.T) {
 		t.Fatalf("the acceptance row %+v (%v %v)", row, found, err)
 	}
 
-	// an author whose first attempt ran on the reviewer's family and was lost: its edits stay in the worktree, so its pair is an
-	// author pair and the reviewer is refused
+	// an author whose first attempt ran on the reviewer's family and was lost: its edits stay in the worktree and its pair remains in
+	// the author-pair digest, while family overlap does not block the verified review
 	k.recordSession("executor", "lost", k.heads["lost"], "", "", sessionAttempt{reviewerModel, "high"}, sessionAttempt{authorModel, "high"})
 	k.recordSession("reviewer", "lost", k.heads["lost"], "verified", criteria, sessionAttempt{reviewerModel, "high"})
-	_, err = k.accept("lost")
-	wantAgentRefusal(t, "an author attempt of the reviewer's family", err, contract.RefusalDispositionConflict, IndependenceRefused)
+	if got, err := k.accept("lost"); err != nil || got.AcceptanceID == "" {
+		t.Fatalf("same-family author attempt must not block acceptance: %+v %v", got, err)
+	}
 
 	// a reviewer whose first attempt was lost is judged on the pair of the attempt that answered
 	k.recordSession("executor", "lostreviewer", k.heads["lostreviewer"], "", "", sessionAttempt{authorModel, "high"})
