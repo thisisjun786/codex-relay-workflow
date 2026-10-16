@@ -882,7 +882,7 @@ the attempt as `turn_check_undecided:<reason>` (`listing_bounded`, `listing_empt
 same way although it
 decides the veto: the delivery's token is in the child's items but its turn is gone from the
 list (`token_without_turn`). The message is there, so it is not sent again, but the turn that would
-have acted on it is gone, which the child has to be able to see. `status` reads the phase as
+have acted on it is gone, which the child must be able to see. `status` reads the phase as
 `awaiting_ack:turn_check_undecided`, and `assignment-show` carries the reason as
 `projection.completion.delivery.turnCheck`. Nothing is sent again on an undecided reading. The
 daemon reads such a row again after ten minutes. Only a later reading that decides clears the
@@ -1065,7 +1065,7 @@ when another reader, which read the host later, named a hold first: a reading th
 writes only over the name it read, so an older reading never replaces a newer one, and its answer
 names the actor, reason and `recovery` of the hold the attempt now carries.
 
-Recovering the report is the child's. `assignment-show` answers `parent_recovers_unknown_send_lost`
+Recovering the report is the child's job. `assignment-show` answers `parent_recovers_unknown_send_lost`
 or `parent_recovers_unknown_send_undecided` with `recovery`, whose command is `show --event <id>` on
 this store. The `child` session's report is in the store whatever happened to the message, so the child
 reads it there and opens a fresh execution generation if the work still needs verifying.

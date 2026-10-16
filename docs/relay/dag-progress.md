@@ -280,7 +280,7 @@ A store that lacks one of these tables (a store that predates it) is answered wi
 "Newest" compares the recorded times with one another and never with the present; a tie is broken by source, relationship, generation and the stored identities, so two readings of one store state
 choose the same row. A `child` session report is activity and is not evidence; a ruling is evidence and is not activity; the two entries never merge into one "last seen".
 
-Activity is display only. The stage of a node is `dag-progress`'s, and activity is never read by it, so a `child` session that only sends heartbeats (polls, turns admitted, lifecycle observations) changes no
+Activity is display only. `dag-progress` owns a node's stage and never reads activity, so a `child` session that only sends heartbeats (polls, turns admitted, lifecycle observations) changes no
 stage, no count, no evidence and no `dag-progress` digest, however late the store says the heartbeat was recorded. An overdue state would have to come from a durable event, and none is derived. Tokens,
 turns and node counts are not used to describe how complete the work is.
 

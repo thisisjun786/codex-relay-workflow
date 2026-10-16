@@ -41,7 +41,7 @@ for review both said completion; the message that STARTS the work had no name at
 The directions are named by the sessions at their two ends. The code stores them under the role ids of the relationship: `parent_to_child` is the child to its `child` session, `child_to_parent` the `child` session to its child, and `parent_to_supervisor` the child to the parent.
 
 The restraint is load-bearing in two rows. An **assignment** does not require a generation,
-because a newly created `child` session's registration needs a task id creation has not returned yet
+because a newly created `child` session's registration needs a task id that creation has not returned yet
 and the assignment is what gets sent before it exists; demanding one would refuse every
 legitimate first dispatch. A **progress** note requires nothing but the issue, because
 demanding a head from a `child` session with nothing to show yet is how a plausible value gets made up.
