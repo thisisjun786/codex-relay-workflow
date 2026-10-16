@@ -31,7 +31,7 @@ func TestCILocalIntegrationRunsTheMergedTreesOwnCrwDev(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(tree, "cmd", "crw-dev"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// a caller TMPDIR that leaves ci local room (here none: /tmp) is no note of its own either (CRW-1557)
+	// a caller without TMPDIR (the one temp function's default) is no note of its own either (CRW-1557, CRW-1570)
 	t.Setenv("TMPDIR", "")
 	var notes bytes.Buffer
 	verify := CILocalIntegration(crwconfig.VerifierTools{GoRoot: root}, &notes)
