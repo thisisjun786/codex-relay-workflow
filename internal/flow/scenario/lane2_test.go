@@ -73,6 +73,55 @@ func TestSizeFitChildEscalatesSizeSplitAndStartsNoChild(t *testing.T) {
 	}
 }
 
+// A node the architect sized for a bundle split (CRW-1437) is too big for one node and goes up to the parent: the lane escalates it once
+// with reason size_split, detail its size reason and ask bundle_split_request, calls no executor for it, writes no crw.decide for it (the
+// node is closed: size_split closes its execution, so no slot stays held), and the other nodes of the milestone are not held up by it.
+func TestBundleSplitEscalatesSizeSplitWithAsk(t *testing.T) {
+	nodes := []NodeSpec{
+		{ID: "A", Issue: "CRW-A", Title: "a bundle-sized issue", Regions: []string{"a/"}, SizeFit: "bundle_split", SizeReason: "regions_gt3"},
+		{ID: "B", Issue: "CRW-B", Title: "issue B", Regions: []string{"b/"}},
+	}
+	l := NewLab(t, nodes...)
+	got := mustRunIncomplete(t, l)
+	if state, reason := laneOf(t, got, "A"); state != "escalated" || reason != "size_split" {
+		t.Fatalf("lane A: %s %s, want escalated size_split", state, reason)
+	}
+	if state, _ := laneOf(t, got, "B"); state != "landed" {
+		t.Fatalf("lane B: %s", state)
+	}
+	var esc []engine.Event
+	for _, ev := range l.FlowRows(engine.EvEscalation) {
+		if str(ev.Data, "node") == "A" {
+			esc = append(esc, ev)
+		}
+	}
+	if len(esc) != 1 || esc[0].Op != ops.OpEscalate || str(esc[0].Data, "reason") != "size_split" {
+		t.Fatalf("escalations of A %+v, want one size_split", esc)
+	}
+	if d, a := str(esc[0].Data, "detail"), str(esc[0].Data, "ask"); d != "regions_gt3" || a != "bundle_split_request" {
+		t.Errorf("the escalation of A has detail %q ask %q, want the size reason and bundle_split_request", d, a)
+	}
+	if ev, _ := esc[0].Data["evidence"].(map[string]any); str(ev, "size_reason") != "regions_gt3" {
+		t.Errorf("the escalation of A carries evidence %v, want the size reason", esc[0].Data["evidence"])
+	}
+	for _, c := range l.Calls() {
+		if c.Node == "A" {
+			t.Errorf("a call for the bundle-split node: %+v", c)
+		}
+	}
+	for _, r := range l.Rows(ops.OpDecide) {
+		if str(r.Data, "node") == "A" {
+			t.Errorf("a crw.decide row for the bundle-split node: %+v", r)
+		}
+	}
+	if !slices.Contains(l.Relay.CloseReasons(), "A:size_split") {
+		t.Errorf("closes %v: A's execution was not closed with size_split", l.Relay.CloseReasons())
+	}
+	if l.Relay.SlotHeld("A") {
+		t.Errorf("a slot is held for the bundle-split node")
+	}
+}
+
 // A group is an order unit only: its members run in the declared order, each with its own fresh executor on the executor tier (a
 // tier step of the first does not carry to the second), the second one's worktree starts at the integration tip after the first
 // landed, and no handle crosses from one node to the other.
