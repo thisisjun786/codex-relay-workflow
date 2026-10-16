@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"regexp"
 	"slices"
 	"sort"
+	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 )
@@ -491,6 +493,156 @@ func startRowOf(r rows, node string) (engine.Event, string, bool) {
 		return row, kind, true
 	}
 	return engine.Event{}, "", false
+}
+
+// releasedPlans is, in the milestone's order, the plan each started node of the milestone started under: the whole issue of the
+// ledger revision its start row names, and the whole decisions its decision_refs name there. It is the one rule both readers stand
+// on: crw.releasedPlans gives it to the critic of a re-plan (RELEASED PLANS), and crw.designLedger refuses a revision after the first
+// that does not keep it (CRW-1472), so what the critic is told a DESIGN must keep is what the ledger demands.
+func releasedPlans(r rows, ms string) ([]ReleasedPlan, error) {
+	out := []ReleasedPlan{}
+	for _, node := range milestoneNodes(r, ms) {
+		// the started predicate of the signal path (startRowOf): a node it counts started is listed, and only such a node
+		rel, kind, ok := startRowOf(r, node)
+		if !ok {
+			continue
+		}
+		revision := dataStr(rel, "revision")
+		led, ok := ledgerOf(r, ms, revision)
+		if !ok {
+			return nil, fmt.Errorf("the ledger has no revision %s of milestone %s, which node %s was released under", revision, ms, node)
+		}
+		is, found, err := designIssue(led, node)
+		if err != nil {
+			return nil, fmt.Errorf("node %s: %w", node, err)
+		}
+		if !found {
+			return nil, fmt.Errorf("revision %s plans no issue for node %s, which was released under it", revision, node)
+		}
+		is.EditRegions, is.TestsFirst, is.DecisionRefs, is.OrderAfter = nonNil(is.EditRegions), nonNil(is.TestsFirst), nonNil(is.DecisionRefs), nonNil(is.OrderAfter)
+		p := ReleasedPlan{Node: node, Kind: kind, Revision: revision, DesignDigest: dataStr(rel, "design_digest"), Plan: is, Decisions: []Decision{}}
+		design, err := ledgerDesign(led)
+		if err != nil {
+			return nil, fmt.Errorf("node %s: %w", node, err)
+		}
+		for _, ref := range is.DecisionRefs {
+			p.Decisions = append(p.Decisions, decisionsOf(design, ref)...)
+		}
+		out = append(out, p)
+	}
+	return out, nil
+}
+
+// decisionsOf are the decisions of a DESIGN with the id, in its order.
+func decisionsOf(d Design, id string) []Decision {
+	var out []Decision
+	for _, dec := range d.Decisions {
+		if dec.ID == id {
+			out = append(out, dec)
+		}
+	}
+	return out
+}
+
+// revisionKeepsStarted is the rule crw.designLedger holds a revision after the first to (CRW-1472): every started node keeps the
+// issue it started under (releasedPlans, the plans the critic of the re-plan was given), every field of it, and every decision its
+// decision_refs name there, every field of each; and every node the milestone still needs has an issue. A node the milestone needs
+// is one of the nodes the run read (milestoneNodes) that the plan of the revision holds (slices: the plan the decision evaluated, or
+// the live one), or one that has started: a node the plan dropped and that never started is not demanded, and one a plan revision
+// added, which the run never runs, is not either. An unstarted node, and a decision no started node names, change freely.
+func revisionKeepsStarted(r rows, ms string, design Design, plan map[string]string) error {
+	plans, err := releasedPlans(r, ms)
+	if err != nil {
+		return err
+	}
+	issues := make(map[string]DesignIssue, len(design.Issues))
+	for _, is := range design.Issues {
+		issues[is.Node] = is
+	}
+	started := map[string]bool{}
+	for _, p := range plans {
+		started[p.Node] = true
+		is, ok := issues[p.Node]
+		if !ok {
+			return fmt.Errorf("node %s started under revision %s (%s) and has no issue: a started node keeps the issue it started under", p.Node, p.Revision, p.Kind)
+		}
+		if fields := differingFields(canonicalIssue(p.Plan), canonicalIssue(is)); len(fields) > 0 {
+			return fmt.Errorf("node %s started under revision %s (%s), and its issue differs from that plan in %s: a started node keeps every field of its issue", p.Node, p.Revision, p.Kind, strings.Join(fields, ", "))
+		}
+		// the decisions as the revision the node started under has them (once per id, however often decision_refs names it)
+		led, _ := ledgerOf(r, ms, p.Revision)
+		then, err := ledgerDesign(led)
+		if err != nil {
+			return fmt.Errorf("node %s: %w", p.Node, err)
+		}
+		seen := map[string]bool{}
+		for _, ref := range p.Plan.DecisionRefs {
+			if seen[ref] {
+				continue
+			}
+			seen[ref] = true
+			was, now := canonicalDecisions(decisionsOf(then, ref)), canonicalDecisions(decisionsOf(design, ref))
+			switch {
+			case now == "[]" && was != "[]":
+				return fmt.Errorf("decision %s, which node %s started under (revision %s), is missing: a started node keeps the decisions it names", ref, p.Node, p.Revision)
+			case now != was:
+				return fmt.Errorf("decision %s, which node %s started under (revision %s), differs from the decision of that revision: a started node keeps every field of the decisions it names", ref, p.Node, p.Revision)
+			}
+		}
+	}
+	for _, node := range milestoneNodes(r, ms) {
+		if _, held := plan[node]; !held || started[node] {
+			continue
+		}
+		if _, ok := issues[node]; !ok {
+			return fmt.Errorf("node %s of milestone %s, which the plan of the revision holds, has no issue", node, ms)
+		}
+	}
+	return nil
+}
+
+// canonicalIssue is an issue as the ledger compares it: its JSON with an absent list read as an empty one, so that an issue keeps
+// its plan whether a list of it marshals as null or as [].
+func canonicalIssue(is DesignIssue) map[string]any {
+	is.EditRegions, is.TestsFirst, is.DecisionRefs, is.OrderAfter = nonNil(is.EditRegions), nonNil(is.TestsFirst), nonNil(is.DecisionRefs), nonNil(is.OrderAfter)
+	subs := make([]SubTask, 0, len(is.SubTasks))
+	for _, sub := range is.SubTasks {
+		sub.EditRegions, sub.After = nonNil(sub.EditRegions), nonNil(sub.After)
+		subs = append(subs, sub)
+	}
+	is.SubTasks = subs
+	b, _ := json.Marshal(is)
+	var m map[string]any
+	_ = json.Unmarshal(b, &m)
+	return m
+}
+
+// canonicalDecisions is the JSON of decisions with an absent list read as an empty one.
+func canonicalDecisions(ds []Decision) string {
+	out := make([]Decision, 0, len(ds))
+	for _, d := range ds {
+		d.Evidence, d.Alternatives, d.Assumptions = nonNil(d.Evidence), nonNil(d.Alternatives), nonNil(d.Assumptions)
+		out = append(out, d)
+	}
+	b, _ := json.Marshal(out)
+	return string(b)
+}
+
+// differingFields are the members, sorted, whose JSON differs between two objects.
+func differingFields(was, now map[string]any) []string {
+	var out []string
+	for k, v := range was {
+		if w, ok := now[k]; !ok || !reflect.DeepEqual(v, w) {
+			out = append(out, k)
+		}
+	}
+	for k := range now {
+		if _, ok := was[k]; !ok {
+			out = append(out, k)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // milestoneNodes are the nodes of the milestone in the order the scheduler offers them, as the run read them first.

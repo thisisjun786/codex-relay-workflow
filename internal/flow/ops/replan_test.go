@@ -480,8 +480,9 @@ func TestLedgerRecordsTheEvaluatedPlan(t *testing.T) {
 	}
 	// B changes once more while the delta is audited
 	w.relay.plan = planOfNodes(map[string]string{"A": "a2", "B": "b3"}, "A", "B")
+	// the delta changes the unstarted B: the started A keeps the issue it was released with (crw.designLedger, CRW-1472)
 	d1 := designOf("A", "B")
-	d1.Issues[0].Approach = "approach A after the re-plan"
+	d1.Issues[1].Approach = "approach B after the re-plan"
 	design, _ := json.Marshal(d1)
 	cand := Candidate{Design: design, Answers: json.RawMessage(`[]`)}
 	w.must("designAudit", "M", 1, cand, call("c_arch2", "completed", "claude-x", nil),

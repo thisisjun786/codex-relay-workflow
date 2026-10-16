@@ -501,7 +501,7 @@ inline (SP-INL-1), reuse an answer (SP-INL-2), skip, refuse or hand a question t
 | --- | --- | --- |
 | `milestone(plan, milestone)` | the nodes of the milestone with edges, regions and slice digests | always (a read) |
 | `designAudit(milestone, round, candidate, architect, call)` | the audit row: state, candidate digest, auditor and architect models | always |
-| `designLedger(milestone, entry)` | the next revision (`r0`, `r1`, ...): the DESIGN, the answers, the digest, the architect handle, the signal that made it and the slice digest of every node of the plan it was made against; refuses a DESIGN with no approved audit - for a revision after `r0` an audit made after the revision before it | always |
+| `designLedger(milestone, entry)` | the next revision (`r0`, `r1`, ...): the DESIGN, the answers, the digest, the architect handle, the signal that made it and the slice digest of every node of the plan it was made against; refuses a DESIGN with no approved audit - for a revision after `r0` an audit made after the revision before it - and a revision after `r0` that does not keep what the started nodes stand on (a started node with no issue, or whose issue differs in any field from the plan `crw.releasedPlans` gives for it, or a decision that plan names missing or changed in any field) or that plans no issue for a node the run read and the plan of the revision holds | always |
 | `release(plan, node, milestone)` | the release under the revision of the ledger that stands (`revision`, `design_digest`, `slice_digest`, `execution_id`); a node sized `split` with sub-tasks is released to one executor as any node is (CRW-1459), and a node sized for a `bundle_split`, for a child or for a split with no sub-tasks (a DESIGN recorded before CRW-1435) is not released to an executor (an unreleased row of that `kind`); a plan that cannot be read, or that has dropped the node (`node_not_in_plan`), releases nothing | the relay says the execution stands, and the revision it was made under stands or the node's slice is the one the revision that stands was made against (`release_rebind`) |
 | `issuePlan(node)` | the node's entry of the DESIGN of its release revision | always |
 | `commit(node, call, regions)` | the commit of the call's recorded `pending_tree` (`commit`, `parent`, `tree`, `out_of_scope`, the receipt's outcome and `plan_mismatch`) | the commit is on the history of the node's worktree |
@@ -617,7 +617,11 @@ and the head each node landed with.
 carries `RELEASED PLANS`, the plan each started node was released with as `crw.releasedPlans` reads it from the revision of its release - the whole issue, every field, and the whole
 decisions its `decision_refs` name; a node whose issue was sized for a child, a bundle split or a split with no sub-tasks started too (its lane recorded the design row and escalated it), is
 listed with that plan and is no unstarted node of the re-plan - and a started node whose issue differs from it in any field, or a decision such a plan names that the DESIGN drops or changes
-in any field, is a P1 finding), and the nodes that have not started are
+in any field, is a P1 finding). `crw.designLedger` holds the revision to the same rule and refuses it otherwise: a started node (the one predicate of
+`crw.releasedPlans`) has no issue, its issue differs in any field from its released plan (an absent list reads as an empty one), or a decision that plan
+names is missing or differs in any field from the decision of the revision the node started under; and it refuses a revision that has no issue for a node
+the run read that the plan of the revision (the evaluated plan, else the live one) still holds. A node that has not started changes freely, a node the plan
+dropped and that never started is not demanded, and a started node is demanded whatever the plan. The nodes that have not started are
 released under a revision only after that, because the signal that re-plans keeps every new release back until it is decided. A lane that started keeps the
 revision it was released under; it ends under it and lands or is held as usual. Each revision records the slice digest of every node of the plan it was made
 against - for a revision after the first, the plan the architect and the auditor evaluated (`plan` of `crw.replanSignals`, handed to `crw.designLedger`), so that a plan revision made while
