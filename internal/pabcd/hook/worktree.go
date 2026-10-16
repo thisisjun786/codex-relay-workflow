@@ -8,6 +8,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/gitprobe"
 	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
@@ -25,7 +26,7 @@ import (
 const worktreeGuardDir = "worktree-guard"
 
 // WorktreeIdentity says where a cwd sits among the managed worktrees. CheckoutRoot is empty, the oracle's null,
-// when no .git entry was found between the cwd and the slot root.
+// when no .git resolving to a repository was found between the cwd and the slot root.
 type WorktreeIdentity struct {
 	Managed      bool
 	WorktreesDir string
@@ -115,31 +116,23 @@ func firstSegment(rel string) string {
 // maxPathLen is the longest path the system accepts (Linux PATH_MAX); a longer one names nothing.
 const maxPathLen = 4096
 
-// findCheckoutRoot is the nearest ancestor of cwd (itself included) that holds a .git entry, looking no higher than
-// slotRoot; empty when there is none. Oracle defect, fixed with the same answers: it joins and cleans the path at every
-// level, which is quadratic, so a cwd of tens of thousands of missing levels (65 KB of input) held the oracle for 15 s.
-// No stat of a path over maxPathLen can succeed, so the ancestors that long are skipped.
+// findCheckoutRoot is the nearest ancestor of cwd (itself included) whose .git resolves to a Git directory
+// (gitprobe.RepositoryAbove: an entry that holds no repository is no marker), looking no higher than
+// slotRoot; empty when there is none, and a marker that cannot be read is advisory only, so its error is
+// none here. Oracle defect, fixed with the same answers: it joins and cleans the path at every level, which
+// is quadratic, so a cwd of tens of thousands of missing levels (65 KB of input) held the oracle for 15 s.
+// No stat of a path over maxPathLen can succeed, so the ancestors that long are skipped — and the walk
+// errors on one, so the cut leaves room for the "/.git" it appends.
 func findCheckoutRoot(cwd, slotRoot string) string {
 	cur := cwd
 	if len(slotRoot) > maxPathLen {
 		return ""
 	}
-	if len(cur) > maxPathLen {
-		cur = cur[:max(1, strings.LastIndexByte(cur[:maxPathLen+1], '/'))]
+	if len(cur)+len("/.git") >= maxPathLen {
+		cur = cur[:max(1, strings.LastIndexByte(cur[:maxPathLen-len("/.git")], '/'))]
 	}
-	for {
-		if _, err := os.Stat(filepath.Join(cur, ".git")); err == nil {
-			return cur
-		}
-		if cur == slotRoot {
-			return ""
-		}
-		parent := filepath.Dir(cur)
-		if parent == cur {
-			return ""
-		}
-		cur = parent
-	}
+	root, _ := gitprobe.RepositoryAbove(cur, gitprobe.RepositorySearch{Ceilings: []string{filepath.Dir(slotRoot)}})
+	return root
 }
 
 // detectManagedWorktree places cwd under the first candidate root that holds it, by canonical paths, so a link into a

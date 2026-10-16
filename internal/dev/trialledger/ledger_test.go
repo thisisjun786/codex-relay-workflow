@@ -105,8 +105,13 @@ func materialize(t *testing.T, c ledgerCase, base string) string {
 	case c.Start != nil:
 		must(os.WriteFile(start, fsEncode(sub(*c.Start)), 0o600))
 	}
+	gitMeta := func(dir string) {
+		// A .git entry is a marker only when it holds a Git directory (CRW-1588).
+		must(os.MkdirAll(dir+"/objects", 0o755))
+		must(os.WriteFile(dir+"/HEAD", []byte("ref: refs/heads/main\n"), 0o600))
+	}
 	if has("git-above") {
-		must(os.Mkdir(base+"/.git", 0o755))
+		gitMeta(base + "/.git")
 	}
 	if c.Ledger != nil {
 		text := fsEncode(sub(*c.Ledger))
@@ -115,7 +120,7 @@ func materialize(t *testing.T, c ledgerCase, base string) string {
 			must(os.WriteFile(base+"/outside.jsonl", text, 0o600))
 			must(os.Symlink(base+"/outside.jsonl", trial+"/ledger.jsonl"))
 		case has("ledger-link-worktree"):
-			must(os.MkdirAll(trial+"/nested/.git", 0o755))
+			gitMeta(trial + "/nested/.git")
 			must(os.WriteFile(trial+"/nested/ledger.jsonl", text, 0o600))
 			must(os.Symlink(trial+"/nested/ledger.jsonl", trial+"/ledger.jsonl"))
 		default:

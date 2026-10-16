@@ -105,19 +105,14 @@ func Validate(ctx context.Context, source, revision, destination string) (Worktr
 	if present || isSymlink(destination) || !isDir(filepath.Dir(destination)) {
 		return Worktree{}, &Error{"destination must be absent with an existing parent directory"}
 	}
-	for parent := filepath.Dir(destination); ; parent = filepath.Dir(parent) {
-		dotGit, err := exists(filepath.Join(parent, ".git"))
-		if err != nil {
-			return Worktree{}, fmt.Errorf("destination parent: %w", err)
-		}
-		head, err := os.Stat(filepath.Join(parent, "HEAD"))
-		bare := err == nil && head.Mode().IsRegular() && isDir(filepath.Join(parent, "objects"))
-		if dotGit || bare {
-			return Worktree{}, &Error{"destination must be outside existing repositories"}
-		}
-		if parent == filepath.Dir(parent) {
-			break
-		}
+	// Only a marker that resolves to a repository refuses: a ".git" that holds no Git directory (the
+	// empty one a sandbox leaves behind, a file that is no gitfile) is no marker (CRW-1588).
+	root, err = gitprobe.RepositoryAbove(filepath.Dir(destination), gitprobe.RepositorySearch{IncludeBare: true})
+	if err != nil {
+		return Worktree{}, fmt.Errorf("destination parent: %w", err)
+	}
+	if root != "" {
+		return Worktree{}, &Error{"destination must be outside existing repositories"}
 	}
 	list, err := git(ctx, source, "worktree", "list", "--porcelain", "-z")
 	if err != nil {

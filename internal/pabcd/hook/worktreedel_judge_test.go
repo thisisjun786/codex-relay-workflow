@@ -27,7 +27,7 @@ func newDelRig(t *testing.T) delRig {
 	r.slotRoot = filepath.Join(r.worktrees, "zk3q")
 	r.checkout = filepath.Join(r.slotRoot, "repo")
 	r.other = filepath.Join(home, "elsewhere", "build")
-	wtWrite(t, filepath.Join(r.checkout, ".git"), "gitdir: /fake/main/.git/worktrees/zk3q\n")
+	wtGitfile(t, filepath.Join(r.checkout, ".git"))
 	wtWrite(t, filepath.Join(r.other, "keep"), "x")
 	return r
 }

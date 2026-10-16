@@ -110,3 +110,62 @@ func Test_Worktree_preserves_colliding_file_when_destination_exists(t *testing.T
 		t.Fatalf("collision modified: %q %v", body, err)
 	}
 }
+
+// CRW-1588: the ancestor walk judges a .git by what it resolves to. A marker that holds no repository
+// (the empty directory a sandbox leaves behind, a file that is no gitfile) is no marker, while a real
+// repository — a clone's .git directory, a linked worktree's gitfile, a bare repository's own HEAD and
+// objects — still refuses.
+func Test_Worktree_validate_judges_the_marker_by_its_repository(t *testing.T) {
+	// Given
+	source, revision, _ := repository(t)
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	gitMeta := func(dir string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Join(dir, "objects"), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "HEAD"), []byte("ref: refs/heads/main\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	parent := func(parts ...string) string {
+		t.Helper()
+		dir := filepath.Join(append([]string{root}, parts...)...)
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			t.Fatal(err)
+		}
+		return dir
+	}
+
+	// Markers that hold no repository do not refuse the destination below them.
+	empty := parent("empty")
+	if err := os.Mkdir(filepath.Join(empty, ".git"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	garbage := parent("garbage")
+	if err := os.WriteFile(filepath.Join(garbage, ".git"), []byte("not a gitfile\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{empty, garbage} {
+		if _, err := Validate(context.Background(), source, revision, filepath.Join(dir, "new-checkout")); err != nil {
+			t.Errorf("a destination below %s (its .git holds no repository) is refused: %v", dir, err)
+		}
+	}
+
+	// A linked worktree's gitfile, and a bare repository's HEAD and objects, still refuse.
+	linked := parent("linked")
+	gitMeta(filepath.Join(root, "meta"))
+	if err := os.WriteFile(filepath.Join(linked, ".git"), []byte("gitdir: "+filepath.Join(root, "meta")+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	bare := parent("bare")
+	gitMeta(bare)
+	for _, dir := range []string{linked, bare} {
+		if _, err := Validate(context.Background(), source, revision, filepath.Join(dir, "new-checkout")); err == nil || err.Error() != "destination must be outside existing repositories" {
+			t.Errorf("a destination below %s (a repository) is not refused: %v", dir, err)
+		}
+	}
+}

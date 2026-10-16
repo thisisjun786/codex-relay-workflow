@@ -25,6 +25,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/homeguard"
+	"github.com/thisisjun786/codex-relay-workflow/internal/gitprobe"
 	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
@@ -784,10 +785,11 @@ func localMkStepDir(parent, prefix string) (string, error) {
 	return "", fmt.Errorf("no free %s<8 hex> name below %s after 16 tries", prefix, parent)
 }
 
-// localGitAbove is the first .git entry (of any type) at or above dir, or "" when there is none. The
-// walk follows both the path as written and its resolved form, and it stops below a ceiling: a ceiling
-// directory and what lies above it are not checked.
-func localGitAbove(dir string, ceilings []string) string {
+// localGitAbove is the .git marker of the first repository at or above dir (gitprobe.RepositoryAbove:
+// a marker that resolves to a Git directory, not a sandbox's empty .git or a file that is no gitfile), or
+// "" when there is none. The walk follows both the path as written and its resolved form, and it stops
+// below a ceiling: a ceiling directory and what lies above it are not checked.
+func localGitAbove(dir string, ceilings []string) (string, error) {
 	stop := map[string]bool{}
 	for _, ceiling := range ceilings {
 		if ceiling == "" {
@@ -798,23 +800,24 @@ func localGitAbove(dir string, ceilings []string) string {
 			stop[resolved] = true
 		}
 	}
+	stops := make([]string, 0, len(stop))
+	for ceiling := range stop {
+		stops = append(stops, ceiling)
+	}
 	forms := []string{filepath.Clean(dir)}
 	if resolved, err := filepath.EvalSymlinks(dir); err == nil && resolved != forms[0] {
 		forms = append(forms, resolved)
 	}
 	for _, form := range forms {
-		for d := form; !stop[d]; {
-			if _, err := os.Lstat(filepath.Join(d, ".git")); err == nil {
-				return filepath.Join(d, ".git")
-			}
-			parent := filepath.Dir(d)
-			if parent == d {
-				break
-			}
-			d = parent
+		root, err := gitprobe.RepositoryAbove(form, gitprobe.RepositorySearch{Ceilings: stops})
+		if err != nil {
+			return "", err
+		}
+		if root != "" {
+			return filepath.Join(root, ".git"), nil
 		}
 	}
-	return ""
+	return "", nil
 }
 
 // localStepTempDir makes the fresh TMPDIR every step of a run gets (CRW-1489): ci<8 hex> directly below
@@ -822,16 +825,21 @@ func localGitAbove(dir string, ceilings []string) string {
 // physical place, resolved from the value as written (no lexical Clean first). It is the one candidate
 // (CRW-1569): its length is not judged, because no test socket lies below TMPDIR (CRW-1568), and the run
 // never moves the steps elsewhere. The failing tests find a repository by walking up from TMPDIR for a
-// .git, so a .git at or above it (a sandbox's /tmp/.git) refuses the run (temp_dir_unusable) before
-// anything is made. The record's callerTmpDir stays the raw TMPDIR value and its tmpDir is the directory
-// made.
+// .git, so a repository at or above it refuses the run (temp_dir_unusable) before anything is made — a
+// .git that resolves to no Git directory (a sandbox's stray empty /tmp/.git, a file that is no gitfile)
+// is no marker (CRW-1588). The record's callerTmpDir stays the raw TMPDIR value and its tmpDir is the
+// directory made.
 func localStepTempDir(opts localOptions) (string, error) {
 	parent, err := tmploc.Check()
 	if err != nil {
 		return "", err
 	}
-	if git := localGitAbove(parent, opts.gitCeilings); git != "" {
-		return "", fmt.Errorf("temp_dir_unusable: %s is below %s; set TMPDIR to a directory with no .git at or above it", parent, git)
+	git, err := localGitAbove(parent, opts.gitCeilings)
+	if err != nil {
+		return "", fmt.Errorf("temp_dir_unusable: %s: checking for a repository at or above it: %w; set TMPDIR to a readable directory outside every repository", parent, err)
+	}
+	if git != "" {
+		return "", fmt.Errorf("temp_dir_unusable: %s is below %s; set TMPDIR to a directory outside every repository", parent, git)
 	}
 	dir, err := localMkStepDir(parent, "ci")
 	if err != nil {
@@ -1161,10 +1169,11 @@ const (
 )
 
 // localEngineSources are the paths the engine's plan is compiled from: the engine package, the command
-// that runs it and the Makefile target that starts it (CRW-1025), and the configuration package whose tool
+// that runs it and the Makefile target that starts it (CRW-1025), the configuration package whose tool
 // roots the engine applies to every step's environment (CRW-958: crwconfig.LoadToolRoots and
-// ToolRoots.Apply execute from the caller's compiled source).
-var localEngineSources = []string{"internal/dev/ci", "cmd/crw-dev", "Makefile", "internal/crwconfig"}
+// ToolRoots.Apply execute from the caller's compiled source), and the gitprobe package whose repository
+// marker preflight decides whether the run's step TMPDIR is refused at all (CRW-1588).
+var localEngineSources = []string{"internal/dev/ci", "cmd/crw-dev", "Makefile", "internal/crwconfig", "internal/gitprobe"}
 
 // localCompiledExt are the extensions of files the Go toolchain compiles or links into a package, so an
 // ignored file with one of them under the engine paths is engine source whatever git ignores.
