@@ -266,6 +266,45 @@ func TestArchitectPacketNamesTheHeadOfTheBackgroundFindings(t *testing.T) {
 	}
 }
 
+// architectBackground is a background of two nodes as crw.explore returns it: bg-n1 answered, bg-n2 with no answer.
+const architectBackground = "[{ id: 'bg-n1', question: 'background of n1', answer: 'a.go holds it', findings: { answer: 'a.go holds it', evidence: ['a.go'] } }, " +
+	"{ id: 'bg-n2', question: 'background of n2', answer: '', findings: null }]"
+
+// TestArchitectPacketWithoutAMissingExplorationIsUnchanged (CRW-1571): with no missing exploration the architect's packet has the
+// bytes it had before CRW-1571.
+func TestArchitectPacketWithoutAMissingExplorationIsUnchanged(t *testing.T) {
+	got := packetText(t, "architect-golden-packet", "architectPacket", "architectPacket(ms, "+architectBackground+", 'head0')")
+	want := "ROLE: architect. Plan milestone M1 of plan P (the milestone).\n\n" +
+		"Answer with DESIGN: the decisions, one plan for each issue node below (its size_fit, the sub_tasks of a split node, edit regions, approach, tests first and done condition), the open questions you cannot answer from what you read, and the risks.\n\n" +
+		"NODES:\nn1 (CRW-1): first\n  regions: a.go\n  criteria: none\nn2 (CRW-2): second after n1\n  regions: b.go\n  criteria: none\nn3 (CRW-3): third after n1\n  regions: c.go\n  criteria: none\n\n" +
+		"BACKGROUND FINDINGS (read at head0, the commit your directory is a checkout of; an explorer read the repository for each node before you; build on them, and ask as an open question only what they and your own reading leave open):\n" +
+		"- bg-n1: background of n1\n  answer: a.go holds it\n  findings: {\"answer\":\"a.go holds it\",\"evidence\":[\"a.go\"]}\n- bg-n2: background of n2"
+	if got != want {
+		t.Errorf("architect packet\n%q\nwant\n%q", got, want)
+	}
+}
+
+// TestArchitectPacketNamesAMissingExploration (CRW-1571): a background answer whose explorer was asked twice and did not answer
+// (crw.explore's missing member) is not listed among the BACKGROUND FINDINGS; a MISSING EXPLORATIONS section after them names it
+// with both calls and the status and reason of the last.
+func TestArchitectPacketNamesAMissingExploration(t *testing.T) {
+	bg := "[{ id: 'bg-n1', question: 'background of n1', answer: 'a.go holds it', findings: null }, " +
+		"{ id: 'bg-n2', question: 'background of n2', answer: '', call: '', findings: null, missing: { calls: ['c_1', 'c_2'], status: 'null_model', reason: 'schema_invalid_after_repair' } }]"
+	got := packetText(t, "architect-missing-packet", "architectPacket", "architectPacket(ms, "+bg+", 'head0')")
+	findings, missing, ok := strings.Cut(got, "\n\nMISSING EXPLORATIONS")
+	if !ok {
+		t.Fatalf("no MISSING EXPLORATIONS section:\n%s", got)
+	}
+	if !strings.HasSuffix(findings, "\n- bg-n1: background of n1\n  answer: a.go holds it") {
+		t.Errorf("BACKGROUND FINDINGS should end with bg-n1 alone:\n%s", findings)
+	}
+	want := " (the explorer of each was asked twice and did not answer; read what the node rests on yourself, and ask as an open question what you cannot settle):\n" +
+		"- bg-n2: background of n2 (calls c_1, c_2: null_model schema_invalid_after_repair)"
+	if missing != want {
+		t.Errorf("missing section\n%q\nwant\n%q", missing, want)
+	}
+}
+
 // TestArchitectPacketAsksForTheSubTasksOfASplit (S-1, CRW-1435): the architect's first packet asks, with each issue's size_fit, for
 // the sub_tasks of a split node, and the size fit section of the architect overlay names every size_fit value and every member of a
 // sub-task the DESIGN schema has, and no other size: a value or a member the schema gains or drops moves the overlay with it.
