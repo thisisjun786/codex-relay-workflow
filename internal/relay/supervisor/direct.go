@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
@@ -138,8 +139,8 @@ func checkDirect(m DirectMessage) error {
 // to parent and supervisor. The body is the preface, a blank line and the text, trimmed and cut to
 // maxDirectBody. The top-level origin records what the channel generated rather than the sender
 // gave (statement.go): evidence "channel" when the pointer is the default one and "sender" when the
-// list is the sender's, text the digest of the sender's whole trimmed text (before any cut) or null,
-// and preface the trimmed preface or null.
+// list is the sender's, text the digest of the sender's whole text less its trailing whitespace
+// (before any cut, composedText) or null, and preface the trimmed preface or null.
 func (c *Channel) composeDirect(m DirectMessage, r Resolution, at string) Packet {
 	k := directKinds[m.Kind]
 	id := DirectMessageID(m)
@@ -154,7 +155,7 @@ func (c *Channel) composeDirect(m DirectMessage, r Resolution, at string) Packet
 		evidence = append(evidence, c.command("supervisor-show", "--message", id))
 		origin["evidence"] = "channel"
 	}
-	if text := strings.TrimSpace(m.Text); text != "" {
+	if text := composedText(m); text != "" {
 		origin["text"] = "sha256:" + pyvalue.SHA256Hex(text)
 	}
 	if preface := strings.TrimSpace(m.Preface); preface != "" {
@@ -194,6 +195,17 @@ func (c *Channel) composeDirect(m DirectMessage, r Resolution, at string) Packet
 		"reach": reachUnmeasured()}
 	return Packet{"version": packetVersion, "envelope": envelope, "issue": nil, "generation": nil, "criteriaDigest": nil, "policy": nil,
 		"callback": nil, "artifact": nil, "evidence": evidence, "body": body, "activation": nil, "origin": origin}
+}
+
+// composedText is the sender's text of m less only what the body always drops of it, so that the
+// origin's digest changes whenever the text's part of the body does. The body is the joined preface
+// and text, trimmed, so the text always loses its trailing whitespace, and composedText drops only
+// that. Its leading whitespace, the first line's indentation included, is kept: below report-up's
+// attribution the body carries it, and with no preface, where the body's trim drops it, keeping it
+// never makes two texts the body tells apart the same statement. The preface does not decide the
+// digest, so the same text from the lead and from another thread is one statement.
+func composedText(m DirectMessage) string {
+	return strings.TrimRightFunc(m.Text, unicode.IsSpace)
 }
 
 // directLayer is the layer and the recipient role the envelope of a kind names for resolution r: the

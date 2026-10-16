@@ -123,7 +123,7 @@ const (
 // directOrigin is the origin record of a direct packet (composeDirect).
 type directOrigin struct {
 	evidence string // "sender" or "channel"
-	text     any    // "sha256:<hex>" of the sender's whole trimmed text, or nil
+	text     any    // "sha256:<hex>" of the sender's whole text less its trailing whitespace (composedText), or nil
 }
 
 // readDirectOrigin is the origin record of a decoded packet, when it has a readable one: an object

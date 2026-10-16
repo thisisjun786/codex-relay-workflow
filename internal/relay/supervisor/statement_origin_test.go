@@ -256,9 +256,10 @@ func TestComposeDirectBodyIsTheBaseBody(t *testing.T) {
 				t.Fatalf("the Preface path's body sha256 is %s, want the base %s", got, in.body)
 			}
 			origin, _ := p["origin"].(map[string]any)
+			// Below the attribution the body keeps the text's leading indentation, so the digest does.
 			var text any
-			if trimmed := strings.TrimSpace(in.text); trimmed != "" {
-				text = "sha256:" + pyvalue.SHA256Hex(trimmed)
+			if strings.TrimSpace(in.text) != "" {
+				text = "sha256:" + pyvalue.SHA256Hex(strings.TrimRight(in.text, " \t\n"))
 			}
 			if origin["evidence"] != "channel" || origin["text"] != text || origin["preface"] != proxyAttribution {
 				t.Fatalf("origin %v, want the channel's pointer, text %v and the attribution", origin, text)
@@ -269,7 +270,7 @@ func TestComposeDirectBodyIsTheBaseBody(t *testing.T) {
 		m := DirectMessage{Kind: KindLeadReport, Relationship: "initiative:INI-1", Subject: "lrp_1", Summary: "s", Text: "  said  ", Evidence: []string{"commit 1"}}
 		p := f.c.composeDirect(m, statementResolutions[0], statementClocks[0])
 		origin, _ := p["origin"].(map[string]any)
-		if p["body"] != "said" || origin["evidence"] != "sender" || origin["text"] != "sha256:"+pyvalue.SHA256Hex("said") || origin["preface"] != nil {
+		if p["body"] != "said" || origin["evidence"] != "sender" || origin["text"] != "sha256:"+pyvalue.SHA256Hex("  said") || origin["preface"] != nil {
 			t.Fatalf("body %v origin %v", p["body"], origin)
 		}
 	})
@@ -292,6 +293,8 @@ func TestDirectStatementPrefaceIsNotTheSenders(t *testing.T) {
 		{"lead_then_another_reporter", "milestone one is done", "", proxyAttribution},
 		{"title_only_other_reporter", "", proxyAttribution, otherAttribution},
 		{"long_text_other_preface_length", longDirectText, proxyAttribution, "Reported by thread 01someoneElseWithALongerName, which is not the initiative's lead (01lead)."},
+		{"indented_reporter_became_the_lead", "    milestone one is done", proxyAttribution, ""},
+		{"indented_lead_then_another_reporter", "    milestone one is done", "", proxyAttribution},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			w := newHoldWorld(t, "direct")
@@ -301,6 +304,40 @@ func TestDirectStatementPrefaceIsNotTheSenders(t *testing.T) {
 			w.preface = tc.after
 			w.stageDirect(t)
 			w.expectHeld(t, true, tc.name)
+		})
+	}
+}
+
+// TestDirectStatementPrefacedIndentationDecides: under report-up's attribution line the body keeps the
+// sender's text as given, its first line's leading indentation included, so the statement compares
+// that text as the body carries it. A first line whose indentation alone changed is a new statement
+// and releases the park; the same text replayed keeps it.
+func TestDirectStatementPrefacedIndentationDecides(t *testing.T) {
+	const flat = "milestone one is done\n  - the scope is complete"
+	for _, tc := range []struct{ name, before, after string }{
+		{"indented", flat, "    " + flat},
+		{"unindented", "    " + flat, flat},
+		{"deeper", "  " + flat, "    " + flat},
+		{"tab", "  " + flat, "\t" + flat},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newHoldWorld(t, "direct")
+			w.text, w.preface = tc.before, proxyAttribution
+			w.stageDirect(t)
+			w.parkDirect(t)
+			w.stageDirect(t)
+			w.expectHeld(t, true, "the same text replayed under the attribution")
+			before, _ := w.storedTop(t)["body"].(string)
+			w.text = tc.after
+			w.stageDirect(t)
+			w.expectHeld(t, false, "a first line whose leading indentation alone changed")
+			after, _ := w.storedTop(t)["body"].(string)
+			if after == before || after != proxyAttribution+"\n\n"+tc.after {
+				t.Fatalf("the body is %q (was %q), want the attribution, a blank line and the changed text", after, before)
+			}
+			w.parkDirect(t)
+			w.stageDirect(t)
+			w.expectHeld(t, true, "the changed text replayed")
 		})
 	}
 }

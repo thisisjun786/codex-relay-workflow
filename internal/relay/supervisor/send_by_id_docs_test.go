@@ -15,7 +15,10 @@ import (
 // with no hold is held hierarchy_unresolved by the attempt's resolve
 // (TestSendByIDOfAnUnheldMessageWhoseEndpointsMovedHoldsItUnaddressed). Neither text may say a send
 // by id after a move always writes nothing, and each names both holds; the docs also name the journal
-// kind the unheld path writes.
+// kind the unheld path writes. The attempt checks eligibility before it resolves, so a message behind
+// an older message to its recipient that can be sent first answers not_claimable and never reaches the
+// hold: each sentence that names the unheld path's journal row states that condition, and the help
+// names what such a message answers.
 func TestSendByIDDocsAndHelpNameTheUnheldPath(t *testing.T) {
 	docs, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "relay", "supervisor-channel.md"))
 	if err != nil {
@@ -43,6 +46,25 @@ func TestSendByIDDocsAndHelpNameTheUnheldPath(t *testing.T) {
 	}
 	if !strings.Contains(paragraph, "supervisor_message_unaddressed") {
 		t.Errorf("the docs paragraph does not name the journal kind supervisor_message_unaddressed: %s", paragraph)
+	}
+	const notBehind = "not behind an older message to its recipient"
+	for _, text := range []struct{ name, body string }{{"the docs paragraph", paragraph}, {"the supervisor-send --message help", help}} {
+		named := 0
+		for _, sentence := range strings.Split(strings.ReplaceAll(text.body, "\n", " "), ". ") {
+			if !strings.Contains(sentence, "supervisor_message_unaddressed") {
+				continue
+			}
+			named++
+			if !strings.Contains(sentence, notBehind) {
+				t.Errorf("%s says when the unheld path holds and journals without the condition %q: %s", text.name, notBehind, sentence)
+			}
+		}
+		if named == 0 {
+			t.Errorf("%s has no sentence naming the unheld path's journal row supervisor_message_unaddressed: %s", text.name, text.body)
+		}
+	}
+	if !strings.Contains(help, "not_claimable") {
+		t.Errorf("the supervisor-send --message help does not say a message behind an older one answers not_claimable: %s", help)
 	}
 }
 

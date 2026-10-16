@@ -984,8 +984,9 @@ report and a rotated sender session all stage the same statement again. A direct
 is what its sender gave. The channel records in the packet's `origin` the values it generated itself:
 whether the evidence is the default `supervisor-show --message` pointer (`channel`, which names the
 executable and state directory that composed it) or the sender's list (`sender`), report-up's
-attribution line (`preface`), and the digest of the sender's whole text before the body's 6000-byte
-cut (`text`). A row that carries the record is compared through it, so another executable or another
+attribution line (`preface`), and the digest of the sender's whole text less only its trailing whitespace
+(its first line's indentation, which the body keeps below the attribution line, included), before
+the body's 6000-byte cut (`text`). A row that carries the record is compared through it, so another executable or another
 reporting thread is the same statement, while a change anywhere in the sender's text, its evidence
 list, or an explicit pointer later omitted is a new one. A row staged before the record existed is
 compared the fields way on both sides until this build writes it: another executable or reporter

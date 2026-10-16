@@ -88,6 +88,7 @@ func TestReportUpProxyReportKeepsItsAcknowledgedParkWhoeverReportsIt(t *testing.
 		{"a non-lead then the lead", "01someone", "01lead", []string{"--subject", "scope", "--text", "the delivery scope is complete"}},
 		{"title only", "01someone", "01other", []string{"--subject", "the delivery scope is complete"}},
 		{"a 7000-byte text", "01someone", "01other", []string{"--subject", "scope", "--text", "@" + long}},
+		{"an indented text, a non-lead then the lead", "01someone", "01lead", []string{"--subject", "scope", "--text", "    the delivery scope is complete"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s, id := parkedReport(t, tc.first, tc.args...)
@@ -123,6 +124,23 @@ func TestReportUpProxyReportKeepsItsAcknowledgedParkWhoeverReportsIt(t *testing.
 		reportAgain(t, s, "01someone", "--subject", "scope", "--text", "the delivery scope is not complete")
 		if row := s.message(id); row.HoldReason.String == store.SupervisorHoldSuperseded {
 			t.Fatalf("a changed report is still held %q, want the park released", row.HoldReason.String)
+		}
+	})
+
+	// Below the attribution the body keeps the text's first-line indentation, so a report whose
+	// first line changed only there is another report; the same text again is not.
+	t.Run("a first line indented differently releases", func(t *testing.T) {
+		s, id := parkedReport(t, "01someone", "--subject", "scope", "--text", "the delivery scope is complete")
+		reportAgain(t, s, "01other", "--subject", "scope", "--text", "the delivery scope is complete")
+		if row := s.message(id); row.HoldReason.String != store.SupervisorHoldSuperseded {
+			t.Fatalf("the same report is held %q, want it still parked", row.HoldReason.String)
+		}
+		reportAgain(t, s, "01other", "--subject", "scope", "--text", "    the delivery scope is complete")
+		if row := s.message(id); row.HoldReason.String == store.SupervisorHoldSuperseded {
+			t.Fatalf("a report whose first line was indented is still held %q, want the park released", row.HoldReason.String)
+		}
+		if body := messageBody(t, s, id); body != proxyAttribution("01other", "01lead")+"\n\n    the delivery scope is complete" {
+			t.Fatalf("body %q, want the attribution and the indented text", body)
 		}
 	})
 }
