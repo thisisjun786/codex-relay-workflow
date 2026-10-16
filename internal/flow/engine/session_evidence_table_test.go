@@ -771,3 +771,146 @@ func TestSessionEvidenceRefreshGitFailureRepair(t *testing.T) {
 		}
 	}
 }
+
+// heldOnDir is the directory a held executor call worked in, as the next resume reads it (heldCwd): the allocation path of its
+// prepared row.
+func heldOnDir(t *testing.T, rows []Event) string {
+	t.Helper()
+	prep := rowsNamed(rows, EvPrepared)
+	if len(prep) == 0 {
+		t.Fatalf("no prepared row: %s", eventsOf(rows))
+	}
+	m, _ := prep[0].Data["allocation"].(map[string]any)
+	dir := rowStr(m, "path")
+	if dir == "" {
+		t.Fatalf("the prepared row %v names no allocation", prep[0].Data)
+	}
+	return dir
+}
+
+// resumedInPlace checks how the resume after a hold went on: in place (one hold_cleared row, the call's one prepared row) or live (no
+// hold_cleared row, the call prepared again).
+func (k *evidenceKit) resumedInPlace(t *testing.T, inPlace bool) {
+	t.Helper()
+	var j Journal = k.h.journal
+	if k.jr != nil {
+		j = k.jr
+	}
+	rows := k.rowsOf("exe")
+	cleared, prepared := len(flowRows(j, EvHoldCleared)), len(rowsNamed(rows, EvPrepared))
+	switch {
+	case inPlace && (cleared != 1 || prepared != 1):
+		t.Errorf("%d hold_cleared rows and %d prepared rows, want the held call to go on in place (rows %s)", cleared, prepared, eventsOf(rows))
+	case !inPlace && (cleared != 0 || prepared != 2):
+		t.Errorf("%d hold_cleared rows and %d prepared rows, want the held call to run live over a tree the hold did not leave (rows %s)",
+			cleared, prepared, eventsOf(rows))
+	}
+}
+
+// TestSessionEvidenceRefreshGitFailureLeavesTheHeldSnapshot: the call held when its record could not be placed again
+// (evidenceRefreshHold) may have had its input delivered, so its held row records P_held, the working snapshot of the call's
+// directory, as every other hold of an executor does. A resume whose directory no longer holds that tree runs the call live; one
+// whose tree is unchanged goes on in place (CRW-1561).
+func TestSessionEvidenceRefreshGitFailureLeavesTheHeldSnapshot(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		tree    string
+		inPlace bool
+	}{{"TreeChanged", "T1", false}, {"TreeUnchanged", "", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			arm, spent := failGitOnce(t)
+			k := newEvidenceKit(t, true, ".crw/\n")
+			owner := t.TempDir()
+			k.setOwnerCwd(owner)
+			k.setHostCwd(owner)
+			k.setOrch(func(Step, string, int) orchAnswer { return orchAnswer{hang: true} }, nil)
+			k.dieAt(t, func(e Event) bool { return e.Kind == KindCall && e.Event == EvTurnStarted }, evidenceExe, owner)
+			dir := heldOnDir(t, k.rowsOf("exe"))
+			k.placer.setTree(dir, "TH")
+			arm()
+			if got := value[[]any](t, k.h.run(evidenceExe)); got[0] != StatusHeld || got[1] != ReasonEvidenceAssignmentFailed {
+				t.Fatalf("resumed %v, want held %s (rows %s)", got, ReasonEvidenceAssignmentFailed, eventsOf(k.rowsOf("exe")))
+			}
+			if !spent() {
+				t.Fatal("the resumed process never asked git for the HEAD of the call's directory")
+			}
+			held := rowsNamed(k.rowsOf("exe"), EvHeld)
+			if len(held) != 1 {
+				t.Fatalf("held rows %v, want one", held)
+			}
+			if rowStr(held[0].Data, "p_held") != "TH" || rowStr(held[0].Data, "p_held_error") != "" {
+				t.Errorf("held %v, want p_held the tree TH of %s", held[0].Data, dir)
+			}
+			if tc.tree != "" {
+				k.placer.setTree(dir, tc.tree)
+			}
+			k.setOrch(func(Step, string, int) orchAnswer { return orchAnswer{} }, nil)
+			if got := value[[]any](t, k.h.run(evidenceExe)); got[0] != "completed" {
+				t.Fatalf("the next resume %v, want completed (rows %s)", got, eventsOf(k.rowsOf("exe")))
+			}
+			k.resumedInPlace(t, tc.inPlace)
+		})
+	}
+}
+
+// TestSessionEvidenceHoldsLeaveTheHeldSnapshot: the two other holds of a call whose flow evidence assignment could not be recorded
+// record P_held as well: the hold before anything was dispatched (evidenceHold, not_delivered: the directory may still be edited
+// from outside) and the hold of a subagent that took the step and was closed unbound (evidenceUnbound: it may have edited files).
+// The unbound call whose directory changed runs live on the next resume (CRW-1561).
+func TestSessionEvidenceHoldsLeaveTheHeldSnapshot(t *testing.T) {
+	t.Run("NotDelivered", func(t *testing.T) {
+		k := newEvidenceKit(t, true, ".crw/\n")
+		if err := os.Symlink(t.TempDir(), filepath.Join(k.evCwd, ".crw")); err != nil {
+			t.Fatal(err)
+		}
+		dir := k.placer.realPath("/w/n1/a1")
+		k.placer.setTree(dir, "TH")
+		if got := value[[]any](t, k.h.run(evidenceExe)); got[0] != StatusHeld || got[1] != ReasonEvidenceAssignmentFailed {
+			t.Fatalf("result %v", got)
+		}
+		rows := k.rowsOf("exe")
+		if got := heldOnDir(t, rows); got != dir {
+			t.Fatalf("the call worked in %s, want %s", got, dir)
+		}
+		held := rowsNamed(rows, EvHeld)
+		if len(held) != 1 || rowStr(held[0].Data, "input_state") != "not_delivered" || rowStr(held[0].Data, "p_held") != "TH" {
+			t.Errorf("held rows %v, want one not_delivered whose p_held is the tree TH of %s", held, dir)
+		}
+	})
+	t.Run("Unbound", func(t *testing.T) {
+		k := newEvidenceKit(t, true, ".crw/\n")
+		host := t.TempDir()
+		link := filepath.Join(host, ".crw")
+		if err := os.Symlink(t.TempDir(), link); err != nil {
+			t.Fatal(err)
+		}
+		k.setHostCwd(host)
+		dir := k.placer.realPath("/w/n1/a1")
+		k.placer.setTree(dir, "TH")
+		if got := value[[]any](t, k.h.run(evidenceExe)); got[0] != StatusHeld || got[1] != ReasonEvidenceAssignmentFailed {
+			t.Fatalf("result %v", got)
+		}
+		waitFor(t, "the unbound subagent closed", func() bool { c := k.orch.closedAgents(); return len(c) == 1 && c[0] == "agent-1" })
+		rows := k.rowsOf("exe")
+		if got := heldOnDir(t, rows); got != dir {
+			t.Fatalf("the call worked in %s, want %s", got, dir)
+		}
+		held := rowsNamed(rows, EvHeld)
+		if len(held) != 1 || rowStr(held[0].Data, "evidence_unbound") != "agent-1" {
+			t.Fatalf("held rows %v, want one naming agent-1 unbound", held)
+		}
+		if rowStr(held[0].Data, "p_held") != "TH" || rowStr(held[0].Data, "p_held_error") != "" {
+			t.Errorf("held %v, want p_held the tree TH of %s", held[0].Data, dir)
+		}
+		// the host cwd can hold records now, and the closed subagent's directory is not the tree the hold left
+		if err := os.Remove(link); err != nil {
+			t.Fatal(err)
+		}
+		k.placer.setTree(dir, "T1")
+		k.h.cfg.Resume = &ResumeOptions{}
+		if got := value[[]any](t, k.h.run(evidenceExe)); got[0] != "completed" {
+			t.Fatalf("resumed %v: rows %s", got, eventsOf(k.rowsOf("exe")))
+		}
+		k.resumedInPlace(t, false)
+	})
+}
