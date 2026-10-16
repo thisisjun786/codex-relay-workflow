@@ -75,7 +75,7 @@ func TestCRW1330_StartPlanCarriesTheSnapshotAndItsWarnings(t *testing.T) {
 	if !strings.HasSuffix(ans.Plan.Policy, role.StoreFile) || len(ans.Plan.Roles) != len(role.FlowRoles()) {
 		t.Fatalf("plan %+v", ans.Plan)
 	}
-	if joined := strings.Join(ans.Plan.PolicyWarnings, "\n"); !strings.Contains(joined, "executor-t1") || !strings.Contains(joined, "reviewer-final") {
+	if joined := strings.Join(ans.Plan.PolicyWarnings, "\n"); !strings.Contains(joined, "executor-t1") || !strings.Contains(joined, "critic") {
 		t.Fatalf("warnings %q", ans.Plan.PolicyWarnings)
 	}
 	_, text, _ := td.do(append([]string{"start", "project-lane", "--thread", "thread-owner", "--state", w.state, "--preview"}, lane...)...)

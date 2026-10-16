@@ -56,7 +56,9 @@ function notesSection(notes) {
 // architectPacket is the architect's first turn of a milestone. background is the answers of the background explorers that ran before
 // it, one for each node (crw.explore of kind background, CRW-1466): given, the packet carries them as BACKGROUND FINDINGS, each by its
 // id, question, answer and the explorer's findings only - never by its route, reason, scope, notation or origin, so the packet's bytes
-// do not move with the routing metadata a binary records; not given (or empty), the packet is the one it was before CRW-1466.
+// do not move with the routing metadata a binary records; not given (or empty), the packet is the one it was before CRW-1466. An
+// answer whose explorer was asked twice and did not answer (missing, CRW-1571) is not a finding: a MISSING EXPLORATIONS section after
+// them names it, and with none missing the packet is the one it was before.
 // head is the design head the run sampled before the phase explore (crw.designHead): the background explorers read it and the
 // architect's directory is a checkout of it, and BACKGROUND FINDINGS names it; without one the packet is as it was.
 export function architectPacket(ms, background, head) {
@@ -67,16 +69,30 @@ export function architectPacket(ms, background, head) {
     'Answer with DESIGN: the decisions, one plan for each issue node below (its size_fit, the sub_tasks of a split node, edit regions, approach, tests first and done condition), the open questions you cannot answer from what you read, and the risks.',
     section('NODES', nodes),
   ]
-  if (background && background.length) {
+  const answered = (background || []).filter((a) => !a.missing)
+  const missing = (background || []).filter((a) => a.missing)
+  if (answered.length) {
     parts.push(section('BACKGROUND FINDINGS (' + (head ? 'read at ' + head + ', the commit your directory is a checkout of; ' : '') + 'an explorer read the repository for each node before you; build on them, and ask as an open question only what they and your own reading leave open)',
-      background.map((a) => {
+      answered.map((a) => {
         const lines = [(a.id ? a.id + ': ' : '') + a.question]
         if (a.answer) lines.push('  answer: ' + a.answer)
         if (a.findings) lines.push('  findings: ' + canon(a.findings))
         return '- ' + lines.join('\n')
       })))
   }
+  // a background question whose explorer was null_model twice (crw.explore's missing, CRW-1571): named, never listed as a finding
+  if (missing.length) {
+    parts.push(section('MISSING EXPLORATIONS (the explorer of each was asked twice and did not answer; read what the node rests on yourself, and ask as an open question what you cannot settle)',
+      missing.map((a) => '- ' + missingLine(a))))
+  }
   return parts.join('\n\n')
+}
+
+// missingLine names a question whose explorer was asked twice and did not answer (crw.explore's missing, CRW-1571): its id and
+// question, both calls, and the status and reason of the last.
+function missingLine(a) {
+  const m = a.missing
+  return (a.id ? a.id + ': ' : '') + a.question + ' (calls ' + m.calls.join(', ') + ': ' + m.status + (m.reason ? ' ' + m.reason : '') + ')'
 }
 
 // The executor contract and the authority boundary the design audit holds a DESIGN to (CRW-1321): the architect overlay
@@ -97,7 +113,9 @@ const AUTHORITY = [
 ]
 
 // answerLines renders the answers of the open questions for the design audit: each question with its route and what it got
-// (CRW-1347), so no question reaches the audit as an empty answer without its route.
+// (CRW-1347), so no question reaches the audit as an empty answer without its route. A question whose explorer was asked twice and
+// did not answer (crw.explore's missing, CRW-1571; a repeat of it in the round carries it too) says so in its route line, so the
+// critic never reads it as answered; with none missing the lines are the ones they were before.
 function answerLines(answers) {
   return list((answers || []).map((a) => {
     const lines = [(a.id ? a.id + ': ' : '') + a.question, '  route: ' + routeLine(a)]
@@ -108,6 +126,7 @@ function answerLines(answers) {
 }
 
 function routeLine(a) {
+  if (a.missing) return 'an explorer was asked twice and did not answer (' + missedCalls(a.missing) + ')'
   switch (a.route) {
     case 'spawn':
       return 'an explorer answered it (call ' + (a.call || 'none') + ')'
@@ -118,6 +137,11 @@ function routeLine(a) {
     default:
       return a.route + (a.reason ? ' (' + a.reason + ')' : '') + ': no answer'
   }
+}
+
+// missedCalls names both calls of a missing exploration and the status and reason of the last (CRW-1571).
+function missedCalls(m) {
+  return 'calls ' + m.calls.join(', ') + ': ' + m.status + (m.reason ? ' ' + m.reason : '')
 }
 
 function reuseLine(reason) {
@@ -242,10 +266,13 @@ export function answeredQuestions(answers) {
 // The design-answers turn of the architect's thread (CRW-1466): the answers its open questions got in this audit round go back to it
 // before the critic audits the DESIGN, and it answers with the DESIGN again. Each answered question is rendered by its id, question,
 // answer and the explorer's findings only - never by its route, reason, scope, notation or origin, so the packet's bytes do not move
-// with the routing metadata a binary records. context is a re-plan's {head, base_tip, landed, unstarted}: the turn is then at the head
-// the re-plan judges (headBlock); the first DESIGN has none.
+// with the routing metadata a binary records. A question whose explorer was asked twice and did not answer (crw.explore's missing,
+// CRW-1571) is no answer: a NOT ANSWERED section after the ANSWERS names it, and with none missing the packet is the one it was
+// before. context is a re-plan's {head, base_tip, landed, unstarted}: the turn is then at the head the re-plan judges (headBlock); the
+// first DESIGN has none.
 export function designAnswersPacket(answers, context) {
   const at = context ? headBlock(context) : null
+  const missing = (answers || []).filter((a) => a.missing)
   return [
     'ROLE: architect. The open questions of your DESIGN got the answers below. Answer with the DESIGN again, with what they say folded into its decisions and plans, before the critic audits it; keep the ids of the decisions and the issues, and give dispositions null (no audit finding is before you). An open question an answer settles leaves open_questions; a question you raise anew in this answer reaches the critic with no answer, which is a P1 finding, and is routed in the next audit round.',
     section('ANSWERS', answeredQuestions(answers).map((a) => {
@@ -254,6 +281,7 @@ export function designAnswersPacket(answers, context) {
       if (a.findings) lines.push('  findings: ' + canon(a.findings))
       return '- ' + lines.join('\n')
     })),
+    missing.length ? section('NOT ANSWERED (the explorer of each was asked twice and did not answer; the question stays open)', missing.map((a) => '- ' + missingLine(a))) : '',
     at ? 'Your directory P is a read-only checkout of the pinned head: work only under the absolute path P.\n' + at.head : '',
     at ? at.landed : '',
   ].filter(Boolean).join('\n\n')
@@ -301,7 +329,6 @@ export function reflectionPacket(ms, cur, closed) {
     at.head,
     section('DECISIONS OF THE DESIGN (map each to the files and criteria of the integrated range)', drivenDecisions(cur)),
     at.landed,
-    'REVIEWER-FINAL ALIGNMENT: ' + (closed.final ? closed.final.alignment : 'none'),
     'Answer with REFLECTION: ALIGNED, or MISALIGNED with each decision the range departs from, what you observed, the nodes it affects and the evidence.',
   ].join('\n\n')
 }
@@ -514,24 +541,6 @@ export function fixPacket(node, verdict, ci, notes, receipt) {
   return parts.join('\n\n')
 }
 
-export function reviewPacket(node, plan, head, ci, opts) {
-  const parts = [
-    'ROLE: reviewer. Review the head ' + head.commit + ' of node ' + node + ' (' + plan.issue + ') against its criteria; round ' + (opts.round || 1) + '.',
-    // the two lines `crw flow audit` reads back from the thread on the host: what the acceptance of this review stands on
-    'HEAD: ' + head.commit + '\nCRITERIA DIGEST: ' + plan.criteria_digest,
-    section('CRITERIA', criteriaList(plan.criteria)),
-    section('DONE CONDITION', [plan.done_condition]),
-    section('EDIT REGIONS', list(plan.regions, 'undeclared')),
-    section('CHANGED PATHS', list(head.changed)),
-    section('OUT OF SCOPE', list(head.out_of_scope, 'none')),
-    'VERIFICATION: ' + (ci.pass ? 'passed' : 'failed') + ' (' + ci.command + ') record ' + ci.digest,
-  ]
-  const n = notesSection(opts.notes)
-  if (n) parts.push(n)
-  parts.push('Answer with VERDICT. verified means every criterion is met and no defect blocks. Answer one entry of criteria for each criterion c1, c2, ... above, each once, under its id. A defect you cannot judge from the head is of kind evidence_missing and carries an evidence_question. The impact of each defect is one of core_function, safety_or_data, permission_boundary, criterion_unmet, regression_introduced, minor_separable: a defect of P0 to P2 blocks whatever its impact, and of the impacts only minor_separable does not block. A verdict of verified over a defect that blocks is refused as no verdict.')
-  return parts.join('\n\n')
-}
-
 // ---- the milestone close (crw:lib/close) ----
 
 // The captures as the later calls read them: the path each can be opened at (crw.qaCapture resolved it against the directory the
@@ -542,10 +551,6 @@ function captureLines(captures) {
 
 function decisionLines(decisions) {
   return list((decisions || []).map((d) => d.id + ' (' + ((d.nodes || []).length ? 'nodes ' + d.nodes.join(', ') : 'no node') + '): ' + d.change), 'none recorded')
-}
-
-function evidenceLines(g) {
-  return list((g.evidence || []).map((e) => e.kind + (e.command ? ' ' + e.command : '') + ': ' + e.state + (e.pass ? ' pass' : '') + (e.head ? ' at ' + e.head : '')))
 }
 
 // The QA capture call (SP-QA-1): drives the surface in a scratch worktree at the head the gate pinned and judges nothing.
@@ -594,20 +599,6 @@ export function qaSelfReviewPacket(ms, g, view) {
     'Review your own captures of the final gate of milestone ' + ms.id + ' at ' + g.head + ' once, as a reviewer who did not make them, and give the QA receipt.',
     section('YOUR CAPTURES (open the paths given here directly: they are resolved against the worktree you captured in)', captureLines(view.captures)),
     'Answer with QA_RECEIPT: PASS, REVISE or FAIL, the findings with their severity, and a summary. A PASS stands over no P0 or P1 finding.',
-  ].join('\n\n')
-}
-
-// reviewer-final: the review of the integrated range, after the final gate passed. The gate is its input.
-export function finalPacket(ms, g) {
-  return [
-    'ROLE: reviewer-final. Review the integrated range ' + g.range + ' of milestone ' + ms.id + ' (' + ms.title + ') after its final gate passed. You review the range, not the issues one by one: those were reviewed before.',
-    'HEAD: ' + g.head + '\nRANGE: ' + g.range,
-    section('FINAL GATE (passed)', evidenceLines(g)),
-    section('CRITERIA OF THE MILESTONE', criteriaList(ms.criteria)),
-    // the approved DESIGN lives in the journal's ledger, not in the checkout this reviewer reads: its decisions are the comparison
-    // source of the alignment judgement
-    section('DESIGN DECISIONS (the approved DESIGN of this milestone; name a decision by its id in the drift)', decisionLines(g.decisions)),
-    'Answer with VERDICT_FINAL: the verdict, one entry of criteria for each criterion c1, c2, ... above, the defects, and the alignment of the integrated range with the DESIGN DECISIONS above (ALIGNED, MISALIGNED with the drift you saw, or NOT_ASSESSED). verified means every criterion is met and no defect blocks. The impact of each defect is one of core_function, safety_or_data, permission_boundary, criterion_unmet, regression_introduced, minor_separable: a defect of P0 to P2 blocks whatever its impact, and of the impacts only minor_separable does not block. A final verdict of verified over a defect that blocks is refused as no verdict.',
   ].join('\n\n')
 }
 

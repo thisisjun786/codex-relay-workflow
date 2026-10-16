@@ -14,8 +14,8 @@ type Pair struct {
 	Effort string `json:"effort"`
 }
 
-// RoleSpec is one role of the policy: its role family (executor and executor-t1 share one, reviewer and
-// reviewer-final share one, the critic is its own), its fixed pair, and the Claude-style model aliases that name its model family.
+// RoleSpec is one role of the policy: its role family (executor and executor-t1 share one, the reviewer and the critic
+// are each their own), its fixed pair, and the Claude-style model aliases that name its model family.
 type RoleSpec struct {
 	Family string
 	Pair   Pair
@@ -63,7 +63,7 @@ type Policy struct {
 	Aliases []AliasRule
 	// Source is where the table was read from and Digest the digest the run pins; both are empty for the fake policy. For
 	// the table of a production flow command (LoadPolicy) Source is the helper role store's path and Digest the canonical
-	// digest of the seven (model, effort) pairs (role.FlowSnapshot.Digest); for a table PolicyFromExecution built from a policy
+	// digest of the six (model, effort) pairs (role.FlowSnapshot.Digest); for a table PolicyFromExecution built from a policy
 	// file they are the file's path and the SHA-256 of its bytes. A run records them when it starts and a resumed run that
 	// reads another digest records the change.
 	Source, Digest string
@@ -172,20 +172,18 @@ func (p *Policy) RoleKey(name string) bool {
 	return ok
 }
 
-// FakePolicy is the role table of the fake backend: the seven roles with placeholder pairs and the alias table of the
-// design (opus -> architect; haiku with isolation worktree -> executor; sonnet -> executor-t1; ocx-gpt-6-1-sol with
-// xhigh -> reviewer-final, otherwise reviewer; haiku without isolation is ambiguous). The critic (CRW-1434) is named by
-// agentType only (no alias row: ocx-gpt-6-1-sol at xhigh is reviewer-final's), on a gpt pair like its compiled default
-// (execution.DefaultCriticPair), so it is of another model family than the architect.
+// FakePolicy is the role table of the fake backend: the six roles with placeholder pairs and the alias table of the
+// design (opus -> architect; haiku with isolation worktree -> executor; sonnet -> executor-t1; ocx-gpt-6-1-sol -> reviewer
+// at any effort; haiku without isolation is ambiguous). The critic (CRW-1434) is named by agentType only (no alias row), on a
+// gpt pair like its compiled default (execution.DefaultCriticPair), so it is of another model family than the architect.
 func FakePolicy() *Policy {
 	roles := map[string]RoleSpec{
-		"architect":      {Family: "architect", Pair: Pair{"claude-fake-opus", "high"}, ModelAliases: []string{"opus"}},
-		"executor":       {Family: "executor", Pair: Pair{"claude-fake-haiku", "xhigh"}, ModelAliases: []string{"haiku"}},
-		"executor-t1":    {Family: "executor", Pair: Pair{"claude-fake-sonnet", "xhigh"}, ModelAliases: []string{"sonnet"}},
-		"reviewer":       {Family: "reviewer", Pair: Pair{"gpt-fake-sol", "high"}, ModelAliases: []string{"ocx-gpt-6-1-sol"}},
-		"reviewer-final": {Family: "reviewer", Pair: Pair{"gpt-fake-sol", "xhigh"}, ModelAliases: []string{"ocx-gpt-6-1-sol"}},
-		"explorer":       {Family: "explorer", Pair: Pair{"claude-fake-haiku", "high"}, ModelAliases: []string{"haiku"}},
-		"critic":         {Family: "critic", Pair: Pair{"gpt-fake-sol", "xhigh"}, ModelAliases: []string{"ocx-gpt-6-1-sol"}},
+		"architect":   {Family: "architect", Pair: Pair{"claude-fake-opus", "high"}, ModelAliases: []string{"opus"}},
+		"executor":    {Family: "executor", Pair: Pair{"claude-fake-haiku", "xhigh"}, ModelAliases: []string{"haiku"}},
+		"executor-t1": {Family: "executor", Pair: Pair{"claude-fake-sonnet", "xhigh"}, ModelAliases: []string{"sonnet"}},
+		"reviewer":    {Family: "reviewer", Pair: Pair{"gpt-fake-sol", "high"}, ModelAliases: []string{"ocx-gpt-6-1-sol"}},
+		"explorer":    {Family: "explorer", Pair: Pair{"claude-fake-haiku", "high"}, ModelAliases: []string{"haiku"}},
+		"critic":      {Family: "critic", Pair: Pair{"gpt-fake-sol", "xhigh"}, ModelAliases: []string{"ocx-gpt-6-1-sol"}},
 	}
 	for name, spec := range roles {
 		spec.Sandbox = roleSandbox(name)
@@ -198,21 +196,17 @@ func FakePolicy() *Policy {
 			{Key: "haiku", Isolation: "worktree", Role: "executor"},
 			{Key: "haiku", Cause: execution.AliasAmbiguous, Detail: execution.AliasAmbiguousHaikuDetail},
 			{Key: "sonnet", Role: "executor-t1"},
-			{Key: "ocx-gpt-6-1-sol", Effort: "xhigh", Role: "reviewer-final"},
 			{Key: "ocx-gpt-6-1-sol", Role: "reviewer"},
 		},
 	}
 }
 
-// roleFamily is the role family of an agent role: executor and executor-t1 are one, reviewer and reviewer-final are
-// one, architect, explorer and critic are alone (a reviewer handle is never resumed as a critic, and the design audit is
-// not a node review).
+// roleFamily is the role family of an agent role: executor and executor-t1 are one, every other role is alone (a reviewer
+// handle is never resumed as a critic, and the design audit is not a node review).
 func roleFamily(role string) string {
 	switch role {
 	case execution.AgentExecutor, execution.AgentExecutorT1:
 		return "executor"
-	case execution.AgentReviewer, execution.AgentReviewerFinal:
-		return "reviewer"
 	}
 	return role
 }
@@ -246,11 +240,11 @@ func PolicyFromExecution(p execution.Policy, source string) (*Policy, error) {
 	return out, nil
 }
 
-// PolicyFromRoleHelper is the role table of a production flow run (CRW-1330, CRW-1316 design section 8): each of the seven
+// PolicyFromRoleHelper is the role table of a production flow run (CRW-1330, CRW-1316 design section 8): each of the six
 // roles runs the pair of the helper role store's snapshot (an undecided role has the empty pair, so a call of it names no
 // model and no effort), with its family, its sandbox and the design's model aliases; the alias table is the code's
 // (execution.DefaultAliasRows), nothing of it read from a file. Source is the store's path and Digest the snapshot's
-// canonical digest of the seven pairs. The snapshot's warnings are kept, and a reviewer or reviewer-final on the model
+// canonical digest of the six pairs. The snapshot's warnings are kept, and a reviewer on the model
 // family of an author (architect, executor, executor-t1), or a critic on the architect's (execution.FamilyOverlaps),
 // adds one: the runtime independence gate judges each review, and the table is never refused for it.
 func PolicyFromRoleHelper(snap role.FlowSnapshot) *Policy {

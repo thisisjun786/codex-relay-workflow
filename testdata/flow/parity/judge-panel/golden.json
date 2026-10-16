@@ -9,7 +9,7 @@
       "path": "root",
       "position": 2,
       "label": "decide",
-      "role": "reviewer-final",
+      "role": "reviewer",
       "sandbox": "read-only",
       "status": "completed",
       "requestedPair": {
@@ -18,7 +18,7 @@
       },
       "configuredPair": {
         "model": "gpt-6.1-sol",
-        "effort": "xhigh"
+        "effort": "high"
       }
     },
     {

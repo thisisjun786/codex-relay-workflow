@@ -58,13 +58,15 @@ func TestSessionOrchestratorDecisionTable(t *testing.T) {
 		role, op    string
 		warning     string
 	}{
-		{"reviewer-final step", spawnInput("reviewer", stepMessage("c_1/t1-a1", "reviewer-final"), ""), fbReviewerFinal, "reviewer-final", "c_1/t1-a1", ""},
+		// reviewer-final is a retired role key (CRW-1450): the header names no role, the agent_type decides, the line's pair of the key
+		// is never applied
+		{"a step of the retired reviewer-final key", spawnInput("reviewer", stepMessage("c_1/t1-a1", "reviewer-final"), ""), fbReviewer, "reviewer", "c_1/t1-a1", ""},
 		{"executor-t1 step", spawnInput("executor", stepMessage("c_2/t1-a2", "executor-t1"), ""), fbExecutorT1, "executor-t1", "c_2/t1-a2", ""},
 		{"worker is an executor", spawnInput("worker", stepMessage("c_3/t2-a1", "executor"), ""), fbExecutor, "executor", "c_3/t2-a1", ""},
 		{"architect step", spawnInput("architect", stepMessage("c_4/t1-a1", "architect"), ""), fbArchitect, "architect", "c_4/t1-a1", ""},
 		{"explorer step", spawnInput("explorer", stepMessage("c_5/t1-a1", "explorer"), ""), fbExplorer, "explorer", "c_5/t1-a1", ""},
 		{"reviewer step with a pair of its own", spawnInput("reviewer", stepMessage("c_6/t1-a1", "reviewer"), `"model":"m","reasoning_effort":"low"`), fbReviewer, "reviewer", "c_6/t1-a1", ""},
-		{"role and agent_type do not pair", spawnInput("executor", stepMessage("c_7/t1-a1", "reviewer-final"), ""), fbReviewerFinal, "reviewer-final", "c_7/t1-a1", "role_agent_type_mismatch"},
+		{"role and agent_type do not pair", spawnInput("executor", stepMessage("c_7/t1-a1", "reviewer"), ""), fbReviewer, "reviewer", "c_7/t1-a1", "role_agent_type_mismatch"},
 		{"no marker, explorer", spawnInput("explorer", "TASK: where is the parser", ""), fbExplorer, "explorer", "", "unrecorded_spawn"},
 		{"no marker, worker", spawnInput("worker", "TASK: fix it", ""), fbExecutor, "executor", "", "unrecorded_author"},
 		{"no marker, architect", spawnInput("architect", "TASK: design it", ""), fbArchitect, "architect", "", "unrecorded_author"},
@@ -127,8 +129,8 @@ func TestSessionOrchestratorLedgerUnwritableAllows(t *testing.T) {
 	warnings := captureFlowBoundWarnings(t)
 	// the ledger's place is taken by a directory, so no line can be appended to it
 	spawnHookMust(t, os.MkdirAll(filepath.Join(r.dir, bound.DecisionsDir, fbThreadA+bound.FileSuffix), 0o700))
-	out := r.spawn(fbThreadA, "tool-1", spawnInput("reviewer", stepMessage("c_1/t1-a1", "reviewer-final"), ""))
-	if got := fbPairOf(r.expectAllowed(out)); got != fbReviewerFinal {
+	out := r.spawn(fbThreadA, "tool-1", spawnInput("executor", stepMessage("c_1/t1-a1", "executor-t1"), ""))
+	if got := fbPairOf(r.expectAllowed(out)); got != fbExecutorT1 {
 		t.Fatalf("pair %+v", got)
 	}
 	if w := warnings(); len(w) != 1 || !strings.Contains(w[0], "ledger") || !strings.Contains(w[0], fbThreadA) {
@@ -155,7 +157,8 @@ func TestSessionOrchestratorHookFailureAllows(t *testing.T) {
 // line), and the general oracle parser is what it was.
 func TestFlowBoundRoleHeaderTakesTheSixRoles(t *testing.T) {
 	for msg, want := range map[string]string{
-		"CRW-ROLE: reviewer-final\n\nx":                     "reviewer-final",
+		"CRW-ROLE: reviewer-final\n\nx":                     "",
+		"CRW-ROLE: critic\n\nx":                             "critic",
 		"crw-flow-op: c/t1-a1\nCRW-ROLE: executor-t1\n\nx":  "executor-t1",
 		"scope: x\nCRW-ROLE: architect\nTASK: y":            "architect",
 		"CRW-ROLE: explorer  \r\nTASK: y":                   "explorer",

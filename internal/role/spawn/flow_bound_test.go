@@ -36,13 +36,14 @@ const (
 var (
 	fbExplorer = bound.Pair{Model: "explorer-model", Effort: "high"}
 	fbReviewer = bound.Pair{Model: "reviewer-model", Effort: "xhigh"}
-	// the other four pairs of an orchestrator line (CRW-1348: the line carries the six roles)
-	fbArchitect     = bound.Pair{Model: "architect-model", Effort: "high"}
-	fbExecutor      = bound.Pair{Model: "executor-model", Effort: "xhigh"}
-	fbExecutorT1    = bound.Pair{Model: "executor-t1-model", Effort: "xhigh"}
+	// the other pairs of an orchestrator line (CRW-1348)
+	fbArchitect  = bound.Pair{Model: "architect-model", Effort: "high"}
+	fbExecutor   = bound.Pair{Model: "executor-model", Effort: "xhigh"}
+	fbExecutorT1 = bound.Pair{Model: "executor-t1-model", Effort: "xhigh"}
+	// the pair of the retired reviewer-final key (CRW-1450), which a line an earlier binary wrote carries and no spawn takes
 	fbReviewerFinal = bound.Pair{Model: "reviewer-final-model", Effort: "xhigh"}
-	// the seventh pair (CRW-1434): orchestratorLine is a line the earlier binary wrote, without it; orchestratorLineWithCritic
-	// is today's
+	// the critic's pair (CRW-1434): orchestratorLine is a line the earlier binary wrote, without it and with reviewer-final's;
+	// orchestratorLineWithCritic carries it
 	fbCritic = bound.Pair{Model: "critic-model", Effort: "xhigh"}
 )
 

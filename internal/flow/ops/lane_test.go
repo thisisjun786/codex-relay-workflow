@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/audit"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/reviewadapter"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/roles"
@@ -262,7 +263,7 @@ func TestLedgerAndReleaseNeedAnApprovedAudit(t *testing.T) {
 	}
 }
 
-// An audit that was not made by an independent reviewer is not an approval: the model family of the auditor differs from the
+// An audit that was not made by an independent critic is not an approval: the model family of the auditor differs from the
 // architect's, a call that did not complete is not an audit, and an approval over a P1 finding is no approval.
 func TestDesignAuditIndependence(t *testing.T) {
 	w := newWorld(t)
@@ -308,11 +309,77 @@ func TestDesignAuditStillRefusesAnArchitectFamilyCritic(t *testing.T) {
 		_ = json.Unmarshal(w.must("designAudit", "M", 1, cand, arch, critic), &r)
 		return r
 	}
-	if r := audit("claude-opus", "claude-sonnet"); r.State != StateRefused || r.Reason != "independence_refused" || r.Reviewer.Role != "critic" {
+	if r := audit("claude-opus", "claude-sonnet"); r.State != StateRefused || r.Reason != "independence_refused" || r.Critic.Role != "critic" {
 		t.Errorf("a critic of the architect's family: %+v", r)
 	}
-	if r := audit("claude-opus", "gpt-6.1-sol"); r.State != AuditApproved || r.Reviewer.Role != "critic" || r.Architect.Role != "architect" {
+	if r := audit("claude-opus", "gpt-6.1-sol"); r.State != AuditApproved || r.Critic.Role != "critic" || r.Architect.Role != "architect" {
 		t.Errorf("a critic of another family: %+v", r)
+	}
+}
+
+// TestDesignAuditRowNamesTheCriticRole (CRW-1453): the design audit is the critic's call, and the answer and the row say so: the
+// answer names the auditor under critic, and the row journals critic_call and critic_model beside the architect's. Neither names
+// a reviewer any more.
+func TestDesignAuditRowNamesTheCriticRole(t *testing.T) {
+	w := newWorld(t)
+	design, _ := json.Marshal(designOf("A"))
+	cand := Candidate{Design: design, Answers: json.RawMessage(`[]`)}
+	arch := call("c_arch", "completed", "claude-opus", nil)
+	arch.Meta.Role = "architect"
+	critic := call("c_crit", "completed", "gpt-6.1-sol", map[string]any{"verdict": "approved", "findings": []any{}, "summary": "ok"})
+	critic.Meta.Role = "critic"
+	out := w.must("designAudit", "M", 1, cand, arch, critic)
+	var answer map[string]any
+	if err := json.Unmarshal(out, &answer); err != nil {
+		t.Fatal(err)
+	}
+	brief, _ := answer["critic"].(map[string]any)
+	if brief == nil || brief["role"] != "critic" || answer["state"] != AuditApproved {
+		t.Errorf("the answer does not name the critic: %s", out)
+	}
+	if _, ok := answer["reviewer"]; ok {
+		t.Errorf("the answer still names a reviewer: %s", out)
+	}
+	audits := rows(w.j.Events()).opRows(OpDesignAudit)
+	if len(audits) != 1 {
+		t.Fatalf("audit rows %d", len(audits))
+	}
+	row := audits[0]
+	if dataStr(row, "critic_call") != "c_crit" || dataStr(row, "critic_model") != "gpt-6.1-sol" ||
+		dataStr(row, "architect_call") != "c_arch" || dataStr(row, "architect_model") != "claude-opus" {
+		t.Errorf("the row does not name the critic beside the architect: %v", row.Data)
+	}
+	for _, k := range []string{"reviewer_call", "reviewer_model"} {
+		if _, ok := row.Data[k]; ok {
+			t.Errorf("the row still journals %s: %v", k, row.Data)
+		}
+	}
+}
+
+// TestOldReviewerAuditRowsStillRead (CRW-1453): a design audit an earlier binary journaled names its auditor reviewer_call and
+// reviewer_model, and its answer names it under reviewer. A run recorded then goes on on this binary: the approved audit lets its
+// DESIGN into the ledger, the release of a node reads that revision, and the old answer still decodes.
+func TestOldReviewerAuditRowsStillRead(t *testing.T) {
+	w := newWorld(t)
+	w.must("milestone", "plan-1", "M")
+	design, _ := json.Marshal(designOf("A"))
+	cand := Candidate{Design: design, Answers: json.RawMessage(`[]`)}
+	old := `{"state":"approved","reason":"","round":1,"candidate_digest":"` + cand.digest() + `","findings":[],"summary":"ok",` +
+		`"reviewer":{"callId":"c_aud","handle":"","status":"completed","reason":"","role":"critic"},"architect":{"callId":"c_arch","handle":"","status":"completed","reason":"","role":"architect"}}`
+	w.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: "c_old_audit", Op: OpDesignAudit, Event: engine.EvCompleted,
+		Data: map[string]any{"result": old, "milestone": "M", "round": float64(1), "candidate_digest": cand.digest(), "state": AuditApproved, "reason": "",
+			"reviewer_call": "c_aud", "architect_call": "c_arch", "reviewer_model": "gpt-y", "architect_model": "claude-x"}})
+	var res AuditResult
+	if err := json.Unmarshal([]byte(old), &res); err != nil || res.State != AuditApproved || res.CandidateDigest != cand.digest() {
+		t.Fatalf("the old answer does not decode: %+v %v", res, err)
+	}
+	if _, err := w.op("designLedger", "M", map[string]any{"revision": "r0", "design": json.RawMessage(design), "answers": json.RawMessage(`[]`), "architect": call("c_arch", "completed", "claude-x", nil)}); err != nil {
+		t.Fatalf("the ledger refuses a DESIGN over an old reviewer audit row: %v", err)
+	}
+	var rel ReleaseOutcome
+	_ = json.Unmarshal(w.must("release", "plan-1", "A", "M"), &rel)
+	if !rel.Released || rel.Revision != FirstRevision || rel.DesignDigest != cand.digest() {
+		t.Errorf("release over an old reviewer audit row: %+v", rel)
 	}
 }
 
@@ -1470,13 +1537,6 @@ func TestDecodersHoldTheRulesOfTheSchemas(t *testing.T) {
 	if err := Validate(SchemaVerdict, []byte(`{"verdict":"verified"} {}`)); err == nil {
 		t.Errorf("two documents validated")
 	}
-	// two reviewers that find the same thing in other words and spacing find one finding
-	a := Defect{Kind: "correctness", File: "f.go", Line: 3, Finding: "The  guard is MISSING"}
-	b := Defect{Kind: "correctness", File: "f.go", Line: 3, Finding: " the guard is missing "}
-	c := Defect{Kind: "correctness", File: "f.go", Line: 4, Finding: "the guard is missing"}
-	if FindingDigest(a) != FindingDigest(b) || FindingDigest(a) == FindingDigest(c) {
-		t.Errorf("finding digests %s %s %s", FindingDigest(a), FindingDigest(b), FindingDigest(c))
-	}
 }
 
 // crw.verify records a passing or failing verification with the digest of its record, and a verification that could not run is
@@ -1890,14 +1950,9 @@ func impactVerdicts(verdict, severity, impact string) map[string][]byte {
 	for k, v := range fields {
 		block[k] = v
 	}
-	final := map[string]any{"alignment": map[string]any{"verdict": "ALIGNED", "drift": []any{}}}
-	for k, v := range fields {
-		final[k] = v
-	}
 	one, _ := json.Marshal(fields)
 	batch, _ := json.Marshal(map[string]any{"nodes": []any{block}})
-	fin, _ := json.Marshal(final)
-	return map[string][]byte{SchemaVerdict: one, SchemaVerdictBatch: batch, SchemaVerdictFinal: fin}
+	return map[string][]byte{SchemaVerdict: one, SchemaVerdictBatch: batch}
 }
 
 // CRW-1438: the impact of a defect is one closed set, held once in premerge.Impacts. Every verdict schema a reviewer answers with
@@ -1957,39 +2012,22 @@ func TestVerifiedWithABlockingImpactIsVerdictInvalid(t *testing.T) {
 	}
 }
 
-// CRW-1438: the reviewer is told the closed impact set its verdict answers with: the packet of crw:lib/packets names every value of
-// premerge.Impacts, that only minor_separable does not block, and that verified over a blocking defect is refused; the reviewer
-// overlay says the same under Output.
-func TestReviewPacketNamesTheImpactVocabulary(t *testing.T) {
-	src := "import { reviewPacket } from 'crw:lib/packets'\nexport const meta = { name: 'review-packet' }\n" +
-		"return reviewPacket('A', { issue: 'CRW-1', criteria_digest: 'd', criteria: ['first'], done_condition: 'done', regions: ['a.go'] }, " +
-		"{ commit: 'h1', changed: ['a.go'], out_of_scope: [] }, { pass: true, command: 'go test ./...', digest: 'v1' }, { round: 1 })\n"
-	prog, err := script.Load(script.Source{Name: "review-packet.js", Text: []byte(src)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	res, err := engine.Run(context.Background(), prog, engine.Config{Backend: engine.NewFake(), Policy: engine.FakePolicy()})
-	if err != nil || res.Status != engine.RunCompleted {
-		t.Fatalf("%v %+v", err, res)
-	}
-	var packet string
-	if err := json.Unmarshal(res.Value, &packet); err != nil {
-		t.Fatalf("the review packet is not a string: %v (%s)", err, res.Value)
-	}
+// CRW-1438: the reviewer is told the closed impact set its verdict answers with: the reviewer overlay names every value of
+// premerge.Impacts, that only minor_separable does not block, and that verified over a blocking defect is refused, under Output. The
+// node reviewer's packet is retired with its path (CRW-1447); the overlay stays, as the critic is built on the reviewer's definition.
+func TestReviewerOverlayNamesTheImpactVocabulary(t *testing.T) {
 	overlay, err := roles.Overlay("reviewer", roles.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for name, text := range map[string]string{"the review packet": packet, "the reviewer overlay": overlay} {
-		for _, impact := range premerge.Impacts {
-			if !strings.Contains(text, impact) {
-				t.Errorf("%s does not name the impact %s:\n%s", name, impact, text)
-			}
+	for _, impact := range premerge.Impacts {
+		if !strings.Contains(overlay, impact) {
+			t.Errorf("the reviewer overlay does not name the impact %s:\n%s", impact, overlay)
 		}
-		for _, rule := range []string{"only " + premerge.MinorSeparable + " does not block", "verified over a defect that blocks is refused"} {
-			if !strings.Contains(text, rule) {
-				t.Errorf("%s does not say %q:\n%s", name, rule, text)
-			}
+	}
+	for _, rule := range []string{"only " + premerge.MinorSeparable + " does not block", "verified over a defect that blocks is refused"} {
+		if !strings.Contains(overlay, rule) {
+			t.Errorf("the reviewer overlay does not say %q:\n%s", rule, overlay)
 		}
 	}
 }
@@ -2233,6 +2271,181 @@ func TestAcceptAssemblesPremergeFromAUnitCheckRecord(t *testing.T) {
 		rec, err := premerge.Decode(w.relay.got[0].Premerge)
 		if err != nil || w.relay.got[0].ReviewerCall != want || rec.Grader.PromptDigest != grader {
 			t.Errorf("review last %v: basis %s grader %+v (%v), want %s", reviewLast, w.relay.got[0].ReviewerCall, rec.Grader, err, want)
+		}
+	}
+}
+
+// acceptRows is a lane world for crw.accept read from hand-written rows: node A released with two criteria, a relay that keeps what
+// it is asked to accept, and no git. Its rows are on head (base base) unless a test names another commit.
+type acceptRows struct {
+	*world
+	relay      *acceptCapture
+	head, base string
+}
+
+func newAcceptRows(t *testing.T) *acceptRows { t.Helper(); return newAcceptRowsOf(t, "") }
+
+// newAcceptRowsOf is newAcceptRows with node A's plan naming criteria as its criteria digest (the release's, which an acceptance stands
+// on); "" keeps the plan's own.
+func newAcceptRowsOf(t *testing.T, criteria string) *acceptRows {
+	t.Helper()
+	w := newWorld(t)
+	w.relay.plan = planOfNodes(map[string]string{"A": "a1"}, "A")
+	w.relay.plan.Nodes[0].Criteria = []string{"first", "second"}
+	if criteria != "" {
+		w.relay.plan.Nodes[0].CriteriaDigest = criteria
+	}
+	w.ledgered(true, designOf("A"))
+	w.must("release", "plan-1", "A", "M")
+	capture := &acceptCapture{stubRelay: w.relay}
+	w.lane.d.Relay = capture
+	w.lane.d.Git = func(context.Context, string, []string, ...string) (string, error) {
+		return "", errors.New("this test runs no git")
+	}
+	return &acceptRows{world: w, relay: capture, head: strings.Repeat("a", 40), base: strings.Repeat("b", 40)}
+}
+
+func (a *acceptRows) row(op, callID string, data map[string]any) {
+	b, _ := json.Marshal(data)
+	var round map[string]any
+	_ = json.Unmarshal(b, &round)
+	a.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: callID, Op: op, Event: engine.EvCompleted, Data: round})
+}
+
+// committed writes the commit row of the head (tree tree) and its passing verification.
+func (a *acceptRows) committed(tree string) {
+	a.row(OpCommit, "c_commit", map[string]any{"node": "A", "commit": a.head, "parent": a.base, "tree": tree, "result": "{}"})
+	a.row(OpVerify, "c_verify", map[string]any{"node": "A", "head": a.head, "ok": true, "base": a.base, "digest": strings.Repeat("d", 64), "result": "{}"})
+}
+
+// unitCheck writes a completed unit check of verdict verified with no finding; extra names its commit or tree.
+func (a *acceptRows) unitCheck(callID string, extra map[string]any) {
+	res, _ := json.Marshal(map[string]any{"state": "ok", "detail": "", "verdict": "verified", "findings": []any{}, "engine_family": "grok", "model": "grok-4.7-medium",
+		"effort": "medium", "guide_rev": "g1", "prompt_digest": "pd-unit", "fingerprint_before": "t-head", "fingerprint_after": "t-head", "elapsed_ms": 1})
+	data := map[string]any{"role": "unit-check", "node": "A", "execution_id": "exec-A", "criteria_digest": strings.Repeat("c", 64), "result": string(res)}
+	for k, v := range extra {
+		data[k] = v
+	}
+	a.row(OpUnitCheck, callID, data)
+}
+
+// review writes a completed crw.review of the head with a verdict, its reviewer call reviewer.
+func (a *acceptRows) review(callID, reviewer, verdict string) {
+	defects := []any{}
+	if verdict != "verified" {
+		defects = []any{map[string]any{"ref": "f1", "kind": "bug", "severity": "P1", "introduced": true, "file": "x.go", "line": 3, "finding": "it breaks"}}
+	}
+	v, _ := json.Marshal(map[string]any{"verdict": verdict, "criteria": []any{map[string]any{"id": "c1", "met": true, "evidence": "e1"}, map[string]any{"id": "c2", "met": true, "evidence": "e2"}},
+		"defects": defects, "summary": "s"})
+	a.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: reviewer, Op: "agent", Event: engine.EvPrepared,
+		Data: map[string]any{"role": "reviewer", "node": "A", "model": "gpt-x", "effort": "high", "prompt_digest": "pd-" + reviewer}})
+	rr, _ := json.Marshal(ReviewResult{State: StateVerdict, Verdict: v, Findings: []FindingRef{}, Head: a.head, CriteriaDigest: strings.Repeat("e", 64), Call: Brief{CallID: reviewer}})
+	a.row(OpReview, callID, map[string]any{"node": "A", "head": a.head, "criteria_digest": strings.Repeat("e", 64), "state": StateVerdict, "verdict": verdict, "call": reviewer, "result": string(rr)})
+}
+
+// TestAcceptRefusesWhenANewerReviewOnTheHeadNeedsChanges (CRW-1480 item 1): the basis of an acceptance is the newest judgment of the
+// head in journal order, a review with a verdict of either value or a unit check that judged. A review of the head that needs changes,
+// newer than a verified unit check or a verified review of the same head, withdraws them: crw.accept refuses reviewer_not_verified
+// naming that review, and the relay is never asked. In the other order the newer verified judgment is the basis.
+func TestAcceptRefusesWhenANewerReviewOnTheHeadNeedsChanges(t *testing.T) {
+	refused := func(a *acceptRows, what string) {
+		t.Helper()
+		_, err := a.op("accept", "A", a.head)
+		if err == nil || ReasonOf(err.Error()) != "reviewer_not_verified" || !strings.Contains(err.Error(), "c_review2") {
+			t.Errorf("%s: crw.accept %v, want refused reviewer_not_verified naming c_review2", what, err)
+		}
+		if len(a.relay.got) != 0 {
+			t.Errorf("%s: the relay was asked to accept: %+v", what, a.relay.got)
+		}
+	}
+	accepted := func(a *acceptRows, what, basis string) {
+		t.Helper()
+		if _, err := a.op("accept", "A", a.head); err != nil || len(a.relay.got) != 1 || a.relay.got[0].ReviewerCall != basis {
+			t.Errorf("%s: crw.accept %v %+v, want accepted on %s", what, err, a.relay.got, basis)
+		}
+	}
+
+	a := newAcceptRows(t)
+	a.committed("t-head")
+	a.unitCheck("c_uc", map[string]any{"tree": "t-head"})
+	a.review("c_review2", "c_rev2", "needs_changes")
+	refused(a, "a verified unit check, then a review that needs changes")
+
+	a = newAcceptRows(t)
+	a.committed("t-head")
+	a.review("c_review", "c_rev", "verified")
+	a.review("c_review2", "c_rev2", "needs_changes")
+	refused(a, "a verified review, then a review that needs changes")
+
+	a = newAcceptRows(t)
+	a.committed("t-head")
+	a.review("c_review", "c_rev", "verified")
+	a.unitCheck("c_uc", map[string]any{"commit": a.head})
+	a.review("c_review2", "c_rev2", "needs_changes")
+	refused(a, "a review, a unit check, then a review that needs changes")
+
+	a = newAcceptRows(t)
+	a.committed("t-head")
+	a.review("c_review2", "c_rev2", "needs_changes")
+	a.unitCheck("c_uc", map[string]any{"tree": "t-head"})
+	accepted(a, "a review that needs changes, then a verified unit check", "c_uc")
+
+	a = newAcceptRows(t)
+	a.committed("t-head")
+	a.review("c_review2", "c_rev2", "needs_changes")
+	a.review("c_review", "c_rev", "verified")
+	accepted(a, "a review that needs changes, then a verified review", "c_rev")
+}
+
+// TestAcceptTakesAUnitCheckWhoseShaIsUpperCase (CRW-1480 item 4): a unit check names the head by its commit, or before the commit by
+// its tree, and a sha is the same object in either case, as the relay's acceptance reads it (strings.EqualFold): a check that names the
+// head or its tree in upper case is a check of the head.
+func TestAcceptTakesAUnitCheckWhoseShaIsUpperCase(t *testing.T) {
+	tree := strings.Repeat("e", 40)
+	for _, c := range []struct {
+		what  string
+		extra map[string]any
+	}{
+		{"the commit in upper case", map[string]any{"commit": strings.ToUpper(strings.Repeat("a", 40))}},
+		{"the tree in upper case", map[string]any{"tree": strings.ToUpper(tree)}},
+	} {
+		a := newAcceptRows(t)
+		a.committed(tree)
+		a.unitCheck("c_uc", c.extra)
+		if _, err := a.op("accept", "A", a.head); err != nil || len(a.relay.got) != 1 || a.relay.got[0].ReviewerCall != "c_uc" {
+			t.Errorf("a unit check that names %s: crw.accept %v %+v, want accepted on c_uc", c.what, err, a.relay.got)
+		}
+	}
+}
+
+// TestAuditOfAnUpperCaseUnitCheckAcceptanceIsNoMismatch (CRW-1480 item 4): a sha names the same object in either case, so the audit of
+// an acceptance on a unit check compares the check's commit and tree with the head and the head's tree as crw.accept does. An acceptance
+// on a check that names its commit or its tree in upper case audits with no mismatch: its unit_check_row check is ok (the world records
+// no executor call, so the acceptance as a whole is unobserved, never a mismatch).
+func TestAuditOfAnUpperCaseUnitCheckAcceptanceIsNoMismatch(t *testing.T) {
+	tree := strings.Repeat("e", 40)
+	for _, c := range []struct {
+		what  string
+		extra map[string]any
+	}{
+		{"the commit in upper case", map[string]any{"commit": strings.ToUpper(strings.Repeat("a", 40))}},
+		{"the tree in upper case", map[string]any{"tree": strings.ToUpper(tree)}},
+	} {
+		// the check is under the criteria digest of the node's release, which the acceptance stands on, and its row names its state
+		a := newAcceptRowsOf(t, strings.Repeat("c", 64))
+		a.committed(tree)
+		c.extra["state"] = "ok"
+		a.unitCheck("c_uc", c.extra)
+		if _, err := a.op("accept", "A", a.head); err != nil {
+			t.Fatalf("%s: crw.accept %v", c.what, err)
+		}
+		var aud AuditOutcome
+		if err := json.Unmarshal(a.must("audit", "M"), &aud); err != nil || len(aud.Results) != 1 {
+			t.Fatalf("%s: the audit %+v %v", c.what, aud, err)
+		}
+		r := aud.Results[0]
+		if aud.Mismatch != 0 || r.State == audit.Mismatch || len(r.Checks) == 0 || r.Checks[0].Name != audit.CheckUnitCheck || r.Checks[0].Result != audit.OK {
+			t.Errorf("%s: the audit of the acceptance: mismatch %d, %+v", c.what, aud.Mismatch, r)
 		}
 	}
 }
@@ -4096,4 +4309,71 @@ func TestUnitCheckHoldsWithoutAnAcceptedReceipt(t *testing.T) {
 			t.Errorf("a committed check has a receipt section:\n%s", u.checker.got[0].Prompt)
 		}
 	})
+}
+
+// CRW-1467: a release the scheduler held back for an edit overlap is proven once the lane asked again after it on its path (a later
+// completed or refused crw.release of the same node): the lane went on from that answer, and a resume replays it. The last held-back
+// answer, with no ask after it, is not proven and asks the relay again; the other not-released rules keep their answers.
+func TestHeldBackReleaseAskedAgainOnItsPathStaysProven(t *testing.T) {
+	w := newWorld(t)
+	op := w.lane.Ops()[NameRelease]
+	row := engine.Event{RunID: "r", Kind: engine.KindCall, CallID: "c_b1", Path: "root/9:B", Position: 1, Op: OpRelease, Event: engine.EvCompleted, Seq: 1,
+		Data: map[string]any{"node": "B", "plan": "p", "released": false, "kind": "executor", "reason": "defer:edit_overlap"}}
+	later := func(mut func(*engine.Event)) engine.Event {
+		ev := engine.Event{RunID: "r", Kind: engine.KindCall, CallID: "c_b3", Path: "root/9:B", Position: 3, Op: OpRelease, Event: engine.EvCompleted, Seq: 5,
+			Data: map[string]any{"node": "B", "plan": "p", "released": true, "kind": "executor"}}
+		if mut != nil {
+			mut(&ev)
+		}
+		return ev
+	}
+	superseded := engine.Event{RunID: "r", Kind: engine.KindCall, CallID: "c_b3", Path: "root/9:B", Position: 3, Op: OpRelease, Event: engine.EvSuperseded, Seq: 6}
+	for _, tc := range []struct {
+		name string
+		ev   []engine.Event
+		want bool
+	}{
+		{"a later completed release of the node", []engine.Event{row, later(nil)}, true},
+		{"a later refused release without node data", []engine.Event{row, later(func(ev *engine.Event) {
+			ev.Event, ev.Data = engine.EvRefused, map[string]any{"reason": "op_failed", "detail": "relay down"}
+		})}, true},
+		{"no later row", []engine.Event{row}, false},
+		{"only a later plan read", []engine.Event{row, later(func(ev *engine.Event) { ev.Op = OpPlanRead })}, false},
+		{"a later release on another path", []engine.Event{row, later(func(ev *engine.Event) { ev.Path = "root/9:C" })}, false},
+		{"a later release of another node", []engine.Event{row, later(func(ev *engine.Event) { ev.Data["node"] = "C" })}, false},
+		{"a later release of another run", []engine.Event{row, later(func(ev *engine.Event) { ev.RunID = "r2" })}, false},
+		{"an earlier release on the path", []engine.Event{later(func(ev *engine.Event) { ev.Position, ev.Seq = 0, 0 }), row}, false},
+		// an earlier process refused the ask at position 3 and a resume ran position 1 again: a resume supersedes no refused row, and
+		// that refusal is no ask after the new answer
+		{"a refused release at a later position written before the answer", []engine.Event{later(func(ev *engine.Event) {
+			ev.Event, ev.Data, ev.Seq = engine.EvRefused, map[string]any{"reason": "op_failed"}, 0
+		}), row}, false},
+		{"a later release that was superseded", []engine.Event{row, later(nil), superseded}, false},
+	} {
+		ok, why, err := op.Proven(context.Background(), tc.ev, row)
+		if err != nil || ok != tc.want {
+			t.Errorf("%s: proven %v (%s) %v, want %v", tc.name, ok, why, err, tc.want)
+		}
+	}
+	// the other not-released rules keep their answers, with a later ask on the path or without one
+	asked := []engine.Event{row, later(nil)}
+	for _, tc := range []struct {
+		reason, kind string
+		want         bool
+	}{
+		{"x", "executor", false},
+		{"defer:no_capacity", "executor", false},
+		{ReasonPlanChanged, "executor", true},
+		{"x", "child", true},
+		{"x", "split", true},
+	} {
+		other := row
+		other.Data = map[string]any{"node": "B", "plan": "p", "released": false, "kind": tc.kind, "reason": tc.reason}
+		for _, ev := range [][]engine.Event{nil, asked} {
+			ok, why, err := op.Proven(context.Background(), ev, other)
+			if err != nil || ok != tc.want {
+				t.Errorf("reason %s kind %s (%d rows): proven %v (%s) %v, want %v", tc.reason, tc.kind, len(ev), ok, why, err, tc.want)
+			}
+		}
+	}
 }

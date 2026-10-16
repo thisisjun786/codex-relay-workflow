@@ -42,7 +42,6 @@ const (
 	NameExploreRecord  = "exploreRecord"
 	NameCommit         = "commit"
 	NameVerify         = "verify"
-	NameReview         = "review"
 	NameUnitCheck      = "unitCheck"
 	NameStepRecord     = "stepRecord"
 	NameAccept         = "accept"
@@ -55,9 +54,9 @@ const (
 	NameFinalGate      = "finalGate"
 	NameQAReceipt      = "qaReceipt"
 	NameQACapture      = "qaCapture"
-	NameReviewerFinal  = "reviewerFinal"
 	NameAudit          = "audit"
 	NameArchive        = "archive"
+	NameMergeRequest   = "mergeRequest"
 	NameCrosscheck     = "crosscheck"
 )
 
@@ -80,6 +79,7 @@ const (
 	OpReportUp       = "crw." + NameReportUp
 	OpAudit          = "crw." + NameAudit
 	OpArchive        = "crw." + NameArchive
+	OpMergeRequest   = "crw." + NameMergeRequest
 	// OpCommitName is OpCommit under the name the agent allocator and the engine use for the rows of crw.commit.
 	OpCommitName = OpCommit
 )
@@ -109,6 +109,9 @@ type Deps struct {
 	// nothing. Reporter is the seam of F11; nil records the call and answers that nothing is wired.
 	Threads  Threads
 	Reporter Reporter
+	// PullRequests reads the pull request and its checks for crw.mergeRequest; nil is a Go error of that op. Its request goes to the
+	// Reporter, which must implement MergeRequester.
+	PullRequests PullRequests
 	// Now is the clock of the rows' decided_at; nil is time.Now.
 	Now func() time.Time
 	// Actor is the task that runs the lane (the registered parent of the project).
@@ -156,7 +159,6 @@ func (l *Lane) Ops() map[string]engine.Op {
 		NameExploreRecord:    &exploreRecordOp{l},
 		NameCommit:           &commitOp{l},
 		NameVerify:           &verifyOp{l},
-		NameReview:           &reviewOp{l},
 		NameUnitCheck:        &unitCheckOp{l},
 		NameStepRecord:       &stepRecordOp{l},
 		NameAccept:           &acceptOp{l},
@@ -169,7 +171,6 @@ func (l *Lane) Ops() map[string]engine.Op {
 		NameFinalGate:        &finalGateOp{l},
 		NameQAReceipt:        &qaReceiptOp{l},
 		NameQACapture:        &qaCaptureOp{l},
-		NameReviewerFinal:    &reviewerFinalOp{l},
 		NameAudit:            &auditOp{l},
 		NameArchive:          &archiveOp{l},
 		NameCrosscheck:       &crosscheckOp{l},
@@ -184,6 +185,7 @@ func (l *Lane) Ops() map[string]engine.Op {
 		NameReleasedPlans:    &releasedPlansOp{l},
 		NameRegionsOverlap:   &regionsOverlapOp{l},
 		NameAdmissionRegions: &admissionRegionsOp{l},
+		NameMergeRequest:     &mergeRequestOp{l},
 	}
 }
 

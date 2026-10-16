@@ -149,15 +149,17 @@ func TestOpenRefusesWhatCannotBeOpened(t *testing.T) {
 		t.Errorf("%d pull requests after a refused push, want the first one only", n)
 	}
 	for name, args := range map[string][]string{
-		"no repo":       {"open", "--head", "crw/m1", "--title", "t", "--issue", "o/r#1"},
-		"no issue":      {"open", "--repo", "o/r", "--head", "crw/m1", "--title", "t"},
-		"bad issue":     {"open", "--repo", "o/r", "--head", "crw/m1", "--title", "t", "--issue", "#1"},
-		"head is base":  {"open", "--repo", "o/r", "--head", "dev", "--title", "t", "--issue", "o/r#1"},
-		"body and file": {"open", "--repo", "o/r", "--head", "crw/m1", "--title", "t", "--issue", "o/r#1", "--body", "x", "--body-file", "y"},
-		"no command":    {},
-		"other command": {"merge"},
-		"show no ref":   {"show"},
-		"show bad ref":  {"show", "--pr", "o/r"},
+		"no repo":             {"open", "--head", "crw/m1", "--title", "t", "--issue", "o/r#1"},
+		"no issue":            {"open", "--repo", "o/r", "--head", "crw/m1", "--title", "t"},
+		"bad issue":           {"open", "--repo", "o/r", "--head", "crw/m1", "--title", "t", "--issue", "#1"},
+		"head is base":        {"open", "--repo", "o/r", "--head", "dev", "--title", "t", "--issue", "o/r#1"},
+		"body and file":       {"open", "--repo", "o/r", "--head", "crw/m1", "--title", "t", "--issue", "o/r#1", "--body", "x", "--body-file", "y"},
+		"no command":          {},
+		"branch no milestone": {"branch", "--checkout", g.checkout},
+		"branch no checkout":  {"branch", "--milestone", "m1"},
+		"other command":       {"merge"},
+		"show no ref":         {"show"},
+		"show bad ref":        {"show", "--pr", "o/r"},
 		// --remote is a remote name: an option-shaped or path-shaped value is refused before anything is pushed
 		"remote starts with a dash": {"open", "--repo", "o/r", "--head", "crw/m1", "--title", "t", "--issue", "o/r#1", "--push", g.checkout, "--remote", "--receive-pack=x"},
 		"remote is a path":          {"open", "--repo", "o/r", "--head", "crw/m1", "--title", "t", "--issue", "o/r#1", "--push", g.checkout, "--remote", "/tmp/x"},
@@ -307,5 +309,22 @@ func TestOpenPushesTheCheckoutItNamesWhateverGitDirTheEnvironmentHolds(t *testin
 				t.Errorf("answer %s (%v), want pushed %s", out, err, tip)
 			}
 		})
+	}
+}
+
+// TestUsageNamesTheBranchCommand (CRW-1440): the usage, the help and the two command-list messages name `branch` next to open and show.
+func TestUsageNamesTheBranchCommand(t *testing.T) {
+	want := "crw flow pr branch --checkout DIR --milestone M [--base BRANCH] [--name BRANCH]"
+	if !strings.Contains(Usage, want) {
+		t.Errorf("Usage does not name %q:\n%s", want, Usage)
+	}
+	code, out, _ := run(t, deps(t, nil, nil), "--help")
+	if code != 0 || !strings.Contains(out, "  branch ") {
+		t.Errorf("help: exit %d, no branch paragraph:\n%s", code, out)
+	}
+	for name, args := range map[string][]string{"no command": {}, "other command": {"merge"}} {
+		if code, _, errOut := run(t, deps(t, nil, nil), args...); code != 2 || !strings.Contains(errOut, "open, show or branch") {
+			t.Errorf("%s: exit %d %q, want 2 naming open, show or branch", name, code, errOut)
+		}
 	}
 }

@@ -49,6 +49,8 @@ const (
 	KindProjectBlocked         = "project_blocked"
 	KindProjectDecisionRequest = "project_decision_request"
 	KindJunDecisionRequest     = "jun_decision_request"
+	// KindMergeRequest is the request to the parent to merge the pull request of a closed milestone (crw.mergeRequest, CRW-1457).
+	KindMergeRequest = "merge_request"
 )
 
 // ForeignSeqBase is the first sequence number a command (a process that is not the run) gives a flow_events row. The journal of a run

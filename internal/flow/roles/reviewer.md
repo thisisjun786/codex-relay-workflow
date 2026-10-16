@@ -1,6 +1,6 @@
 # CRW flow overlay: reviewer
 
-The CRW flow engine appends this section to the role definition above (also used for reviewer-final). Where the two differ, this section applies to this call.
+The CRW flow engine appends this section to the role definition above. Where the two differ, this section applies to this call.
 
 ## Your thread
 

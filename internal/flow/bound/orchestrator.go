@@ -16,21 +16,22 @@ import (
 // holds the line of one live run, a run whose process holds its run lock (the caller tells, Live); the open line of a run whose
 // process is gone is closed before another run's is written, and a second start while the first run lives is not bound.
 
-// OrchestratorRoles are the seven roles whose pairs an orchestrator line carries, in the order the flow's role table lists them
-// (the critic, CRW-1434, last).
-var OrchestratorRoles = []string{"architect", "executor", "executor-t1", "reviewer", "reviewer-final", "explorer", "critic"}
+// OrchestratorRoles are the six roles whose pairs an orchestrator line carries, in the order the flow's role table lists them
+// (the critic, CRW-1434, last). A line an earlier binary wrote may also carry a pair of the retired reviewer-final key (CRW-1450);
+// it is read and never applied, since no spawn names that role.
+var OrchestratorRoles = []string{"architect", "executor", "executor-t1", "reviewer", "explorer", "critic"}
 
 // optionalOrchestratorRoles are the orchestrator roles a line may leave out: a line the binary before CRW-1434 wrote carries the
 // six other pairs and no critic, and stays readable (Validate).
 var optionalOrchestratorRoles = map[string]bool{"critic": true}
 
-// AgentTypeOf is the spawn_agent agent_type of a role: executor-t1 spawns an executor, reviewer-final and critic a reviewer
-// (the critic has no agent definition of its own), every other role its own name.
+// AgentTypeOf is the spawn_agent agent_type of a role: executor-t1 spawns an executor, the critic a reviewer (it has no agent
+// definition of its own), every other role its own name.
 func AgentTypeOf(role string) string {
 	switch role {
 	case "executor-t1":
 		return "executor"
-	case "reviewer-final", "critic":
+	case "critic":
 		return "reviewer"
 	}
 	return role
@@ -48,7 +49,7 @@ func RoleOfAgentType(agentType string) string {
 	return ""
 }
 
-// IsOrchestratorRole reports whether role is one of the seven.
+// IsOrchestratorRole reports whether role is one of the six.
 func IsOrchestratorRole(role string) bool {
 	for _, r := range OrchestratorRoles {
 		if r == role {
@@ -80,7 +81,7 @@ type OrchestratorBinding struct {
 	Writer *Writer
 	// RunID is the run, Thread its owner thread, Digest the digest of the role pairs the run pinned (the line's policyDigest).
 	RunID, Thread, Digest string
-	// Pairs are the seven role pairs.
+	// Pairs are the six role pairs.
 	Pairs map[string]Pair
 	// Live reports whether the process of a run holds its run lock; nil takes every other run for one without a process.
 	Live func(run string) bool

@@ -4,7 +4,6 @@
     "executor": {"model": "anthropic/claude-haiku-5", "reasoningEffort": "xhigh"},
     "executor-t1": {"model": "anthropic/claude-sonnet-5-5", "reasoningEffort": "xhigh"},
     "reviewer": {"model": "gpt-6.1-sol", "reasoningEffort": "high"},
-    "reviewer-final": {"model": "gpt-6.1-sol", "reasoningEffort": "xhigh"},
     "explorer": {"model": "anthropic/claude-haiku-5", "reasoningEffort": "high"}
   }
 }

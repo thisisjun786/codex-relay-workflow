@@ -37,6 +37,22 @@ type Comment struct {
 	Body   string
 }
 
+// FakeCheckRun is a check run of a head commit, in the fields the adapter reads: Status is "queued", "in_progress" or "completed";
+// Conclusion is the result of a completed one.
+type FakeCheckRun struct {
+	Name, Status, Conclusion, HTMLURL string
+}
+
+// FakeStatus is a commit status of a head commit; State is "success", "pending", "failure" or "error".
+type FakeStatus struct {
+	Context, State, TargetURL string
+}
+
+type fakeChecks struct {
+	runs     []FakeCheckRun
+	statuses []FakeStatus
+}
+
 // Server is the fake.
 type Server struct {
 	Repo string
@@ -52,6 +68,7 @@ type Server struct {
 	comments []Comment
 	lastID   int
 	requests []string
+	checks   map[string]fakeChecks
 }
 
 // New starts the fake for the repository "owner/name"; it stops with the test.
@@ -166,14 +183,52 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if m := checksRoute.FindStringSubmatch(path); r.Method == http.MethodGet && repoOK(m) {
+		s.mu.Lock()
+		set, ok := s.checks[m[2]]
+		s.mu.Unlock()
 		if m[3] == "check-runs" {
-			reply(w, http.StatusOK, map[string]any{"total_count": 0, "check_runs": []any{}})
+			runs := []any{}
+			for _, r := range set.runs {
+				run := map[string]any{"name": r.Name, "status": r.Status, "html_url": r.HTMLURL}
+				if r.Conclusion != "" {
+					run["conclusion"] = r.Conclusion
+				} else {
+					run["conclusion"] = nil
+				}
+				runs = append(runs, run)
+			}
+			reply(w, http.StatusOK, map[string]any{"total_count": len(runs), "check_runs": runs})
 		} else {
-			reply(w, http.StatusOK, map[string]any{"state": "pending", "statuses": []any{}})
+			statuses := []any{}
+			for _, st := range set.statuses {
+				statuses = append(statuses, map[string]any{"context": st.Context, "state": st.State, "target_url": st.TargetURL})
+			}
+			reply(w, http.StatusOK, map[string]any{"state": combinedState(ok, set.statuses), "statuses": statuses})
 		}
 		return
 	}
 	reply(w, http.StatusNotFound, map[string]any{"message": "Not Found: " + r.Method + " " + path})
+}
+
+// combinedState is the "state" GitHub gives for the statuses of a commit: pending when there is none (and for a head nothing was
+// set for), failure when one failed or errored, pending when one is pending, else success.
+func combinedState(set bool, statuses []FakeStatus) string {
+	if !set || len(statuses) == 0 {
+		return "pending"
+	}
+	out := "success"
+	for _, st := range statuses {
+		switch st.State {
+		case "success":
+		case "pending":
+			if out == "success" {
+				out = "pending"
+			}
+		default:
+			return "failure"
+		}
+	}
+	return out
 }
 
 // pullJSON is the GitHub shape of p; the caller holds the lock.
@@ -255,4 +310,20 @@ func (s *Server) Requests() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]string(nil), s.requests...)
+}
+
+// SetChecks sets the check runs and commit statuses the fake answers for the commit sha (40 lowercase hex characters, as the
+// adapter asks for the head it read). It replaces what was set for sha; no runs and no statuses clear it. A sha nothing was set
+// for answers no check run and a pending status, as the fake always did.
+func (s *Server) SetChecks(sha string, runs []FakeCheckRun, statuses []FakeStatus) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(runs) == 0 && len(statuses) == 0 {
+		delete(s.checks, sha)
+		return
+	}
+	if s.checks == nil {
+		s.checks = map[string]fakeChecks{}
+	}
+	s.checks[sha] = fakeChecks{runs: append([]FakeCheckRun(nil), runs...), statuses: append([]FakeStatus(nil), statuses...)}
 }

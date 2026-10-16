@@ -48,7 +48,7 @@ func TestDesignAuditBeforeFirstExecutor(t *testing.T) {
 		t.Fatalf("order: audit %d, ledger %d, release %d, executor %d", audit, ledger, release, executor)
 	}
 	row := l.Rows(ops.OpDesignAudit)[0]
-	arch, rev := str(row.Data, "architect_model"), str(row.Data, "reviewer_model")
+	arch, rev := str(row.Data, "architect_model"), str(row.Data, "critic_model")
 	if arch == "" || rev == "" || execution.ModelFamily(arch) == execution.ModelFamily(rev) {
 		t.Errorf("the audit was not independent: architect %q, auditor %q", arch, rev)
 	}

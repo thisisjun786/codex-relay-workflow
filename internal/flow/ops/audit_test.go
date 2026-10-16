@@ -17,8 +17,9 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 )
 
-// The audit and the archive of a milestone close (CRW-1206): the reviewer threads of the acceptances are archived only when the
-// audit of their acceptance passed.
+// The audit of a milestone's acceptances and the archive of their reviewer threads (CRW-1206): a thread is archived only when the audit
+// of its acceptance passed. The project lane's close audits the acceptances and archives nothing (CRW-1447); crw.archive stays an op of the
+// lane that a script may call, and these tests call it directly.
 
 // threadHost is the host of the reviewer threads: what it lists for a thread, and the archives it was asked for.
 type threadHost struct {

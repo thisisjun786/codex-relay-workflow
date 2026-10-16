@@ -114,7 +114,7 @@ func TestDecideResumesOnlyOnAppliedRow(t *testing.T) {
 // The host refuses thread/start of the first executor (a configuration fault), the orchestrator retries, and the replacement
 // executor builds the head that is unit-checked and accepted: the refused attempt never created a thread and wrote nothing, so the
 // acceptance is audited ok - its pair is the replacement's (CRW-1206 correction, d5). The acceptance rests on a unit check
-// (CRW-1465), which has no thread: nothing is archived.
+// (CRW-1465), which has no thread, and the close archives nothing (CRW-1447).
 func TestAuditOfARecoveredNodeIgnoresTheRefusedExecutorAttempt(t *testing.T) {
 	l := NewLab(t, oneNode()...)
 	var mu sync.Mutex
@@ -223,7 +223,7 @@ func TestMilestoneCloseRerunsAfterLaneSuffix(t *testing.T) {
 	}
 	want := []live{{"crw.integrate", lostPath}, {"crw.finalGate", "root"}, {"crw.verify", "root"}, {"crw.finalGate", "root"}, {"crw.crosscheck", "root"},
 		{"crw.milestoneClose", "root"}, {"crw.currentDesign", "root"}, {"crw.spawnDecision", "root"}, {"crw.reflection", "root"},
-		{"crw.replanSignals", "root"}, {"crw.audit", "root"}, {"crw.archive", "root"}, {"crw.reportUp", "root"}, {"crw.spawnDecision", "root"}}
+		{"crw.replanSignals", "root"}, {"crw.audit", "root"}, {"crw.reportUp", "root"}, {"crw.spawnDecision", "root"}}
 	if !slices.Equal(ranLive, want) {
 		t.Errorf("live operations %v, want %v", ranLive, want)
 	}
@@ -368,7 +368,7 @@ func TestMilestoneCloseRunsAgainWhenTheTargetMovedOn(t *testing.T) {
 		}
 	}
 	if !slices.Equal(live, []string{"crw.finalGate", "crw.verify", "crw.finalGate", "crw.crosscheck", "crw.milestoneClose", "crw.currentDesign", "crw.spawnDecision", "crw.reflection",
-		"crw.replanSignals", "crw.audit", "crw.archive", "crw.reportUp", "crw.spawnDecision"}) {
+		"crw.replanSignals", "crw.audit", "crw.reportUp", "crw.spawnDecision"}) {
 		t.Errorf("live operations %v", live)
 	}
 	if turns := turnsSince(l, before); len(turns) != 1 || labelOf(l, turns[0].call) != "reflection:M1" {

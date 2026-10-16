@@ -13,7 +13,7 @@ import (
 
 const threadB = "0190a000-0000-7000-8000-00000000000b"
 
-// sixPairs are the pairs of every orchestrator role (seven since CRW-1434; the name is older).
+// sixPairs are the pairs of every orchestrator role (six: the critic came with CRW-1434, reviewer-final left with CRW-1450).
 func sixPairs(model string) map[string]Pair {
 	out := map[string]Pair{}
 	for _, role := range OrchestratorRoles {
@@ -23,12 +23,23 @@ func sixPairs(model string) map[string]Pair {
 }
 
 func TestOrchestratorLineCarriesTheSixRolePairs(t *testing.T) {
-	if strings.Join(OrchestratorRoles, ",") != "architect,executor,executor-t1,reviewer,reviewer-final,explorer,critic" {
-		t.Fatalf("the seven roles: %v", OrchestratorRoles)
+	if strings.Join(OrchestratorRoles, ",") != "architect,executor,executor-t1,reviewer,explorer,critic" {
+		t.Fatalf("the six roles: %v", OrchestratorRoles)
 	}
 	good := Line{RunID: "run-1", ThreadID: threadA, Kind: KindOrchestrator, HelperPairs: sixPairs("m"), PolicyDigest: "sha256:x"}
 	if err := good.Validate(threadA); err != nil {
-		t.Fatalf("a line with the seven pairs: %v", err)
+		t.Fatalf("a line with the six pairs: %v", err)
+	}
+	// reviewer-final is a retired role key (CRW-1450): no orchestrator role, no agent_type mapping; a line an earlier binary wrote with
+	// its pair still validates, and the pair is never applied.
+	if IsOrchestratorRole("reviewer-final") || AgentTypeOf("reviewer-final") != "reviewer-final" {
+		t.Fatalf("reviewer-final is still an orchestrator role: %v %q", IsOrchestratorRole("reviewer-final"), AgentTypeOf("reviewer-final"))
+	}
+	older := good
+	older.HelperPairs = sixPairs("m")
+	older.HelperPairs["reviewer-final"] = Pair{Model: "m-reviewer-final", Effort: "xhigh"}
+	if err := older.Validate(threadA); err != nil {
+		t.Fatalf("a line of an earlier binary with a reviewer-final pair: %v", err)
 	}
 	for _, role := range OrchestratorRoles {
 		l := good
@@ -185,8 +196,8 @@ func TestMarkerOpIsTheFirstLine(t *testing.T) {
 	}
 }
 
-// CRW-1434 (D-7): the critic is the seventh role of an orchestrator line, and an optional one. A line the earlier binary wrote
-// carries the six old pairs and no critic; it stays readable, so the spawn hook keeps the run's pairs and ledger rows until the
+// CRW-1434 (D-7): the critic is the last role of an orchestrator line, and an optional one. A line the earlier binary wrote
+// carries the six old pairs (reviewer-final among them, a retired key since CRW-1450) and no critic; it stays readable, so the spawn hook keeps the run's pairs and ledger rows until the
 // run rebinds. A critic pair that is present follows the same rule as every other role's.
 func TestOrchestratorLineWithoutACriticPairStillValidates(t *testing.T) {
 	if n := len(OrchestratorRoles); n == 0 || OrchestratorRoles[n-1] != "critic" {
@@ -206,13 +217,13 @@ func TestOrchestratorLineWithoutACriticPairStillValidates(t *testing.T) {
 	if err := six.Validate(threadA); err != nil {
 		t.Fatalf("a line with the six old pairs and no critic: %v", err)
 	}
-	seven := six
-	seven.HelperPairs = sixPairs("m")
-	if _, ok := seven.HelperPairs["critic"]; !ok || len(seven.HelperPairs) != 7 {
-		t.Fatalf("the pairs of the orchestrator roles: %v", seven.HelperPairs)
+	current := six
+	current.HelperPairs = sixPairs("m")
+	if _, ok := current.HelperPairs["critic"]; !ok || len(current.HelperPairs) != 6 {
+		t.Fatalf("the pairs of the orchestrator roles: %v", current.HelperPairs)
 	}
-	if err := seven.Validate(threadA); err != nil {
-		t.Fatalf("a line with the seven pairs: %v", err)
+	if err := current.Validate(threadA); err != nil {
+		t.Fatalf("a line with the six pairs: %v", err)
 	}
 	effortOnly := six
 	effortOnly.HelperPairs = sixPairs("m")
