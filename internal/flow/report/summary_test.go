@@ -432,9 +432,10 @@ func TestSummaryDuplicateIntentRowsSendAndSettleOnce(t *testing.T) {
 	if len(intents) != 1 {
 		t.Fatalf("intents %+v", intents)
 	}
-	// the other writer's copy of the same intent
+	// the other writer's copy of the same intent, in other words
 	if _, err := (ForeignAppender{Store: w.st, Run: testRun, Now: fixedNow}).Append(ctx, NewRow{Kind: KindSummaryNotice, Payload: map[string]any{
-		"summary_id": intents[0].Str("summary_id"), "plan": testPlan, "document": testDocument, "logical_id": intents[0].Str("logical_id"), "run": testRun}}); err != nil {
+		"summary_id": intents[0].Str("summary_id"), "plan": testPlan, "document": testDocument, "logical_id": intents[0].Str("logical_id"), "run": testRun,
+		"text": "the other writer's words"}}); err != nil {
 		t.Fatal(err)
 	}
 	if n := len(w.rows(KindSummaryNotice)); n != 2 {
@@ -450,6 +451,13 @@ func TestSummaryDuplicateIntentRowsSendAndSettleOnce(t *testing.T) {
 	}
 	if n := len(w.rows(KindSummarySettled)); n != 1 {
 		t.Errorf("%d settlements", n)
+	}
+	// both sends carry the text of the earliest row, never the later copy's
+	first := intents[0].Str("text")
+	for i, p := range w.sender.parentSent() {
+		if first == "" || p.Text != first {
+			t.Errorf("send %d carried %q, want the earliest row's text %q", i, p.Text, first)
+		}
 	}
 }
 
@@ -492,18 +500,177 @@ func TestAForeignCommandReconcilesTheSummaryOfTheOrchestratorsRun(t *testing.T) 
 	}
 }
 
-// CRW-1478 split (CRW-1548): the summary notice keeps the words dev 7f21f0069 sends. The flow composes it again on every reconcile
-// and resends it under the fixed logical id summary-<id>, and the manage outbox keys that id to the sha256 of the text it first
-// carried, so a retry in other words of a send an earlier build left undetermined is refused locally. The notice names the 자식
-// (project session) only once CRW-1548 settles such a retry; until then its one bare role word is the summary.go line of
-// testdata/role_words_baseline.txt.
-func TestSummaryNoticeKeepsItsWording(t *testing.T) {
+// CRW-1548: the summary notice names the 자식 (project session), the layer the project's registered owner is, and no bare role word. The
+// words every earlier build sent stay byte for byte in summaryNoticeTextV0, the text a summary_notice row without a text of its own is
+// sent in, and its one bare role word is the summary.go line of testdata/role_words_baseline.txt.
+func TestSummaryNoticeNamesTheLayer(t *testing.T) {
 	text := SummaryNoticeText("sum-1", "plan-1", "doc-1")
-	want := "[crw flow] summary_owed summary=sum-1 plan=plan-1 document=doc-1\nThe plan summary is owed to the document. You are the parent of the project: take the newest entry (`crw relay dag-summary-status --plan plan-1`), claim it (`dag-summary-claim`), write the document with your Linear connector, read it back and complete it (`dag-summary-complete`). The run and the manager do not claim."
-	if text != want {
-		t.Errorf("the summary notice changed its words; a retry under summary-<id> would be refused (CRW-1548):\n got %q\nwant %q", text, want)
+	if !strings.Contains(text, "자식") {
+		t.Errorf("the summary notice does not name the 자식: %q", text)
 	}
-	if hits := layername.Find(text); len(hits) != 1 || hits[0].Word != "parent" {
-		t.Errorf("the notice carries the bare role words %v, want the one \"parent\" its baseline line counts", hits)
+	if hits := layername.Find(text); len(hits) != 0 {
+		t.Errorf("the summary notice carries the bare role words %v", hits)
+	}
+	for _, want := range []string{"summary_owed", "summary=sum-1", "plan=plan-1", "document=doc-1", "`crw relay dag-summary-status --plan plan-1`", "`dag-summary-claim`", "`dag-summary-complete`"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the summary notice lacks %q: %q", want, text)
+		}
+	}
+	legacy := summaryNoticeTextV0("sum-1", "plan-1", "doc-1")
+	want := "[crw flow] summary_owed summary=sum-1 plan=plan-1 document=doc-1\nThe plan summary is owed to the document. You are the parent of the project: take the newest entry (`crw relay dag-summary-status --plan plan-1`), claim it (`dag-summary-claim`), write the document with your Linear connector, read it back and complete it (`dag-summary-complete`). The run and the manager do not claim."
+	if legacy != want {
+		t.Errorf("the words of the earlier builds changed; a retry of a row they wrote would be refused locally (CRW-1548):\n got %q\nwant %q", legacy, want)
+	}
+	if hits := layername.Find(legacy); len(hits) != 1 || hits[0].Word != "parent" {
+		t.Errorf("the earlier words carry the bare role words %v, want the one \"parent\" its baseline line counts", hits)
+	}
+}
+
+// summaryWorld is a world whose plan owes a summary entry; enqueue asks for it and returns its summary id.
+func summaryWorld(t *testing.T) *world {
+	t.Helper()
+	w := newWorld(t)
+	w.agentNode("A")
+	w.documentRow()
+	w.verdict("A", "needs_changes", "the guard is missing")
+	return w
+}
+
+func (w *world) enqueue() string {
+	w.t.Helper()
+	enq, err := w.sched.EnqueueSummary(ctx, testPlan, testOrch, testDocument, false)
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	return enq.Entry.SummaryID
+}
+
+// intentPayload is the payload of a summary_notice row for id; text "" leaves the text member out, as every earlier build wrote it.
+func intentPayload(id, text string) map[string]any {
+	p := map[string]any{"summary_id": id, "plan": testPlan, "document": testDocument, "logical_id": "summary-" + id, "run": testRun}
+	if text != "" {
+		p["text"] = text
+	}
+	return p
+}
+
+func (w *world) summaryEnv(rows Appender) SummaryEnv {
+	return SummaryEnv{Store: w.st, Sched: w.sched, Rows: rows, Run: testRun, Plan: testPlan, Document: testDocument, Actor: testOrch, Sender: w.sender,
+		Wake: func(context.Context, string) bool { return true }}
+}
+
+// CRW-1548: the manage outbox keys summary-<id> to the sha256 of the first text it carried, so a notice is always sent in the text its
+// intent row holds, never in words composed again: on the first reconcile and on the one after a send that got no answer. The row the
+// reconcile writes carries the text it sends.
+func TestSummaryNoticeSendsTheTextItsIntentHolds(t *testing.T) {
+	t.Run("the row's text is what goes", func(t *testing.T) {
+		w := summaryWorld(t)
+		id := w.enqueue()
+		rows := ForeignAppender{Store: w.st, Run: testRun, Now: fixedNow}
+		if wrote, _, err := rows.AppendOnce(ctx, NewRow{Kind: KindSummaryNotice, Payload: intentPayload(id, "X")}, "summary_id"); err != nil || !wrote {
+			t.Fatalf("the intent: %v %v", wrote, err)
+		}
+		env := w.summaryEnv(rows)
+		w.sender.replyParent = func(ParentSend) (SendResult, error) { return SendResult{}, errors.New("no answer") }
+		if out, err := ReconcileSummary(ctx, env); err != nil || out.Intents != 0 || out.Sent != 1 || out.Settled != 0 {
+			t.Fatalf("the first reconcile: %+v %v", out, err)
+		}
+		w.sender.replyParent = nil
+		if out, err := ReconcileSummary(ctx, env); err != nil || out.Sent != 1 || out.Settled != 1 {
+			t.Fatalf("the second reconcile: %+v %v", out, err)
+		}
+		sent := w.sender.parentSent()
+		if len(sent) != 2 {
+			t.Fatalf("%d sends, want 2", len(sent))
+		}
+		for i, p := range sent {
+			if p.Text != "X" || p.LogicalID != "summary-"+id {
+				t.Errorf("send %d carried %q under %q, want the intent's text \"X\" under summary-%s", i, p.Text, p.LogicalID, id)
+			}
+		}
+	})
+	for _, c := range []struct {
+		name string
+		rows func(w *world) Appender
+	}{
+		{"a command's row", func(w *world) Appender { return ForeignAppender{Store: w.st, Run: testRun, Now: fixedNow} }},
+		{"the run's journal", func(w *world) Appender { return JournalAppender{Journal: w.journal, RunID: testRun, Store: w.st} }},
+	} {
+		t.Run("the written row carries what is sent: "+c.name, func(t *testing.T) {
+			w := summaryWorld(t)
+			out, err := ReconcileSummary(ctx, w.summaryEnv(c.rows(w)))
+			if err != nil || out.Intents != 1 || out.Sent != 1 || out.Settled != 1 {
+				t.Fatalf("outcome %+v %v", out, err)
+			}
+			intents := w.rows(KindSummaryNotice)
+			sent := w.sender.parentSent()
+			if len(intents) != 1 || len(sent) != 1 {
+				t.Fatalf("intents %d sends %d", len(intents), len(sent))
+			}
+			if got := intents[0].Str("text"); got == "" || got != sent[0].Text || got != SummaryNoticeText(out.SummaryID, testPlan, testDocument) {
+				t.Errorf("the intent holds %q, the send carried %q", got, sent[0].Text)
+			}
+		})
+	}
+}
+
+// racingAppender is the row writer of a run that loses the race for one summary id's intent (R1-4): on its first AppendOnce of a
+// summary_notice, another writer stores its own intent for the same summary id first, so the write that follows finds it and writes nothing.
+type racingAppender struct {
+	inner, other ForeignAppender
+	// text is the other writer's notice text; "" writes the row as the earlier builds did, without one
+	text  string
+	raced bool
+}
+
+func (a *racingAppender) Append(ctx context.Context, row NewRow) (int64, error) {
+	return a.inner.Append(ctx, row)
+}
+
+func (a *racingAppender) AppendOnce(ctx context.Context, row NewRow, key string) (bool, int64, error) {
+	if row.Kind == KindSummaryNotice && !a.raced {
+		a.raced = true
+		id, _ := row.Payload["summary_id"].(string)
+		if _, err := a.other.Append(ctx, NewRow{Kind: KindSummaryNotice, Payload: intentPayload(id, a.text)}); err != nil {
+			return false, 0, err
+		}
+	}
+	return a.inner.AppendOnce(ctx, row, key)
+}
+
+// R1-4: another writer stores the intent of the newest summary id between this reconcile's read of the rows and its own write. The notice
+// goes once, in the other writer's text (the earlier words when that row holds none), never in the words this build composes, and it
+// settles once with no summary_notice_refused escalation.
+func TestSummaryIntentWrittenByAnotherWriterFirstSendsItsText(t *testing.T) {
+	for _, c := range []struct{ name, text string }{{"its row holds a text", "T1: the summary is owed, in the other writer's words"}, {"its row holds none", ""}} {
+		t.Run(c.name, func(t *testing.T) {
+			w := summaryWorld(t)
+			rows := &racingAppender{inner: ForeignAppender{Store: w.st, Run: testRun, Now: fixedNow}, other: ForeignAppender{Store: w.st, Run: testRun, Now: fixedNow}, text: c.text}
+			out, err := ReconcileSummary(ctx, w.summaryEnv(rows))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !rows.raced || out.Intents != 0 || out.Sent != 1 || out.Settled != 1 {
+				t.Fatalf("outcome %+v (raced %v), want no intent of its own, one send and one settlement", out, rows.raced)
+			}
+			want := c.text
+			if want == "" {
+				want = summaryNoticeTextV0(out.SummaryID, testPlan, testDocument)
+			}
+			sent := w.sender.parentSent()
+			if len(sent) != 1 || sent[0].Text != want {
+				t.Fatalf("sent %+v, want one send of %q", sent, want)
+			}
+			if c.text != "" && sent[0].Text == SummaryNoticeText(out.SummaryID, testPlan, testDocument) {
+				t.Error("the notice went in the words this build composes")
+			}
+			settled := w.rows(KindSummarySettled)
+			if len(settled) != 1 || settled[0].Str("result") != SettledAccepted {
+				t.Errorf("settled %+v, want accepted once", settled)
+			}
+			if esc := w.rows(engine.EvEscalation); len(esc) != 0 {
+				t.Errorf("escalations %+v", esc)
+			}
+		})
 	}
 }
