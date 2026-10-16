@@ -442,3 +442,44 @@ func TestRollbackIsAskedInRisksAndCheckedThere(t *testing.T) {
 		t.Error("the architect overlay does not ask for the rollback in risks, which the critic checks")
 	}
 }
+
+// CRW-1497: the role prompt (definition and overlay) is the fixed head of every call of the role, the same bytes on every run: it
+// names no date, time, absolute path, run, call or turn of a run. The values of a call are in its task packet after "## Task".
+func TestRoleHeadHasNoPerRunValues(t *testing.T) {
+	perRun := map[string]*regexp.Regexp{
+		"a date":                regexp.MustCompile(`\b20\d\d-\d\d-\d\d\b`),
+		"a clock time":          regexp.MustCompile(`\b\d\d:\d\d:\d\d\b`),
+		"an absolute path":      regexp.MustCompile(`(^|[\s"'(=])/(home|state|scratch|tmp|var|Users|opt|w)/`),
+		"a run id":              regexp.MustCompile(`\brun-[0-9a-f]{6,}\b`),
+		"a call id":             regexp.MustCompile(`\bc_[0-9a-f]{6,}\b`),
+		"a step marker":         regexp.MustCompile(`/t\d+-a\d+\b`),
+		"a crw-flow-op marker":  regexp.MustCompile(`crw-flow-op: \S`),
+		"a thread or agent id":  regexp.MustCompile(`\b(thread|agent)-[0-9a-f]{8,}\b`),
+		"a full commit sha":     regexp.MustCompile(`\b[0-9a-f]{40}\b`),
+		"a home directory form": regexp.MustCompile(`~/`),
+	}
+	type variant struct {
+		role string
+		opts Options
+	}
+	var variants []variant
+	for _, name := range Names {
+		variants = append(variants, variant{name, Options{}})
+	}
+	variants = append(variants, variant{"executor", Options{QA: true}})
+	for _, v := range variants {
+		prompt, err := Prompt(v.role, v.opts)
+		if err != nil {
+			t.Fatalf("%s (qa %v): %v", v.role, v.opts.QA, err)
+		}
+		again, _ := Prompt(v.role, v.opts)
+		if again != prompt {
+			t.Errorf("%s (qa %v): two builds of the prompt differ", v.role, v.opts.QA)
+		}
+		for what, re := range perRun {
+			if m := re.FindString(prompt); m != "" {
+				t.Errorf("%s (qa %v): the role prompt names %s (%q), a per-run value", v.role, v.opts.QA, what, m)
+			}
+		}
+	}
+}

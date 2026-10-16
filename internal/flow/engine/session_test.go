@@ -1333,3 +1333,102 @@ func countOf(list []string, v string) int {
 	}
 	return n
 }
+
+// CRW-1497: everything of a task packet before its "## Task" heading is the same bytes for the same role and variant, so a model
+// that caches prompt prefixes reuses it from one call to the next; the values of the call (its marker, P and the input) come after
+// the heading. Two calls of each role variant (with different P, markers and inputs) are compared, and a repair spawn too.
+func TestSessionPacketHeadIsTheSameBytesForTheSameRoleCalledTwice(t *testing.T) {
+	const task = "\n## Task\n"
+	headOf := func(t *testing.T, what, packet string) string {
+		t.Helper()
+		i := strings.Index(packet, task)
+		if i < 0 {
+			t.Fatalf("%s: the packet has no %q heading:\n%s", what, task, packet)
+		}
+		return packet[:i]
+	}
+	k := newSessionKit(t)
+	k.h.cfg.Tools = testRepositoryTools()
+	k.orch.answer = func(st Step, _ string, _ int) orchAnswer {
+		if st.Role == "executor" && !strings.Contains(st.Workspace, "/call/") {
+			return orchAnswer{edit: "P:" + st.Op}
+		}
+		return orchAnswer{}
+	}
+	value[[]string](t, k.h.run(`
+const e1 = await agent.call('build node n1', { agentType: 'executor', label: 'exe1', node: 'n1', schema: RECEIPT })
+const e2 = await agent.call('build node n2 another way', { agentType: 'executor', label: 'exe2', node: 'n2', schema: RECEIPT })
+const q1 = await agent.call('capture the surface', { agentType: 'executor', label: 'qa1', qa: true, head: 'h-gate', schema: RECEIPT })
+const q2 = await agent.call('capture the other surface', { agentType: 'executor', label: 'qa2', qa: true, head: 'h-gate2', schema: RECEIPT })
+const r1 = await agent.call('review the head', { agentType: 'reviewer', label: 'rev1', head: 'h-review', schema: VERDICT })
+const r2 = await agent.call('review the other head', { agentType: 'reviewer', label: 'rev2', head: 'h-review2', schema: VERDICT })
+return [e1.status, e2.status, q1.status, q2.status, r1.status, r2.status]`))
+	packets := map[string]string{}
+	markers := map[string]string{}
+	cwds := map[string]string{}
+	for _, label := range []string{"exe1", "exe2", "qa1", "qa2", "rev1", "rev2"} {
+		var step Event
+		for _, r := range k.rowsOf(label) {
+			if r.Event == EvStepPublished {
+				step = r
+				break
+			}
+		}
+		raw, err := os.ReadFile(rowStr(step.Data, "packet"))
+		if err != nil {
+			t.Fatalf("%s: packet: %v", label, err)
+		}
+		packets[label], markers[label], cwds[label] = string(raw), rowStr(step.Data, "marker"), rowStr(step.Data, "workspace")
+	}
+	for _, pair := range [][2]string{{"exe1", "exe2"}, {"qa1", "qa2"}, {"rev1", "rev2"}} {
+		a, b := pair[0], pair[1]
+		if markers[a] == markers[b] || cwds[a] == cwds[b] || cwds[a] == "" {
+			t.Fatalf("%s and %s do not differ in marker and P (%s %s, %s %s)", a, b, markers[a], markers[b], cwds[a], cwds[b])
+		}
+		ha, hb := headOf(t, a, packets[a]), headOf(t, b, packets[b])
+		if ha != hb {
+			t.Errorf("the heads of %s and %s differ:\n%s\n----\n%s", a, b, ha, hb)
+		}
+		for _, label := range pair {
+			head, tail := headOf(t, label, packets[label]), packets[label][len(headOf(t, label, packets[label])):]
+			for _, v := range []string{markers[label], cwds[label]} {
+				if strings.Contains(head, v) {
+					t.Errorf("%s: the head names the per-call value %q:\n%s", label, v, head)
+				}
+				if !strings.Contains(tail, v) {
+					t.Errorf("%s: the packet after the task heading does not name %q:\n%s", label, v, tail)
+				}
+			}
+			if !strings.Contains(tail, "- Workspace P: "+cwds[label]) || !strings.Contains(tail, "- Operation: crw-flow-op: "+markers[label]) {
+				t.Errorf("%s: the run values do not name the marker and P:\n%s", label, tail)
+			}
+			for _, section := range []string{"## Where you work", "## Repository tools", "## Role instructions"} {
+				if !strings.Contains(head, section) {
+					t.Errorf("%s: the head has no %q section:\n%s", label, section, head)
+				}
+			}
+		}
+	}
+	if headOf(t, "exe1", packets["exe1"]) == headOf(t, "qa1", packets["qa1"]) || headOf(t, "exe1", packets["exe1"]) == headOf(t, "rev1", packets["rev1"]) {
+		t.Errorf("the QA variant or the reviewer has the executor's head")
+	}
+
+	// a repair spawn (a new subagent for the repair turn) and a spawn after earlier attempts keep the head of the role too
+	spawn := func(cwd, marker, task, last, note string, repair bool) string {
+		c := &callRun{e: &Engine{cfg: Config{Tools: testRepositoryTools(), Session: &SessionConfig{}}},
+			plan: &callPlan{role: "executor", spec: RoleSpec{Family: "executor"}, schema: []byte(`{"type":"object"}`)},
+			sess: &sessionCall{attempt: 2, task: task, lastText: last, note: note}, cwd: cwd}
+		return c.sessionPacket(2, marker, "Your previous answer did not satisfy the output schema", repair, StepSpawn)
+	}
+	first := spawn("/w/call/a/P", "a/t2-a2", "build node n1", "this is not JSON", "attempt 1 was lost", true)
+	second := spawn("/w/call/b/P", "b/t2-a2", "build node n2", "not JSON either", "attempt 1 timed out", true)
+	plain := spawn("/w/call/c/P", "c/t1-a1", "", "", "", false)
+	if hf, hs := headOf(t, "repair 1", first), headOf(t, "repair 2", second); hf != hs || hf != headOf(t, "plain", plain) {
+		t.Errorf("the repair spawns' heads differ from each other or from a plain spawn's:\n%s\n----\n%s", hf, hs)
+	}
+	for _, v := range []string{"build node n1", "this is not JSON", "attempt 1 was lost", "/w/call/a/P", "a/t2-a2"} {
+		if !strings.Contains(first[len(headOf(t, "repair 1", first)):], v) {
+			t.Errorf("the repair packet does not name %q after the task heading:\n%s", v, first)
+		}
+	}
+}
