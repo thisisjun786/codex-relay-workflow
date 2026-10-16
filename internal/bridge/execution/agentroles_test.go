@@ -16,7 +16,7 @@ const (
 	agentSol    = "gpt-6.1-sol"
 )
 
-// agentRolesDoc is the agent-roles section of the design: one pair per role, the reviewer and the critic on another model family.
+// agentRolesDoc is the agent-roles section of the design: one model/effort pair per role.
 func agentRolesDoc() doc {
 	return doc{
 		"architect":   doc{"model": agentOpus, "reasoningEffort": "xhigh"},
@@ -152,7 +152,7 @@ func TestAgentRolesPairsMustBeAllowed(t *testing.T) {
 	}
 }
 
-func TestReviewerFamilyDiffersFromExecutor(t *testing.T) {
+func TestReviewerModelFamilyOverlapDoesNotWarn(t *testing.T) {
 	for _, row := range []struct {
 		name  string
 		roles doc
@@ -163,16 +163,12 @@ func TestReviewerFamilyDiffersFromExecutor(t *testing.T) {
 		{"reviewer under a bare name of the executor's family", withRole("reviewer", pairDoc("claude-opus-5-5", "high"))},
 	} {
 		t.Run(row.name, func(t *testing.T) {
-			// CRW-1330: a warning, not a PolicyError; the runtime independence gate judges each review.
-			message := strings.Join(mustLoad(t, agentPolicy(row.roles)).Warnings(), "\n")
-			if !strings.Contains(message, "reviewer") || !strings.Contains(message, "family") {
-				t.Fatal(message)
+			if warnings := mustLoad(t, agentPolicy(row.roles)).Warnings(); len(warnings) != 0 {
+				t.Fatal(warnings)
 			}
 		})
 	}
-	// The architect and the explorer are not authors of a reviewed change: they may share a family with a reviewer. The
-	// architect is the author of the design the critic audits, so the critic moves off the architect's family here
-	// (TestAgentRoleNamesIncludeCriticAndOldPolicyFilesStillLoad pins that warning).
+	// Architect, explorer, and critic model-family overlap is also informational only.
 	roles := agentRolesDoc()
 	roles["architect"] = pairDoc(agentSol, "xhigh")
 	roles["critic"] = pairDoc("inferhub/deepseek-v4.1-flash", "xhigh")
@@ -424,11 +420,11 @@ func TestAgentRoleNamesIncludeCriticAndOldPolicyFilesStillLoad(t *testing.T) {
 		t.Fatalf("the missing role warning %q", message)
 	}
 
-	// The critic audits the architect's design: a critic on the architect's model family is warned about.
+	// Model-family overlap is not a role configuration warning.
 	same := agentRolesDoc()
 	same["critic"] = pairDoc("anthropic/claude-sonnet-5", "xhigh")
-	if message := strings.Join(mustLoad(t, agentPolicy(same)).Warnings(), "\n"); !strings.Contains(message, "critic") || !strings.Contains(message, "architect") || !strings.Contains(message, "family") {
-		t.Fatalf("no critic family warning: %q", message)
+	if warnings := mustLoad(t, agentPolicy(same)).Warnings(); len(warnings) != 0 {
+		t.Fatalf("same-family critic config warned: %q", warnings)
 	}
 }
 

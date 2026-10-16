@@ -150,7 +150,6 @@ func TestLintLifecycleViolationFixtures(t *testing.T) {
 	for name, rule := range map[string]string{
 		"land-twice.js":               RuleLandTwice,
 		"land-without-review.js":      RuleLandWithoutReview,
-		"same-family-review.js":       RuleReviewerFamily,
 		"label-duplicate.js":          RuleLabelDuplicate,
 		"t1-without-step-decision.js": RuleTierStepDecision,
 	} {
@@ -193,8 +192,7 @@ func TestLintTierStepRequiresDecision(t *testing.T) {
 
 func TestLintReviewerFamily(t *testing.T) {
 	r := lintFile(t, "same-family-review.js")
-	wantRules(t, r, RuleReviewerFamily)
-	if len(r.Diagnostics) != 1 || r.Diagnostics[0].Line != 4 {
+	if !r.OK() {
 		t.Errorf("%+v", r.Diagnostics)
 	}
 	for name, body := range map[string]string{
@@ -216,17 +214,16 @@ return agent.call('build', { agentType: 'executor', label: 'build' })`,
 const step = await crw.tierStep('n', {})
 await agent.call('build', { agentType: 'executor-t1', stepDecision: step.id, label: 'build' })
 return agent.call(crw.reviewPacket('n'), { agentType: 'executor', label: 'check' })`)
-	if !slices.Contains(rules(r), RuleReviewerFamily) {
-		t.Errorf("%v", r.Diagnostics)
+	if !r.OK() {
+		t.Errorf("same-family reviewer in a new thread: %v", r.Diagnostics)
 	}
 	// A review whose role the text cannot tell is judged on the trace.
 	r = lintText(t, `
 await agent.call('build', { agentType: 'executor', label: 'build' })
 const who = ['executor'][0]
 return agent.call('review the change', { agentType: who, label: 'review:dynamic' })`)
-	wantRules(t, r, RuleReviewerFamily)
-	if r.Diagnostics[0].Source != sourceTrace {
-		t.Errorf("%+v", r.Diagnostics)
+	if !r.OK() {
+		t.Errorf("same-family dynamic reviewer in a new thread: %+v", r.Diagnostics)
 	}
 }
 
@@ -446,6 +443,22 @@ func TestLintCLI(t *testing.T) {
 	// The other flow commands still answer.
 	if code, out, _ = run("roles"); code != 0 || !strings.Contains(out, "roles:") {
 		t.Errorf("roles: exit %d\n%s", code, out)
+	}
+}
+
+func TestLintCLISameThreadReviewWarningDoesNotFail(t *testing.T) {
+	t.Setenv("CODEX_THREAD_BRIDGE_EXECUTION_POLICY", "")
+	scriptPath := filepath.Join(t.TempDir(), "same-thread-review.js")
+	scriptText := `export const meta = { name: 'same-thread-review' }
+const ex = await agent.call('build', { agentType: 'executor', label: 'build' })
+return agent.call('review', { resume: ex.handle, label: 'review:build' })`
+	if err := os.WriteFile(scriptPath, []byte(scriptText), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+	code := RunCLI(context.Background(), []string{"lint", scriptPath}, &out, &errOut)
+	if code != 0 || errOut.Len() != 0 || strings.Count(out.String(), RuleReviewerThreadSame) != 1 || !strings.Contains(out.String(), ": ok (dry run: ran)") {
+		t.Fatalf("warning-only lint: exit %d\n%s\n%s", code, out.String(), errOut.String())
 	}
 }
 
@@ -737,22 +750,19 @@ return out[0]`,
 	}
 }
 
-// A review is independent by the model family of its pair, whatever the role is called, and a continuation keeps the
-// pair of its thread.
+// A new thread can review with the author's model family; resuming the author's thread warns and does not block lint.
 func TestLintReviewerModelFamily(t *testing.T) {
-	// In the placeholder table the executor and the explorer run models of one family, the reviewer another.
+	// In the placeholder table the executor and explorer run models of one family, but this review starts a new thread.
 	r := lintText(t, `
 await agent.call('build', { agentType: 'executor', label: 'build' })
-return agent.call('review the change', { agentType: 'explorer', label: 'review:build' })`)
-	wantRules(t, r, RuleReviewerFamily)
-	if r.Diagnostics[0].Source != sourceStatic || r.Diagnostics[0].Line != 4 {
+	return agent.call('review the change', { agentType: 'explorer', label: 'review:build' })`)
+	if !r.OK() {
 		t.Errorf("%+v", r.Diagnostics)
 	}
 	r = lintText(t, `
 const ex = await agent.call('build', { agentType: 'executor', label: 'build' })
 return agent.call('review the change', { resume: ex.handle, label: 'review:build' })`)
-	wantRules(t, r, RuleReviewerFamily)
-	if r.Diagnostics[0].Source != sourceStatic || r.Diagnostics[0].Line != 4 {
+	if len(r.Diagnostics) != 1 || r.Diagnostics[0].Rule != "reviewer_thread_same" || r.Diagnostics[0].Source != sourceStatic || r.Diagnostics[0].Line != 4 {
 		t.Errorf("a continuation of the author's thread: %+v", r.Diagnostics)
 	}
 	// A continuation of a reviewer's thread is a reviewer's call; a continuation of a fix round that is not a review
@@ -770,24 +780,23 @@ return agent.call('fix', { resume: ex.handle, label: 'fix:1' })`,
 			t.Errorf("%s: %v", name, r.Diagnostics)
 		}
 	}
-	// The trace judges the pair each call was configured with: a continuation of the author's thread, and a role of
-	// the author's model family under another name.
-	call := func(label, role, family, model, resumeOf string) engine.Event {
-		d := map[string]any{"role": role, "family": family, "model": model, "explicit_label": true}
+	// The dry-run reports an observed continuation of the author's thread, regardless of model family.
+	call := func(id, label, role, family, resumeOf string) engine.Event {
+		d := map[string]any{"role": role, "family": family, "explicit_label": true}
 		if resumeOf != "" {
 			d["resume_of"] = resumeOf
 		}
-		return engine.Event{Kind: engine.KindCall, Event: engine.EvPrepared, Op: "agent", Path: "root", Label: label, Data: d}
+		return engine.Event{Kind: engine.KindCall, CallID: id, Event: engine.EvPrepared, Op: "agent", Path: "root", Label: label, Data: d}
 	}
-	author := call("build", "executor", "executor", "anthropic/claude-haiku-5", "")
+	author := call("c_1", "build", "executor", "executor", "")
 	for name, row := range map[string]struct {
 		events []engine.Event
 		want   []string
 	}{
-		"another family":            {[]engine.Event{author, call("review:build", "reviewer", "reviewer", "gpt-6.1-sol", "")}, nil},
-		"the explorer's model":      {[]engine.Event{author, call("review:build", "explorer", "explorer", "anthropic/claude-haiku-5", "")}, []string{RuleReviewerFamily}},
-		"a continuation of author":  {[]engine.Event{author, call("review:build", "executor", "executor", "anthropic/claude-haiku-5", "c_1")}, []string{RuleReviewerFamily}},
-		"a continuation of a judge": {[]engine.Event{author, call("review:build", "reviewer", "reviewer", "gpt-6.1-sol", "c_2")}, nil},
+		"same-family fresh thread":  {[]engine.Event{author, call("c_2", "review:build", "explorer", "explorer", "")}, nil},
+		"different-family fresh":    {[]engine.Event{author, call("c_3", "review:build", "reviewer", "reviewer", "")}, nil},
+		"a continuation of author":  {[]engine.Event{author, call("c_2", "review:build", "executor", "executor", "c_1")}, []string{"reviewer_thread_same"}},
+		"a continuation of a judge": {[]engine.Event{author, call("c_2", "review:build", "reviewer", "reviewer", "c_unknown")}, nil},
 	} {
 		got := rules(Report{Diagnostics: traceDiagnostics(&engine.Result{Status: engine.RunCompleted}, row.events, nil)})
 		if !slices.Equal(got, row.want) {

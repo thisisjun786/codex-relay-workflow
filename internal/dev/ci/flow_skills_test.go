@@ -62,8 +62,9 @@ func flowOwnershipProblems(section string) []string {
 		`(?i)the executor and an oversized (issue )?child start no PABCD state machine`,
 		`(?i)the standalone PABCD rules are unchanged`,
 		`(?i)the crosscheck does not replace the critic's design check`,
-		`(?i)crosscheck[^.]*another (model|engine) family than (every|each|the) author`,
-		`(?i)another model family than the architect`,
+		`(?i)crosscheck[^.]*separate (tool )?invocation`,
+		`(?i)same.thread[^.]*warning[^.]*record[^.]*continue`,
+		`(?i)tool review[^.]*no (agent )?thread id`,
 		`(?i)before any executor starts`,
 		`(?i)needs_changes[^.]*returns to the architect`,
 		`(?i)replan[^.]*audited again`,
@@ -100,7 +101,7 @@ func TestFlowControlOwnershipTableWording(t *testing.T) {
 	}
 	// The skill that classifies the work carries the same order for a C4 issue, so the two readers agree.
 	dev := normalized(readRepoText(t, "plugins/crw/skills/crw-dev/SKILL.md"))
-	for _, want := range []string{"the critic's design check, independent and pre-build: by the critic, of a different model family than the architect, before any executor starts", "the crosscheck does not replace the critic's design check"} {
+	for _, want := range []string{"the critic's separate review execution", "the crosscheck does not replace the critic's design check", "same-thread review is warning-only and recorded; the run continues"} {
 		if !strings.Contains(dev, want) {
 			t.Errorf("crw-dev/SKILL.md lacks %q", want)
 		}
@@ -124,9 +125,9 @@ func TestFlowControlOwnershipTableWording(t *testing.T) {
 	t.Run("fixture: each missing sentence is reported", func(t *testing.T) {
 		good := "## Who owns control in a flow-managed run\n\n| Control | Owner |\n|---|---|\n| Phases | the run |\n| Audit | the run |\n| Evidence | the run |\n\n" +
 			"The executor and an oversized child start no PABCD state machine. The standalone PABCD rules are unchanged.\n\n" +
-			"1. The architect DESIGN.\n2. The critic's design check, pre-build, by the critic, of another model family than the architect, before any executor starts; needs_changes returns to the architect and a replan is audited again.\n" +
-			"3. The unit check of each node before the run commits it.\n4. After integration the final gate, then the crosscheck over the integrated range by a review engine of another model family than every author.\n" +
-			"5. The acceptance audit.\n6. The report.\n\nThe crosscheck does not replace the critic's design check.\n"
+			"1. The architect DESIGN.\n2. The critic's design check, pre-build, by the critic in a separate review execution, before any executor starts; needs_changes returns to the architect and a replan is audited again.\n" +
+			"3. The unit check of each node before the run commits it.\n4. After integration the final gate, then the crosscheck over the integrated range in a separate tool invocation.\n" +
+			"A same-thread review, if observed, is warning-only and recorded; the run continues. Tool reviews have no agent thread id.\n5. The acceptance audit.\n6. The report.\n\nThe crosscheck does not replace the critic's design check.\n"
 		if p := flowOwnershipProblems(sectionOf(good, "Who owns control in a flow-managed run")); len(p) > 0 {
 			t.Fatalf("the good text is reported: %v", p)
 		}
@@ -141,8 +142,8 @@ func TestFlowControlOwnershipTableWording(t *testing.T) {
 			"final replaces": func(s string) string {
 				return strings.Replace(s, "The crosscheck does not replace", "The crosscheck replaces", 1)
 			},
-			"crosscheck of the authors' family": func(s string) string {
-				return strings.Replace(s, "of another model family than every author", "of the authors' model family", 1)
+			"same-thread review handling": func(s string) string {
+				return strings.Replace(s, "same-thread review, if observed, is warning-only and recorded; the run continues", "same-thread review is refused", 1)
 			},
 			"audit after run": func(s string) string {
 				return strings.Replace(s, "before any executor starts", "after the executors", 1)

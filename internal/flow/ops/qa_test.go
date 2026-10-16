@@ -264,8 +264,8 @@ return { need: g.need_tests, ran: out.map((v) => v.command), state: again.state,
 // reviewer was. The old op answered refused independence_unproven when no author was known, refused independence_refused for a reviewer
 // of an author's family, a verdict for one of another family, null_model verdict_invalid for an answer that was no VERDICT_FINAL or
 // said MISALIGNED with no drift, and the call's own state for a call that did not complete. The op and its independence judgment are
-// retired (CRW-1450); the close's review is the crosscheck, whose engine is of another family than every author
-// (TestCrosscheckEngineIsOfAnotherFamilyThanTheAuthors). The results the op left read as they did: the close closes on the verdict
+// retired (CRW-1450); the close's review is the crosscheck, which runs as a separate tool invocation.
+// The results the old op left read as they did: the close closes on the verdict
 // alone, and every other state, the refusals of independence included, is no verified review (close_unverified, no row).
 func TestReviewerFinalIndependenceAndStates(t *testing.T) {
 	ok := finalAnswer("verified", nil)

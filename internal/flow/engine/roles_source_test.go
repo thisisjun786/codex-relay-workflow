@@ -117,15 +117,14 @@ func TestCRW1330_PlaceholderTableOnlyUnderTestIsolationWithoutAStore(t *testing.
 	}
 }
 
-func TestCRW1330_ReviewerFamilyOverlapIsWarnedAndRecordedAtRunStart(t *testing.T) {
+func TestCRW1330_ReviewerFamilyOverlapDoesNotWarnAtRunStart(t *testing.T) {
 	withRoleStore(t, roleStore("anthropic/claude-haiku-5", "anthropic/claude-sonnet-5"))
 	t.Setenv(execution.EnvPolicy, "")
 	table, _, err := LoadPolicy()
 	if err != nil {
 		t.Fatal(err)
 	}
-	joined := strings.Join(table.Warnings, "\n")
-	if !strings.Contains(joined, "reviewer") || !strings.Contains(joined, "family") || !strings.Contains(joined, "claude") {
+	if len(table.Warnings) != 0 {
 		t.Fatalf("warnings %q", table.Warnings)
 	}
 	// the run records the warnings in its started row; the table resolves calls as before
@@ -136,8 +135,7 @@ func TestCRW1330_ReviewerFamilyOverlapIsWarnedAndRecordedAtRunStart(t *testing.T
 		t.Fatalf("%s %s", res.ErrorKind, res.Error)
 	}
 	started := h.journal.Events()[0]
-	recorded, _ := json.Marshal(started.Data["policy_warnings"])
-	if started.Event != "started" || started.Data["policy_digest"] != table.Digest || started.Data["policy_source"] != table.Source || !strings.Contains(string(recorded), "family") {
+	if started.Event != "started" || started.Data["policy_digest"] != table.Digest || started.Data["policy_source"] != table.Source {
 		t.Fatalf("started %+v", started.Data)
 	}
 	// a table without warnings writes no policy_warnings member (the placeholder table's runs keep their rows)

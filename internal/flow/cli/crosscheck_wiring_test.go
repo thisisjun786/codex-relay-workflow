@@ -116,18 +116,18 @@ func TestBuildLaneWiresTheCrosscheck(t *testing.T) {
 		t.Errorf("receipts file %q", out.Verdict.ReceiptsFile)
 	}
 
-	// an undecided architect pair is an undecided author
+	// An undecided author pair remains metadata, not a crosscheck gate (CRW-1515).
 	undecided := engine.FakePolicy()
 	spec := undecided.Roles["architect"]
 	spec.Pair = engine.Pair{}
 	undecided.Roles["architect"] = spec
 	const run2 = "run-ccwire00002"
 	out = l.runCrosscheck(l.laneWorldFor(run2, undecided, LaneOptions{Crosscheck: l.cc.seam()}), run2, head)
-	if out.State != ops.CrosscheckStateRefused || out.Reason != ops.ReasonCrosscheckAuthorUndecided || !strings.Contains(out.Detail, "architect") {
+	if out.State != ops.CrosscheckStateVerdict {
 		t.Errorf("an undecided architect: %+v", out)
 	}
-	if len(l.cc.requests()) != 2 {
-		t.Error("a pass ran for an undecided author")
+	if len(l.cc.requests()) != 4 {
+		t.Error("the independent passes must run with an undecided author model")
 	}
 
 	// the shipped crosscheck: astra then grok over the review adapter, 40 minutes a pass, the table's author pairs

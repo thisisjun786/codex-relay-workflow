@@ -238,7 +238,7 @@ func shippedUnitCheck(getenv func(string) (string, bool)) (*ops.UnitCheck, error
 // shippedCrosscheckLimit is the time limit of one pass of the shipped crosscheck's engine.
 const shippedCrosscheckLimit = 40 * time.Minute
 
-// crosscheckAuthorRoles are the roles whose pairs author a milestone: the engine of its crosscheck is of another family than each.
+// crosscheckAuthorRoles are the roles whose pairs are recorded as the milestone's author provenance.
 var crosscheckAuthorRoles = []string{"architect", "executor", "executor-t1"}
 
 // laneCrosscheck is the crosscheck of a run's lane: the option's (the shipped one when nil), with the author pairs of the run's role

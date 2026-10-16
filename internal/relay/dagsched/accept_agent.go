@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"log"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -19,8 +20,7 @@ import (
 // row of dag_agent_acceptances, never a row of a frozen table. The path requires five things together, and each refusal is its own reason:
 //
 //  1. the current agent execution of the node (a node with a closed or superseded execution has none);
-//  2. a verified verdict the run recorded for this execution (flow_calls), of a reviewer call or of a unit check, under the criteria set the plan fixed, on the head under review, by a pair whose model
-//     family differs from every author pair the run observed for the node (independence_refused), and at least one observed author pair (independence_unproven);
+//  2. a verified verdict the run recorded for this execution (flow_calls), of a reviewer call or of a unit check, under the criteria set the plan fixed and on the head under review;
 //  3. the pre-merge record, judged by judgePremerge, the function the relationship path uses;
 //  4. the verification record and the commit proof: the head is read by the relay from git, in the execution's worktree, and is never taken from the call (P-AV-2); it descends from the base and the
 //     record is judged against its tree (JudgeVerificationRecord);
@@ -38,17 +38,17 @@ import (
 //     carried (a digest the verdict document names itself is not read: it is the reviewer's claim, not a record of its input).
 //   - a unit check is the completed row of the op crw.unitCheck (kind crw.unitCheck, role unit-check) that carries the plan, the node and the execution; result_bytes is the reviewadapter.Result the check
 //     left (state, verdict, model, effort, engine_family); detail_json names the criteria_digest the check was given, read as a reviewer's is. It is on the head when commit_sha is the head, or, for a
-//     check run before the commit, when commit_sha is empty and tree_digest is the tree of the head (a node without a head: commit_sha empty). Its pair is the model and effort of its result (an op row
-//     has no thread), and its family is the result's engine_family read trimmed and in lower case (one blank after the trim, or no family name, is unknown: independence_unproven), else the family
-//     of its model. A check whose state is not ok gave no judgment: it is no basis and withdraws nothing.
+//     check run before the commit, when commit_sha is empty and tree_digest is the tree of the head (a node without a head: commit_sha empty). Its model and effort are retained as provenance when
+//     present; engine_family remains a readable historical field but does not gate acceptance. A check whose state is not ok gave no judgment: it is no basis and withdraws nothing.
 //   - the latest reviewer call or unit check of the execution on the head decides, so a later needs_changes of either withdraws an earlier verified.
 //   - the pair a call ran on is the configured pair the host read back for the call's thread: the thread_started row of the call, whose detail_json names model and effort. A continuation (resume) has no thread_started row: its prepared row names resume_of and the pair the thread was read back with (configured_model, configured_effort), and that is its pair.
 //   - an author pair is the pair of a completed call of the node whose role is executor, executor-t1 or architect, whatever execution of the node it ran in, and the pair of the execution rows the node has.
 
 // The closed reasons of the agent path. D-02: this build registers no new refusal reason, so each travels in the detail of a disposition_conflict.
 const (
-	ReviewerMissing         = "reviewer_missing"
-	ReviewerNotVerified     = "reviewer_not_verified"
+	ReviewerMissing     = "reviewer_missing"
+	ReviewerNotVerified = "reviewer_not_verified"
+	// These refusal labels remain exported for legacy readers of stored dispositions; acceptance no longer emits them.
 	IndependenceRefused     = "independence_refused"
 	IndependenceUnproven    = "independence_unproven"
 	AgentWorktreeUnrecorded = "agent_worktree_unrecorded"
@@ -67,8 +67,10 @@ type agentPair struct{ Model, Effort string }
 // reviewerCall is the verdict of the reviewer call that decides an acceptance, with the facts the acceptance row keeps of it.
 type reviewerCall struct {
 	CallID, ThreadID, TurnID string
+	RunID                    string
 	Pair                     agentPair
 	Verdict, CriteriaDigest  string
+	SameThreadAuthorIDs      []string
 }
 
 // agentProof is the commit proof of an implementation node, read from git before the acceptance transaction: the head, the base, the checkout both were proved in, the tree and the verification record.
@@ -225,6 +227,10 @@ func (s *Scheduler) acceptAgent(ctx context.Context, snap dag.Snapshot, n dag.Sn
 			a.PremergeDigest, a.PremergeJSON, a.PremergeEvaluatedHead = judged.digest, string(judged.raw), judged.evaluatedHead
 			a.VerificationDigest, a.VerificationJSON = shaOf(proof.recordRaw), string(proof.recordRaw)
 		}
+		if err := recordSameThreadWarning(txCtx, tx, review, node, a.AcceptedAt); err != nil {
+			// The warning is advisory: keep acceptance fail-open, but surface a failed journal write to the process log.
+			log.Printf("dagsched: failed to persist review_same_thread warning for plan=%q node=%q reviewer_call=%q: %v", plan, node, review.CallID, err)
+		}
 		var supersedes any
 		if a.Supersedes != "" {
 			supersedes = a.Supersedes
@@ -335,7 +341,7 @@ func unitCheckOnHead(commit, treeDigest, head, tree string) bool {
 
 // agentReview reads, in the caller's transaction, the verdict that decides an acceptance and the author pairs it is judged against. The latest completed reviewer call or unit check of the execution on
 // the head decides (tree is the tree of the head, which a check run before the commit is matched on; a unit check that gave no judgment is skipped): it has to be verified, to have seen the criteria set
-// in force (compared by the caller), and its pair's model family has to differ from the family of every author pair observed for the node. It answers the author pairs observed, sorted, for the digest the
+// in force (compared by the caller). Model and effort observations are retained when available; model family does not gate acceptance. It answers the author pairs observed, sorted, for the digest the
 // acceptance keeps.
 func (s *Scheduler) agentReview(ctx context.Context, q store.Querier, plan, node string, e AgentExecution, head, tree string) (reviewerCall, []agentPair, error) {
 	var review reviewerCall
@@ -391,6 +397,7 @@ func (s *Scheduler) agentReview(ctx context.Context, q store.Querier, plan, node
 	if !decided {
 		return review, nil, refuse(contract.RefusalDispositionConflict, "%s: the run recorded no completed reviewer call or unit check of execution %s on head %s, so the result has no verdict", ReviewerMissing, e.ExecutionID, orDash(head))
 	}
+	review.RunID = run
 	// the criteria the reviewer saw are the digest its input recorded (detail_json), never a digest the reviewer wrote into its own verdict: that would be a claim about the input, not a record of it
 	var seen struct {
 		CriteriaDigest string `json:"criteria_digest"`
@@ -411,48 +418,81 @@ func (s *Scheduler) agentReview(ctx context.Context, q store.Querier, plan, node
 	if review.Verdict != "verified" {
 		return review, nil, refuse(contract.RefusalDispositionConflict, "%s: the latest %s %s of execution %s ruled %q, not verified", ReviewerNotVerified, label, review.CallID, e.ExecutionID, review.Verdict)
 	}
-	var family string
 	if unit {
 		// an op row has no thread: the pair is the one the check's result names
 		review.Pair = agentPair{Model: check.Model, Effort: check.Effort}
 		if review.Pair.Model == "" {
-			return review, nil, refuse(contract.RefusalDispositionConflict, "%s: unit check %s names no model, so its family is unknown", IndependenceUnproven, review.CallID)
-		}
-		// the family the check declares is read in the form an author's family is read from its model (trimmed, lower case); one that is blank or no family name is unknown
-		if check.EngineFamily != "" {
-			declared, ok := execution.CanonicalFamily(check.EngineFamily)
-			if !ok {
-				return review, nil, refuse(contract.RefusalDispositionConflict, "%s: unit check %s declares the engine family %q, which is no family name, so its family is unknown", IndependenceUnproven, review.CallID, check.EngineFamily)
-			}
-			family = declared
+			return review, nil, refuse(contract.RefusalDispositionConflict, "%s: unit check %s records no model for the acceptance provenance", ReviewerMissing, review.CallID)
 		}
 	} else {
 		if review.Pair, err = callPair(ctx, q, review.CallID, run); err != nil {
 			return review, nil, err
 		}
 		if review.Pair.Model == "" {
-			return review, nil, refuse(contract.RefusalDispositionConflict, "%s: the pair reviewer call %s ran on was never read back from its thread, so its family is unknown", IndependenceUnproven, review.CallID)
+			return review, nil, refuse(contract.RefusalDispositionConflict, "%s: reviewer call %s has no host-read model for the acceptance provenance", ReviewerMissing, review.CallID)
 		}
-	}
-	if family == "" {
-		family = execution.ModelFamily(review.Pair.Model)
-	}
-	if family == "" {
-		return review, nil, refuse(contract.RefusalDispositionConflict, "%s: the model %s of %s %s names no family, so its family is unknown", IndependenceUnproven, review.Pair.Model, label, review.CallID)
 	}
 	authors, err := authorPairs(ctx, q, plan, node, e)
 	if err != nil {
 		return review, nil, err
 	}
-	if len(authors) == 0 {
-		return review, nil, refuse(contract.RefusalDispositionConflict, "%s: the run observed no author pair for %s, so the %s %s cannot be shown to differ from it", IndependenceUnproven, node, label, review.CallID)
-	}
-	for _, author := range authors {
-		if execution.ModelFamily(author.Model) == family {
-			return review, nil, refuse(contract.RefusalDispositionConflict, "%s: %s %s ran on %s (family %s) and an author of %s ran on %s: the reviewer's family differs from every observed author pair", IndependenceRefused, label, review.CallID, review.Pair.Model, family, node, author.Model)
+	if !unit && review.ThreadID != "" {
+		review.SameThreadAuthorIDs, err = authorCallsOnThread(ctx, q, plan, node, review.ThreadID)
+		if err != nil {
+			return review, nil, err
 		}
 	}
 	return review, authors, nil
+}
+
+// authorCallsOnThread finds author call IDs with an observed attempt on the reviewer's thread. thread_started rows retain prior attempts
+// for session calls, so this covers earlier attempts when the journal recorded them. Tool reviews have no thread and never reach here.
+func authorCallsOnThread(ctx context.Context, q store.Querier, plan, node, thread string) ([]string, error) {
+	rows, err := q.QueryContext(ctx, "SELECT DISTINCT call_id FROM flow_calls WHERE kind = 'agent' AND role IN ('"+strings.Join(authorRoles, "','")+"') AND plan_id = ? AND node_id = ? AND thread_id = ? AND event IN ('thread_started', 'session_attempt_lost', 'completed') ORDER BY call_id", plan, node, thread)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var calls []string
+	for rows.Next() {
+		var call string
+		if err := rows.Scan(&call); err != nil {
+			return nil, err
+		}
+		calls = append(calls, call)
+	}
+	return calls, rows.Err()
+}
+
+// recordSameThreadWarning appends an advisory event to the existing flow journal. It records the observed collision and never changes
+// the acceptance verdict. The foreign sequence range keeps this write separate from the run's own append-only journal sequence.
+func recordSameThreadWarning(ctx context.Context, q store.Querier, review reviewerCall, node, recordedAt string) error {
+	if len(review.SameThreadAuthorIDs) == 0 {
+		return nil
+	}
+	// Keep aligned with flow/engine.ForeignSeqBase: command-written flow events use a disjoint sequence range.
+	const foreignSeqBase int64 = 1 << 40
+	var top sql.NullInt64
+	if err := q.QueryRowContext(ctx, "SELECT MAX(seq) FROM flow_events WHERE run_id = ? AND seq >= ?", review.RunID, foreignSeqBase).Scan(&top); err != nil {
+		return err
+	}
+	seq := foreignSeqBase
+	if top.Valid {
+		seq = top.Int64 + 1
+	}
+	payload, err := json.Marshal(map[string]any{
+		"_kind":                    "flow",
+		"warning":                  "review_same_thread",
+		"reviewer_call_id":         review.CallID,
+		"reviewer_thread_id":       review.ThreadID,
+		"same_thread_author_calls": review.SameThreadAuthorIDs,
+	})
+	if err != nil {
+		return err
+	}
+	_, err = q.ExecContext(ctx, "INSERT INTO flow_events (run_id, seq, kind, call_id, node_id, subject, payload_json, recorded_at) VALUES (?,?,?,?,?,?,?,?)",
+		review.RunID, seq, "review_same_thread", review.CallID, node, "review_same_thread", string(payload), recordedAt)
+	return err
 }
 
 // callPair is the pair a call's thread was configured with, as the host read it back. A call that opened a thread has the thread_started row. A continuation (resume) opens none: the engine records, in its

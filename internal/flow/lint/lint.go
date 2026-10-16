@@ -33,8 +33,15 @@ type Report struct {
 	DryRun string `json:"dryRun"`
 }
 
-// OK reports whether the script has no finding.
-func (r Report) OK() bool { return len(r.Diagnostics) == 0 }
+// OK reports whether the script has no finding that fails lint. Same-thread review is a warning recorded for the operator.
+func (r Report) OK() bool {
+	for _, d := range r.Diagnostics {
+		if d.Rule != RuleReviewerThreadSame {
+			return false
+		}
+	}
+	return true
+}
 
 // Check lints one script.
 func Check(ctx context.Context, src script.Source, opts Options) Report {

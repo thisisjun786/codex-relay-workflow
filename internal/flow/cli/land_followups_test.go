@@ -114,13 +114,13 @@ func TestLandHeadStartWarnsOfALiveRunOfThePlan(t *testing.T) {
 
 // TestLandHeadLeavesTheAuthorPairOfAnUnprovenSetEmpty (item 7): a land one of whose named authors was not read back records no author
 // pair on the node's execution (the observed pair of the others would stand for authors the run does not know), with the warning
-// land_author_pair_unrecorded on the release row; the review is independence_unproven as before.
+// land_author_pair_unrecorded on the release row; the separate tool review may still land it (CRW-1515).
 func TestLandHeadLeavesTheAuthorPairOfAnUnprovenSetEmpty(t *testing.T) {
 	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
 	l.outsideHead("A-1", "outside-a1")
 	authors := []string{l.authorThread("claude-fake-sonnet", "high"), "0190a000-0000-7000-8000-ffffffffffff"}
 	spec := l.start("start", "land-head", "--args", landArgs(l, "A-1", "outside-a1", authors...), "--handoff", l.file)
-	if v := landValueOf(t, l.runToEnd(spec.RunID)); v.State != "escalated" || v.Reason != "independence_unproven" {
+	if v := landValueOf(t, l.runToEnd(spec.RunID)); v.State != "landed" || v.Acceptance == "" {
 		t.Fatalf("the land of an unproven author set: %+v", v)
 	}
 	var model, effort string

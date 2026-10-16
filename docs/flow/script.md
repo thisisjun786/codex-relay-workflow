@@ -42,7 +42,7 @@ the helper role store `CRW_HOME/subagents.json`: the pairs of `architect`, `exec
 `agent-roles` and `agent-aliases` sections are not read; a file that still declares them is a warning, and one whose
 sections do not parse still loads, with the sections ignored and the loader's reason as another warning. The run record
 keeps the store's path and the canonical digest of the six pairs, and the warnings of the table (a flow-only key at
-its compiled default, an undecided role, a reviewer on an author's model family, a critic on the architect's, and the retired role key
+its compiled default, an undecided role, same-thread review when observed, and the retired role key
 of the `crw.reviewerFinal` op when the store or the policy file still holds it: the key is ignored, takes no pair and is not in the
 digest). A test with no store runs on the fake backend's placeholder table. `crw flow roles` prints the table, the source, the digest and the warnings.
 
@@ -229,7 +229,7 @@ The calls of a run share an agent pool (`--pool`, default 6): at most that many 
 | `handle` | Opaque `crwh1:<run>:<call_id>`; non-null once a thread exists for the call. It resolves through the journal to the call's thread and last turn. |
 | `status` | `completed`, `null_model`, `held`, `refused`, `unknown` or `superseded`. |
 | `output` | The schema-valid object (or the text of a call without a schema); non-null only when `status` is `completed`. |
-| `reason` | Closed set, `null` when completed: `schema_invalid_after_repair`, `context_window_exceeded`, `host_infra_<kind>`, `host_config_<kind>`, `host_policy_<kind>`, `host_interrupted_external`, `engine_paused`, `budget_exhausted`, `pair_refused`, `policy_refused`, `independence_refused`, `missing_step_decision`, `schema_not_strict`, `foreign_handle`, `dispatch_unknown`, `superseded_by_attempt`, `superseded_by_resume`, `cancelled`, `worktree_failed`, `restore_snapshot_mismatch`, `accepted_node_changed`, `recovery_hold`. |
+| `reason` | Closed set, `null` when completed: `schema_invalid_after_repair`, `context_window_exceeded`, `host_infra_<kind>`, `host_config_<kind>`, `host_policy_<kind>`, `host_interrupted_external`, `engine_paused`, `budget_exhausted`, `pair_refused`, `policy_refused`, legacy `independence_refused`, `missing_step_decision`, `schema_not_strict`, `foreign_handle`, `dispatch_unknown`, `superseded_by_attempt`, `superseded_by_resume`, `cancelled`, `worktree_failed`, `restore_snapshot_mismatch`, `accepted_node_changed`, `recovery_hold`. |
 | `meta` | `role`, `requestedPair`, `configuredPair`, `threadId`, `turnIds`, `repairUsed`, `tokens`, `startSeq`, `endSeq` (the last two are absent under `crw flow run`, see above). |
 
 A failed or interrupted turn, and an RPC error to the thread or turn request, is classified by its `codexErrorInfo`: the
@@ -353,9 +353,10 @@ an open question whose explorer is missing is no answer: design-answers names it
 answers give it the route line `an explorer was asked twice and did not answer` with both calls, and the round halts the milestone
 (source `explorer`) only when its call failed as above (every explorer it spawned missing, or one that did not complete otherwise), a
 question asked of the owner thread being no exploration;
-the critic (`agentType: 'critic'`, a role of its own, of another model family than the architect;
-the `AUDIT` spawn decision names it) audits the DESIGN (`DESIGN_AUDIT`, recorded by `crw.designAudit`, which judges the independence by the model
-families of the two calls' pairs, never by the role), and `needs_changes` returns the DESIGN to the architect on its own thread: the design-fix packet
+the critic (`agentType: 'critic'`, a role of its own, in a separate review execution;
+the `AUDIT` spawn decision names it) audits the DESIGN (`DESIGN_AUDIT`, recorded by `crw.designAudit`). The result may include optional
+`warnings: [review_same_thread]`; the journal records that warning and the observed `critic_thread` and `architect_thread`. An observed
+same-thread review does not block the audit. `needs_changes` returns the DESIGN to the architect on its own thread: the design-fix packet
 names each finding by its id `r<round>.<index>` (the index 1-based in the audit's findings) and the architect answers the DESIGN with `dispositions`,
 one for each id, `folded` or `rebutted` with its reason (null in the first DESIGN, in a design-answers answer and in a re-plan answer; the schema
 requires the member of every answer, and a DESIGN a run recorded before the member existed is read with it null wherever the run reads a recorded
@@ -547,7 +548,7 @@ inline (SP-INL-1), reuse an answer (SP-INL-2), skip, refuse or hand a question t
 | Operation | Records and returns | Replayed while |
 | --- | --- | --- |
 | `milestone(plan, milestone)` | the nodes of the milestone with edges, regions and slice digests | always (a read) |
-| `designAudit(milestone, round, candidate, architect, call)` | the audit row: state, candidate digest, auditor and architect models; a candidate that breaks a design rule the DESIGN schema cannot express (a split node's 2 to 4 sub-tasks, none for another node, unique sub-task ids, sub-task regions within the node's, `after` naming only earlier sub-tasks; CRW-1435) is audited `needs_changes` with a P1 finding that names the node and the rule (`design_rule` on the row), whatever the critic ruled, so the DESIGN goes back to the architect; a candidate the schema refuses is an error | always |
+| `designAudit(milestone, round, candidate, architect, call)` | the audit row: state, candidate digest, auditor and architect models, optional `warnings: [review_same_thread]` when the host reports the critic and architect thread are the same; the journal records `critic_thread`, `architect_thread` and warnings, and the warning never blocks. A candidate that breaks a design rule the DESIGN schema cannot express (a split node's 2 to 4 sub-tasks, none for another node, unique sub-task ids, sub-task regions within the node's, `after` naming only earlier sub-tasks; CRW-1435) is audited `needs_changes` with a P1 finding that names the node and the rule (`design_rule` on the row), whatever the critic ruled, so the DESIGN goes back to the architect; a candidate the schema refuses is an error | always |
 | `designLedger(milestone, entry)` | the next revision (`r0`, `r1`, ...): the DESIGN, the answers, the digest, the architect handle, the signal that made it and the slice digest of every node of the plan it was made against; refuses a DESIGN with no approved audit - for a revision after `r0` an audit made after the revision before it - and a revision after `r0` that does not keep what the started nodes stand on (a started node with no issue, or whose issue differs in any field from the plan `crw.releasedPlans` gives for it, or a decision that plan names missing or changed in any field) or that plans no issue for a node the run read and the plan of the revision holds | always |
 | `release(plan, node, milestone)` | the release under the revision of the ledger that stands (`revision`, `design_digest`, `slice_digest`, `execution_id`); a node sized `split` with sub-tasks is released to one executor as any node is (CRW-1459), and a node sized for a `bundle_split`, for a child or for a split with no sub-tasks (a DESIGN recorded before CRW-1435) is not released to an executor (an unreleased row of that `kind`); a plan that cannot be read, or that has dropped the node (`node_not_in_plan`), releases nothing | the relay says the execution stands, and the revision it was made under stands or the node's slice is the one the revision that stands was made against (`release_rebind`) |
 | `issuePlan(node)` | the node's entry of the DESIGN of its release revision | always |
@@ -594,27 +595,25 @@ call and fixes nothing. Its steps:
   detached, in `<state>/flow/<run>/land-wt/<node>-<commit>`, the worktree the row names and the execution's handle points at, and the row
   records the commit, its tree, its base (the merge-base with the integration tip), the paths it changes and the authors with their pairs.
 - The gates are the lane's: `crw.verify` of that head (verification-record/1 of the exact tree), one unit check in the committed mode,
-  `crw.unitCheck(node, null, {commit: head, base: head.base})` (CRW-1468): the review tool run in Go over `base..head` of the land
-  checkout, with no reviewer call; a head made outside a run has no executor, so the check's row records the receipt `no_executor`. The
+  `crw.unitCheck(node, null, {commit: head, base: head.base})` (CRW-1468): the review tool run in Go in a separate tool invocation over
+  `base..head` of the land checkout, with no reviewer call or agent thread id; a head made outside a run has no executor, so the check's row records the receipt `no_executor`. A same-thread agent review, if actually observed, is warning-only and recorded, and the run continues. Model family is provenance only. The
   tool is a Codex review by default, `codex review --base <base>` in the clean checkout of the head (Codex reviews the diff
   from the merge-base of base and HEAD, which in that checkout is `base..head`; its answer does not name the range, and it is given no
   prompt), and
   Bugbot on a Codex quota, with the same settings and fallback record as the node lane's check (CRW-1517). Bugbot's committed reader
   takes an answer only when it names the requested range `base..head` by its commit ids and no other range, so a clean Bugbot answer
   that names no range or another one fails closed as `unit_check_invalid`. Then
-  `crw.land` (`crw.accept` on that check, the relay's agent acceptance, which judges the check's model family against the pair the
-  execution records: `independence_refused` for a check of the authors' family, `independence_unproven` when the pair of any author it
-  names was not read back; then `crw.integrate`). They write the rows they write for a node of a project lane.
-- The only refusals are input errors (no head, a head git does not resolve, authors of more than one model family - one execution row
-  records one author pair - and an issue that is not a node of the milestone) and the gates. Named limit: authors of more than one model
-  family are refused `land_author_families_mixed` before any gate, even where a check of a third family would be independent of all of
-  them, because the execution row holds one author pair; lifting it changes the relay's stored form, so such a head is landed one family's
-  work at a time, or made in a project-lane run (CRW-1397). A land one of whose named authors is not read back records no author pair on
+  `crw.land` (`crw.accept` on that check, the relay's agent acceptance; model family is provenance only, while the review uses a separate
+  tool invocation. An observed same-thread review is warning-only and recorded, and acceptance continues; then `crw.integrate`). They write the rows they write for a node of a project lane.
+- The only refusals are input errors (no head, a head git does not resolve, and an issue that is not a node of the milestone) and the gates.
+  Historical records may still contain `independence_refused`, `independence_unproven` or `land_author_families_mixed`; readers preserve
+  those reasons as recorded outcomes, without applying them to new work. A land one of whose named authors is not read back records no author pair on
   the execution (`land_author_pair_unrecorded`, a warning of the row: the observed pair would stand for authors the run does not know),
-  and the acceptance is `independence_unproven`; the pairs the host reads back are trimmed. A verification that fails, a check that
+  and missing author model information is kept as a warning/evidence; it does not create a family-based independence refusal. Historical
+  `independence_unproven` remains readable. The pairs the host reads back are trimmed. A verification that fails, a check that
   finds a blocking defect and a land the relay refuses end the run escalated for the child (`land_verification_failed`,
   `land_review_needs_changes` with the ids of the check's findings carried on the escalation, the relay's reason); a check that gives no
-  judgment (`unit_check_<state>`) and a check that is not independent escalate as a configuration fault. The findings of a verified check
+  judgment (`unit_check_<state>`) escalates as a configuration fault. The findings of a verified check
   that block nothing land as premerge defects. An author whose pair is not read back, no
   author named and a path outside the node's regions are warnings of the release row (`land_author_unobserved`, `land_authors_unnamed`,
   `land_out_of_scope`). A lost epoch ends the run `stopped` with `epoch_lost`.
@@ -825,23 +824,16 @@ ignored file is outside both trees and is not judged: the engines read the track
 
 **The engine.** The lane ships two engine profiles, tried in this order: astra (`codex exec -m gpt-6-astra`, family gpt, answering under a
 strict form of the answer schema the op writes to `<run dir>/crosscheck/answer.strict.json`) and grok (`grok -m grok-4.7`, family grok),
-each pass with a limit of 40 minutes. A round runs on the first profile whose family is no author family of the milestone: the crosscheck
-is made by a review engine of another model family than every author, the independence every review of the flow keeps. The authors are
-read from the run's own pairs, never from a compiled default and never guessed: the pairs of `architect`, `executor` and `executor-t1` in
-the run's role table (a resumed run has the pairs it pinned) and the models of the milestone's author calls in the run's journal. When one
-of them is undecided (a role whose pair is empty, an author call whose row names no model) the round is refused
-`crosscheck_author_undecided` before any checkout or pass, the detail naming each; when no profile is left the round is refused
-`crosscheck_no_independent_engine`. CRW builds with Claude models and reviews on the two shipped profiles, so the supported configuration is
-a milestone whose authors are all of family claude; that narrowing is the parent's decision, and a third engine profile, which would widen
-it, is an engine change. Round 1 by the authors' families:
+each pass with a limit of 40 minutes. The profile order is the parent's decision; a round runs the first configured profile regardless of author family. If author model information is
+undecided, it is journaled under `author_warnings` and does not block. When no profile is configured, the round is refused `crosscheck_no_engine`.
+The old `crosscheck_author_undecided` and `crosscheck_no_independent_engine` constants remain readable as legacy reasons. The crosscheck is made in a separate tool invocation; tool reviews have no agent thread id. If a same-thread review is actually observed on an agent review path, it is
+warning-only and recorded, and the run continues. Model family remains provenance. The authors are read from the run's own pairs for
+attribution, never to select or exclude an engine. Round 1 follows configured profile order:
 
 | Authors of the milestone | Round 1 |
 | --- | --- |
-| claude only (the supported configuration) | astra (gpt) |
-| a gpt author, with or without claude authors | grok (grok) |
-| a grok author, with or without claude authors | astra (gpt) |
-| gpt and grok authors | refused `crosscheck_no_independent_engine` |
-| an undecided author pair | refused `crosscheck_author_undecided` |
+| any author family, including mixed or unknown | astra (gpt), when available |
+| first profile unavailable | grok (grok), when available |
 
 **The verdict.** The two passes run together, each one check of the review adapter; an `invalid` answer is asked once more. A pass that
 read no repository is void (`not_read`: under the floors of its engine profile on the commands it ran that succeeded, the tokens it read and the time it
@@ -879,8 +871,8 @@ times. A crosscheck that does not verify the range keeps the milestone open, and
   V's canonical digest: a resume that judges the range again (the target moved, or a proof error ran the gate again at the same head)
   and gives another V is a new escalation with the new V, the current question of the milestone, told again, while the earlier
   escalation keeps its V; the same V again is the same escalation.
-- `refused` (`crosscheck_author_undecided`, `crosscheck_no_independent_engine`, `crosscheck_prior_invalid`): `crosscheck_refused`, ask
-  `configuration`, a question for the parent.
+- `refused` (`crosscheck_no_engine`, `crosscheck_prior_invalid`): `crosscheck_refused`, ask `configuration`, a question for the parent.
+  Historical `crosscheck_author_undecided` and `crosscheck_no_independent_engine` remain readable; author model uncertainty is recorded in `author_warnings` and does not block.
 - `failed` (`crosscheck_no_run_dir`, `crosscheck_worktree_dirty`, `crosscheck_worktree_moved`, `crosscheck_prompt_too_large`, a pass that
   failed): `crosscheck_failed`, ask `crosscheck_failed`; `no_verdict`: `crosscheck_no_verdict`, ask `crosscheck_no_verdict`. Both go up to
   the parent.
@@ -935,7 +927,7 @@ report, not a finding.
 | Rule | What it finds |
 | --- | --- |
 | `lifecycle_land_twice`, `lifecycle_land_without_review`, `lifecycle_order` | A lifecycle automaton per executor node and per function that calls `crw.commit`, `crw.verify`, `crw.review`, `crw.unitCheck`, `crw.land` or a land release: build once (a rebuild is allowed until the node has landed), then rounds of commit, verify, review, then land at most once, in one of two ways: from a completed review, or, the second way, from verified when a completed unit check of the node's current tree stands (build, unit check, commit, verify, land; also release(land), verify, unit check, land). A `crw.unitCheck` is legal while the node is built (before the commit, also after a fix) or verified (a committed head) and changes no phase: it sets the node's checked flag (in the journal only a completed `crw.unitCheck` row of role `unit-check` whose `state` is `ok` with a `verdict`: a check held for the tool's quota or a blank answer judged nothing), which a build, a resumed executor call of the node (a fix changes the tree) and a land release clear and a commit and a verify keep; where paths meet, a node is checked only when it is checked on every path. A land release is a `crw.release` whose fourth argument is an object literal with a `land` key (in the journal, a completed `crw.release` row with `kind` `land` and `released` true): `land-head` checks out a committed head, so it moves a node before the build or built to committed; any other release is no event, and an identifier as the fourth argument is none either. A call starts its event where it runs and completes where its promise is used: awaited, returned, passed on or kept by the expression around it (the right side of `&&`, `||` or `??`, the left side of `||` or `??`, the last part of a sequence, a branch of `?:`, the value of an assignment), or read (passed on, closed over, `{ p }`) through a name that holds it. A promise whose value is discarded never completes: a call used as a statement, under `void` or another unary operator, in a sequence but its last part, on the left of `&&`, in a test, a comparison, arithmetic or an untagged template, and a held name read only in such a place; a stored promise that nothing reads leaves the node where it was, so `crw.review(...)` without `await` is not a review a later `crw.land` can follow. Started is enough for two rules: a second `crw.land` is a land twice whether or not the first was awaited, and a `crw.commit` started after a review leaves the node built (a change no round has committed), so the land needs a new round. A build, commit or land of a node, started, begins a new generation of it: a promise of an earlier call of that node that settles afterwards belongs to the head before it, so it neither makes the new head committed, verified or reviewed nor takes a started land back (an old `crw.review` awaited after a new `crw.commit` or after `crw.land` changes nothing). Where paths meet, a name keeps every call it may hold there, each with its own generation, and reading it puts the node in any phase one of those paths reaches, so the result does not depend on which branch the text lists first: `let r = crw.review(...)`, then a new round on one branch and `r = crw.review(...)` of the current head on the other, then `await r` and `crw.land`, has a reviewed path and is no finding in either branch order. A `break` or `continue` with a label goes to the statement the label names. A node is named by the `node` option of its executor call and by the first argument of the `crw.*` calls, so the phase of one node never stands for another's; a node the function does not build is taken as built. A violation is reported when it is illegal on every path that reaches it; the finally block of a try is checked from the state at the end of the body or handler and from the state of each completion that leaves through it (a throw no handler takes, a return, a break or continue to a loop outside the try), and that completion then goes on where it was going with the state the block leaves, unless the block returns, throws, breaks or continues itself. A handler starts from the state before the body or after any call in it, and an exception it takes no longer reaches the finally block. |
-| `reviewer_family_same` | A review call (its prompt is `crw.reviewPacket(...)` or its label starts with `review`) whose model family (`claude`, `gpt`, taken from the model of its role's pair) is the model family of the author call before it. A role is not a family: an `explorer` on the executor's model is no independent review. A continuation (`resume:`) is judged by the pair of the thread it continues. The dry run judges the pair each call was configured with. |
+| `reviewer_family_same` | Legacy diagnostic retained for old lint records. New lint does not diagnose a review because its model family matches an author; model family is provenance. A separately invoked tool review has no agent thread id. If an agent review's same thread is actually observed, it is a warning recorded in the run and does not block. |
 | `label_duplicate` | A label used twice on one path, or on a call that a loop with at least two rounds shown by the text (`for (let i = 0; i < 3; i++)`, `for (const x of [..])`) runs every round: no break, continue, return or throw in the loop, and no condition between the loop and the call. The first round of a `do … while` counts as one run, so `do { … } while (false)` uses its labels once. Any other repeat is judged by the dry run, which sees whether the call really repeats. Calls without a label do not count. |
 | `executor_t1_without_step_decision` | An `executor-t1` call without a `stepDecision`, or whose `stepDecision` is not the id `crw.tierStep` returned earlier on the same path and not overwritten since (the walk follows assignments through branches and loops). A plain function call stays on its caller's path, so a helper that reads the id from its closure or a parameter is left to the dry run; a function given to `parallel`, `pipeline` or `crw.dag` runs on a child path, and a decision it reads from the function that starts it is refused. A continuation inherits it from its handle. The dry run refuses an id that no `crw.tierStep` returned on the path. |
 | `classify_arg`, `resume_arg` | `crw.classify(...)` or `resume:` given something other than an `agent.call` result or its handle: the output of `agent()`, a `.output`, a bare value. |
@@ -1505,7 +1497,7 @@ run's directory `<state>/flow/<run>/` and none writes the journal, which only th
   run's repository other than the run's own `refs/crw/flow/<run>/` (the run moves those itself) and the binding files of the
   flow-bound directory (the hook's ledger and claims are left out: the owner's spawns write them while a subagent works).
 - The session facts of the preview are warnings, never a refusal (CRW-1318): `owner_bound` (the owner can be bound: a thread id, a
-  readable binding, no other live run, live as the binding reads it: its process holds the run lock or its start holds the start lock), `role_models` (the six pairs, a role without one or without an effort, a reviewer of an author's model family, a critic of the architect's),
+  readable binding, no other live run, live as the binding reads it: its process holds the run lock or its start holds the start lock), `role_models` (the six pairs, a role without one or without an effort; same-thread review is warning-only when observed),
   `owner_state_writable` (the run directory, the flow-bound directory, the control socket and the repository), `subagent_slots`
   (`agents.max_threads` leaves a slot for a call) and `multi_agent_v1` (`features.multi_agent_v2` is off: under V2 the protocol
   stops); `verifier_prerequisites`, the sixth, is judged for every run (CRW-1319).

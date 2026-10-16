@@ -68,7 +68,7 @@ type Policy struct {
 	// reads another digest records the change.
 	Source, Digest string
 	// Warnings are what the table's reading found and did not refuse (a flow-only key at its compiled default, an undecided
-	// role, a reviewer on an author's model family, an execution policy still declaring agent-roles). A run records them in
+	// role, an execution policy still declaring agent-roles). A run records them in
 	// its started row.
 	Warnings []string
 	// States is where each role's pair came from in a table built from the helper role store (store, compiled_default,
@@ -175,7 +175,7 @@ func (p *Policy) RoleKey(name string) bool {
 // FakePolicy is the role table of the fake backend: the six roles with placeholder pairs and the alias table of the
 // design (opus -> architect; haiku with isolation worktree -> executor; sonnet -> executor-t1; ocx-gpt-6-1-sol -> reviewer
 // at any effort; haiku without isolation is ambiguous). The critic (CRW-1434) is named by agentType only (no alias row), on a
-// gpt pair like its compiled default (execution.DefaultCriticPair), so it is of another model family than the architect.
+// gpt pair like its compiled default (execution.DefaultCriticPair).
 func FakePolicy() *Policy {
 	roles := map[string]RoleSpec{
 		"architect":   {Family: "architect", Pair: Pair{"claude-fake-opus", "high"}, ModelAliases: []string{"opus"}},
@@ -244,21 +244,16 @@ func PolicyFromExecution(p execution.Policy, source string) (*Policy, error) {
 // roles runs the pair of the helper role store's snapshot (an undecided role has the empty pair, so a call of it names no
 // model and no effort), with its family, its sandbox and the design's model aliases; the alias table is the code's
 // (execution.DefaultAliasRows), nothing of it read from a file. Source is the store's path and Digest the snapshot's
-// canonical digest of the six pairs. The snapshot's warnings are kept, and a reviewer on the model
-// family of an author (architect, executor, executor-t1), or a critic on the architect's (execution.FamilyOverlaps),
-// adds one: the runtime independence gate judges each review, and the table is never refused for it.
+// canonical digest of the six pairs. The snapshot's warnings are kept.
 func PolicyFromRoleHelper(snap role.FlowSnapshot) *Policy {
 	out := &Policy{Roles: map[string]RoleSpec{}, Source: snap.Path, Digest: snap.Digest(), Warnings: slices.Clone(snap.Warnings), States: map[string]string{}}
-	models := map[string]string{}
 	for _, r := range snap.Roles {
 		name := string(r.Role)
 		out.Roles[name] = RoleSpec{Family: roleFamily(name), Pair: Pair{Model: r.Model, Effort: r.Effort}, Sandbox: roleSandbox(name), ModelAliases: execution.DefaultModelAliases(name)}
 		out.States[name] = string(r.State)
-		models[name] = r.Model
 	}
 	for _, row := range execution.DefaultAliasRows() {
 		out.Aliases = append(out.Aliases, AliasRule{Key: row.Key, Effort: row.Effort, Isolation: row.Isolation, Role: row.Role, Cause: row.Refuse, Detail: row.Detail})
 	}
-	out.Warnings = append(out.Warnings, execution.FamilyOverlaps(models, execution.AgentArchitect, execution.AgentExecutor, execution.AgentExecutorT1)...)
 	return out
 }

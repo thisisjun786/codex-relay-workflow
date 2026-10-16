@@ -328,7 +328,7 @@ role store, `CRW_HOME/subagents.json` (`~/.crw/subagents.json` when `CRW_HOME` i
 - **A missing flow-only key has a compiled default.** With no `executor-t1` entry, or one that cannot be used, the
   flow runs `anthropic/claude-sonnet-5-5` at `xhigh`; with no usable `critic` entry (every store written before the
   critic), `gpt-6.1-sol` at `xhigh`. The default is never the executor's or the reviewer's pair, so a tier step
-  still moves to another pair, and the critic's default is on another family than the architect's usual one. Each default in use is a warning, and `crw role helper reset` of the key brings it back.
+  still moves to another pair, and the critic's default is independently configurable from the architect's. Model family is provenance, not a review constraint. A same-thread review is warning-only if actually observed and is recorded while the run continues. Each default in use is a warning, and `crw role helper reset` of the key brings it back.
 - **A role in mode default is undecided.** A role in `mode: default` (a helper role or a flow-only key), and a
   helper role with no entry or whose entry cannot be used, inherits the session's model: the flow has no pair for
   it, a call of the role names no model and no effort, and the snapshot warns. `crw role helper set executor-t1
@@ -340,13 +340,7 @@ role store, `CRW_HOME/subagents.json` (`~/.crw/subagents.json` when `CRW_HOME` i
   `crw.*` lane operation needs the executor's and the reviewer's pairs (its lane stamps are made of them), and a run
   on the agent backend needs the explorer's and the reviewer's pairs (it writes them to the flow binding the spawn
   hook reads). A run that needs neither starts with the gaps recorded in its `policy_warnings`.
-- **A reviewer is not an author's family.** When `reviewer` runs a model of the family of
-  `architect`, `executor` or `executor-t1`, the table warns, and so it does when `critic` runs a model of the
-  architect's family (the critic audits the architect's design; the design audit itself judges its independence by
-  the model families of the two calls' pairs). The family of a model is its name without the provider
-  prefix, up to the first dash (`anthropic/claude-haiku-5` and `claude-opus-5-5` are `claude`, `gpt-6.1-sol` is
-  `gpt`). The run starts and records the warning; the runtime independence gate still judges every review by the
-  pair the reviewer thread was created on (`independence_refused`, `independence_unproven`).
+- **Review context and model provenance.** The `reviewer` and `critic` roles describe review work; model family is recorded as provenance and does not constrain a review. Prefer a separate review execution when available. If the host actually reports reuse of an author thread, record a warning and continue. Tool reviews have a separate invocation and no agent thread id. Existing records with `independence_refused` or `independence_unproven` remain readable as historical outcomes.
 - **The alias table is the code's.** A Claude script names a model (`model: 'haiku'`) or a verifier (`agentType:
   'ocx-gpt-6-1-sol'`), not a role, and the flow maps the options of such a call with this table:
 
@@ -388,8 +382,7 @@ The loader accepts `agent-roles` and `agent-aliases` in a policy file without re
 is not used by a flow run, so what is wrong with them is a warning, kept by the loader and shown by `crw flow
 roles` and `crw doctor flow-roles`: a section that does not parse (a role missing, two pairs for one role, an
 unknown key, `agent-aliases` without `agent-roles`, alias rows that overlap) is ignored with the reason, and of a
-section that parses, a pair the file's `allowed` list does not approve, a reviewer on the model family of
-`executor` or `executor-t1` and a critic on the architect's family are warned about. The `critic` key is the one
+section that parses, a pair the file's `allowed` list does not approve. A same-thread review is warned and recorded only when the host actually reports it, and does not block. The `critic` key is the one
 a section may leave out, because every file written before the critic does: such a section loads, its critic takes
 the compiled default `gpt-6.1-sol` at `xhigh` (with the model alias `ocx-gpt-6-1-sol`), and the loader warns
 "agent-roles declares no critic; the compiled default gpt-6.1-sol/xhigh applies"; the `allowed` list is not
