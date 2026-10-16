@@ -514,6 +514,16 @@ func TestAChildSizedNodeHasStarted(t *testing.T) {
 		t.Fatalf("release of the child-sized node: %+v, want released false, kind child, size_fit_child", rel)
 	}
 	r := rows(w.j.Events())
+	// CRW-1464: the child row is the shared unreleased sized row: no `child` session is started, the relay is not asked, and no slice is
+	// recorded (the managed start that compared one is deleted)
+	if row, ok := r.opRows(OpRelease).last(func(ev engine.Event) bool { return dataStr(ev, "node") == "B" }); !ok || dataBool(row, "released") || dataStr(row, "kind") != "child" {
+		t.Fatalf("the release row of the child-sized node: %v, %v", row.Data, ok)
+	} else if _, has := row.Data["slice_digest"]; has {
+		t.Errorf("the child-sized node's release row records slice_digest %v; an unreleased sized row records no slice", row.Data["slice_digest"])
+	}
+	if len(w.relay.releases) != 0 {
+		t.Errorf("the relay was asked %+v, want no release: a child-sized node takes no slot", w.relay.releases)
+	}
 	m, _, err := milestoneOf(r, "M")
 	if err != nil {
 		t.Fatal(err)

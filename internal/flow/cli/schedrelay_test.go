@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -661,19 +662,24 @@ func TestSchedRelayAcceptIntegrateCloseOnTempStore(t *testing.T) {
 	}
 }
 
-// TestSchedRelayReleaseChildRefusesUnwired (CRW-1277 g): the run starts no `child` session, since a managed child start needs host settings it
-// does not hold: ReleaseChild is an error, never a result the lane would record as a running child.
+// TestSchedRelayReleaseChildRefusesUnwired (CRW-1277 g, CRW-1464): the run starts no `child` session. CRW-1285 gave the relay a managed
+// child start behind host settings no start pins since CRW-1417; CRW-1464 deleted it, so the run's relay has no method that starts a
+// `child` session and holds no host settings for one. A node sized for a child is an unreleased sized row of crw.release that asks the
+// relay nothing (ops TestAChildSizedNodeHasStarted), and the lane escalates it as size_split.
 func TestSchedRelayReleaseChildRefusesUnwired(t *testing.T) {
 	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
 	r := l.relayFor("run-child00001", l.handoffBytes(nil), 1)
-	res, err := r.ReleaseChild(ctx, ops.ChildRequest{Plan: l.plan, Node: l.nodeOf["A-1"], RunID: r.RunID, RequestID: "c1"})
-	// CRW-1285 superseded the answer (g): a run that holds no host settings (no --child-host) still starts no child, and its refusal is
-	// child_host_unset; the managed start with host settings is TestReleaseChildStartsAManagedChildWithHostSettings
-	if !errors.Is(err, ErrChildHostUnset) || !strings.HasPrefix(err.Error(), "refused:child_host_unset:") || res.Started || res.Child != "" {
-		t.Fatalf("ReleaseChild: %+v %v", res, err)
+	typ := reflect.TypeOf(r)
+	for _, name := range []string{"ReleaseChild", "Child"} {
+		if _, ok := typ.MethodByName(name); ok {
+			t.Errorf("the run's relay has a method %s", name)
+		}
+		if _, ok := typ.Elem().FieldByName(name); ok {
+			t.Errorf("the run's relay has a field %s", name)
+		}
 	}
 	if n := l.count("SELECT COUNT(*) FROM dag_agent_executions") + l.count("SELECT COUNT(*) FROM managed_start_requests") + l.count("SELECT COUNT(*) FROM dag_coordinator_claims"); n != 0 {
-		t.Errorf("the refused child release wrote %d rows", n)
+		t.Errorf("building the run's relay wrote %d rows", n)
 	}
 }
 

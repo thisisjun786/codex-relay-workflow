@@ -175,27 +175,6 @@ type CloseResult struct {
 	State        string `json:"state"`
 }
 
-// ChildRequest is the request of a managed child start. The lane no longer releases `child` sessions (CRW-1415); the type is kept for
-// schedrelay.go until bundle S.
-type ChildRequest struct {
-	Plan, Node, RunID string
-	Revision          string
-	DesignDigest      string
-	Reason            string
-	RequestID         string
-	// SliceDigest is the node's slice of the plan crw.release compared (CRW-1382): the relay's managed release compares it with the
-	// node's slice when it judges the start and again in the transaction that records it, as for an executor (CRW-1288), and a slice
-	// that is another starts no child (Started false, plan_changed). An empty SliceDigest compares nothing.
-	SliceDigest string
-}
-
-// ChildResult is the child that was started.
-type ChildResult struct {
-	Started bool   `json:"started"`
-	Reason  string `json:"reason"`
-	Child   string `json:"child"`
-}
-
 // ReasonEpochLost is the closed reason of a fenced write the run made after another session claimed the coordinator epoch of its plan
 // (CRW-1285): the run ends at that write with the reason, and writes nothing more at the relay.
 const ReasonEpochLost = "epoch_lost"

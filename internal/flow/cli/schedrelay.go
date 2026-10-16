@@ -57,10 +57,6 @@ type SchedRelay struct {
 	HostMemory func() (*dagsched.HostMemoryBound, error)
 	// RunnableCommand says why the run's verifier cannot run a required command of a milestone ("" when it can); nil checks nothing.
 	RunnableCommand func(command string) string
-	// Child is the host settings of a managed child start (SP-CHILD-1, CRW-1285): the crw-flow-child-host/1 document the run pinned
-	// (--child-host); nil when it pinned none, and a node sized for a child is then refused with the reason. The scheduler's Start and
-	// Selectors are the managed engine the child is started with.
-	Child *ChildHost
 
 	// release serializes the releases: the bound of the host is set on the scheduler for the one being made.
 	release sync.Mutex
@@ -595,71 +591,6 @@ func (r *SchedRelay) ReleaseStands(ctx context.Context, plan, node, execution st
 		return false, err
 	}
 	return r.Sched.AgentAcceptanceIntegrated(ctx, q, acc.Agent)
-}
-
-// ReleaseChild releases a node the architect sized for a child as a `child` session (SP-CHILD-1, CRW-1285): dagsched.Release, the managed
-// start of dag-release, under the task that runs the run, with the request the run holds the inputs of (as Release: the base from the
-// plan's target, the rule version, the criteria of the node's issue, the pinned handoff, the run's directory) and the host settings of
-// the run's --child-host document: the parent's and the child's host and settings, and the child's title (the managed start prefixes the
-// node's issue key). The child it admitted, bound to the node, is the answer. A run that holds no host settings, or settings that cannot start a child, is
-// refused with the reason (an input error); a start the managed engine refused or left incomplete, a node the scheduler holds back and
-// every other failure are errors. The one ChildResult with Started false is the start under a slice of the plan that is not the node's
-// any more (Reason plan_changed, CRW-1382): the request carries the slice crw.release compared, the managed release compares it, and
-// crw.releaseChild records that no child started and the lane ends the node unreleased. The intent and the slot of a start that did not
-// finish stay, and the same release continues it.
-func (r *SchedRelay) ReleaseChild(ctx context.Context, req ops.ChildRequest) (ops.ChildResult, error) {
-	if r.Child == nil {
-		return ops.ChildResult{}, ErrChildHostUnset
-	}
-	if why := r.Child.Problem(); why != "" {
-		return ops.ChildResult{}, fmt.Errorf("refused:child_host_settings: %s", why)
-	}
-	if r.Sched.Start == nil {
-		return ops.ChildResult{}, errors.New("refused:child_start_unwired: the run's scheduler has no managed-start engine")
-	}
-	if err := r.claim(ctx, req.Plan); err != nil {
-		return ops.ChildResult{}, err
-	}
-	n, is, err := r.issueOf(ctx, req.Plan, req.Node)
-	if err != nil {
-		return ops.ChildResult{}, err
-	}
-	request, err := r.releaseRequest(req.Plan, n, is)
-	if err != nil {
-		return ops.ChildResult{}, err
-	}
-	request.Instructions = fmt.Sprintf("You are the issue child of node %s (issue %s) of DAG plan %s, released by flow run %s under design revision %s (%s; sized for a child: %s). "+
-		"Run the issue-lane workflow for this node with the plan the run released it with; you coordinate only, and the executor calls of your run author every commit (SP-CHILD-1).",
-		req.Node, n.IssueKey, req.Plan, r.RunID, req.Revision, req.DesignDigest, req.Reason)
-	request.ScopeRef = "crw-flow:" + r.RunID + "/" + req.Node
-	request.Parent = r.Child.Parent
-	request.Child = r.Child.Child
-	// the node's slice crw.release compared: the managed release compares it when it judges the start and in the transaction that records
-	// it, as Release does (CRW-1288, CRW-1382)
-	request.ExpectedSliceDigest = req.SliceDigest
-	// the managed start sends the host the child's title prefixed with the node's issue key (managed.childTitle), so the title is the document's
-	r.release.Lock()
-	defer r.release.Unlock()
-	done, err := r.hostBound()
-	if err != nil {
-		return ops.ChildResult{}, err
-	}
-	defer done()
-	res, err := r.Sched.Release(ctx, req.Plan, req.Node, r.Actor, request)
-	if err != nil {
-		if reason, held := holdBack(err); held && reason == ops.ReasonPlanChanged {
-			// the plan gives the node another slice than the one the flow compared: no child is started, and the answer says why
-			return ops.ChildResult{Reason: ops.ReasonPlanChanged}, nil
-		} else if held {
-			return ops.ChildResult{}, fmt.Errorf("refused:child_held_back: the scheduler holds node %s back (%s): no child is started: %v", req.Node, reason, err)
-		}
-		return ops.ChildResult{}, epochLost(req.Plan, err)
-	}
-	if !res.Bound {
-		return ops.ChildResult{}, fmt.Errorf("refused:child_not_started: the managed start of node %s ended %s at %s (%s): no child is running; its intent and slot stay, and the same release continues it",
-			req.Node, res.State, res.Stage, res.Reason)
-	}
-	return ops.ChildResult{Started: true, Child: res.ChildTaskID, Reason: req.Reason}, nil
 }
 
 // ---- acceptance and integration ----
