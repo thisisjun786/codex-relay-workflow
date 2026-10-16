@@ -699,6 +699,11 @@ worktree before it asks, the run's buffered rows are stored first, and the run's
 node's calls and the reviewer's input criteria digest on the reviewer's completed row, which the acceptance reads. `integrate` names the node's current acceptance and the head it accepted (anything else is refused before the batch, `acceptance_not_current` or `head_not_accepted`) and is one
 `IntegrateBatch` of the node with the wiring of `crw relay dag-integrate` (`dagsched.IntegrationDeps`: `crw-dev ci local` over the
 merged tree, the merged tree's own crw-dev when the configuration names a Go root, git's compare-and-swap of the branch) onto the plan's target branch, followed by the observation of the landing there;
+the batch's crw-dev gets a HOME and TMPDIR of its own, a fresh `crw-<8 hex>` directory (mode 0700, removed after) directly below the
+run process's TMPDIR resolved, which is the TMPDIR the run's start recorded (below), so it and the node's land-head `crw.verify`
+(whose crw-dev inherits the run process's environment) both work below the run's directory whatever shell relaunched the run and
+however long the directory is; there is no length rule and no other parent, and a directory that cannot be used is a host error
+naming it;
 `close` is `AgentClose`. A node sized `child` is released to no one: it goes up as a `size_split` escalation with detail
 `child_retired` (the evidence carries the plan's `size_reason`), and no child is started.
 
@@ -1354,6 +1359,11 @@ run's directory `<state>/flow/<run>/` and none writes the journal, which only th
   directory is made again; `crw flow resume RUN --detach` exits 1 naming the directory; `next` resumes nothing and warns "its resume
   did not start" with the reason. `--no-resume` starts nothing and is not asked; the later relaunch refuses. The spec is never
   rewritten: the directory is made again.
+- A run that works in the process that reads its spec (the run process `crw flow _run`, the foreground `crw flow resume RUN` and
+  the engine's `crw flow resume RUN SCRIPT`) puts the env its spec records into that process's environment before it takes a lock
+  and puts back what was there when the run is done, so everything the run reads from its own environment (the land-head ci local,
+  the integration batch's TMPDIR, the temporary files of its operations) is below the recorded TMPDIR. A recorded TMPDIR that is
+  missing, not a directory or not writable refuses that process (exit 2, the reason naming the directory) before any lock or row.
 - The owner thread is bound to a session run by the `orchestrator` line of its flow-bound file (`internal/flow/bound`
   `BindOrchestrator`: `kind: orchestrator`, `run_id`, the `policyDigest` of the role table and the `helperPairs` of the seven roles
   architect, executor, executor-t1, reviewer, reviewer-final, explorer, critic; `Line.Validate` takes no orchestrator line without

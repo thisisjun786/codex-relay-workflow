@@ -182,6 +182,17 @@ func (c *command) process(args []string) int {
 
 // execute runs a spec as this process: the lock, the world, the engine, the result. sigs delivers the signals the process answers.
 func (c *command) execute(spec Spec, state string, resume bool, sigs <-chan os.Signal) int {
+	// the run works below the TMPDIR its start recorded, whatever shell started this process (CRW-1570): a recorded directory that is
+	// gone refuses the run before any lock or row, and the recorded env is this process's until the run is done (the land-head ci local
+	// and the integration batch's own TMPDIR read it)
+	if err := checkRunEnv(spec); err != nil {
+		return c.fail("run %s: %v", spec.RunID, err)
+	}
+	restoreEnv, err := c.applyEnv(spec)
+	if err != nil {
+		return c.fail("run %s: %v", spec.RunID, err)
+	}
+	defer restoreEnv()
 	// a session run's process holds its process lock from before the run lock until after it (its started row names the token)
 	process := c.processLock(state, spec)
 	defer process.Release()

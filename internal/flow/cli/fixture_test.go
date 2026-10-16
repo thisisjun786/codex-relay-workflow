@@ -3,8 +3,11 @@ package cli
 import (
 	"bytes"
 	"context"
+	"maps"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -129,6 +132,42 @@ type testDeps struct {
 	spawned []SpawnRequest
 	order   *bytes.Buffer
 	facts   []Fact
+	// envs records the ApplyEnv calls of the commands the test runs (applied, and restored once the run is done with them): the
+	// process environment is left as it is, since tests run the body of a run in this process and in parallel (CRW-1570)
+	envs envRecord
+}
+
+// envRecord is what the recording ApplyEnv of the fixture saw.
+type envRecord struct {
+	mu       sync.Mutex
+	applied  []map[string]string
+	restored int
+}
+
+// apply records rec and returns the restore that records it was called.
+func (r *envRecord) apply(rec map[string]string) (func(), error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.applied = append(r.applied, maps.Clone(rec))
+	return func() {
+		r.mu.Lock()
+		r.restored++
+		r.mu.Unlock()
+	}, nil
+}
+
+// counts are the ApplyEnv calls applied and restored so far, and the maps applied.
+func (r *envRecord) counts() (applied []map[string]string, restored int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return slices.Clone(r.applied), r.restored
+}
+
+// reset forgets what was recorded.
+func (r *envRecord) reset() {
+	r.mu.Lock()
+	r.applied, r.restored = nil, 0
+	r.mu.Unlock()
 }
 
 func (w *world) deps() *testDeps {
@@ -156,6 +195,7 @@ func (w *world) deps() *testDeps {
 		Probe:  ProberFunc(func(ctx context.Context, req PreflightRequest) []Fact { return td.facts }),
 		Signal: func(pid int, sig syscall.Signal) error { return nil },
 	}
+	td.ApplyEnv = td.envs.apply
 	return td
 }
 

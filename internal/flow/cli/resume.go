@@ -63,9 +63,19 @@ func (c *command) resume(args []string) int {
 		signal.Notify(sigs, syscall.SIGUSR1, syscall.SIGUSR2)
 		defer signal.Stop(sigs)
 		defer pauseOnSignal(sigs, ctl.Control)()
-		// a session run's process holds its process lock from before the run lock until after it, as the run process does
+		// a session run's process holds its process lock from before the run lock until after it, as the run process does; the run
+		// works below the TMPDIR its start recorded, as in the run process (execute, CRW-1570): one that is gone refuses the resume
+		// before any lock or row
 		var process *processLock
 		if spec, err := ReadSpec(sel.Path, run); err == nil {
+			if err := checkRunEnv(spec); err != nil {
+				return c.fail("run %s: %v", run, err)
+			}
+			restoreEnv, err := c.applyEnv(spec)
+			if err != nil {
+				return c.fail("run %s: %v", run, err)
+			}
+			defer restoreEnv()
 			process = c.processLock(sel.Path, spec)
 			defer process.Release()
 		}
