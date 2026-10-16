@@ -909,52 +909,9 @@ func TestSchedRelayCloseLeavesARetiredRelationshipExecution(t *testing.T) {
 // child: the run is an old run's, of the project lane whose DESIGN is the current one less S-1 (child in the size_fit enum, no
 // sub_tasks member), started from a script file, and its architect answers with no sub_tasks member.
 func TestChildSizedNodeWithARetiredRelationshipExecutionEscalates(t *testing.T) {
-	text, err := workflows.Source(ProjectLaneWorkflow)
-	if err != nil {
-		t.Fatal(err)
-	}
-	const designImport = "import { RECEIPT, DESIGN, DESIGN_AUDIT, REFLECTION } from 'crw:lib/schemas'\n"
-	head, ok := strings.CutPrefix(string(text), designImport)
-	at := strings.Index(head, "\nexport const meta = ")
-	if !ok || at < 0 {
-		t.Fatalf("project-lane.js no longer starts with the import of DESIGN this test replaces, followed by its meta line")
-	}
-	current, _ := ops.SchemaText(ops.SchemaDesign)
-	var design map[string]any
-	if err := json.Unmarshal([]byte(current), &design); err != nil {
-		t.Fatal(err)
-	}
-	issue := design["properties"].(map[string]any)["issues"].(map[string]any)["items"].(map[string]any)
-	delete(issue["properties"].(map[string]any), "sub_tasks")
-	issue["properties"].(map[string]any)["size_fit"].(map[string]any)["enum"] = []any{"executor", "child", "split"}
-	issue["required"] = slices.DeleteFunc(issue["required"].([]any), func(r any) bool { return r == "sub_tasks" })
-	legacyDesign, _ := json.Marshal(design)
-	end := at + 1 + strings.IndexByte(head[at+1:], '\n') + 1
-	lane := filepath.Join(t.TempDir(), ProjectLaneWorkflow+".js")
-	if err := os.WriteFile(lane, []byte("import { RECEIPT, DESIGN_AUDIT, REFLECTION } from 'crw:lib/schemas'\n"+head[:end]+"const DESIGN = "+string(legacyDesign)+"\n"+head[end:]), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
+	lane := legacyChildLane(t)
 	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"}, labIssue{Key: "A-2", Milestone: "M1"})
-	l.designEdit = func(d *ops.Design) {
-		for i := range d.Issues {
-			if d.Issues[i].Issue == "A-2" {
-				d.Issues[i].SizeFit, d.Issues[i].SizeReason = "child", "regions_gt3"
-			}
-		}
-	}
-	l.turn = func(c labCall, _ fakehost.TurnRequest) (fakehost.TurnPlan, bool) {
-		if c.Role != "architect" || strings.HasPrefix(c.Label, "reflection:") {
-			return fakehost.TurnPlan{}, false
-		}
-		var m map[string]any
-		raw, _ := json.Marshal(l.design())
-		_ = json.Unmarshal(raw, &m)
-		for _, is := range m["issues"].([]any) {
-			delete(is.(map[string]any), "sub_tasks")
-		}
-		return labSay(m), true
-	}
+	l.legacyChildDesign("A-2")
 	node := l.nodeOf["A-2"]
 	l.pastRelationshipExecution(node)
 	spec := l.start("start", lane, "--args", `{"plan":"plan-1","milestone":"M1"}`, "--handoff", l.file)
@@ -982,5 +939,61 @@ func TestChildSizedNodeWithARetiredRelationshipExecutionEscalates(t *testing.T) 
 	}
 	if len(esc) != 1 || str(esc[0].Data, "detail") != "child_retired" {
 		t.Errorf("the escalations of %s: %+v, want one with detail child_retired", node, esc)
+	}
+}
+
+// legacyChildLane is the project lane of a run of before S-1 (CRW-1435), the only lane whose DESIGN sizes a node for a child: the current
+// lane less S-1 (child in the size_fit enum, no sub_tasks member), written to a script file a run is started from.
+func legacyChildLane(t *testing.T) string {
+	t.Helper()
+	text, err := workflows.Source(ProjectLaneWorkflow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const designImport = "import { RECEIPT, DESIGN, DESIGN_AUDIT, REFLECTION } from 'crw:lib/schemas'\n"
+	head, ok := strings.CutPrefix(string(text), designImport)
+	at := strings.Index(head, "\nexport const meta = ")
+	if !ok || at < 0 {
+		t.Fatalf("project-lane.js no longer starts with the import of DESIGN this test replaces, followed by its meta line")
+	}
+	current, _ := ops.SchemaText(ops.SchemaDesign)
+	var design map[string]any
+	if err := json.Unmarshal([]byte(current), &design); err != nil {
+		t.Fatal(err)
+	}
+	issue := design["properties"].(map[string]any)["issues"].(map[string]any)["items"].(map[string]any)
+	delete(issue["properties"].(map[string]any), "sub_tasks")
+	issue["properties"].(map[string]any)["size_fit"].(map[string]any)["enum"] = []any{"executor", "child", "split"}
+	issue["required"] = slices.DeleteFunc(issue["required"].([]any), func(r any) bool { return r == "sub_tasks" })
+	legacyDesign, _ := json.Marshal(design)
+	end := at + 1 + strings.IndexByte(head[at+1:], '\n') + 1
+	lane := filepath.Join(t.TempDir(), ProjectLaneWorkflow+".js")
+	if err := os.WriteFile(lane, []byte("import { RECEIPT, DESIGN_AUDIT, REFLECTION } from 'crw:lib/schemas'\n"+head[:end]+"const DESIGN = "+string(legacyDesign)+"\n"+head[end:]), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return lane
+}
+
+// legacyChildDesign makes the lab's architect answer a DESIGN of before S-1 that sizes the node of issue key for a child: no issue
+// carries the sub_tasks member.
+func (l *laneLab) legacyChildDesign(key string) {
+	l.designEdit = func(d *ops.Design) {
+		for i := range d.Issues {
+			if d.Issues[i].Issue == key {
+				d.Issues[i].SizeFit, d.Issues[i].SizeReason = "child", "regions_gt3"
+			}
+		}
+	}
+	l.turn = func(c labCall, _ fakehost.TurnRequest) (fakehost.TurnPlan, bool) {
+		if c.Role != "architect" || strings.HasPrefix(c.Label, "reflection:") {
+			return fakehost.TurnPlan{}, false
+		}
+		var m map[string]any
+		raw, _ := json.Marshal(l.design())
+		_ = json.Unmarshal(raw, &m)
+		for _, is := range m["issues"].([]any) {
+			delete(is.(map[string]any), "sub_tasks")
+		}
+		return labSay(m), true
 	}
 }
