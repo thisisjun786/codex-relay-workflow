@@ -164,6 +164,12 @@ as such:
   attempt starts at the node's last commit and takes none of an earlier attempt's working files: the node lane's tier step before
   any commit, a rebuild after a checked fix): nothing reads its effect again, and it is proven as the recorded fact it is. A call of
   an attempt no fresh one followed is the current attempt's.
+- A split node (CRW-1459) runs its sub-tasks as turns of its one executor thread: each next one is a `subtask:<node>:<tier>:s<k>` call, an executor
+  call of the node as a fix is, and the checkpoint commit of each sub-task before the last is one more `crw.commit` row of the chain, made
+  against the sub-task's `edit_regions`. A split node makes one checkpoint `crw.commit` per sub-task before the last and is judged once:
+  no `crw.verify` or `crw.land` row of the node precedes the last sub-task's commit, and verify and land read the node's last commit, as
+  they read the last of a fix round's. A fresh attempt (a rebuild, a tier step) starts at that last commit, so the sub-tasks it holds stay
+  proven while the current `HEAD` descends from it, by the rule above.
 - A worktree a resume restored (below) holds the pending tree P of the last build or fix of the replayed prefix. It is the node's
   current worktree from the call that adopts it on, and it proves the calls of the prefix - the call P belongs to and the calls
   before it, which ran in the worktree of an earlier attempt - while its files are P.
@@ -181,7 +187,7 @@ work grew from, which the acceptance of the head uses too. A failed verification
 for each step of its record that failed and gives a reason (not a step skipped after an earlier failure): `job`, `step`, the `tests` (`--- FAIL: <Test>`) and `packages` (`FAIL\t<pkg>`)
 its reason names and `tail`, the last 20 lines of the reason (at most 2048 bytes); a reason with no such line has no test and no
 package, only the tail. The member is additive (a row without it names no failed test), and the executor's fix packet and a fresh
-thread's packet render it (CRW-1469). A node released as a child or a split keeps its release row (`crw.release`). Review: a record of the same head and
+thread's packet render it (CRW-1469). A node sized for a child, a bundle split or a split with no sub-tasks keeps its unreleased release row (`crw.release`); a split with sub-tasks is released as an executor node is (CRW-1459). Review: a record of the same head and
 criteria digest (`crw.review`). Accept: the recorded acceptance is active, not stale, of the same head (the relay says which).
 Integrate: the recorded batch commit is an ancestor of the integration ref; the target moving on keeps it an ancestor. Gate: a
 passing record of the current integration head, the same command set (the plan's required commands joined with `;`) and the same
