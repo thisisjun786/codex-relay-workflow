@@ -545,6 +545,165 @@ func TestAChildSizedNodeHasStarted(t *testing.T) {
 	}
 }
 
+// S-6 (CRW-1472): crw.designLedger refuses a revision after r0 that drops or changes what a started node stands on, and one that
+// drops a node the run still needs. A is released to an executor and B is sized for a bundle split (an unreleased sized row): both
+// have started (startRowOf, the predicate crw.releasedPlans lists by). C has not. A revision is refused when a started node has no
+// issue, when its issue differs in any field from the one it started under, when a decision its decision_refs name is missing or
+// differs in any field, and when a node of the milestone that the plan of the revision still holds has no issue. An unstarted node
+// changes freely, a started node kept as it started passes, and a node the plan dropped and that never started is not demanded.
+func TestDesignLedgerRefusesARevisionMissingANodeOrDecision(t *testing.T) {
+	r0 := func() Design {
+		d := designOf("A", "B", "C")
+		d.Issues[1].SizeFit, d.Issues[1].SizeReason, d.Issues[1].IssueSizeDecision = "bundle_split", "regions_gt3", "over_line"
+		return d
+	}
+	startWith := func(t *testing.T, first Design) *world {
+		w := newWorld(t)
+		w.relay.plan = planOfNodes(map[string]string{"A": "sa", "B": "sb", "C": "sc"}, "A", "B", "C")
+		w.ledgered(true, first)
+		w.release("A")
+		var rel ReleaseOutcome
+		_ = json.Unmarshal(w.must("release", "plan-1", "B", "M"), &rel)
+		if rel.Released || rel.Kind != "bundle_split" {
+			t.Fatalf("release of the bundle-split node: %+v", rel)
+		}
+		r := rows(w.j.Events())
+		for _, n := range []string{"A", "B"} {
+			if _, _, ok := startRowOf(r, n); !ok {
+				t.Fatalf("%s has not started", n)
+			}
+		}
+		if _, _, ok := startRowOf(r, "C"); ok {
+			t.Fatal("C has started")
+		}
+		return w
+	}
+	start := func(t *testing.T) *world { return startWith(t, r0()) }
+	// revise audits the DESIGN after r0 and asks for it as r1, against the plan the relay holds (plan nil) or a plan snapshot
+	revise := func(w *world, d Design, plan *PlanSnapshot) error {
+		design, _ := json.Marshal(d)
+		cand := Candidate{Design: design, Answers: json.RawMessage(`[]`)}
+		w.must("designAudit", "M", 2, cand, call("c_arch2", "completed", "claude-x", nil),
+			call("c_aud2", "completed", "gpt-y", map[string]any{"verdict": "approved", "findings": []any{}, "summary": "ok"}))
+		entry := map[string]any{"design": json.RawMessage(design), "answers": json.RawMessage(`[]`), "architect": call("c_arch2", "completed", "claude-x", nil), "signal": 1, "head": strings.Repeat("2", 40)}
+		if plan != nil {
+			entry["plan"] = plan
+		}
+		_, err := w.op("designLedger", "M", entry)
+		return err
+	}
+	issue := func(d *Design, node string) *DesignIssue {
+		for i := range d.Issues {
+			if d.Issues[i].Node == node {
+				return &d.Issues[i]
+			}
+		}
+		t.Fatalf("no issue %s", node)
+		return nil
+	}
+	drop := func(d *Design, node string) {
+		d.Issues = slices.DeleteFunc(d.Issues, func(is DesignIssue) bool { return is.Node == node })
+	}
+	refused := []struct {
+		name, want string
+		edit       func(d *Design)
+	}{
+		{"a started node has no issue", "A", func(d *Design) { drop(d, "A") }},
+		{"a node sized for a bundle split has no issue", "B", func(d *Design) { drop(d, "B") }},
+		{"a started node's approach differs", "A", func(d *Design) { issue(d, "A").Approach = "approach A after the re-plan" }},
+		{"a started node's edit regions differ", "A", func(d *Design) { issue(d, "A").EditRegions = []string{"A/", "Z/"} }},
+		{"a started node's decision refs differ", "A", func(d *Design) {
+			d.Decisions = append(d.Decisions, Decision{ID: "D2", Evidence: []string{}, Change: "another", Alternatives: []string{}, Assumptions: []string{}})
+			issue(d, "A").DecisionRefs = []string{"D1", "D2"}
+		}},
+		{"a started node's done condition differs", "A", func(d *Design) { issue(d, "A").DoneCondition = "done A otherwise" }},
+		{"a started node's order differs", "A", func(d *Design) { issue(d, "A").OrderAfter = []string{"C"} }},
+		{"a bundle-split node's size reason differs", "B", func(d *Design) { issue(d, "B").SizeReason = "another reason" }},
+		{"a decision a started node names is missing", "D1", func(d *Design) {
+			d.Decisions = []Decision{}
+			for i := range d.Issues {
+				d.Issues[i].DecisionRefs = []string{}
+			}
+			issue(d, "A").DecisionRefs = []string{"D1"}
+		}},
+		{"a decision a started node names changed its change", "D1", func(d *Design) { d.Decisions[0].Change = "another change" }},
+		{"a decision a started node names changed its alternatives", "D1", func(d *Design) { d.Decisions[0].Alternatives = []string{"another way"} }},
+		{"an unstarted node of the plan has no issue", "C", func(d *Design) { drop(d, "C") }},
+	}
+	for _, c := range refused {
+		t.Run("refused/"+c.name, func(t *testing.T) {
+			w := start(t)
+			d := r0()
+			c.edit(&d)
+			err := revise(w, d, nil)
+			if err == nil || !strings.Contains(err.Error(), "crw.designLedger: revision r1") || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("crw.designLedger: %v, want a refusal of revision r1 naming %s", err, c.want)
+			}
+			if cur, _ := currentLedger(rows(w.j.Events()), "M"); dataStr(cur, "revision") != "r0" {
+				t.Errorf("the revision that stands is %v, want r0", cur.Data["revision"])
+			}
+		})
+	}
+	// a started node dropped from the plan is still demanded: its execution stands on its issue
+	t.Run("refused/a started node the plan dropped has no issue", func(t *testing.T) {
+		w := start(t)
+		w.relay.plan = planOfNodes(map[string]string{"B": "sb", "C": "sc"}, "B", "C")
+		d := r0()
+		drop(&d, "A")
+		if err := revise(w, d, nil); err == nil || !strings.Contains(err.Error(), "crw.designLedger: revision r1") || !strings.Contains(err.Error(), "A") {
+			t.Fatalf("crw.designLedger: %v, want a refusal naming A", err)
+		}
+	})
+	// a decision the started node names twice is one decision: the revision that keeps it passes
+	t.Run("passes/a decision a started node names twice", func(t *testing.T) {
+		twice := r0()
+		twice.Issues[0].DecisionRefs = []string{"D1", "D1"}
+		w := startWith(t, twice)
+		if err := revise(w, twice, nil); err != nil {
+			t.Fatalf("crw.designLedger: %v, want revision r1", err)
+		}
+	})
+	passes := []struct {
+		name string
+		edit func(w *world, d *Design) *PlanSnapshot
+	}{
+		{"every node as it was", func(*world, *Design) *PlanSnapshot { return nil }},
+		{"an unstarted node changes freely", func(_ *world, d *Design) *PlanSnapshot {
+			c := issue(d, "C")
+			c.Approach, c.EditRegions, c.DoneCondition, c.OrderAfter = "approach C after the re-plan", []string{"C/", "D/"}, "done C otherwise", []string{"A"}
+			d.Decisions = append(d.Decisions, Decision{ID: "D2", Evidence: []string{}, Change: "for C", Alternatives: []string{}, Assumptions: []string{}})
+			c.DecisionRefs = []string{"D1", "D2"}
+			return nil
+		}},
+		{"a decision no started node names changes freely", func(_ *world, d *Design) *PlanSnapshot {
+			d.Decisions = append(d.Decisions, Decision{ID: "D3", Evidence: []string{}, Change: "unused", Alternatives: []string{}, Assumptions: []string{}})
+			return nil
+		}},
+		{"an unstarted node the live plan dropped is not demanded", func(w *world, d *Design) *PlanSnapshot {
+			w.relay.plan = planOfNodes(map[string]string{"A": "sa", "B": "sb"}, "A", "B")
+			drop(d, "C")
+			return nil
+		}},
+		{"an unstarted node the evaluated plan dropped is not demanded", func(_ *world, d *Design) *PlanSnapshot {
+			drop(d, "C")
+			return &PlanSnapshot{Digest: "evaluated", Slices: map[string]string{"A": "sa", "B": "sb"}}
+		}},
+	}
+	for _, c := range passes {
+		t.Run("passes/"+c.name, func(t *testing.T) {
+			w := start(t)
+			d := r0()
+			plan := c.edit(w, &d)
+			if err := revise(w, d, plan); err != nil {
+				t.Fatalf("crw.designLedger: %v, want revision r1", err)
+			}
+			if cur, _ := currentLedger(rows(w.j.Events()), "M"); dataStr(cur, "revision") != "r1" {
+				t.Errorf("the revision that stands is %v, want r1", cur.Data["revision"])
+			}
+		})
+	}
+}
+
 // A wait for a decision is open until the journal has the applied row of its own question and node.
 func TestDecideReadsOnlyTheAppliedRow(t *testing.T) {
 	w := newWorld(t)

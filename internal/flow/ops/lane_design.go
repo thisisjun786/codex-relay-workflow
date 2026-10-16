@@ -277,6 +277,14 @@ func (o *designLedgerOp) Run(ctx context.Context, req engine.OpRequest) (engine.
 		}
 		sl, mileDigest = liveSlices(mile), digestOf(mile)
 	}
+	// a revision after the first keeps what the started nodes stand on and plans every node the run still needs (CRW-1472): the
+	// plans the critic of the re-plan was given (crw.releasedPlans) are the ones it is held to, and the plan of the revision is the
+	// one its slices are taken from
+	if hasPrev {
+		if err := revisionKeepsStarted(r, ms, design, sl); err != nil {
+			return engine.OpResult{}, fmt.Errorf("crw.designLedger: revision %s: %w", e.Revision, err)
+		}
+	}
 	// the head the DESIGN ran at: for a revision after the first the head H the re-plan pinned, for the first the commit the
 	// architect's checkout was made at, as its prepared row records it - never the integration target sampled now, after the audit,
 	// which a lane that landed while the DESIGN was audited has moved past it

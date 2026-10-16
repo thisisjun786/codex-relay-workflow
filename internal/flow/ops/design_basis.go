@@ -81,41 +81,13 @@ func (o *releasedPlansOp) Run(_ context.Context, req engine.OpRequest) (engine.O
 	if err := args(req.Args, &ms); err != nil {
 		return engine.OpResult{}, fmt.Errorf("crw.releasedPlans(milestone): %w", err)
 	}
-	r := rows(req.Journal.Events())
-	nodes, out := []string{}, []ReleasedPlan{}
-	for _, node := range milestoneNodes(r, ms) {
-		// the started predicate of the signal path (startRowOf): a node it counts started is listed, and only such a node
-		rel, kind, ok := startRowOf(r, node)
-		if !ok {
-			continue
-		}
-		revision := dataStr(rel, "revision")
-		led, ok := ledgerOf(r, ms, revision)
-		if !ok {
-			return engine.OpResult{}, fmt.Errorf("crw.releasedPlans: the ledger has no revision %s of milestone %s, which node %s was released under", revision, ms, node)
-		}
-		is, found, err := designIssue(led, node)
-		if err != nil {
-			return engine.OpResult{}, fmt.Errorf("crw.releasedPlans: node %s: %w", node, err)
-		}
-		if !found {
-			return engine.OpResult{}, fmt.Errorf("crw.releasedPlans: revision %s plans no issue for node %s, which was released under it", revision, node)
-		}
-		is.EditRegions, is.TestsFirst, is.DecisionRefs, is.OrderAfter = nonNil(is.EditRegions), nonNil(is.TestsFirst), nonNil(is.DecisionRefs), nonNil(is.OrderAfter)
-		p := ReleasedPlan{Node: node, Kind: kind, Revision: revision, DesignDigest: dataStr(rel, "design_digest"), Plan: is, Decisions: []Decision{}}
-		design, err := ledgerDesign(led)
-		if err != nil {
-			return engine.OpResult{}, fmt.Errorf("crw.releasedPlans: node %s: %w", node, err)
-		}
-		for _, ref := range is.DecisionRefs {
-			for _, d := range design.Decisions {
-				if d.ID == ref {
-					p.Decisions = append(p.Decisions, d)
-				}
-			}
-		}
-		out = append(out, p)
-		nodes = append(nodes, node)
+	out, err := releasedPlans(rows(req.Journal.Events()), ms)
+	if err != nil {
+		return engine.OpResult{}, fmt.Errorf("crw.releasedPlans: %w", err)
+	}
+	nodes := make([]string, 0, len(out))
+	for _, p := range out {
+		nodes = append(nodes, p.Node)
 	}
 	return engine.OpResult{Result: result(out), Data: map[string]any{"milestone": ms, "nodes": nodes}}, nil
 }
