@@ -56,7 +56,9 @@ function notesSection(notes) {
 // architectPacket is the architect's first turn of a milestone. background is the answers of the background explorers that ran before
 // it, one for each node (crw.explore of kind background, CRW-1466): given, the packet carries them as BACKGROUND FINDINGS, each by its
 // id, question, answer and the explorer's findings only - never by its route, reason, scope, notation or origin, so the packet's bytes
-// do not move with the routing metadata a binary records; not given (or empty), the packet is the one it was before CRW-1466.
+// do not move with the routing metadata a binary records; not given (or empty), the packet is the one it was before CRW-1466. An
+// answer whose explorer was asked twice and did not answer (missing, CRW-1571) is not a finding: a MISSING EXPLORATIONS section after
+// them names it, and with none missing the packet is the one it was before.
 // head is the design head the run sampled before the phase explore (crw.designHead): the background explorers read it and the
 // architect's directory is a checkout of it, and BACKGROUND FINDINGS names it; without one the packet is as it was.
 export function architectPacket(ms, background, head) {
@@ -67,16 +69,30 @@ export function architectPacket(ms, background, head) {
     'Answer with DESIGN: the decisions, one plan for each issue node below (its size_fit, the sub_tasks of a split node, edit regions, approach, tests first and done condition), the open questions you cannot answer from what you read, and the risks.',
     section('NODES', nodes),
   ]
-  if (background && background.length) {
+  const answered = (background || []).filter((a) => !a.missing)
+  const missing = (background || []).filter((a) => a.missing)
+  if (answered.length) {
     parts.push(section('BACKGROUND FINDINGS (' + (head ? 'read at ' + head + ', the commit your directory is a checkout of; ' : '') + 'an explorer read the repository for each node before you; build on them, and ask as an open question only what they and your own reading leave open)',
-      background.map((a) => {
+      answered.map((a) => {
         const lines = [(a.id ? a.id + ': ' : '') + a.question]
         if (a.answer) lines.push('  answer: ' + a.answer)
         if (a.findings) lines.push('  findings: ' + canon(a.findings))
         return '- ' + lines.join('\n')
       })))
   }
+  // a background question whose explorer was null_model twice (crw.explore's missing, CRW-1571): named, never listed as a finding
+  if (missing.length) {
+    parts.push(section('MISSING EXPLORATIONS (the explorer of each was asked twice and did not answer; read what the node rests on yourself, and ask as an open question what you cannot settle)',
+      missing.map((a) => '- ' + missingLine(a))))
+  }
   return parts.join('\n\n')
+}
+
+// missingLine names a question whose explorer was asked twice and did not answer (crw.explore's missing, CRW-1571): its id and
+// question, both calls, and the status and reason of the last.
+function missingLine(a) {
+  const m = a.missing
+  return (a.id ? a.id + ': ' : '') + a.question + ' (calls ' + m.calls.join(', ') + ': ' + m.status + (m.reason ? ' ' + m.reason : '') + ')'
 }
 
 // The executor contract and the authority boundary the design audit holds a DESIGN to (CRW-1321): the architect overlay
