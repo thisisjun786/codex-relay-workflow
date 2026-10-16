@@ -49,7 +49,11 @@ type Spec struct {
 	// Preflight is the preflight facts that did not pass (warn or fail) when the run started, as they were read: a fact never
 	// stops the start, so the run's record is where its warnings stay.
 	Preflight []Fact `json:"preflight,omitempty"`
-	CreatedAt string `json:"created_at"`
+	// Env is the environment the run's processes are given, recorded once by `crw flow start`: TMPDIR, the temporary location the
+	// one temp function (tmploc) answered for the starting environment, as written. Nothing else of the caller's environment is
+	// recorded (no PATH, GOFLAGS or GOTOOLCHAIN). Nil, and absent from run.json, in a spec written before the field.
+	Env       map[string]string `json:"env,omitempty"`
+	CreatedAt string            `json:"created_at"`
 }
 
 // NewRunID makes the id of a new run: "run-" and twelve hex digits.

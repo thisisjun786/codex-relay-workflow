@@ -25,10 +25,10 @@ func TestScriptResumeGivesItsCallsTheRepositoryTools(t *testing.T) {
 	}
 	w := newWorld(t)
 	td := w.deps()
-	td.Getenv = func(k string) (string, bool) {
+	td.Getenv = td.w.withTemp(func(k string) (string, bool) {
 		v, ok := map[string]string{"HOME": home, "CRW_CONFIG": config, "PATH": "/usr/bin"}[k]
 		return v, ok
-	}
+	})
 	run, owner := "run-0123456789a1", "01a30000-0000-7000-8000-0000000000a1"
 	script := filepath.Join(t.TempDir(), "look.js")
 	if err := os.WriteFile(script, []byte("export const meta = { name: 'look' }\nconst a = await agent.call('look around', { agentType: 'explorer', label: 'exp' })\nreturn [a.status]\n"), 0o644); err != nil {

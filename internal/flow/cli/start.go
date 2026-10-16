@@ -351,6 +351,15 @@ func (c *command) start(args []string) int {
 		return 0
 	}
 
+	// the run's temporary location, asked of the one temp function once and recorded, so every later process of the run gets the
+	// same one whatever shell relaunches it (CRW-1570); one that cannot be used stops the start before anything of the run is written
+	tmp, err := runTemp(c.getenv)
+	if err != nil {
+		fmt.Fprintf(c.stderr, "crw flow start: the run is not started: %v\n", err)
+		return 1
+	}
+	spec.Env = map[string]string{"TMPDIR": tmp}
+
 	sel, err := ResolveState(cm.state, cm.socket)
 	if err != nil {
 		return c.fail("%v", err)
