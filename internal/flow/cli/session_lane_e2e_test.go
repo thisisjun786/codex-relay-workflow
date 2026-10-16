@@ -56,7 +56,7 @@ var sessionLabPairs = map[string]engine.Pair{
 	"architect": {Model: "anthropic/claude-opus-5-5"}, "executor": {Model: "anthropic/claude-haiku-5", Effort: "medium"},
 	"executor-t1": {Model: "anthropic/claude-sonnet-5-5", Effort: "xhigh"}, "reviewer": {Model: "gpt-6.1-sol", Effort: "high"},
 	"explorer": {Model: "anthropic/claude-haiku-5", Effort: "low"},
-	"critic": {Model: "gpt-6.1-sol", Effort: "xhigh"},
+	"critic":   {Model: "gpt-6.1-sol", Effort: "xhigh"},
 }
 
 // ownerEffort is the reasoning effort of the owner thread: a subagent spawned with no effort runs on it.
