@@ -6,17 +6,15 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc/tmploctest"
 )
 
-// shortDir is a directory short enough that a store socket below it stays under the bind limit.
+// shortDir is a directory short enough that a store socket below it stays under the bind limit: a
+// socket directory (tmploctest.SocketDir), never below TMPDIR, removed when the test ends.
 func shortDir(t *testing.T) string {
 	t.Helper()
-	dir, err := os.MkdirTemp("", "rs")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.RemoveAll(dir) })
-	return dir
+	return tmploctest.SocketDir(t, "rs")
 }
 
 // statusOf is the status the report gives one root.

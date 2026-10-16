@@ -161,3 +161,98 @@ return [a.status]`))
 		})
 	}
 }
+
+// tmpdirTools are the tools of a run whose start recorded TMPDIR (CRW-1570), with the go: the TMPDIR first in Env and prefix.
+func tmpdirTools() *RepositoryTools {
+	go1488 := testRepositoryTools()
+	return &RepositoryTools{
+		Env:    append([]string{"TMPDIR=/runs/tmp-a"}, go1488.Env...),
+		Prefix: "TMPDIR=/runs/tmp-a " + go1488.Prefix,
+		Facts:  append([]string{"temporary directory: /runs/tmp-a, the run's recorded TMPDIR (env.TMPDIR in the run's run.json)"}, go1488.Facts...),
+	}
+}
+
+// fixRound is a build, a check of it and the fix round the check asks for: a call that resumes the build's.
+const fixRound = `const r = await agent.call('build node n1', { agentType: 'executor', label: 'exe', node: 'n1', schema: RECEIPT })
+const chk = await agent.call('review the head', { agentType: 'reviewer', label: 'chk', head: 'h-review', schema: VERDICT })
+const fix = await agent.call('fix what the check found', { resume: r, label: 'fix', schema: RECEIPT })
+return [r.status, chk.status, fix.status]`
+
+// CRW-1570: a fix round's call is an agent call of the same run, so it gets the run's recorded TMPDIR as every call does. On the
+// session backend its packet names the TMPDIR and says the prefix goes in front of every command the subagent runs (TMPDIR concerns
+// every command that makes temporary files, not only go's); on the App Server its thread and turn specs carry TMPDIR=A.
+func TestFixRoundCallGetsTheRunsTMPDIR(t *testing.T) {
+	tools := tmpdirTools()
+	t.Run("session", func(t *testing.T) {
+		k := newSessionKit(t)
+		k.h.cfg.Tools = tools
+		k.orch.answer = func(st Step, _ string, _ int) orchAnswer {
+			if st.Role == "executor" {
+				return orchAnswer{edit: "P:" + st.Op}
+			}
+			return orchAnswer{}
+		}
+		if got := value[[]string](t, k.h.run(fixRound)); strings.Join(got, ",") != "completed,completed,completed" {
+			t.Fatalf("statuses %v", got)
+		}
+		fixRows := k.rowsOf("fix")
+		if len(fixRows) == 0 {
+			t.Fatal("no fix call")
+		}
+		var packets int
+		for _, st := range k.orch.spawned() {
+			if st.Call != fixRows[0].CallID {
+				continue
+			}
+			packets++
+			raw, err := os.ReadFile(st.Packet)
+			if err != nil {
+				t.Fatal(err)
+			}
+			packet := string(raw)
+			for _, want := range []string{"## Repository tools", tools.Facts[0], "`" + tools.Prefix + "`", "in front of every command you run"} {
+				if !strings.Contains(packet, want) {
+					t.Errorf("the fix round's packet does not name %q:\n%s", want, packet)
+				}
+			}
+		}
+		if packets == 0 {
+			t.Fatal("the fix round spawned no subagent")
+		}
+	})
+	t.Run("app-server", func(t *testing.T) {
+		h := newHarness(t)
+		h.cfg.Tools = tools
+		rec := &turnSpecRecorder{Fake: h.fake}
+		h.cfg.Backend = rec
+		if got := value[[]string](t, h.run(fixRound)); strings.Join(got, ",") != "completed,completed,completed" {
+			t.Fatalf("statuses %v", got)
+		}
+		fixRows := h.callRows("fix")
+		if len(fixRows) == 0 {
+			t.Fatal("no fix call")
+		}
+		var turns int
+		for _, spec := range rec.specs {
+			if spec.CallID != fixRows[0].CallID {
+				continue
+			}
+			turns++
+			if spec.Tools == nil || !slices.Contains(spec.Tools.Env, "TMPDIR=/runs/tmp-a") {
+				t.Errorf("the fix round's turn %s carries tools %+v, want TMPDIR=/runs/tmp-a", spec.Op, spec.Tools)
+			}
+			// the turn text ends with the same section (toolsSuffix), whatever the thread's shell holds
+			for _, want := range []string{tools.Facts[0], "`" + tools.Prefix + "`", "in front of every command you run"} {
+				if !strings.Contains(spec.Input, want) {
+					t.Errorf("the fix round's turn %s does not name %q:\n%s", spec.Op, want, spec.Input)
+				}
+			}
+		}
+		if turns == 0 {
+			t.Fatal("the fix round ran no turn")
+		}
+		if got := tools.ShellOverrides()["shell_environment_policy.set.TMPDIR"]; got != "/runs/tmp-a" {
+			t.Errorf("the thread's leaf key TMPDIR is %v", got)
+		}
+	})
+}

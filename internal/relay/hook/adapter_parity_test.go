@@ -19,6 +19,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc/tmploctest"
 )
 
 // The native hook through its process entry point, scenario by scenario as the retired Python
@@ -114,6 +115,7 @@ func nativeAdapterRun(t *testing.T, name string, response Object, base string) O
 	if err := os.Mkdir(filepath.Join(home, "state"), 0o700); err != nil {
 		t.Fatal(err)
 	}
+	tmploctest.CheckSocket(t, socketRootOf(t, filepath.Join(home, "state", "control.sock")), filepath.Join(home, "state", "control.sock"))
 	listener, err := net.Listen("unix", filepath.Join(home, "state", "control.sock"))
 	if err != nil {
 		t.Fatal(err)

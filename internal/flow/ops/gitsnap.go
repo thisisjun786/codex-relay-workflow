@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // GitFunc runs one git command as `git -C dir args...` with env added to the process environment and returns its standard
@@ -91,7 +93,7 @@ func Snapshot(ctx context.Context, git GitFunc, worktree string) (string, error)
 	// The worktree is the directory it is given, exactly: a path git prints is text a runner may have trimmed, and a worktree
 	// whose name ends in a space is a worktree.
 	root := worktree
-	dir, err := os.MkdirTemp("", "crw-snapshot-")
+	dir, err := tmploc.MkdirTemp("crw-snapshot-")
 	if err != nil {
 		return "", err
 	}
@@ -357,7 +359,7 @@ func Restore(ctx context.Context, git GitFunc, repo, path, base, pending string)
 // materialize makes the files of a worktree that holds the tree of base equal to the tree pending, in a temporary index so
 // that the real index stays at base.
 func materialize(ctx context.Context, git GitFunc, worktree, base, pending string) error {
-	dir, err := os.MkdirTemp("", "crw-restore-")
+	dir, err := tmploc.MkdirTemp("crw-restore-")
 	if err != nil {
 		return err
 	}

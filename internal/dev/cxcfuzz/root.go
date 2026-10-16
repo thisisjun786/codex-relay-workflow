@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/homeguard"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // RootEnv is the environment one case runs under: the case's own root and the homes under it, so
@@ -49,11 +50,16 @@ func PrepareRoot(root string) error {
 	return nil
 }
 
-// MkdirTempRoot makes a temporary directory for a case or a worker, unless $TMPDIR is the account's
-// real home or lies in it (CRW-1186).
+// MkdirTempRoot makes a temporary directory for a case or a worker in the temporary directory from
+// tmploc, the one place (CRW-1579), unless that is the account's real home or lies in it (CRW-1186).
+// A TMPDIR that is not absolute is refused with the reason, and no other place is tried.
 func MkdirTempRoot(pattern string) (string, error) {
-	if err := homeguard.Refuse(os.TempDir()); err != nil {
+	parent, err := tmploc.Dir()
+	if err != nil {
 		return "", err
 	}
-	return os.MkdirTemp("", pattern)
+	if err := homeguard.Refuse(parent); err != nil {
+		return "", err
+	}
+	return tmploc.MkdirTemp(pattern)
 }

@@ -38,6 +38,10 @@ type Deps struct {
 	World WorldFunc
 	// Ready waits until the process of a run holds the run lock, or says why it does not; nil does not wait.
 	Ready func(ctx context.Context, state, run string, pid int, since time.Time) error
+	// ApplyEnv puts the environment a run's spec records into the environment of this process for as long as the run works in it
+	// (CRW-1570: the run process and the foreground `crw flow resume RUN SCRIPT`), and restore puts back what was there; nil applies
+	// nothing. The binary's is applyRunEnv.
+	ApplyEnv func(rec map[string]string) (restore func(), err error)
 }
 
 // Default is the Deps of the shipped binary.
@@ -49,16 +53,17 @@ func Default() *Deps {
 
 func defaultDeps() *Deps {
 	return &Deps{
-		Now:     time.Now,
-		Getenv:  os.LookupEnv,
-		Reader:  OpenReader,
-		Writer:  OpenWriter,
-		Spawn:   SpawnDetached,
-		Probe:   StoreProber{},
-		Signal:  killProcess,
-		World:   ProductionWorld,
-		LaneOps: func() bool { return OpsFor != nil },
-		Ready:   AwaitLock,
+		Now:      time.Now,
+		Getenv:   os.LookupEnv,
+		Reader:   OpenReader,
+		Writer:   OpenWriter,
+		Spawn:    SpawnDetached,
+		Probe:    StoreProber{},
+		Signal:   killProcess,
+		World:    ProductionWorld,
+		LaneOps:  func() bool { return OpsFor != nil },
+		Ready:    AwaitLock,
+		ApplyEnv: applyRunEnv,
 	}
 }
 

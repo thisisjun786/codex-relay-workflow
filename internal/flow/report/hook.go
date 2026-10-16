@@ -61,6 +61,9 @@ func (h *RunHook) BatchCommitted(ctx context.Context, _ string) error { return h
 func (h *RunHook) RunFinished(ctx context.Context, _, status string) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if cancelledEnd(h.Journal.Events()) {
+		return nil
+	}
 	err := h.reconcileLocked(ctx)
 	run, ok, rerr := ReadRun(ctx, h.Store.DB, h.Run)
 	if rerr == nil {
@@ -211,6 +214,9 @@ func (h *RunHook) reconcile(ctx context.Context) error {
 }
 
 func (h *RunHook) reconcileLocked(ctx context.Context) error {
+	if cancelledEnd(h.Journal.Events()) {
+		return nil
+	}
 	run, ok, err := ReadRun(ctx, h.Store.DB, h.Run)
 	if err != nil || !ok {
 		// the run record is written with the run's first batch: before it there is nothing to tell
@@ -223,6 +229,24 @@ func (h *RunHook) reconcileLocked(ctx context.Context) error {
 	}
 	errs = append(errs, h.escalations(ctx, run))
 	return errors.Join(errs...)
+}
+
+// Cancellation is an explicit stop, not a request for the upper layer to recover.
+// Read only this process's end, never a cancelled end preceding a later start.
+func cancelledEnd(events []engine.Event) bool {
+	for i := len(events) - 1; i >= 0; i-- {
+		e := events[i]
+		if e.Kind != engine.KindRun {
+			continue
+		}
+		if e.Event == "started" {
+			return false
+		}
+		if e.Event == "finished" {
+			return e.Data["error_kind"] == engine.ErrKindCancelled
+		}
+	}
+	return false
 }
 
 // document is the summary document the run recorded (the newest summary_document row of its journal).

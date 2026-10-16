@@ -154,7 +154,7 @@ func (s *Store) List(ctx context.Context, filter UserDecisionFilter) ([]decision
 	}
 	out := make([]decisions.Record, 0, len(rows))
 	for _, row := range rows {
-		record, err := decodeUserDecision(row)
+		record, err := s.decodeUserDecisionWithNote(ctx, row)
 		if err != nil {
 			return nil, err
 		}
@@ -219,7 +219,7 @@ func (s *Store) userDecisionsByFingerprint(ctx context.Context, fingerprint stri
 	}
 	out := make([]decisions.Record, 0, len(rows))
 	for _, row := range rows {
-		record, err := decodeUserDecision(row)
+		record, err := s.decodeUserDecisionWithNote(ctx, row)
 		if err != nil {
 			return nil, err
 		}
@@ -235,6 +235,9 @@ func (s *Store) insertUserDecision(ctx context.Context, record decisions.Record)
 	}
 	_, err = s.exec(ctx, "INSERT INTO dag_user_decisions ("+userDecisionColumns+")"+
 		" VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", values...)
+	if err == nil {
+		err = s.writeUserDecisionNote(ctx, record)
+	}
 	return err
 }
 
@@ -420,7 +423,7 @@ func (s *Store) Get(ctx context.Context, decisionID string) (decisions.Record, e
 	if row == nil {
 		return decisions.Record{}, fmt.Errorf("%w: %q", ErrUserDecisionAbsent, decisionID)
 	}
-	return decodeUserDecision(row)
+	return s.decodeUserDecisionWithNote(ctx, row)
 }
 
 // Update reads the record decisionID names, hands it to mutate, and stores what mutate returns -
@@ -496,5 +499,8 @@ func (s *Store) writeUserDecision(ctx context.Context, record decisions.Record) 
 	}
 	args = append(args, record.DecisionID)
 	_, err = s.exec(ctx, "UPDATE dag_user_decisions SET "+strings.Join(assignments, ", ")+" WHERE decision_id = ?", args...)
+	if err == nil {
+		err = s.writeUserDecisionNote(ctx, record)
+	}
 	return err
 }

@@ -8,6 +8,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc/tmploctest"
 )
 
 // toolFile loads a configuration document written under a fresh home.
@@ -137,7 +140,7 @@ func TestToolRootsPrepareMakesAMissingBuildWork(t *testing.T) {
 	if err := (ToolRoots{}).Prepare(); err != nil {
 		t.Errorf("nothing configured: %v", err)
 	}
-	plain := filepath.Join(home, "plain")
+	plain := filepath.Join(tmploctest.SocketDir(t, "rs"), "plain")
 	if err := os.WriteFile(plain, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -255,8 +258,37 @@ func TestLoadToolRootsWithoutAHomeIsNoConfiguration(t *testing.T) {
 // CRW-958: ConfiguredRelayState is the configured root only when the file names it; a split key or a
 // root that is a file refuses.
 func TestConfiguredRelayState(t *testing.T) {
+	checkConfiguredRelayState(t)
+}
+
+// CRW-1568: the same judgements hold whatever TMPDIR is. The test runs below its own TMPDIR of at
+// least 120 bytes, set before the home is made, so a relay root derived from TMPDIR would give a
+// store socket over the bind limit (socket_path_too_long).
+func TestConfiguredRelayState_isTMPDIRIndependent(t *testing.T) {
+	base, err := tmploc.MkdirTemp("crw-long-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(base) })
+	long := filepath.Join(base, strings.Repeat("l", max(1, 120-len(base)-1)))
+	if err := os.Mkdir(long, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if len(long) < 120 {
+		t.Fatalf("the long TMPDIR %q is %d bytes, want at least 120", long, len(long))
+	}
+	t.Setenv("TMPDIR", long)
+	checkConfiguredRelayState(t)
+}
+
+// checkConfiguredRelayState is the body of the ConfiguredRelayState tests: a configured root, no
+// file, a file that does not name relay_state, a split key and a root that is a file.
+func checkConfiguredRelayState(t *testing.T) {
+	t.Helper()
 	home, env := rootsHome(t)
-	root := filepath.Join(home, "disk", "relay")
+	// a store socket lies below the relay root, so the roots come from a socket directory (never below
+	// TMPDIR); the configuration file stays under home
+	root := filepath.Join(tmploctest.SocketDir(t, "rs"), "relay")
 	path := configWriteAt(t, configDefaultPath(home), `{"paths":{"relay_state":"`+root+`"}}`)
 	if got, err := ConfiguredRelayState(env); err != nil || got != root {
 		t.Errorf("configured: %q, %v", got, err)
@@ -272,7 +304,7 @@ func TestConfiguredRelayState(t *testing.T) {
 	if _, err := ConfiguredRelayState(env); err == nil || !strings.Contains(err.Error(), CheckStateSplit) {
 		t.Errorf("split: %v", err)
 	}
-	plain := filepath.Join(home, "plain")
+	plain := filepath.Join(tmploctest.SocketDir(t, "rs"), "plain")
 	if err := os.WriteFile(plain, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}

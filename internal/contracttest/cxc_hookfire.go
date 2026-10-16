@@ -11,6 +11,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/cxccorpus"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // RecDirEnv names the records directory of a replay case. A process that has it set and is not the
@@ -85,6 +86,10 @@ func FireHooks(in HookFireInput) ([]HookFireResult, error) {
 		return nil, err
 	}
 	defer removeConfig()
+	scratchBase, err := scratchParent(in.Scratch)
+	if err != nil {
+		return nil, err
+	}
 	ids, fixtures, err := loadCXCFixtures(in.Root)
 	if err != nil {
 		return nil, err
@@ -127,7 +132,7 @@ func FireHooks(in HookFireInput) ([]HookFireResult, error) {
 			res.Run = true
 			var made []string
 			tmp := func() string {
-				dir, mkErr := os.MkdirTemp(in.Scratch, "fire-")
+				dir, mkErr := tmploc.MkdirTempIn(scratchBase, "fire-")
 				if mkErr != nil {
 					panic(mkErr)
 				}
@@ -148,6 +153,15 @@ func FireHooks(in HookFireInput) ([]HookFireResult, error) {
 	return results, nil
 }
 
+// scratchParent is the directory the files of a firing are made in: scratch, or tmploc.Dir() (TMPDIR, else
+// /tmp) when scratch is "". It is never "" or relative, so no MkdirTemp below it decides a location itself.
+func scratchParent(scratch string) (string, error) {
+	if scratch == "" {
+		return tmploc.Dir()
+	}
+	return scratch, nil
+}
+
 // writeSandboxConfig writes the crw configuration every case of a firing reads as CRW_CONFIG (CRW-1265): its
 // sandbox_root is the scratch directory the case roots lie in (TMPDIR when scratch is ""), and the system
 // temporary locations the long cases use are its project roots (testsupport.SandboxConfigDocument). A firing
@@ -156,11 +170,11 @@ func FireHooks(in HookFireInput) ([]HookFireResult, error) {
 // base was judged outside the rule in the managed-dispatch fixtures. The file lies in a directory of its own in scratch, outside every
 // case root; the returned function removes it.
 func (r *cxcReplayer) writeSandboxConfig(scratch string) (remove func(), err error) {
-	base := scratch
-	if base == "" {
-		base = os.TempDir()
+	base, err := scratchParent(scratch)
+	if err != nil {
+		return nil, err
 	}
-	dir, err := os.MkdirTemp(base, "crw-config-")
+	dir, err := tmploc.MkdirTempIn(base, "crw-config-")
 	if err != nil {
 		return nil, err
 	}

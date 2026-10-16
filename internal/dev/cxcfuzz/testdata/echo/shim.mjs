@@ -12,11 +12,11 @@
 //                     handshake and its start-up deadline, not a case's per-case deadline, expires
 //
 // A real target's shim imports its dist module under ORACLE_ROOT the way the record-oracle.mjs
-// recorders do; ORACLE_ROOT defaults to the extracted CXC v0.2.40 component tree. echo imports
-// none, so the harness's own tests need no oracle tree.
+// recorders do; the harness sets ORACLE_ROOT, and a shim without it stops (no built-in place). echo
+// imports none, so the harness's own tests need no oracle tree, only the variable.
 import { createInterface } from "node:readline";
 
-const oracleRoot = process.env.ORACLE_ROOT || "/var/tmp/cxc-v0.2.40/plugins/codexclaw/components";
+const oracleRoot = process.env.ORACLE_ROOT; if (!oracleRoot) throw new Error("ORACLE_ROOT is unset; the harness sets it from the target's Oracle.Root");
 const mutate = process.env.CXCFUZZ_MUTATE === "1";
 const stall = process.env.CXCFUZZ_STALL === "1";
 

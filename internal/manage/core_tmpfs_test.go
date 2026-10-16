@@ -87,8 +87,9 @@ func tmpfsRoot(base string, h tmpfsHost, getenv func(string) string) (root strin
 		return "", false
 	}
 	tmpfsSweep(base, h)
-	// The name is the prefix and the pid and nothing else: the fake hosts of the tests bind unix sockets under TMPDIR, and a socket path
-	// is at most 107 bytes (the longest of them is TMPDIR plus 67 bytes). A root of that name that is already there is not ours to replace.
+	// The name is the prefix and the pid and nothing else. The fake hosts of the tests bind their unix sockets below tmploc.SocketRoot,
+	// never under TMPDIR (CRW-1568), so this root's length bounds no socket path. A root of that name that is already there is not ours
+	// to replace.
 	root = filepath.Join(base, tmpfsRootPrefix+strconv.Itoa(os.Getpid()))
 	if err := os.Mkdir(root, 0o700); err != nil {
 		return "", false

@@ -17,6 +17,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/reading"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/scope"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc/tmploctest"
 )
 
 // registrations is what RegisteredMatching finds of the host's registrations inside dir (as
@@ -288,12 +289,9 @@ func TestRegisteredMatchingDoesNotTakeWhatCannotBeExecutedForAProgram(t *testing
 	bin := filepath.Join(h.home, "bin")
 	write(t, filepath.Join(bin, "runner"), fakeCrw+"runner", 0o755)
 	write(t, filepath.Join(bin, "no-hash-bang"), "echo hello\n", 0o755)
-	short, err := os.MkdirTemp("", "crw-sock-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(short) })
+	short := tmploctest.SocketDir(t, "crw-sock-") // a socket directory, never below TMPDIR (CRW-1568)
 	socket := filepath.Join(short, "app.sock")
+	tmploctest.CheckSocket(t, short, socket)
 	listener, err := net.Listen("unix", socket)
 	if err != nil {
 		t.Fatal(err)

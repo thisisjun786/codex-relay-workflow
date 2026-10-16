@@ -68,6 +68,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // moduleRoot is the checkout under test. `go test` runs a test binary in its package's source
@@ -114,9 +115,14 @@ var toolNames = []string{
 	"list_threads", "pause_goal", "read_thread", "report_child", "send_message_to_thread", "steer_thread", "wait_thread",
 }
 
-// isolated is one temporary host: every path below lives under root, which is t.TempDir().
+// isolated is one temporary host: every path below lives under root, which is t.TempDir(), except
+// the fake App Server's socket, which lives in sockDir.
 type isolated struct {
 	root, home, codex, state, tmp, trip, tools, sentinel string
+	// sockDir is the fake App Server's socket directory: a fresh directory directly below
+	// tmploc.SocketRoot, never below TMPDIR or root (CRW-1568), removed when the test ends. It is
+	// the one place outside root that inside accepts.
+	sockDir string
 	// scopes and markers are the relay scope registry and marker root; see isolation.
 	scopes, markers string
 	// socket is the owner's control socket the Stop hook dials when the installer's settings name
@@ -201,9 +207,16 @@ func newIsolated(t *testing.T) *isolated {
 	}
 	// `crw install` records the Codex CLI version as one dimension of the measured point.
 	writeFile(t, filepath.Join(h.tools, "codex"), "#!/bin/sh\n[ \"$1\" = --version ] || exit 1\necho 'codex-cli 0.0.0-isolated'\n", 0o755)
-	// The fake App Server's socket, and every temporary file this process makes, land under root.
+	// Every temporary file this process makes lands under root. The fake App Server's socket does
+	// not: it lies in its own directory directly below tmploc.SocketRoot whatever TMPDIR is
+	// (CRW-1568), and that directory is the one other place inside accepts.
 	t.Setenv("TMPDIR", h.tmp)
 	h.fake = fakehost.Start(t)
+	sockDir := filepath.Dir(h.fake.SocketPath)
+	if filepath.Dir(sockDir) != tmploc.SocketRoot || h.inside(sockDir) {
+		t.Fatalf("the fake App Server socket %s is not in a directory of its own directly below tmploc.SocketRoot %s, outside the temporary root %s", h.fake.SocketPath, tmploc.SocketRoot, h.root)
+	}
+	h.sockDir = sockDir
 	h.mustBeInside(t, h.fake.SocketPath)
 	if len(h.fake.SocketPath) > socketLimit {
 		t.Fatalf("the fake App Server socket %s is longer than a unix socket path may be", h.fake.SocketPath)
@@ -213,18 +226,23 @@ func newIsolated(t *testing.T) *isolated {
 	return h
 }
 
-// mustBeInside aborts the test unless path lies under the temporary root.
+// mustBeInside aborts the test unless path lies under the temporary root (or the fake's socket
+// directory; see inside).
 func (h *isolated) mustBeInside(t *testing.T, path string) {
 	t.Helper()
 	if !h.inside(path) {
-		t.Fatalf("%s is not under the test's temporary root %s", path, h.root)
+		t.Fatalf("%s is not under the test's temporary root %s or the fake App Server's socket directory %q", path, h.root, h.sockDir)
 	}
 }
 
-// inside is whether path lies under the temporary root.
+// inside is whether path lies under the temporary root or, once the fake App Server runs, under its
+// socket directory (sockDir). No other place outside root is accepted.
 func (h *isolated) inside(path string) bool {
-	relative, err := filepath.Rel(h.root, path)
-	return err == nil && relative != ".." && !strings.HasPrefix(relative, "../") && !filepath.IsAbs(relative)
+	under := func(dir string) bool {
+		relative, err := filepath.Rel(dir, path)
+		return err == nil && relative != ".." && !strings.HasPrefix(relative, "../") && !filepath.IsAbs(relative)
+	}
+	return under(h.root) || (h.sockDir != "" && under(h.sockDir))
 }
 
 // outside is every absolute path an answer names, at any depth, that is not under the temporary

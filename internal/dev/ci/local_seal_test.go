@@ -215,21 +215,33 @@ func TestLocalReuse_each_key_changed_alone_re_runs_the_table(t *testing.T) {
 	_ = fmt.Sprint
 }
 
-// Parent ruling 5: a clean worktree never lives under TMPDIR, /tmp or /var/tmp; such a root is refused.
-func TestLocalWorkRoot_a_root_inside_TMPDIR_or_tmp_is_refused(t *testing.T) {
+// CRW-1569: a work root is not judged by where it lies. TMPDIR, /tmp and /var/tmp are places like any
+// other: a root below TMPDIR, below a second temporary directory, or named under /tmp or /var/tmp is
+// accepted, with no variable to set and nothing skipped. What is wrong with a root is still refused: a
+// root that is not absolute, and a root in the account's real home.
+func TestLocalWorkRoot_is_not_judged_by_place(t *testing.T) {
 	tmp := t.TempDir()
+	other := t.TempDir()
 	t.Setenv("TMPDIR", tmp)
-	for _, root := range []string{filepath.Join(tmp, "work"), "/tmp/crw-ci-work", "/var/tmp/crw-ci-work"} {
-		if _, err := localWorkRoot(localOptions{WorkRoot: root}); err == nil || !strings.Contains(err.Error(), "work_root_in_tmp") {
-			t.Errorf("the root %s is not refused as work_root_in_tmp: %v", root, err)
+	for _, root := range []string{filepath.Join(tmp, "work"), filepath.Join(other, "work"), "/tmp/crw-ci-work", "/var/tmp/crw-ci-work"} {
+		got, err := localWorkRoot(localOptions{WorkRoot: root})
+		if err != nil {
+			t.Errorf("the root %s is refused: %v", root, err)
+			continue
+		}
+		if got != root {
+			t.Errorf("the root %s is answered as %s", root, got)
 		}
 	}
-	base := os.Getenv("CRW_CI_TEST_WORK_ROOT")
-	if base == "" {
-		t.Skip("set CRW_CI_TEST_WORK_ROOT to a directory outside TMPDIR, /tmp and /var/tmp")
+	if _, err := localWorkRoot(localOptions{WorkRoot: "relative/work"}); err == nil || !strings.Contains(err.Error(), "not absolute") {
+		t.Errorf("a relative work root is not refused: %v", err)
 	}
-	if _, err := localWorkRoot(localOptions{WorkRoot: filepath.Join(base, "accepted")}); err != nil {
-		t.Errorf("a root outside the temporary directories is refused: %v", err)
+	home := t.TempDir()
+	t.Cleanup(homeguard.SetAccountHome(home))
+	_, err := localWorkRoot(localOptions{WorkRoot: filepath.Join(home, ".codex", "work")})
+	var refusal *homeguard.Error
+	if !errors.As(err, &refusal) {
+		t.Errorf("a work root in the account home: want a refusal of the account home, got %v", err)
 	}
 }
 

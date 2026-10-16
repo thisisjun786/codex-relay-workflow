@@ -12,11 +12,13 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc/tmploctest"
 )
 
 // serveOnce serves one connection on state/control.sock with the owner's HandleControl, as the daemon does.
 func serveOnce(t *testing.T, state string) {
 	t.Helper()
+	tmploctest.CheckSocket(t, socketRootOf(t, filepath.Join(state, "control.sock")), filepath.Join(state, "control.sock"))
 	address, release, err := ControlAddress(filepath.Join(state, "control.sock"))
 	if err != nil {
 		t.Fatal(err)
@@ -96,6 +98,7 @@ func TestAskOwnerMarkerRootRefusesAnAnswerThatIsNoAbsoluteRoot(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			state := ownedState(t)
+			tmploctest.CheckSocket(t, socketRootOf(t, filepath.Join(state, "control.sock")), filepath.Join(state, "control.sock"))
 			address, release, err := ControlAddress(filepath.Join(state, "control.sock"))
 			if err != nil {
 				t.Fatal(err)

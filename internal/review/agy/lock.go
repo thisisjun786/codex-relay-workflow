@@ -16,17 +16,19 @@ const lockPoll = 50 * time.Millisecond
 
 var errLockWait = errors.New("agy: the host-wide lock was not free in time")
 
-// DefaultLockPath is the host-wide lock file: crw/review/agy.lock under XDG_STATE_HOME, or under ~/.local/state.
-func DefaultLockPath() string {
+// DefaultLockPath is the host-wide lock file: crw/review/agy.lock under XDG_STATE_HOME, or under ~/.local/state. With neither XDG_STATE_HOME
+// nor a home there is no default, and the error says so and how to give the lock instead: the temporary directory is a location, not a state
+// home, so it is never taken in their place (CRW-1579).
+func DefaultLockPath() (string, error) {
 	state := os.Getenv("XDG_STATE_HOME")
 	if state == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			home = os.TempDir()
+			return "", fmt.Errorf("agy: the host-wide lock has no default: XDG_STATE_HOME is unset and the home is unknown (%v); set XDG_STATE_HOME or HOME, or give the lock file (CRW_REVIEW_LOCK, --lock)", err)
 		}
 		state = filepath.Join(home, ".local", "state")
 	}
-	return filepath.Join(state, "crw", "review", "agy.lock")
+	return filepath.Join(state, "crw", "review", "agy.lock"), nil
 }
 
 // acquire takes an exclusive flock on path, trying every lockPoll until wait has passed (a negative wait tries once). It returns errLockWait when the lock

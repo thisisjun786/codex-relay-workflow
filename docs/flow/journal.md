@@ -201,8 +201,10 @@ as such:
 record) is asked again on a resume. The base it names is the merge-base of the head and the integration tip, the commit the node's
 work grew from, which the acceptance of the head uses too. A failed verification's row and result carry `failed_tests`, one entry
 for each step of its record that failed and gives a reason (not a step skipped after an earlier failure): `job`, `step`, the `tests` (`--- FAIL: <Test>`) and `packages` (`FAIL\t<pkg>`)
-its reason names and `tail`, the last 20 lines of the reason (at most 2048 bytes); a reason with no such line has no test and no
-package, only the tail. The member is additive (a row without it names no failed test), and the executor's fix packet and a fresh
+its reason names and `tail`, at most 20 lines and 2048 bytes of the reason: a reason that fits is its own tail; one that leads with
+crw-dev ci local's marked block (the failing lines of the output before its last lines, each `--- FAIL` line with its indented
+message lines, then a `...` line) keeps the block's first 10 lines (at most 1024 bytes), then `...`, then the reason's last lines
+(CRW-1569); any other keeps its last lines. A reason with no test or package line has no test and no package, only the tail. The member is additive (a row without it names no failed test), and the executor's fix packet and a fresh
 thread's packet render it (CRW-1469). A node sized for a child, a bundle split or a split with no sub-tasks keeps its unreleased release row (`crw.release`); a split with sub-tasks is released as an executor node is (CRW-1459). Review: a record of the same head and
 criteria digest (`crw.review`). Accept: the recorded acceptance is active, not stale, of the same head (the relay says which).
 Integrate: the recorded batch commit is an ancestor of the integration ref; the target moving on keeps it an ancestor. Gate: a

@@ -4,10 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc/tmploctest"
 )
 
 // CRW-1341: the tracking section of the configuration file names the repository that holds the
@@ -165,12 +166,9 @@ func TestMalformedTrackingNeverStopsAnotherReader(t *testing.T) {
 	} {
 		home, env := rootsHome(t)
 		build := home + "/build"
-		// a store socket path must stay under the bind limit, so the relay state root is short
-		relay, err := os.MkdirTemp("/tmp", "rs")
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { os.RemoveAll(relay) })
+		// a store socket path must stay under the bind limit, so the relay state root is a socket
+		// directory (never below TMPDIR)
+		relay := tmploctest.SocketDir(t, "rs")
 		path := configWriteAt(t, home+"/c/config.json", `{"tracking":`+section+`,"paths":{"build_cache":"`+build+`","relay_state":"`+relay+`"},"manage":{"repository":"o/code"},"sandbox":{"project_roots":["`+home+`/p"]}}`)
 		envC := func(k string) string {
 			if k == "CRW_CONFIG" {

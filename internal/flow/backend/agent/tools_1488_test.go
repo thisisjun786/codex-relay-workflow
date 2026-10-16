@@ -289,3 +289,96 @@ func TestTwoRunsColdResumeEachWithItsOwnTools(t *testing.T) {
 		t.Errorf("after the next turn the thread's shell policy is %v, want %v", got, a.policy)
 	}
 }
+
+// runTMPDIRTools are the tools of a run whose start recorded TMPDIR a and whose configuration names no go (CRW-1570): the TMPDIR
+// alone.
+func runTMPDIRTools(a string) *engine.RepositoryTools {
+	return &engine.RepositoryTools{
+		Env:    []string{"TMPDIR=" + a},
+		Prefix: "TMPDIR=" + a,
+		Facts:  []string{"temporary directory: " + a + ", the run's recorded TMPDIR (env.TMPDIR in the run's run.json)"},
+	}
+}
+
+// CRW-1570: a thread the flow starts, forks or resumes for a call of a run with a recorded TMPDIR has it in its shell: the
+// thread/start, the thread/fork and the cold thread/resume carry the leaf key shell_environment_policy.set.TMPDIR = the recorded
+// directory, over the server's policy, which stays.
+func TestThreadStartSetsTheRunsTMPDIR(t *testing.T) {
+	a := filepath.Join(t.TempDir(), "run tmp")
+	tools := runTMPDIRTools(a)
+	withTMPDIR := map[string]any{"inherit": "none", "set": map[string]any{"KEEP": "x", "TMPDIR": a}}
+	leaf := func(t *testing.T, method string, params map[string]any) {
+		t.Helper()
+		config, _ := params["config"].(map[string]any)
+		if got := config["shell_environment_policy.set.TMPDIR"]; got != a {
+			t.Errorf("a %s carries config %v, want shell_environment_policy.set.TMPDIR = %s", method, config, a)
+		}
+		if _, table := config["shell_environment_policy"]; table {
+			t.Errorf("a %s sends a shell_environment_policy table: %v", method, config)
+		}
+	}
+
+	t.Run("start", func(t *testing.T) {
+		e := newEnv(t)
+		serverPolicy(e)
+		spec := e.policy.Roles["explorer"]
+		info, err := e.backend.StartThread(context.Background(), engine.ThreadSpec{CallID: "c_tmp", Role: "explorer", Pair: spec.Pair, Sandbox: spec.Sandbox,
+			Cwd: filepath.Join(e.root, "tmp"), Tools: tools})
+		if err != nil {
+			t.Fatal(err)
+		}
+		starts := e.requests("thread/start")
+		if len(starts) != 1 {
+			t.Fatalf("%d thread/start requests", len(starts))
+		}
+		leaf(t, "thread/start", starts[0].Params)
+		if got := shellPolicyOf(t, e, info.ID); !reflect.DeepEqual(got, withTMPDIR) {
+			t.Errorf("the started thread's shell policy is %v, want %v", got, withTMPDIR)
+		}
+	})
+
+	t.Run("fork", func(t *testing.T) {
+		e := newEnv(t, withOwner("proc-1"))
+		serverPolicy(e)
+		e.tools = tools
+		e.useClock()
+		e.run(forkBuildOnly)
+		e.restart("proc-2")
+		if got := value[[]string](t, e.resumeRun(forkContinued)); !slices.Equal(got, []string{"completed", "completed"}) {
+			t.Fatalf("%v", got)
+		}
+		forks := e.requests("thread/fork")
+		if len(forks) != 1 {
+			t.Fatalf("%d thread/fork requests, want 1", len(forks))
+		}
+		leaf(t, "thread/fork", forks[0].Params)
+		forked := str(e.row("second", engine.EvForkStarted).Data, "thread_id")
+		if got := shellPolicyOf(t, e, forked); !reflect.DeepEqual(got, withTMPDIR) {
+			t.Errorf("the forked thread's shell policy is %v, want %v", got, withTMPDIR)
+		}
+	})
+
+	t.Run("resume", func(t *testing.T) {
+		e := newEnv(t, withOwner("proc-1"))
+		serverPolicy(e)
+		e.tools = tools
+		e.useClock()
+		e.killAfter(engine.EvTurnRequested)
+		a1 := calls(e.run(buildScript))["a"]
+		thread := str(e.row("a", engine.EvThreadStarted).Data, "thread_id")
+		e.threads.Restart()
+		e.thaw()
+		e.restart("proc-2")
+		e.expectCompletedOnce(e.resumeRun(buildScript), "a", a1.CallID+"/t1")
+		resumes := e.requests("thread/resume")
+		if len(resumes) == 0 {
+			t.Fatal("the turn on the cold thread sent no thread/resume")
+		}
+		for _, r := range resumes {
+			leaf(t, "thread/resume", r.Params)
+		}
+		if got := shellPolicyOf(t, e, thread); !reflect.DeepEqual(got, withTMPDIR) {
+			t.Errorf("the resumed thread's shell policy is %v, want %v", got, withTMPDIR)
+		}
+	})
+}

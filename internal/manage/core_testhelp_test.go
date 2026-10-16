@@ -91,7 +91,7 @@ func coreMain(m *testing.M) int {
 		fmt.Fprintln(os.Stderr, "crw manage tests:", err)
 		return 1
 	}
-	removeRule, err := sandboxroottest.Install(os.TempDir(), sandboxroottest.FallbackTempParents...)
+	removeRule, err := sandboxroottest.InstallTemp()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "crw manage tests: the sandbox-root rule:", err)
 		return 1

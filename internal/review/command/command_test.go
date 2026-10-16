@@ -546,6 +546,53 @@ func TestConfigFlagBeatsEnvironmentBeatsDefault(t *testing.T) {
 	}
 }
 
+// CRW-1579 (U-A5-4): with neither XDG_STATE_HOME nor a home, the agy lock and the run ledger have no default.
+// That is a usage error (exit 2, with the reason) only when they are still unset after the environment and
+// the flags: an explicit lock and state directory parse on such a host, and -h still prints the usage.
+func TestParseConfig_noHome_isAUsageErrorOnlyWithoutAnOverride(t *testing.T) {
+	args := []string{"--base", "a", "--head", "b", "--issue", "CRW-1", "--out", "/o"}
+	clearEnv(t)
+	t.Setenv("XDG_STATE_HOME", "")
+	t.Setenv("HOME", "")
+	for _, c := range []struct {
+		extra []string
+		want  []string
+	}{
+		{nil, []string{"XDG_STATE_HOME", "HOME", "CRW_REVIEW_LOCK", "--lock", "CRW_REVIEW_STATE_DIR", "--state-dir"}},
+		{[]string{"--lock", "/l/agy.lock"}, []string{"XDG_STATE_HOME", "HOME", "CRW_REVIEW_STATE_DIR", "--state-dir"}},
+		{[]string{"--state-dir", "/s"}, []string{"XDG_STATE_HOME", "HOME", "CRW_REVIEW_LOCK", "--lock"}},
+	} {
+		var out, errOut bytes.Buffer
+		cfg, code := parseConfig(append(slices.Clone(args), c.extra...), &out, &errOut)
+		if code != usageExit || out.Len() != 0 || !strings.HasPrefix(errOut.String(), "usage: crw review --base") || !strings.Contains(errOut.String(), "crw review: error: ") {
+			t.Errorf("%v with no home: %d %q %q (%+v), want a usage error", c.extra, code, out.String(), errOut.String(), cfg)
+			continue
+		}
+		for _, name := range c.want {
+			if !strings.Contains(errOut.String(), name) {
+				t.Errorf("%v with no home: the error %q does not name %s", c.extra, errOut.String(), name)
+			}
+		}
+	}
+	var out, errOut bytes.Buffer
+	cfg, code := parseConfig(append(slices.Clone(args), "--lock", "/l/agy.lock", "--state-dir", "/s"), &out, &errOut)
+	if code != -1 || cfg.LockPath != "/l/agy.lock" || cfg.StateDir != "/s" {
+		t.Errorf("--lock and --state-dir with no home: %d %q (%+v), want them parsed", code, errOut.String(), cfg)
+	}
+	t.Setenv("CRW_REVIEW_LOCK", "/el/agy.lock")
+	t.Setenv("CRW_REVIEW_STATE_DIR", "/es")
+	errOut.Reset()
+	if cfg, code := parseConfig(slices.Clone(args), &out, &errOut); code != -1 || cfg.LockPath != "/el/agy.lock" || cfg.StateDir != "/es" {
+		t.Errorf("CRW_REVIEW_LOCK and CRW_REVIEW_STATE_DIR with no home: %d %q (%+v), want them parsed", code, errOut.String(), cfg)
+	}
+	clearEnv(t)
+	out.Reset()
+	errOut.Reset()
+	if _, code := parseConfig([]string{"-h"}, &out, &errOut); code != 0 || errOut.Len() != 0 || !strings.HasPrefix(out.String(), "usage: crw review") {
+		t.Errorf("-h with no home: %d %q %q", code, out.String(), errOut.String())
+	}
+}
+
 // The agy that answers is testdata/fake-agy.sh, run through the real agy.Run: the lock, the arguments, the prompt length check and the log parsing are all in play.
 func TestEndToEndWithFakeAgy(t *testing.T) {
 	f := newFixture(t)

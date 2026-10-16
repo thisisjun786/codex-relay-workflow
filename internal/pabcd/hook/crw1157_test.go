@@ -82,15 +82,16 @@ func TestCRW1157GithubRecovery(t *testing.T) {
 			t.Errorf("unreadable recovery: %s", reason)
 		}
 	}
-	// A lexical cwd outside the trusted temp roots does not need a real file to be rejected; the directory is fixed so the
-	// test does not depend on where the checkout or TMPDIR lives.
+	// A body file the guard cannot read carries the read's own cause and the way forward, bounded; the place of the directory
+	// is not a reason (CRW-1578). The directory is fixed ("/" holds no clean.md) so the test does not depend on where the
+	// checkout or TMPDIR lives.
 	outside := "/"
 	if err := os.WriteFile(filepath.Join(cwd, "clean.md"), []byte("clean"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	reason := githubPostAnswerReason(t, HandleGitHubPostGuard(gateBash(t, outside, "gh pr comment 1 --body-file ./clean.md")))
-	if !strings.Contains(reason, "TMPDIR") || !strings.Contains(reason, "outside") || len(reason) > 700 {
-		t.Errorf("temp recovery: %s", reason)
+	if !strings.Contains(reason, "unreadable-body-file") || !strings.Contains(reason, "regular readable file") || strings.Contains(reason, "outside") || len(reason) > 700 {
+		t.Errorf("body recovery: %s", reason)
 	}
 }
 
