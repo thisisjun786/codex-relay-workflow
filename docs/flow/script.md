@@ -1100,8 +1100,8 @@ the summary and the run readers, the proofs of the old ops, the trace export and
 changed since the run started is a repin on resume, never a refusal: the refusal comes from the rows.
 
 What the rows cannot show: an old lane nested under a name that is none of those workflows, whose process ended after a reviewer
-call and before the row that recorded its review, leaves no row a marker matches. Its old copy imports composites of `crw:lib/lane`
-that no longer exist, so the resumed child does not load, and its `workflow()` position fails without running any op live.
+call and before the row that recorded its review, leaves no row a marker matches. Its old copy imports composites that `crw:lib/lane`
+does not export, so the resumed child does not load, and its `workflow()` position fails without running any op live.
 
 A call that ended held has one resolution command whatever the reason (a spent budget, a refused `thread/start`, a failed turn, an
 engine pause, a flow binding that could not be written): `crw flow resume RUN SCRIPT`. A held row asks no operator input
