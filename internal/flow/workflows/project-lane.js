@@ -498,9 +498,24 @@ phase('build')
 // change and hold (planned_regions, when the plan states one that is not a plain edit), which crw.regionsOverlap judges by (CRW-1461).
 const designed = {}
 for (const is of initialDesign.issues) designed[is.node] = is.edit_regions
+// A node the relay already reads as integrated is not built again (CRW-1597): before the lanes are admitted,
+// crw.reuseIntegrated proves the earlier run's integration of it - the relay's current acceptance and integration observations,
+// the unchanged node slice and approved DESIGN, and the source run's acceptance, integration and audit records against the
+// current target. A proven node joins the lanes as landed with its source provenance; a pending node runs its ordinary lane.
+// The integrated proof comes from the relay and the earlier run's journal; the final close evidence (gate, crosscheck, report)
+// is this run's own, made at the close below - no final-gate evidence is copied between runs.
+const inherited = []
+const pending = []
+for (const n of ms.nodes) {
+  const saved = await crw.reuseIntegrated(ms.id, n.id)
+  if (saved.reused) inherited.push({ node: n.id, state: 'landed', head: saved.head, batch_commit: saved.batch_commit, acceptance_id: saved.acceptance_id, source_run: saved.source_run, reused: true })
+  else pending.push(n)
+}
 const admitted = []
-for (const n of ms.nodes) admitted.push(Object.assign({}, n, { regions: await crw.admissionRegions(n.planned_regions || n.regions, designed[n.id]) }))
-const lanes = await crw.dag(args.plan, lane, { nodes: admitted, milestone: ms.id, cap: args.cap, onSignal })
+for (const n of pending) admitted.push(Object.assign({}, n, { regions: await crw.admissionRegions(n.planned_regions || n.regions, designed[n.id]) }))
+const fresh = admitted.length ? await crw.dag(args.plan, lane, { nodes: admitted, milestone: ms.id, cap: args.cap, onSignal }) : []
+const completed = inherited.concat(fresh)
+const lanes = ms.nodes.map((n) => completed.find((l) => l && l.node === n.id))
 const lost = lanes.filter((l) => l && l.reason === EPOCH_LOST)
 if (lost.length > 0) return { state: 'stopped', reason: EPOCH_LOST, detail: (lost.find((l) => l.detail) || lost[0]).detail || '', milestone: ms.id, lanes }
 // the run-level hold plan_superseded (CRW-1291): the relay's plan moved past the revision the run pinned, and the run holds for its parent
