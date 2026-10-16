@@ -813,7 +813,10 @@ and the given values, and nothing is written. The
 message goes in the lead's name, and a caller is not refused for not being the lead: a calling
 thread that is not the initiative's lead is named at the top of the message text, recorded on the
 row (`reporterIsLead: false`) and warned in the answer (`warning`); a caller with no
-`CODEX_THREAD_ID` is recorded without a reporter and warned.
+`CODEX_THREAD_ID` is recorded without a reporter and warned. That attribution line is the channel's,
+not the reporter's words: the packet records it as `origin.preface`, so who reported a report does
+not make it another statement, and a report the management seat acknowledged stays parked when
+another thread or the lead reports it again unchanged.
 
 ## The surface
 
@@ -977,7 +980,20 @@ for a direct message's cap word, which its re-address keeps (below) while its ro
 A statement is what the message says, not its bytes (`statementKey`): its obligation, event and
 submission and the content fields of its packet. Seat, scope, sender and observation time are routing
 and never make a new statement, so the daemon's pass, a restart, the direct sender repeating its
-report and a rotated sender session all stage the same statement again.
+report and a rotated sender session all stage the same statement again. A direct message's statement
+is what its sender gave. The channel records in the packet's `origin` the values it generated itself:
+whether the evidence is the default `supervisor-show --message` pointer (`channel`, which names the
+executable and state directory that composed it) or the sender's list (`sender`), report-up's
+attribution line (`preface`), and the digest of the sender's whole text less only its trailing whitespace
+(its first line's indentation, which the body keeps below the attribution line, included), before
+the body's 6000-byte cut (`text`). A row that carries the record is compared through it, so another executable or another
+reporting thread is the same statement, while a change anywhere in the sender's text, its evidence
+list, or an explicit pointer later omitted is a new one. A row staged before the record existed is
+compared the fields way on both sides until this build writes it: another executable or reporter
+releases its park once, and an explicit pointer equal to the same channel's default pointer text that
+is later omitted reads as the same statement. A row without the record whose stored body reached the
+cut cannot show what the cut dropped, so its next staging releases its park once and writes the
+record. An unchanged replay of an old row writes nothing.
 
 | entry | none | other | derived | acknowledged | notice |
 | --- | --- | --- | --- | --- | --- |
@@ -992,6 +1008,10 @@ report and a rotated sender session all stage the same statement again.
 | restage, same recipient | keep | keep (its own path) | if owed | same statement: keep, else if owed | release (reserved again) |
 | send_by_id, recipient or sender moved | keep (answers `relation_owner_drift`: stage it again) | keep | keep | keep | keep |
 | send_by_id, same endpoints | keep | keep (its own path) | if owed | if owed | if owed |
+
+An attempt asks the rule only of a `superseded_by_report` hold, so the `none` and `other` cells of
+the send_by_id rows are `holdDecision`'s answers; what a send by id does with a message that has no
+hold or another word is the attempt's own path, which the send by id paragraph below states.
 
 Re-addressing an `other` hold differs by path, as it did before the rule: an event's or an
 omission's message re-addressed by `supervisor-stage` is released whatever its word, while a direct
@@ -1012,8 +1032,21 @@ flow delivery row and the attempt's journal row), not the one it asked for.
 A send by id is `supervisor-send --message <id>` or the fault deliverer's send of its notice; the
 daemon's own attempts are not, and take the `restage` rows. A send by id releases a park or a derived
 hold only when what the message is for is still owed, and sends it; otherwise it sends nothing and
-the hold stays. It never re-addresses a message: when the hierarchy names another sender or recipient
-it answers `relation_owner_drift` and writes nothing. Staging the message again where it came from
+the hold stays. It never re-addresses a message. When the hierarchy names another sender or recipient,
+what it does depends on the message's hold. A message held `superseded_by_report` (a park, a derived
+hold or a notice's park) keeps its hold and nothing is written: the send answers `relation_owner_drift`.
+A message with no hold that the attempt can claim (unsent, due, and not behind an older message to
+its recipient) reaches the attempt's resolution of its endpoints, which holds it
+`hierarchy_unresolved`, journals `supervisor_message_unaddressed` and answers `relation_owner_drift`;
+nothing is sent. A message held any other way, or one the attempt cannot claim now, is not sent and
+nothing is written; a `hierarchy_unresolved` hold is first checked against the hierarchy, which
+still names other endpoints, so it stays. When the hierarchy no longer resolves the message's
+relationship at all, a `superseded_by_report` or `hierarchy_unresolved` hold, and a message with no
+hold that the attempt can claim, answer the resolution's own refusal in place of
+`relation_owner_drift`, with the writes above. A `hierarchy_unresolved` hold is released, with a
+`supervisor_message_reopened` row, by the message's next attempt once the hierarchy names its
+endpoints again, or by staging it again.
+Staging the message again where it came from
 re-addresses it (the `readdress` rows) - `supervisor-stage --event <id>` or `--project <key>` for an
 event's or an omission's report, its sender's own report again (`report-up`, the flow's report) for a
 direct message, which `supervisor-stage` does not stage - and the next send goes. No hold word, column, journal kind or index is

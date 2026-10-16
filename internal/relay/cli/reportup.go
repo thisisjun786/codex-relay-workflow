@@ -135,7 +135,6 @@ func runReportUp(ctx context.Context, services dispatch.Services, args dispatch.
 	}
 	digest := "sha256:" + pyvalue.SHA256Hex(text)
 	whole := reportDigest(subject, evidence, text)
-	reported := text
 	report := strings.TrimSpace(args.Text("id"))
 	if report == "" {
 		report = leadReportID(kind, initiative, subject, digest)
@@ -149,9 +148,11 @@ func runReportUp(ctx context.Context, services dispatch.Services, args dispatch.
 	at := delivery.ISOOf(clockNow())
 	// Who reports is not refused (a message is reversible: warn and record). A caller that is not
 	// the initiative's lead is named in the message the management seat reads, recorded on the
-	// report row and warned in the answer; an unknown caller is recorded and warned.
+	// report row and warned in the answer; an unknown caller is recorded and warned. The line that
+	// names it is the channel's preface, not the reporter's words: the body still starts with it, and
+	// who reported a report does not make it another statement (CRW-1558).
 	var reporterIsLead any
-	warning := ""
+	warning, preface := "", ""
 	if lead, err := c.Resolve(ctx, "initiative:"+initiative); err == nil {
 		switch {
 		case reportedBy == "":
@@ -159,12 +160,12 @@ func runReportUp(ctx context.Context, services dispatch.Services, args dispatch.
 		case reportedBy != lead.Sender:
 			reporterIsLead = false
 			warning = "the calling thread " + pyvalue.StrRepr(reportedBy) + " is not the initiative's lead " + pyvalue.StrRepr(lead.Sender) + "; the report is sent in the lead's name, and the message and the report row say who reported it"
-			text = "Reported by thread " + reportedBy + ", which is not the initiative's lead (" + lead.Sender + ").\n\n" + text
+			preface = "Reported by thread " + reportedBy + ", which is not the initiative's lead (" + lead.Sender + ")."
 		default:
 			reporterIsLead = true
 		}
 	}
-	message := supervisor.DirectMessage{Kind: kind, Relationship: "initiative:" + initiative, Subject: report, Summary: subject, Text: text, Evidence: evidence, At: at}
+	message := supervisor.DirectMessage{Kind: kind, Relationship: "initiative:" + initiative, Subject: report, Summary: subject, Text: text, Preface: preface, Evidence: evidence, At: at}
 	// The message this report is: one id, one kind and one initiative are one message, so whether it was
 	// sent is read from it, whatever the row says (a row recorded with nobody above names none).
 	messageID := supervisor.DirectMessageID(message)
@@ -190,7 +191,7 @@ func runReportUp(ctx context.Context, services dispatch.Services, args dispatch.
 	sentStands, heldStands := false, false
 	record := func(ctx context.Context, staged map[string]any) (bool, error) {
 		detail := contract.OrderedObject{{Key: "reportId", Value: report}, {Key: "kind", Value: kind}, {Key: "initiative", Value: initiative},
-			{Key: "subject", Value: subject}, {Key: "text", Value: reported}, {Key: "bodyDigest", Value: digest}, {Key: "evidence", Value: anyStrings(evidence)},
+			{Key: "subject", Value: subject}, {Key: "text", Value: text}, {Key: "bodyDigest", Value: digest}, {Key: "evidence", Value: anyStrings(evidence)},
 			{Key: "reportedBy", Value: nullableText(reportedBy)}, {Key: "reporterIsLead", Value: reporterIsLead}, {Key: "messageId", Value: nullableText(stagedText(staged, "messageId"))},
 			{Key: "recipient", Value: nullableText(stagedText(staged, "recipient"))}, {Key: "staged", Value: stagedText(staged, "messageId") != ""}}
 		encoded := pyjson.Dumps(detail, pyjson.Options{})
