@@ -5,9 +5,13 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os/exec"
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/compile"
+	"github.com/thisisjun786/codex-relay-workflow/internal/gitprobe"
 )
 
 // The five facts a run's start is judged on. A run waits for its owner (a decision, a hold to recover), and the wait ends only when
@@ -257,4 +261,30 @@ func Dispositions(src Source) []string {
 	}
 	walk(src.Program.Body, 0)
 	return out
+}
+
+// BundleBranchProblem says why a bundle's run cannot start ("" when it can). A project whose target names a pr_base is a bundle
+// (CRW-1440): its run integrates on the target's own branch in the target's repository, which `crw flow pr branch` makes, and the
+// pull request is opened against pr_base later. The branch has to be there when the run starts, because the integration lands the
+// nodes on it and never makes it. It is a refusal of the start and not a preflight fact: a fact never stops a start (CRW-1318).
+// A project without a target or without pr_base is not a bundle and git is not run for it. env is the environment git runs in (nil is
+// the process environment); the routing variables are removed from it, so the check reads the target's repository and no other.
+func BundleBranchProblem(ctx context.Context, env []string, in compile.Input, plan string) string {
+	p, ok := HandoffProject(in, plan)
+	if !ok || p.Target == nil || p.Target.PRBase == "" {
+		return ""
+	}
+	t := *p.Target
+	branch := t.Branch()
+	if branch == "" {
+		return ""
+	}
+	cmd := exec.CommandContext(ctx, "git", "-C", t.Repository, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch+"^{commit}")
+	cmd.Env = gitprobe.Sanitize(env, "GIT_TERMINAL_PROMPT=0")
+	if err := cmd.Run(); err == nil {
+		return ""
+	} else if exit := (*exec.ExitError)(nil); !errors.As(err, &exit) || exit.ExitCode() != 1 {
+		return fmt.Sprintf("the bundle branch %q cannot be read in the target checkout %s: %v", branch, t.Repository, err)
+	}
+	return fmt.Sprintf("the bundle branch %q is not in the target checkout %s: make it with `crw flow pr branch --checkout %s --milestone <M> --base %s --name %s` first", branch, t.Repository, t.Repository, strings.TrimPrefix(t.PRBase, "refs/heads/"), branch)
 }

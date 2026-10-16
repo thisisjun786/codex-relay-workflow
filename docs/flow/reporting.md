@@ -24,7 +24,8 @@ messages ([supervisor-channel.md](../relay/supervisor-channel.md#direct-messages
 
 The run (and `crw flow report-up`) hands a report, an escalation and the completion digest to `report.RelaySender`, which stages one
 direct message on the relay's supervisor channel: the relationship is `project:<the project of the run's plan>`, the kind is the
-report's (`flow_milestone_report`, `flow_project_blocked`, `flow_project_decision_request`, `flow_jun_decision_request`) or the notice's
+report's (`flow_milestone_report`, `flow_project_blocked`, `flow_project_decision_request`, `flow_jun_decision_request`,
+`flow_merge_request`) or the notice's
 (`flow_escalation`, `flow_completion`), and the subject is `<run>/<report id>` or `<run>/<logical id>`, so the message id is
 deterministic and the same report staged again is the same message. The channel addresses it to the level above the project - the
 owner of the parent's management seat, else a supervisor registered at the initiative's scope (the legacy initiative supervision), else the single store seat, which is woken like any other recipient (a store seat laid down for a management seat answers only for a
@@ -172,6 +173,26 @@ crw flow report-up --kind project_blocked|project_decision_request|jun_decision_
 
 What an agent node cannot do or decide is not reported by the node: its RECEIPT is classified by the run, the run escalates, the
 escalation reaches the child's thread, and the child reports up.
+
+**A merge request** is a report of its own kind, `merge_request`, not a milestone report: a bundle that lands its milestone through one
+pull request ([script.md](script.md), "The bundle's pull request") asks the parent to merge it with the `crw.mergeRequest` op. The op
+judges first, and a request that fails the judgment is a result of the op with a row of its own and no report (`pr_not_open`,
+`crosscheck_missing`, `head_moved`, `crosscheck_not_accepted`, `checks_failed`, `checks_pending`, `checks_none`,
+`comments_unresolved`). A request that passes goes to the reporter, which writes the report row (the subject is `merge request
+OWNER/NAME#N`) and delivers it as the other reports of the run are delivered (below): to the recipient of a milestone report, through
+the supervisor channel under the kind `flow_merge_request` (a notice of the project, not a decision). Its report id comes from the run,
+the milestone, the pull request (its name folded to lower case) and its head, so a replay finds its row, and the report of the milestone's
+close keeps its own id and its own delivery. The delivery goes under `<run>:merge_request-<head of the report id>:report`. The body
+names the pull request, its head and base branch, the state of the head's checks, the crosscheck at the head (the verdict with its round
+and engine) and the count of unresolved review comments, or that the review bots are not connected; it holds no path, host name or id
+besides the pull request and the SHAs. The request goes once per head: a second call for the same pull request at the same head
+answers `repeated`, sends nothing and writes no second report, a refused request never blocks a later one, and a head that moved needs
+a new crosscheck and is another request. When the channel could not stage the report (the hierarchy above the project drifted, say),
+the op fails without recording the request, so a retry stages it again under the same report id.
+
+The built-in `project-lane` does not call `crw.mergeRequest`, and the lane that `crw flow` builds is wired without a pull request
+reader, so the op is a Go error there ("no pull request reader is wired"): only a script whose lane has a reader sends this report. The
+run never merges the pull request; the dev queue does.
 
 A run meant to start the nodes of a plan (a run of `project-lane` or `night-batch`, an old run of a `child` session's lane, or a run whose
 arguments name a `plan`) that finished `completed` and started no node is `blocked` in `crw flow show` and `ps` (no `crw.release` released a node, no child was

@@ -392,6 +392,9 @@ func TestRecordCallProofsNeverResend(t *testing.T) {
 		t.Error("the request id must tell calls and runs apart")
 	}
 	// a proof about the worktree is not consulted: a recording call whose row exists is never sent again
+	if !IsRecordOp("crw.mergeRequest") {
+		t.Error("crw.mergeRequest is a record op: a request that was recorded is never sent again")
+	}
 	if !IsRecordOp("crw.tierStep") || IsRecordOp(OpCommit) || IsRecordOp("agent") {
 		t.Error("the record calls are escalate, reportUp, hold, tierStep and an old run's releaseChild")
 	}
