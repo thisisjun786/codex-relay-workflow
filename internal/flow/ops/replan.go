@@ -473,9 +473,10 @@ func givenUp(r rows, node string) bool {
 	return !landed
 }
 
-// startRowOf is the row a node started under, and how: a release to an executor that stands (released), or, for a node no executor
-// was released for, the design row that stands and found its issue sized for a split or a child (split, child), which its lane
-// recorded before it escalated the node (size_split). Either is a start: no other revision releases the node, and the plan it
+// startRowOf is the row a node started under, and how: a release to an executor that stands (released; a split with sub-tasks is
+// one, CRW-1459), or, for a node no executor was released for, the design row that stands and found its issue sized for a bundle
+// split, a split with no sub-tasks or a child (bundle_split, split, child), which its lane recorded before it escalated the node
+// (size_split). Either is a start: no other revision releases the node, and the plan it
 // started on is the one a re-plan keeps (crw.releasedPlans). It is the one started predicate of the signal path and the re-plan.
 func startRowOf(r rows, node string) (engine.Event, string, bool) {
 	if rel, ok := releaseRowOf(r, node); ok && !r.superseded(rel) {
@@ -485,7 +486,8 @@ func startRowOf(r rows, node string) (engine.Event, string, bool) {
 	if !ok || r.superseded(row) || dataBool(row, "released") {
 		return engine.Event{}, "", false
 	}
-	if kind := dataStr(row, "kind"); kind == "split" || kind == "child" {
+	switch kind := dataStr(row, "kind"); kind {
+	case "split", "child", "bundle_split":
 		return row, kind, true
 	}
 	return engine.Event{}, "", false
