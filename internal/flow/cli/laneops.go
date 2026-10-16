@@ -172,6 +172,9 @@ func BuildLane(ctx context.Context, req LaneRequest, opt LaneOptions) (LaneWorld
 	}
 	lane := ops.NewLane(ops.Deps{RunID: spec.RunID, Repo: req.Repo, Journal: journal, Relay: seam, Verifier: verifier, Decisions: ops.StoreDecisions{DB: req.Store.DB},
 		Threads: req.Threads, Reporter: reporter, Actor: spec.Thread, LandRoot: RunDir(req.State, spec.RunID), UnitCheck: unitCheck,
+		DesignHistory: func(ctx context.Context, plan string) ([]ops.DesignRun, error) {
+			return designHistory(ctx, req.Store, req.State, req.Repo, spec.RunID, plan)
+		},
 		Crosscheck: laneCrosscheck(opt.Crosscheck, req.Policy)})
 	out := LaneWorld{Ops: lane.Ops(), Prover: ops.NewProver(), InputSnapshot: lane.InputSnapshot, Journal: journal}
 	if plan := planOf(spec.Args); plan != "" && ref.Path != "" {
@@ -235,7 +238,7 @@ func shippedUnitCheck(getenv func(string) (string, bool)) (*ops.UnitCheck, error
 // shippedCrosscheckLimit is the time limit of one pass of the shipped crosscheck's engine.
 const shippedCrosscheckLimit = 40 * time.Minute
 
-// crosscheckAuthorRoles are the roles whose pairs author a milestone: the engine of its crosscheck is of another family than each.
+// crosscheckAuthorRoles are the roles whose pairs are recorded as the milestone's author provenance.
 var crosscheckAuthorRoles = []string{"architect", "executor", "executor-t1"}
 
 // laneCrosscheck is the crosscheck of a run's lane: the option's (the shipped one when nil), with the author pairs of the run's role

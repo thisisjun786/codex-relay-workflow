@@ -6,7 +6,6 @@ import (
 
 	"github.com/dop251/goja/ast"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 )
 
@@ -144,12 +143,9 @@ type agentCall struct {
 	labelStatic bool
 	// role is the role the call resolves to when every option that decides it is static; refusal is why it resolves to
 	// none.
-	role   string
-	family string
-	// modelFamily is the vendor family of the model the role's pair runs ("claude", "gpt"): what a review's independence
-	// is judged on.
-	modelFamily string
-	refusal     *engine.Refusal
+	role    string
+	family  string
+	refusal *engine.Refusal
 }
 
 // agentFacts reads the options of an agent call.
@@ -222,46 +218,7 @@ func (a *analysis) resolveRole(call *agentCall, policy *engine.Policy) {
 		call.refusal = refusal
 		return
 	}
-	call.role, call.family, call.modelFamily = r.Role, r.Spec.Family, execution.ModelFamily(r.Spec.Pair.Model)
-}
-
-// resumeFamily is the model family of the thread a resume option continues, as far as the text shows: the thread keeps
-// the pair of the call that started it. It is "" when the option is not a handle of a single agent.call whose pair is
-// static.
-func (a *analysis) resumeFamily(e ast.Expression, policy *engine.Policy, depth int) string {
-	if depth > 8 || policy == nil || e == nil {
-		return ""
-	}
-	switch x := e.(type) {
-	case *ast.AwaitExpression:
-		return a.resumeFamily(x.Argument, policy, depth+1)
-	case *ast.DotExpression:
-		if x.Identifier.Name == "handle" || x.Identifier.Name == "output" {
-			return a.resumeFamily(x.Left, policy, depth+1)
-		}
-	case *ast.CallExpression:
-		call, ok := a.agentFacts(x, nil, policy)
-		if !ok {
-			return ""
-		}
-		if call.resume {
-			return a.resumeFamily(call.opts["resume"], policy, depth+1)
-		}
-		return call.modelFamily
-	case *ast.Identifier:
-		b := a.refs[x]
-		if b == nil || b.opaque || len(b.assigned) == 0 {
-			return ""
-		}
-		family := a.resumeFamily(b.assigned[0], policy, depth+1)
-		for _, v := range b.assigned[1:] {
-			if a.resumeFamily(v, policy, depth+1) != family {
-				return ""
-			}
-		}
-		return family
-	}
-	return ""
+	call.role, call.family = r.Role, r.Spec.Family
 }
 
 // nodeKey names the executor node an expression stands for, so two expressions that read the same node get the same

@@ -10,7 +10,6 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	flowcli "github.com/thisisjun786/codex-relay-workflow/internal/flow/cli"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
@@ -31,10 +30,13 @@ func seqOf(t *testing.T, l *Lab, what string, keep func(engine.Event) bool) int 
 	return 0
 }
 
-// The first executor starts after an approved audit of the DESIGN, by the critic, of another model family than the architect: the
+// The first executor starts after an approved audit by a critic on a separate thread, even using the architect's model (CRW-1515): the
 // audit is recorded as a design_audit row before the first release, and the release before the first executor call.
 func TestDesignAuditBeforeFirstExecutor(t *testing.T) {
 	l := NewLab(t, twoNodes()...)
+	critic := l.Policy.Roles["critic"]
+	critic.Pair = l.Policy.Roles["architect"].Pair
+	l.Policy.Roles["critic"] = critic
 	mustRun(t, l)
 	audit := seqOf(t, l, "approved audit", func(ev engine.Event) bool {
 		return ev.Op == ops.OpDesignAudit && ev.Event == engine.EvCompleted && str(ev.Data, "state") == "approved"
@@ -49,8 +51,13 @@ func TestDesignAuditBeforeFirstExecutor(t *testing.T) {
 	}
 	row := l.Rows(ops.OpDesignAudit)[0]
 	arch, rev := str(row.Data, "architect_model"), str(row.Data, "critic_model")
-	if arch == "" || rev == "" || execution.ModelFamily(arch) == execution.ModelFamily(rev) {
-		t.Errorf("the audit was not independent: architect %q, auditor %q", arch, rev)
+	if arch == "" || rev != arch {
+		t.Errorf("the same-model audit did not retain its model records: architect %q, auditor %q", arch, rev)
+	}
+	authorCall, authorFound := engine.LookupCall(l.journal, str(row.Data, "architect_call"))
+	criticCall, criticFound := engine.LookupCall(l.journal, str(row.Data, "critic_call"))
+	if !authorFound || !criticFound || authorCall.ThreadID == "" || criticCall.ThreadID == "" || authorCall.ThreadID == criticCall.ThreadID {
+		t.Errorf("separate audit threads were not observed: architect=%+v critic=%+v", authorCall, criticCall)
 	}
 	if l.Labels()[1] != "design-audit:r1" || l.Roles()[1] != "critic" {
 		t.Errorf("calls %v", l.Labels())

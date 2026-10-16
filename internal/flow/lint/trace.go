@@ -16,9 +16,8 @@ func errOutside(rel string) error { return fmt.Errorf("%q is outside the workflo
 // traceCall is what the journal's intent row says about one call.
 type traceCall struct {
 	path, label, role, family, node, stepDecision string
-	// modelFamily is the vendor family of the model the call's thread was configured with.
-	modelFamily            string
-	explicit, continuation bool
+	callID, resumeOf                              string
+	explicit, continuation                        bool
 }
 
 // traceDiagnostics reads the journal of a dry run.
@@ -28,10 +27,10 @@ func traceDiagnostics(res *engine.Result, events []engine.Event, policy *engine.
 		out = append(out, Diagnostic{Rule: rule, Label: label, Message: fmt.Sprintf(format, args...), Source: sourceTrace})
 	}
 	labels := map[string]int{}
-	lastAuthor := map[string]string{} // path -> model family of the last author call
-	phases := map[string]uint8{}      // path and node -> lifecycle phase set
-	checked := map[string]bool{}      // path and node -> a unit check holds for the node's current tree
-	decided := map[string]bool{}      // path and step id -> crw.tierStep returned it on the path
+	authorCalls := map[string]map[string]struct{}{} // path -> observed author call lineage
+	phases := map[string]uint8{}                    // path and node -> lifecycle phase set
+	checked := map[string]bool{}                    // path and node -> a unit check holds for the node's current tree
+	decided := map[string]bool{}                    // path and step id -> crw.tierStep returned it on the path
 	for _, e := range events {
 		if e.Kind != engine.KindCall {
 			continue
@@ -53,17 +52,18 @@ func traceDiagnostics(res *engine.Result, events []engine.Event, policy *engine.
 			if c.role == "executor-t1" && !c.continuation && c.stepDecision != "" && !decided[c.path+"\x00"+c.stepDecision] {
 				add(RuleTierStepDecision, c.label, "the executor-t1 call %q carries stepDecision %q, which crw.tierStep did not return earlier on path %s", c.label, c.stepDecision, c.path)
 			}
-			// A review is independent of the call that wrote the change by its model family, a continuation too: the
-			// thread keeps the pair it was configured with.
 			if c.explicit && strings.HasPrefix(strings.ToLower(c.label), "review") {
-				if author := lastAuthor[c.path]; author != "" && c.modelFamily != "" && author == c.modelFamily {
-					add(RuleReviewerFamily, c.label, "the review call %q runs as %s on the %s model family, the family of the call that wrote the change on path %s", c.label, c.role, c.modelFamily, c.path)
+				if _, sameThread := authorCalls[c.path][c.resumeOf]; c.continuation && sameThread {
+					add(RuleReviewerThreadSame, c.label, "the review call %q resumes an observed call in the author's thread on path %s; this is recorded as a warning", c.label, c.path)
 				}
 				continue
 			}
 			if c.continuation {
 				if c.family == "executor" {
-					lastAuthor[c.path] = c.modelFamily
+					if authorCalls[c.path] == nil {
+						authorCalls[c.path] = map[string]struct{}{}
+					}
+					authorCalls[c.path][c.callID] = struct{}{}
 					// A continuation of an executor thread changes the tree a unit check saw: of its node, or, when the
 					// row names none, of any node of the path.
 					for key := range checked {
@@ -75,7 +75,10 @@ func traceDiagnostics(res *engine.Result, events []engine.Event, policy *engine.
 				continue
 			}
 			if c.family == "executor" {
-				lastAuthor[c.path] = c.modelFamily
+				if authorCalls[c.path] == nil {
+					authorCalls[c.path] = map[string]struct{}{}
+				}
+				authorCalls[c.path][c.callID] = struct{}{}
 				key := c.path + "\x00" + c.node
 				phases[key] = traceEvent(phases[key], false, buildEvent, c.path, &out)
 				delete(checked, key)
@@ -137,15 +140,8 @@ func traceDiagnostics(res *engine.Result, events []engine.Event, policy *engine.
 func preparedCall(e engine.Event) traceCall {
 	str := func(k string) string { s, _ := e.Data[k].(string); return s }
 	explicit, _ := e.Data["explicit_label"].(bool)
-	model := str("configured_model")
-	if model == "" {
-		model = str("model")
-	}
 	c := traceCall{path: e.Path, label: e.Label, role: str("role"), family: str("family"), node: str("node"), stepDecision: str("step_decision"),
-		explicit: explicit, continuation: str("resume_of") != ""}
-	if model != "" {
-		c.modelFamily = execution.ModelFamily(model)
-	}
+		callID: e.CallID, resumeOf: str("resume_of"), explicit: explicit, continuation: str("resume_of") != ""}
 	return c
 }
 

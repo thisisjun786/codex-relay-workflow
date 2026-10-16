@@ -254,6 +254,8 @@ func (f hostFactory) hostCommand(ctx context.Context, command, state, socket str
 		return append(out, contract.Field{Key: "anchorsBound", Value: bound}), nil
 	case "ack":
 		return delivery.AckCommand(ctx, ack, rc, a, pyjson.Text(args["--event"]), pyjson.Text(args["--ack-turn"]), pyjson.Text(args["--ack-proof"]), args["--reject"])
+	case "receipt-pull":
+		return ack.Delivery.PullReceipt(ctx, a, delivery.PullRequest{Event: pyjson.Text(args["--event"]), Turn: pyjson.Text(args["--turn"]), Task: pyjson.Text(args["--task"]), Caller: pyjson.Text(args["--caller-thread"])})
 	case "verify-acks":
 		return delivery.VerifyAcksCommand(ctx, ack, rc, a, hostLimit(args["--limit"]))
 	}

@@ -814,9 +814,9 @@ func TestCrosscheckHoldsWhenAReceiptCannotBeRead(t *testing.T) {
 	}
 }
 
-// TestCrosscheckEngineIsOfAnotherFamilyThanTheAuthors: round 1 takes the first engine (astra, then grok) whose family is no author's
-// family, over the run's role pairs and the milestone's author calls; with no such engine it refuses and runs nothing.
-func TestCrosscheckEngineIsOfAnotherFamilyThanTheAuthors(t *testing.T) {
+// The configured engine order is independent of author model families (CRW-1515),
+// while author and engine family metadata remains in the verdict record.
+func TestCrosscheckEngineFollowsConfiguredOrder(t *testing.T) {
 	for _, c := range []struct {
 		name    string
 		authors map[string]string
@@ -825,11 +825,11 @@ func TestCrosscheckEngineIsOfAnotherFamilyThanTheAuthors(t *testing.T) {
 		family  string
 	}{
 		{"claude authors", claudeAuthors(), "", "astra", "gpt"},
-		{"a gpt executor", map[string]string{"architect": "claude-fake-opus", "executor": "gpt-6.1-sol", "executor-t1": "claude-fake-sonnet"}, "", "grok", "grok"},
+		{"a gpt executor", map[string]string{"architect": "claude-fake-opus", "executor": "gpt-6.1-sol", "executor-t1": "claude-fake-sonnet"}, "", "astra", "gpt"},
 		{"a grok architect", map[string]string{"architect": "grok-4.7", "executor": "claude-fake-haiku", "executor-t1": "claude-fake-sonnet"}, "", "astra", "gpt"},
-		{"claude and gpt", map[string]string{"architect": "claude-fake-opus", "executor": "claude-fake-haiku", "executor-t1": "openai/gpt-6.1-sol"}, "", "grok", "grok"},
-		{"gpt and grok", map[string]string{"architect": "grok-4.7", "executor": "gpt-6.1-sol", "executor-t1": "claude-fake-sonnet"}, "", "", ""},
-		{"a gpt author call beside claude pairs", claudeAuthors(), "gpt-fake-sol", "grok", "grok"},
+		{"claude and gpt", map[string]string{"architect": "claude-fake-opus", "executor": "claude-fake-haiku", "executor-t1": "openai/gpt-6.1-sol"}, "", "astra", "gpt"},
+		{"gpt and grok", map[string]string{"architect": "grok-4.7", "executor": "gpt-6.1-sol", "executor-t1": "claude-fake-sonnet"}, "", "astra", "gpt"},
+		{"a gpt author call beside claude pairs", claudeAuthors(), "gpt-fake-sol", "astra", "gpt"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			w := newCCWorld(t)
@@ -838,17 +838,8 @@ func TestCrosscheckEngineIsOfAnotherFamilyThanTheAuthors(t *testing.T) {
 			if c.call != "" {
 				w.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: "c_exec1", Op: "agent", Event: engine.EvPrepared, Data: map[string]any{"role": "executor", "node": "n1", "model": c.call}})
 			}
-			out, row := w.crosscheck(ccHead, nil)
+			out, _ := w.crosscheck(ccHead, nil)
 			calls := w.checker.requests()
-			if c.engine == "" {
-				if out.State != CrosscheckStateRefused || out.Reason != ReasonCrosscheckNoIndependentEngine || len(calls) != 0 || w.checkout.count() != 0 {
-					t.Errorf("outcome %+v, %d checks, %d checkouts", out, len(calls), w.checkout.count())
-				}
-				if dataStr(row, "reason") != ReasonCrosscheckNoIndependentEngine {
-					t.Errorf("row %+v", row.Data)
-				}
-				return
-			}
 			if out.State != CrosscheckStateVerdict || out.Verdict.EngineFamily != c.family || len(calls) != 2 {
 				t.Fatalf("outcome %+v, %d checks", out, len(calls))
 			}
@@ -857,9 +848,6 @@ func TestCrosscheckEngineIsOfAnotherFamilyThanTheAuthors(t *testing.T) {
 					t.Errorf("pass %s ran on %s, want %s", call.Pass, call.Request.Profile.Name, c.engine)
 				}
 			}
-			if slices.Contains(out.Verdict.AuthorFamilies, out.Verdict.EngineFamily) {
-				t.Errorf("the engine %s is an author's family %v", out.Verdict.EngineFamily, out.Verdict.AuthorFamilies)
-			}
 			if c.call != "" && !slices.Contains(out.Verdict.Authors, CrosscheckAuthor{Source: "call", Name: "c_exec1", Model: c.call, Family: "gpt"}) {
 				t.Errorf("the author call is not among the authors: %+v", out.Verdict.Authors)
 			}
@@ -867,38 +855,37 @@ func TestCrosscheckEngineIsOfAnotherFamilyThanTheAuthors(t *testing.T) {
 	}
 }
 
-// TestCrosscheckRefusesWhenAnAuthorPairIsUndecided: an author role with no pair, or an author call of the milestone that names no
-// model, refuses the crosscheck before any checkout or pass, naming what is undecided; no family is guessed for it.
-func TestCrosscheckRefusesWhenAnAuthorPairIsUndecided(t *testing.T) {
+// Unknown author models are recorded without blocking the independent tool review (CRW-1515).
+func TestCrosscheckRecordsUndecidedAuthorsWithoutRefusing(t *testing.T) {
 	t.Run("a role", func(t *testing.T) {
 		w := newCCWorld(t)
 		w.authors = map[string]string{"architect": "", "executor": "claude-fake-haiku", "executor-t1": "claude-fake-sonnet"}
 		w.build()
-		out, _ := w.crosscheck(ccHead, nil)
-		if out.State != CrosscheckStateRefused || out.Reason != ReasonCrosscheckAuthorUndecided || !strings.Contains(out.Detail, "architect") {
+		out, row := w.crosscheck(ccHead, nil)
+		if out.State != CrosscheckStateVerdict || row.Data["author_warnings"] == nil {
 			t.Errorf("outcome %+v", out)
 		}
-		if len(w.checker.requests()) != 0 || w.checkout.count() != 0 {
-			t.Error("a pass ran or a checkout was made")
+		if len(w.checker.requests()) != 2 || w.checkout.count() != 2 {
+			t.Error("both passes must run")
 		}
 	})
 	t.Run("a call", func(t *testing.T) {
 		w := newCCWorld(t)
 		w.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: "c_exec_nomodel", Op: "agent", Event: engine.EvPrepared, Data: map[string]any{"role": "executor", "node": "n1", "model": ""}})
-		out, _ := w.crosscheck(ccHead, nil)
-		if out.State != CrosscheckStateRefused || out.Reason != ReasonCrosscheckAuthorUndecided || !strings.Contains(out.Detail, "c_exec_nomodel") {
+		out, row := w.crosscheck(ccHead, nil)
+		if out.State != CrosscheckStateVerdict || row.Data["author_warnings"] == nil {
 			t.Errorf("outcome %+v", out)
 		}
-		if len(w.checker.requests()) != 0 || w.checkout.count() != 0 {
-			t.Error("a pass ran or a checkout was made")
+		if len(w.checker.requests()) != 2 || w.checkout.count() != 2 {
+			t.Error("both passes must run")
 		}
 	})
 	t.Run("no author at all", func(t *testing.T) {
 		w := newCCWorld(t)
 		w.authors = nil
 		w.build()
-		out, _ := w.crosscheck(ccHead, nil)
-		if out.State != CrosscheckStateRefused || out.Reason != ReasonCrosscheckAuthorUndecided {
+		out, row := w.crosscheck(ccHead, nil)
+		if out.State != CrosscheckStateVerdict || row.Data["author_warnings"] == nil {
 			t.Errorf("outcome %+v", out)
 		}
 	})

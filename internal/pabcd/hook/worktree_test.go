@@ -28,8 +28,23 @@ func newWtRig(t *testing.T) wtRig {
 	r.worktrees = filepath.Join(r.codexHome, "worktrees")
 	r.slotRoot = filepath.Join(r.worktrees, "7627")
 	r.checkout = filepath.Join(r.slotRoot, "opencodex")
-	wtWrite(t, filepath.Join(r.checkout, ".git"), "gitdir: /fake/main/.git/worktrees/7627\n")
+	wtGitfile(t, filepath.Join(r.checkout, ".git"))
 	return r
+}
+
+// wtGitfile writes the .git of a linked worktree at path: a gitfile naming a Git directory the test owns
+// (a HEAD file and an objects directory below a temporary directory). Detection reads a marker's target
+// now (CRW-1588): a gitfile that names no Git directory is no marker at all.
+func wtGitfile(t *testing.T, path string) {
+	t.Helper()
+	meta := filepath.Join(t.TempDir(), "gitdir")
+	if err := os.MkdirAll(filepath.Join(meta, "objects"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(meta, "HEAD"), []byte("ref: refs/heads/main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	wtWrite(t, path, "gitdir: "+meta+"\n")
 }
 
 func wtWrite(t *testing.T, path, data string) {
@@ -114,7 +129,7 @@ func TestDetectManagedWorktree(t *testing.T) {
 	t.Run("CRW_WORKTREE_ROOTS adds a root", func(t *testing.T) {
 		extraRoot := filepath.Join(r.home, "custom-root")
 		extraCheckout := filepath.Join(extraRoot, "ab12", "repo")
-		wtWrite(t, filepath.Join(extraCheckout, ".git"), "gitdir: /fake\n")
+		wtGitfile(t, filepath.Join(extraCheckout, ".git"))
 		env := wtEnv(map[string]string{
 			"HOME":               r.home,
 			"CODEX_HOME":         filepath.Join(r.home, "nowhere"),
@@ -184,9 +199,22 @@ func TestDetectManagedWorktree(t *testing.T) {
 		if err := os.Remove(filepath.Join(r.checkout, ".git")); err != nil {
 			t.Fatal(err)
 		}
-		wtWrite(t, filepath.Join(r.slotRoot, ".git"), "gitdir: /fake\n")
+		wtGitfile(t, filepath.Join(r.slotRoot, ".git"))
 		if got := detectManagedWorktree(r.checkout, r.env()); got.CheckoutRoot != r.slotRoot {
 			t.Fatalf("got %+v", got)
+		}
+	})
+	t.Run("a .git holding no repository is skipped for the marker above (CRW-1588)", func(t *testing.T) {
+		r := newWtRig(t)
+		if err := os.Remove(filepath.Join(r.checkout, ".git")); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(filepath.Join(r.checkout, ".git"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		wtGitfile(t, filepath.Join(r.slotRoot, ".git"))
+		if got := detectManagedWorktree(r.checkout, r.env()); got.CheckoutRoot != r.slotRoot {
+			t.Fatalf("an empty .git hid the marker above it: %+v", got)
 		}
 	})
 }

@@ -321,6 +321,9 @@ func (rc *Reconciler) isCurrent(attempt, delivery Row) bool {
 		return false
 	}
 	s := delivery.S("state")
+	if s == InboxOnly && delivery.S("dispatch_evidence") == ReceiptPullEvidence {
+		return false
+	}
 	return s != Dispatched && s != Acknowledged && s != Superseded
 }
 
@@ -488,8 +491,8 @@ func (rc *Reconciler) write(ctx context.Context, attempt, delivery Row, record O
 					return err
 				}
 			}
-			promoted, err := execSQL(ctx, rc.Store, "UPDATE deliveries SET state = ?, next_eligible_at = "+deadline+", hold_reason = CASE WHEN ? AND hold_reason IN (?, ?) THEN hold_reason WHEN ? AND hold_reason = ? THEN hold_reason ELSE ? END, dispatch_evidence = CASE WHEN ? THEN NULL ELSE ? END, dispatch_turn_id = CASE WHEN ? THEN NULL ELSE COALESCE(?, dispatch_turn_id) END, lease_owner = NULL, lease_until = NULL, updated_at = ? WHERE event_id = ? AND attempt_count = ? AND state NOT IN (?, 'acknowledged', 'superseded')",
-				append(append([]any{aggregate}, deadlineArgs...), boolFlag(o.keepUnknown), UnknownSendLost, UnknownSendUndecided, boolFlag(aggregate != Dispatched), BusyCap, o.hold, boolFlag(o.clearDispatch), dispatchEvidence, boolFlag(o.clearDispatch), o.dispatchTurn, now, attempt.S("event_id"), attempt.I("attempt_no"), Dispatched)...)
+			promoted, err := execSQL(ctx, rc.Store, "UPDATE deliveries SET state = ?, next_eligible_at = "+deadline+", hold_reason = CASE WHEN ? AND hold_reason IN (?, ?) THEN hold_reason WHEN ? AND hold_reason = ? THEN hold_reason ELSE ? END, dispatch_evidence = CASE WHEN ? THEN NULL ELSE ? END, dispatch_turn_id = CASE WHEN ? THEN NULL ELSE COALESCE(?, dispatch_turn_id) END, lease_owner = NULL, lease_until = NULL, updated_at = ? WHERE event_id = ? AND attempt_count = ? AND state NOT IN (?, 'acknowledged', 'superseded') AND NOT (state = ? AND dispatch_evidence IS ?)",
+				append(append([]any{aggregate}, deadlineArgs...), boolFlag(o.keepUnknown), UnknownSendLost, UnknownSendUndecided, boolFlag(aggregate != Dispatched), BusyCap, o.hold, boolFlag(o.clearDispatch), dispatchEvidence, boolFlag(o.clearDispatch), o.dispatchTurn, now, attempt.S("event_id"), attempt.I("attempt_no"), Dispatched, InboxOnly, ReceiptPullEvidence)...)
 			if err != nil {
 				return err
 			}

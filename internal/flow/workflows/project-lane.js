@@ -5,9 +5,9 @@ import { answeredQuestions, architectPacket, auditFindings, designAnswersPacket,
 export const meta = { name: 'project-lane', description: 'Run the issues of a milestone: background explorers, architect, design audit by the critic, explorers, one lane per issue node, milestone close and report', phases: ['explore', 'design', 'build', 'milestone'], args: { plan: 'string', milestone: 'string', cap: 'number' } }
 
 // The project lane. Explorers first read the repository for each node of the milestone (the background questions, CRW-1466), the
-// milestone is designed once by its architect over what they found, the DESIGN is audited by the critic, of another model family,
+// milestone is designed once by its architect over what they found, the DESIGN is audited by the critic in a separate review execution,
 // before any executor starts, every issue node then runs its own lane (an executor, the unit check of its uncommitted work by a
-// review tool of another model family, run in Go with no reviewer agent, the run's commit and verification, the land), and the
+// separately invoked review tool, run in Go with no reviewer agent or agent thread id, the run's commit and verification, the land). An observed same-thread review is warning-only and recorded, and the run continues; model family is provenance. The
 // milestone is closed over what the lanes integrated. Every fact a lane uses comes from the journal: the plan of its issue from the
 // design revision it was released under (crw.issuePlan), the evidence of its tier from the calls and checks it made. The operations
 // are the host's (internal/flow/ops); the composites (crw.dag, crw.land, ...) come from crw:lib/lane.
@@ -32,7 +32,7 @@ const END_CONDITIONS = []
 for (const n of ms.nodes) for (const c of n.end_condition || []) END_CONDITIONS.push({ issue: n.issue, command: c })
 
 // The design audit of a DESIGN of the architect: its open questions go to explorers or, when out of the architect's authority or
-// beyond the explorer cap, to the orchestrator (crw.exploreRoute), the critic (a role of its own, of another model family than the
+// beyond the explorer cap, to the orchestrator (crw.exploreRoute), the critic (a role of its own, in a separate review execution from the
 // architect, CRW-1452) audits the DESIGN with the answers, after the answers an open question got have gone back to the architect on
 // its own thread (design-answers, CRW-1466), and needs_changes sends it back to the architect on its own thread, for
 // AUDIT_ROUNDS rounds. From the second round on the critic's packet carries the findings of the earlier rounds by id (r<round>.<index>)
@@ -45,25 +45,29 @@ async function auditedDesign(first, tag, context, designHead) {
   // the head every call of the loop reads: a re-plan's pinned head, or the design head the first DESIGN's phase sampled
   // (crw.designHead), so the open questions' explorers, the critic and the architect's turns judge the code the DESIGN was written for
   const at = (context && context.head) || designHead || undefined
-  // the tokens of the loop are those its calls report (meta.tokens; crw.explore's tokens for its explorers), and its cap is made of
-  // budget.run: both are the same on a resume that replays them, whatever ceiling the resume has
+  // Count uncached input plus output from meta.tokens (crw.explore keeps the same split for its explorers).
+  // Cached input stays in the usage records and the detail, outside this cap. budget.run fixes the cap across resumes.
   const cap = budget.run === null ? DESIGN_TOKEN_CAP : Math.min(DESIGN_TOKEN_CAP, budget.run * DESIGN_TOKEN_WARN)
   const capText = budget.run === null ? 'the cap of DESIGN_TOKEN_CAP ' + DESIGN_TOKEN_CAP + ' tokens (the run has no budget)'
     : 'the cap of ' + cap + ' tokens (DESIGN_TOKEN_CAP ' + DESIGN_TOKEN_CAP + ', DESIGN_TOKEN_WARN ' + DESIGN_TOKEN_WARN + ' of the run budget of ' + budget.run + ')'
   let used = 0
+  let cachedInput = 0
   let warned = false
   // the findings of the rounds so far, by id, each round with the dispositions the architect's design-fix answer gave (null when it
   // gave none): the critic's PRIOR FINDINGS
   const prior = []
   async function tokenCap(tokens, round) {
-    used += tokens || 0
+    const usage = tokens || {}
+    const cached = usage.cached_input || 0
+    used += Math.max(0, (usage.input || 0) - cached) + (usage.output || 0)
+    cachedInput += cached
     if (warned || used < cap) return
     warned = true
-    const detail = 'tokens: the design loop ' + (tag ? tag + ' ' : 'of the milestone ') + 'used ' + used + ' tokens by audit round ' + round + ', ' + capText
+    const detail = 'tokens: the design loop ' + (tag ? tag + ' ' : 'of the milestone ') + 'used ' + used + ' tokens by audit round ' + round + ' (uncached input + output; cached input ' + cachedInput + ' excluded), ' + capText
     log('warn design_loop_cap ' + detail)
     await crw.escalate(null, { reason: 'design_loop_tokens', detail })
   }
-  const tokensOf = (call) => (call && call.meta && call.meta.tokens && call.meta.tokens.total) || 0
+  const tokensOf = (call) => (call && call.meta && call.meta.tokens) || {}
   await tokenCap(tokensOf(first), 0)
   for (let round = 1; round <= AUDIT_ROUNDS; round++) {
     // the end condition commands of the issues are run once, by the first explorer of the first DESIGN's first round (CRW-1382)
@@ -72,7 +76,7 @@ async function auditedDesign(first, tag, context, designHead) {
     // the first DESIGN's open questions keep the reuse key of their text (no head in the route's context): every answer of its loop reads
     // the same design head; their explorers are placed at it (opts.head)
     const asked = await crw.explore('open_questions', arch.output.open_questions, context && context.head ? { milestone: ms.id, head: context.head } : { milestone: ms.id }, { endConditions: ends, head: at })
-    await tokenCap(asked.tokens, round)
+    await tokenCap(asked.token_usage, round)
     // the authority questions of the round are asked now, approved or not (CRW-1366): an answer is the next round's
     await askOrchestrator(asked.answers, 'out_of_authority', asked.carried)
     if (asked.failed) return { ok: false, result: await crw.milestoneHalt(ms, 'explorer', asked.failed.status, asked.failed.reason, asked.failed.callId) }
@@ -136,7 +140,9 @@ async function replan(tag, signal, due, head, misaligned, unstarted) {
   const cur = await crw.currentDesign(ms.id)
   await crw.spawnDecision('ARCH_2', 'spawn', { role: 'architect', reason: due.reasons.join(','), inputs: {
     milestone: ms.id, revision: cur.revision, signal, head, reasons: due.reasons, plan_mismatch: due.plan_mismatch, slice_change: due.slice_change.changed } })
-  const call = await agent.call(replanPacket(ms, cur, due, head, misaligned, unstarted), { resume: cur.handle, schema: DESIGN, head, label: 'replan:' + tag })
+  // a re-plan after an imported DESIGN starts a fresh local architect on the reused design's context (CRW-1329): the foreign
+  // run's thread handle is never resumed
+  const call = await agent.call(replanPacket(ms, cur, due, head, misaligned, unstarted), Object.assign({ schema: DESIGN, head, label: 'replan:' + tag }, cur.handle ? { resume: cur.handle } : { agentType: 'architect' }))
   if (call.status !== 'completed') return { state: 'halted', result: await crw.milestoneHalt(ms, 'replan', call.status, call.reason, call.callId) }
   // the plans the started nodes were released with: the critic compares the whole DESIGN with them (RELEASED PLANS)
   const released = await crw.releasedPlans(ms.id)
@@ -185,22 +191,34 @@ async function onSignal(sig) {
 function backgroundQuestion(n) {
   return 'Background of node ' + n.id + ' (' + n.issue + '): ' + n.title + '. What does the repository hold today that the plan of this issue rests on: the files, types, functions and tests it will change or read, the conventions they follow, and what in them must not change?'
 }
-phase('explore')
-// one design head for the phase (crw.designHead): every background explorer and the architect's first call read it, whatever lands on
-// the integration target meanwhile, and the architect's checkout, and so the head r0 records the DESIGN ran at, is made at it
-const designAt = await crw.designHead(ms.id)
-const background = await crw.explore('background', ms.nodes.map((n) => ({ id: 'bg-' + n.id, question: backgroundQuestion(n), scope: '', files_needed: n.regions.length ? n.regions : null })), { milestone: ms.id, head: designAt.head }, {})
-if (background.failed) return crw.milestoneHalt(ms, 'explorer', background.failed.status, background.failed.reason, background.failed.callId)
+// the DESIGN of an earlier run of this plan and repository is reused when crw.designReuse finds it approved over the same slices
+// and milestone digest (CRW-1329): the run's design phase is skipped and its ledger's first revision imports it
+const reused = await crw.designReuse(ms.id)
+let initialDesign
+if (reused.reused) {
+  phase('design')
+  await crw.spawnDecision('ARCH_1', 'skip', { role: 'architect', reason: 'approved_design_reused', inputs: { milestone: ms.id, source_run: reused.source_run, source_revision: reused.source_revision, digest: reused.digest } })
+  await crw.designLedger(ms.id, { reuse: true })
+  initialDesign = reused.design
+} else {
+  phase('explore')
+  // one design head for the phase (crw.designHead): every background explorer and the architect's first call read it, whatever lands on
+  // the integration target meanwhile, and the architect's checkout, and so the head r0 records the DESIGN ran at, is made at it
+  const designAt = await crw.designHead(ms.id)
+  const background = await crw.explore('background', ms.nodes.map((n) => ({ id: 'bg-' + n.id, question: backgroundQuestion(n), scope: '', files_needed: n.regions.length ? n.regions : null })), { milestone: ms.id, head: designAt.head }, {})
+  if (background.failed) return crw.milestoneHalt(ms, 'explorer', background.failed.status, background.failed.reason, background.failed.callId)
 
-phase('design')
-await crw.spawnDecision('ARCH_1', 'spawn', { role: 'architect', inputs: { milestone: ms.id, nodes: ms.nodes.length } })
-const first = await agent.call(architectPacket(ms, background.answers, designAt.head), { agentType: 'architect', schema: DESIGN, head: designAt.head, label: 'architect' })
-if (first.status !== 'completed') return crw.milestoneHalt(ms, 'architect', first.status, first.reason, first.callId)
-const designed0 = await auditedDesign(first, '', undefined, designAt.head)
-if (!designed0.ok) return designed0.result
-const arch = designed0.arch
-await crw.designLedger(ms.id, { design: arch.output, answers: designed0.answers, architect: arch })
-await askOrchestrator(designed0.answers, 'explorer_cap', designed0.carried)
+  phase('design')
+  await crw.spawnDecision('ARCH_1', 'spawn', { role: 'architect', inputs: { milestone: ms.id, nodes: ms.nodes.length } })
+  const first = await agent.call(architectPacket(ms, background.answers, designAt.head), { agentType: 'architect', schema: DESIGN, head: designAt.head, label: 'architect' })
+  if (first.status !== 'completed') return crw.milestoneHalt(ms, 'architect', first.status, first.reason, first.callId)
+  const designed0 = await auditedDesign(first, '', undefined, designAt.head)
+  if (!designed0.ok) return designed0.result
+  const arch = designed0.arch
+  await crw.designLedger(ms.id, { design: arch.output, answers: designed0.answers, architect: arch })
+  await askOrchestrator(designed0.answers, 'explorer_cap', designed0.carried)
+  initialDesign = arch.output
+}
 
 // A fenced write after another session claimed the plan's coordinator epoch is refused epoch_lost (CRW-1285): the lane ends at that
 // write with the reason, and neither escalates nor writes anything more at the relay; the run ends stopped on it (below).
@@ -479,7 +497,7 @@ phase('build')
 // node edits the DESIGN's edit_regions, so the nodes that run at once must not overlap in those either. A planned region keeps the plan's
 // change and hold (planned_regions, when the plan states one that is not a plain edit), which crw.regionsOverlap judges by (CRW-1461).
 const designed = {}
-for (const is of arch.output.issues) designed[is.node] = is.edit_regions
+for (const is of initialDesign.issues) designed[is.node] = is.edit_regions
 const admitted = []
 for (const n of ms.nodes) admitted.push(Object.assign({}, n, { regions: await crw.admissionRegions(n.planned_regions || n.regions, designed[n.id]) }))
 const lanes = await crw.dag(args.plan, lane, { nodes: admitted, milestone: ms.id, cap: args.cap, onSignal })
@@ -501,7 +519,7 @@ try {
 async function closeAndReport() {
   phase('milestone')
   // The close: the final gate over the integrated head (test evidence, and the QA receipt for a driven surface), the crosscheck over the
-  // range with the passed gate as its input (two passes of a review engine of another model family than every author, run by the host),
+  // range with the passed gate as its input (two passes of a review engine in a separate tool invocation, run by the host; no agent thread id),
   // and the close recorded over the tip it judged. A gate that fails or cannot be settled ends the milestone here, and the crosscheck does
   // not run; a crosscheck that does not verify the range ends it too, and nothing is closed, reflected on or reported (crw:lib/close).
   // The halt carries what the close's stop does: the ask, the crosscheck's V in the escalation's evidence and in the run's value, and the
@@ -512,7 +530,7 @@ async function closeAndReport() {
   // of it. A call that did not complete is not ALIGNED: held and unknown hold the milestone, everything else escalates.
   const current = await crw.currentDesign(ms.id)
   await crw.spawnDecision('ARCH_3', 'spawn', { role: 'architect', inputs: { milestone: ms.id, revision: current.revision, head: closed.gate.head } })
-  const reflected = await agent.call(reflectionPacket(ms, current, closed), { resume: current.handle, schema: REFLECTION, head: closed.gate.head, label: 'reflection:' + ms.id })
+  const reflected = await agent.call(reflectionPacket(ms, current, closed), Object.assign({ schema: REFLECTION, head: closed.gate.head, label: 'reflection:' + ms.id }, current.handle ? { resume: current.handle } : { agentType: 'architect' }))
   const reflection = await crw.reflection(ms.id, closed.gate, reflected)
   if (reflection.state !== 'verdict') return crw.milestoneHalt(ms, 'reflection', reflection.state, reflection.reason, reflected.callId)
   // A reason to re-plan stands whatever the alignment says: the numbers of the signals, and the alignment the reflection found.

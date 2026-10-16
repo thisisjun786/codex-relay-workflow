@@ -25,6 +25,23 @@ func worktreeLeg(t *testing.T, id string) harness.Leg {
 	return harness.Leg{}
 }
 
+// legsGitfile writes the .git of a linked worktree at path: a gitfile naming a Git directory the test
+// owns (a HEAD file and an objects directory below a temporary directory), so the marker resolves to a
+// repository the way a real worktree's does (CRW-1588).
+func legsGitfile(t *testing.T, path string) {
+	t.Helper()
+	meta := filepath.Join(t.TempDir(), "gitdir")
+	if err := os.MkdirAll(filepath.Join(meta, "objects"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(meta, "HEAD"), []byte("ref: refs/heads/main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("gitdir: "+meta+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // answerContext is the additionalContext of a leg's answer, which must be one hookSpecificOutput line for event.
 func answerContext(t *testing.T, answer, event string) string {
 	t.Helper()
@@ -51,9 +68,7 @@ func TestWorktreeLegsAnswerThroughTheEnvelope(t *testing.T) {
 	if err := os.MkdirAll(checkout, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(checkout, ".git"), []byte("gitdir: /fake\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	legsGitfile(t, filepath.Join(checkout, ".git"))
 	t.Setenv("HOME", home)
 	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
 	t.Setenv("CRW_WORKTREE_ROOTS", "")

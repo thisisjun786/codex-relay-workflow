@@ -754,3 +754,101 @@ func TestSummaryNewerIntentStoredBetweenTheReadsWaitsForTheNextReconcile(t *test
 		t.Errorf("escalations %+v", esc)
 	}
 }
+
+// TestSummaryOrphanIntentWaitsForFirstReadThenSettlesOnce (CRW-1563): an intent whose summary id no
+// outbox entry holds is settled obsolete — but only after a reconcile that read it together with the
+// states, so an intent written between the state read and this run's own write is left for the next
+// reconcile instead of being settled on sight. In both phases the orphan settles obsolete exactly
+// once and a third reconcile does no more work.
+func TestSummaryOrphanIntentWaitsForFirstReadThenSettlesOnce(t *testing.T) {
+	for _, late := range []bool{false, true} {
+		name := "present in first read"
+		if late {
+			name = "inserted between reads"
+		}
+		t.Run(name, func(t *testing.T) {
+			w := summaryWorld(t)
+			other := ForeignAppender{Store: w.st, Run: testRun, Now: fixedNow}
+			const orphan = "summary-orphan-without-outbox"
+			inserted := 0
+			writeOrphan := func() error {
+				_, err := other.Append(ctx, NewRow{Kind: KindSummaryNotice, Payload: intentPayload(orphan, "orphan intent without an outbox entry")})
+				if err == nil {
+					inserted++
+				}
+				return err
+			}
+			var writer Appender = other
+			if late {
+				writer = &interposingAppender{inner: other, between: writeOrphan}
+			} else if err := writeOrphan(); err != nil {
+				t.Fatal(err)
+			}
+			env := w.summaryEnv(writer)
+			results := func(id string) []string {
+				var got []string
+				for _, row := range w.rows(KindSummarySettled) {
+					if row.Str("summary_id") == id {
+						got = append(got, row.Str("result"))
+					}
+				}
+				return got
+			}
+			first, err := ReconcileSummary(ctx, env)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if inserted != 1 || first.Intents != 1 || first.Sent != 1 {
+				t.Fatalf("first reconcile %+v, orphan writes %d", first, inserted)
+			}
+			// The orphan really has no relay outbox entry; the legitimate summary still progresses.
+			entries := w.entries()
+			if len(entries) != 1 || entries[0].SummaryID != first.SummaryID || first.SummaryID == orphan {
+				t.Fatalf("outbox entries %+v, first %+v", entries, first)
+			}
+			wantFirst := []string{SettledObsolete}
+			wantFirstSettled := 2
+			if late {
+				wantFirst = nil
+				wantFirstSettled = 1
+			}
+			if got := results(orphan); !slices.Equal(got, wantFirst) {
+				t.Errorf("first reconcile orphan settlements %v, want %v", got, wantFirst)
+			}
+			if first.Settled != wantFirstSettled {
+				t.Errorf("first reconcile settled %d, want %d", first.Settled, wantFirstSettled)
+			}
+			next, err := ReconcileSummary(ctx, env)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantNextSettled := 0
+			if late {
+				wantNextSettled = 1
+			}
+			if next.Intents != 0 || next.Sent != 0 || next.Settled != wantNextSettled {
+				t.Errorf("next reconcile %+v, want only %d obsolete settlement", next, wantNextSettled)
+			}
+			if got := results(orphan); !slices.Equal(got, []string{SettledObsolete}) {
+				t.Errorf("next reconcile orphan settlements %v, want obsolete exactly once", got)
+			}
+			again, err := ReconcileSummary(ctx, env)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if again.Intents != 0 || again.Sent != 0 || again.Settled != 0 {
+				t.Errorf("third reconcile repeated work: %+v", again)
+			}
+			if got := results(orphan); !slices.Equal(got, []string{SettledObsolete}) {
+				t.Errorf("third reconcile orphan settlements %v, want obsolete exactly once", got)
+			}
+			sent := w.sender.parentSent()
+			if len(sent) != 1 || sent[0].LogicalID != "summary-"+first.SummaryID {
+				t.Errorf("sent %+v; only legitimate summary should be sent", sent)
+			}
+			if got := w.rows(engine.EvEscalation); len(got) != 0 {
+				t.Errorf("orphan cleanup escalated: %+v", got)
+			}
+		})
+	}
+}

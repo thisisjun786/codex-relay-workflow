@@ -212,7 +212,7 @@ export function designAuditPacket(ms, cand, round, prior, context) {
   const at = context ? headBlock(context) : null
   const replanned = context && Array.isArray(context.unstarted)
   return [
-    'ROLE: critic. Audit the DESIGN of milestone ' + ms.id + ' (round ' + round + ') before any executor starts. You did not write it and are of another model family than the architect.',
+    'ROLE: critic. Audit the DESIGN of milestone ' + ms.id + ' (round ' + round + ') in a separate review execution before any executor starts. Model family is provenance only. If the host actually reports this review reuses the architect thread, record a warning and continue; do not invent a thread id.',
     'Answer with DESIGN_AUDIT: approved only when every issue node has a plan an executor can carry out inside its edit regions, every done condition can be met under the executor contract below, the decisions are consistent with the plan, no decision of the DESIGN is outside the architect\'s authority below, and no P0 or P1 finding stands; otherwise needs_changes with the findings the architect must act on. Check every done condition against the executor contract and every decision against the authority boundary: a done condition the contract cannot meet and a decision outside the authority are each a P1 finding that names its node or decision.',
     section('EXECUTOR CONTRACT (every done condition must be met under it)', EXECUTOR_CONTRACT),
     section('OUT-OF-AUTHORITY DECISIONS (the architect raises these as open questions and does not decide them)', AUTHORITY),
@@ -324,13 +324,19 @@ function drivenDecisions(cur) {
 // read-only worktree of that head.
 export function reflectionPacket(ms, cur, closed) {
   const at = headBlock({ head: closed.gate.head, base_tip: cur.base_tip, landed: cur.landed })
-  return [
-    'ROLE: architect. Reflection at the close of milestone ' + ms.id + ' (' + ms.title + '), on the thread of your DESIGN (revision ' + cur.revision + '). Your directory P is a read-only checkout of the integrated head: work only under the absolute path P.',
+  const parts = [
+    'ROLE: architect. Reflection at the close of milestone ' + ms.id + ' (' + ms.title + '), ' + (cur.handle ? 'on the thread of your DESIGN (revision ' + cur.revision + ')' : 'using the approved DESIGN reused from run ' + cur.source_run + ' revision ' + cur.source_revision) + '. Your directory P is a read-only checkout of the integrated head: work only under the absolute path P.',
+  ]
+  if (cur.source_run && !cur.handle) {
+    parts.push('REUSED APPROVED DESIGN:\n' + JSON.stringify(cur.design) + '\nAPPROVED ANSWERS:\n' + JSON.stringify(cur.answers || []))
+  }
+  parts.push(
     at.head,
     section('DECISIONS OF THE DESIGN (map each to the files and criteria of the integrated range)', drivenDecisions(cur)),
     at.landed,
     'Answer with REFLECTION: ALIGNED, or MISALIGNED with each decision the range departs from, what you observed, the nodes it affects and the evidence.',
-  ].join('\n\n')
+  )
+  return parts.join('\n\n')
 }
 
 // unstartedSection names the nodes a re-plan releases under its revision (CRW-1462): each by id, issue and title; none at the close.
@@ -349,7 +355,12 @@ export function replanPacket(ms, cur, due, head, misaligned, unstarted) {
   const at = headBlock({ head, base_tip: cur.base_tip, landed: cur.landed })
   const lines = due.reasons.map((r) => r)
   const parts = [
-    'ROLE: architect. Re-plan milestone ' + ms.id + ' (' + ms.title + '), on the thread of your DESIGN (revision ' + cur.revision + '). Your directory P is a read-only checkout of the head below: work only under the absolute path P.',
+    'ROLE: architect. Re-plan milestone ' + ms.id + ' (' + ms.title + '), ' + (cur.handle ? 'on the thread of your DESIGN (revision ' + cur.revision + ')' : 'using the approved DESIGN reused from run ' + cur.source_run + ' revision ' + cur.source_revision) + '. Your directory P is a read-only checkout of the head below: work only under the absolute path P.',
+  ]
+  if (cur.source_run && !cur.handle) {
+    parts.push('REUSED APPROVED DESIGN:\n' + JSON.stringify(cur.design) + '\nAPPROVED ANSWERS:\n' + JSON.stringify(cur.answers || []))
+  }
+  parts.push(
     at.head,
     section('WHY THE MILESTONE RE-PLANS', lines),
     'PLAN MISMATCHES OF THIS REVISION: ' + due.plan_mismatch + ' (calls ' + (due.plan_mismatch_calls.join(', ') || 'none') + ')',
@@ -357,7 +368,7 @@ export function replanPacket(ms, cur, due, head, misaligned, unstarted) {
     section('DECISIONS OF THE DESIGN', drivenDecisions(cur)),
     at.landed,
     unstartedSection(ms, unstarted),
-  ]
+  )
   if (misaligned && misaligned.length) {
     parts.push(section('DECISIONS THE REFLECTION FOUND THE RANGE TO DEPART FROM', misaligned.map((m) => '- ' + m.decision_id + ': ' + m.observed + ' (nodes ' + (m.affected_nodes || []).join(', ') + ')')))
   }

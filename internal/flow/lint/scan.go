@@ -11,21 +11,21 @@ import (
 
 // Rule names. A diagnostic carries exactly one.
 const (
-	RuleLoad              = "load"
-	RuleParse             = "parse"
-	RuleLandTwice         = "lifecycle_land_twice"
-	RuleLandWithoutReview = "lifecycle_land_without_review"
-	RuleLifecycleOrder    = "lifecycle_order"
-	RuleReviewerFamily    = "reviewer_family_same"
-	RuleLabelDuplicate    = "label_duplicate"
-	RuleTierStepDecision  = "executor_t1_without_step_decision"
-	RuleClassifyArg       = "classify_arg"
-	RuleResumeArg         = "resume_arg"
-	RuleDeterminism       = "determinism_stub"
-	RuleLaneMutableLet    = "lane_reads_mutable_let"
-	RuleAliasAmbiguous    = "alias_ambiguous"
-	RuleCallRefused       = "call_refused"
-	RulePathConcurrency   = "path_concurrency"
+	RuleLoad               = "load"
+	RuleParse              = "parse"
+	RuleLandTwice          = "lifecycle_land_twice"
+	RuleLandWithoutReview  = "lifecycle_land_without_review"
+	RuleLifecycleOrder     = "lifecycle_order"
+	RuleReviewerThreadSame = "reviewer_thread_same"
+	RuleLabelDuplicate     = "label_duplicate"
+	RuleTierStepDecision   = "executor_t1_without_step_decision"
+	RuleClassifyArg        = "classify_arg"
+	RuleResumeArg          = "resume_arg"
+	RuleDeterminism        = "determinism_stub"
+	RuleLaneMutableLet     = "lane_reads_mutable_let"
+	RuleAliasAmbiguous     = "alias_ambiguous"
+	RuleCallRefused        = "call_refused"
+	RulePathConcurrency    = "path_concurrency"
 )
 
 // Sources of a diagnostic.

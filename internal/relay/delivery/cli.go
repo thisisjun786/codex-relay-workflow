@@ -42,6 +42,7 @@ var deliveryCommands = []commandSpec{
 	// ack-proof derives a proof from its two options alone: it resolves no state directory.
 	{dispatch.Command{Name: "ack-proof", Unselected: true, ReadOnly: true}, cmdAckProof},
 	{dispatch.Command{Name: "ack"}, cmdAck},
+	{dispatch.Command{Name: "receipt-pull"}, cmdReceiptPull},
 	{dispatch.Command{Name: "verdict"}, cmdVerdict},
 	{dispatch.Command{Name: "decision-reply"}, cmdDecisionReply},
 	{dispatch.Command{Name: "decision-show", ReadOnly: true}, cmdDecisionShow},

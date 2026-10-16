@@ -1118,3 +1118,51 @@ func flowGitCommit(t *testing.T, dir, msg string) string {
 	flowGit(t, dir, "commit", "-q", "--allow-empty", "-m", msg)
 	return flowGit(t, dir, "rev-parse", "HEAD")
 }
+
+// TestFlowClaimRechecksHeadAfterJudgement (CRW-1512): a record that changed after the receipt's
+// judgement — a HEAD moved to a non-ancestor — is refused at the claim: the locked re-check judges
+// the record it actually writes, not the copy the judgement read.
+func TestFlowClaimRechecksHeadAfterJudgement(t *testing.T) {
+	r := newFlowTestRig(t)
+	flowGitRepo(t, r.tree)
+	head := flowGitCommit(t, r.tree, "current history")
+	tree := flowGit(t, r.tree, "rev-parse", "HEAD^{tree}")
+	unrelated := flowGit(t, r.tree, "commit-tree", tree, "-m", "unrelated history") // no -p: another root
+	cmd := exec.Command("git", "-C", r.tree, "merge-base", "--is-ancestor", unrelated, head)
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
+	var exit *exec.ExitError
+	if err := cmd.Run(); !errors.As(err, &exit) || exit.ExitCode() != 1 {
+		t.Fatalf("fixture head must be a real non-ancestor: %v", err)
+	}
+	a := r.mint(flowTestOp, time.Now().Add(-time.Minute))
+	if a.Head != head {
+		t.Fatalf("recorded HEAD %q, want %q", a.Head, head)
+	}
+	receipt := FlowReceiptPath(a)
+	flowWrite(t, receipt, "$ go test ./x\nok\n", time.Now())
+	tr := r.transcript(flowSpawnText(a.Op, a.ID, receipt))
+	changed := a
+	changed.Head = unrelated
+	var raw []byte
+	reached := false
+	beforeClaim = func() {
+		beforeClaim = nil
+		reached = true
+		assignMust(t, writeRecord(r.recordPath(a.ID), changed))
+		var err error
+		raw, err = os.ReadFile(r.recordPath(a.ID))
+		assignMust(t, err)
+	}
+	t.Cleanup(func() { beforeClaim = nil })
+	verdict := JudgeAssignedReceiptTurn(r.cwd, flowTestOwner, "agent-1", "turn-1", tr, flowTestJSON, "")
+	if !reached {
+		t.Fatal("initial valid judgement never reached the pre-claim seam")
+	}
+	if verdict != AssignedRefused {
+		t.Errorf("claim of non-ancestor HEAD judged %v, want refused", verdict)
+	}
+	r.unchanged(t, a.ID, raw)
+	if _, ok := AcceptedReceipt(r.cwd, flowTestOwner, a.ID); ok {
+		t.Error("refused claim has an accepted receipt")
+	}
+}

@@ -1,7 +1,7 @@
 import { install } from 'crw:lib/lane'
 import { landFixPacket, answerPacket } from 'crw:lib/packets'
 import { RECEIPT } from 'crw:lib/schemas'
-export const meta = { name: 'land-head', description: 'Land a head made outside a project-lane run through the gates of a run: the verification of its tree, a unit check of its committed range by another model family than its authors, the relay acceptance and the integration', phases: ['land'], args: { plan: 'string', milestone: 'string', issue: 'string', head: 'string', authors: 'object', fix_round: 'number' } }
+export const meta = { name: 'land-head', description: 'Land a head made outside a project-lane run through the gates of a run: the verification of its tree, a unit check of its committed range in a separate tool invocation, the relay acceptance and the integration', phases: ['land'], args: { plan: 'string', milestone: 'string', issue: 'string', head: 'string', authors: 'object', fix_round: 'number' } }
 
 // The landing lane of a head made outside a project-lane run (CRW-1354). The child decides how the work of an issue is made - a
 // project-lane run, or its own subagents outside any run - and CRW enforces the order, the gates and the record of its landing
@@ -11,8 +11,8 @@ export const meta = { name: 'land-head', description: 'Land a head made outside 
 // the host; then the gates every head of a run goes through, with the rows they write: crw.verify (verification-record/1 of the
 // exact tree), crw.unitCheck in the committed mode (CRW-1468: the review tool run in Go on the range base..head of the checkout, no
 // reviewer call; a head made outside a run has no executor until the run's own fix call, so the first check's row records receipt
-// no_executor), crw.land (crw.accept on that check, the relay's agent acceptance, which refuses a check of the authors' model family
-// independence_refused and one it cannot judge against an observed author independence_unproven, then crw.integrate).
+// no_executor), crw.land (crw.accept on that check, the relay's agent acceptance; model family is provenance only. Historical
+// independence_refused and independence_unproven records remain readable. A same-thread observation is warning-only and recorded, then crw.integrate).
 // A check that needs changes is fixed in the run (CRW-1490), on the same release and without giving the slot back: a finding that
 // is only missing evidence (kind evidence_missing, with its evidence_question) is asked of an explorer (crw.explore, kind evidence)
 // and the same head is checked again with the answers in the check's prompt; every other findings set goes to an executor call
@@ -72,7 +72,7 @@ async function landHead(n) {
         return endLand(node, { reason: 'land_verification_failed', detail: ci.summary || '', evidence: { record: ci.digest, failures: ci.failures } }, { head: head.commit })
       }
     }
-    const uc = await crw.unitCheck(node, ex, { round: round + 1, final: round >= LAND_FIX_ROUNDS, commit: head, base, evidence })
+    const uc = await crw.unitCheck(node, ex, { round: round + 1, final: round >= LAND_FIX_ROUNDS, commit: head, base: base, evidence })
     if (uc.hold) {
       await crw.hold(node, { reason: uc.hold, source: 'unit_check' })
       return { node, state: 'held', reason: uc.hold, source: 'unit_check', detail: uc.detail || '' }

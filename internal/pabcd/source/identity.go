@@ -9,12 +9,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"time"
 	"unicode/utf16"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/gitprobe"
 )
 
 // Kind says whether git could answer; "unavailable" is never a guess.
@@ -190,10 +191,12 @@ func Describe(id Identity) string {
 
 func short(sha string) string { return sha[:min(len(sha), 7)] }
 
-// LooksLikeRepo reports whether cwd holds a .git entry: a directory, or the file of a linked worktree. Advisory.
+// LooksLikeRepo reports whether cwd holds a .git that resolves to a Git directory (gitprobe.ResolveGitDir):
+// a real metadata directory, or the file of a linked worktree naming one. An entry that holds no repository —
+// a sandbox's empty .git, a file that is no gitfile — is no marker (CRW-1588). Advisory.
 func LooksLikeRepo(cwd string) bool {
-	_, err := os.Stat(filepath.Join(cwd, ".git"))
-	return err == nil
+	found, err := gitprobe.ResolveGitDir(filepath.Join(cwd, ".git"))
+	return err == nil && found != ""
 }
 
 // AssertNever is the oracle's exhaustiveness guard, for the default case of a switch over a Comparison. The

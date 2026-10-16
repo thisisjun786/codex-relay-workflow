@@ -29,9 +29,7 @@ func TestCRW1307HarnessLegsWarnAndRecord(t *testing.T) {
 	if err := os.MkdirAll(checkout, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(checkout, ".git"), []byte("gitdir: /fake/main/.git/worktrees/zk3q\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	legsGitfile(t, filepath.Join(checkout, ".git"))
 	if err := os.MkdirAll(filepath.Join(codexHome, "memories"), 0o755); err != nil {
 		t.Fatal(err)
 	}

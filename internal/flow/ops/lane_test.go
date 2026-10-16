@@ -263,8 +263,8 @@ func TestLedgerAndReleaseNeedAnApprovedAudit(t *testing.T) {
 	}
 }
 
-// An audit that was not made by an independent critic is not an approval: the model family of the auditor differs from the
-// architect's, a call that did not complete is not an audit, and an approval over a P1 finding is no approval.
+// A completed critic verdict is independent of the model family (CRW-1515).
+// A call that did not complete is not an audit, and an approval over a P1 finding is no approval.
 func TestDesignAuditIndependence(t *testing.T) {
 	w := newWorld(t)
 	design, _ := json.Marshal(designOf("A"))
@@ -275,10 +275,10 @@ func TestDesignAuditIndependence(t *testing.T) {
 		_ = json.Unmarshal(w.must("designAudit", "M", 1, cand, arch, aud), &r)
 		return r
 	}
-	if r := state(call("a", "completed", "claude-opus", nil), call("r", "completed", "claude-sonnet", approved)); r.State != StateRefused || r.Reason != "independence_refused" {
+	if r := state(call("a", "completed", "claude-opus", nil), call("r", "completed", "claude-sonnet", approved)); r.State != AuditApproved || r.Reason != "" {
 		t.Errorf("same family: %+v", r)
 	}
-	if r := state(call("a", "completed", "claude-opus", nil), call("r", "completed", "", approved)); r.State != StateRefused || r.Reason != "independence_unproven" {
+	if r := state(call("a", "completed", "claude-opus", nil), call("r", "completed", "", approved)); r.State != AuditApproved || r.Reason != "" {
 		t.Errorf("unread pair: %+v", r)
 	}
 	if r := state(call("a", "completed", "claude-opus", nil), call("r", "held", "gpt-x", nil)); r.State != StateHeld {
@@ -292,10 +292,8 @@ func TestDesignAuditIndependence(t *testing.T) {
 	}
 }
 
-// TestDesignAuditStillRefusesAnArchitectFamilyCritic (CRW-1452): the design audit is the critic's call now, and its independence is
-// still judged by the model families of the two calls' configured pairs, never by the role: a critic on the architect's family is
-// refused (independence_refused), and the same critic on another family is an approval that names the critic as the auditor.
-func TestDesignAuditStillRefusesAnArchitectFamilyCritic(t *testing.T) {
+// The critic's completed audit names its role regardless of the architect's model family (CRW-1515).
+func TestDesignAuditAcceptsAnArchitectFamilyCritic(t *testing.T) {
 	w := newWorld(t)
 	design, _ := json.Marshal(designOf("A"))
 	cand := Candidate{Design: design, Answers: json.RawMessage(`[]`)}
@@ -309,7 +307,7 @@ func TestDesignAuditStillRefusesAnArchitectFamilyCritic(t *testing.T) {
 		_ = json.Unmarshal(w.must("designAudit", "M", 1, cand, arch, critic), &r)
 		return r
 	}
-	if r := audit("claude-opus", "claude-sonnet"); r.State != StateRefused || r.Reason != "independence_refused" || r.Critic.Role != "critic" {
+	if r := audit("claude-opus", "claude-sonnet"); r.State != AuditApproved || r.Reason != "" || r.Critic.Role != "critic" {
 		t.Errorf("a critic of the architect's family: %+v", r)
 	}
 	if r := audit("claude-opus", "gpt-6.1-sol"); r.State != AuditApproved || r.Critic.Role != "critic" || r.Architect.Role != "architect" {
@@ -4375,5 +4373,278 @@ func TestHeldBackReleaseAskedAgainOnItsPathStaysProven(t *testing.T) {
 				t.Errorf("reason %s kind %s (%d rows): proven %v (%s) %v, want %v", tc.reason, tc.kind, len(ev), ok, why, err, tc.want)
 			}
 		}
+	}
+}
+
+// ---- the design reuse of another run (CRW-1329) ----
+
+// sourceRunEvents are the journal events of a run that ledgered a DESIGN: a source the reuse search reads.
+func sourceRunEvents(t *testing.T, audit bool, d Design) []engine.Event {
+	t.Helper()
+	src := newWorld(t)
+	m := Milestone{ID: "M", Plan: "plan-1", Nodes: []PlanNode{{ID: "A", SliceDigest: "slice-a"}}}
+	src.relay.plan = &m
+	src.ledgered(audit, d)
+	raw, _ := json.Marshal(src.j.Events())
+	var out []engine.Event
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// reuseWorld is a destination run of milestone M of plan-1 that searches the source events given.
+func reuseWorld(t *testing.T, sources ...DesignRun) *world {
+	t.Helper()
+	w := newWorld(t)
+	m := Milestone{ID: "M", Plan: "plan-1", Nodes: []PlanNode{{ID: "A", SliceDigest: "slice-a"}}}
+	w.relay.plan = &m
+	w.must("milestone", "plan-1", "M")
+	w.lane.d.DesignHistory = func(context.Context, string) ([]DesignRun, error) { return sources, nil }
+	return w
+}
+
+func cloneEvents(t *testing.T, events []engine.Event) []engine.Event {
+	t.Helper()
+	raw, _ := json.Marshal(events)
+	var out []engine.Event
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+func supersede(events []engine.Event, callID string) []engine.Event {
+	max := 0
+	for _, e := range events {
+		if e.Seq > max {
+			max = e.Seq
+		}
+	}
+	return append(events, engine.Event{Seq: max + 1, Kind: engine.KindCall, Op: OpDesignLedger, Event: engine.EvSuperseded, CallID: callID})
+}
+
+func rowOf(events []engine.Event, op string) (int, engine.Event) {
+	for i, e := range events {
+		if e.Op == op && e.Event == engine.EvCompleted {
+			return i, e
+		}
+	}
+	return -1, engine.Event{}
+}
+
+func reuseDecision(t *testing.T, w *world) DesignReuseResult {
+	t.Helper()
+	raw, err := w.op(NameDesignReuse, "M")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out DesignReuseResult
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// TestDesignReuseRequiresStandingApproval (CRW-1329): a source is used only on its own standing records - a superseded ledger or
+// audit, a DESIGN that does not decode to the recorded digest or cover the nodes, or an audit that is no approved independent
+// verdict of the candidate are each refused, and the newest standing revision is the one reused.
+func TestDesignReuseRequiresStandingApproval(t *testing.T) {
+	base := sourceRunEvents(t, true, designOf("A"))
+	ledgerIdx, ledgerRow := rowOf(base, OpDesignLedger)
+	_, auditRow := rowOf(base, OpDesignAudit)
+	for _, c := range []struct {
+		name   string
+		events func() []engine.Event
+		reason string
+	}{
+		{"a superseded ledger", func() []engine.Event {
+			return supersede(cloneEvents(t, base), ledgerRow.CallID)
+		}, ReuseMissing},
+		{"a superseded audit", func() []engine.Event {
+			evs := cloneEvents(t, base)
+			return append(evs, engine.Event{Seq: evs[len(evs)-1].Seq + 1, Kind: engine.KindCall, Op: OpDesignAudit, Event: engine.EvSuperseded, CallID: auditRow.CallID})
+		}, ReuseNotApproved},
+		{"a mutated design", func() []engine.Event {
+			evs := cloneEvents(t, base)
+			d := evs[ledgerIdx].Data["design"].(map[string]any)
+			d["issues"].([]any)[0].(map[string]any)["approach"] = "a different approach"
+			return evs
+		}, ReuseInvalid},
+		{"a design of another node", func() []engine.Event {
+			return sourceRunEvents(t, true, designOf("A", "B"))
+		}, ReuseInvalid},
+		{"a missing node", func() []engine.Event {
+			return sourceRunEvents(t, true, designOf("B"))
+		}, ReuseInvalid},
+		{"a ledger that never stood", func() []engine.Event {
+			return sourceRunEvents(t, false, designOf("A"))
+		}, ReuseMissing},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w := reuseWorld(t, DesignRun{Run: "run-source", Events: c.events()})
+			out := reuseDecision(t, w)
+			if out.Reused || len(out.Attempts) != 1 || out.Attempts[0].Reason != c.reason || out.Attempts[0].SourceRun != "run-source" {
+				t.Errorf("decision %+v, want refused reuse with attempt %q", out, c.reason)
+			}
+		})
+	}
+	// a newer approved revision of the same DESIGN is the one the run reuses
+	t.Run("the newest standing revision", func(t *testing.T) {
+		src := newWorld(t)
+		m := Milestone{ID: "M", Plan: "plan-1", Nodes: []PlanNode{{ID: "A", SliceDigest: "slice-a"}}}
+		src.relay.plan = &m
+		d := designOf("A")
+		src.ledgered(true, d)
+		// a re-plan's r1: its own audit of the same candidate, then the ledger of it
+		design, _ := json.Marshal(d)
+		cand := Candidate{Design: design, Answers: json.RawMessage(`[]`)}
+		src.must("designAudit", "M", 2, cand, call("c_arch2", "completed", "claude-x", nil),
+			call("c_aud2", "completed", "gpt-y", map[string]any{"verdict": "approved", "findings": []any{}, "summary": "ok"}))
+		src.must("designLedger", "M", map[string]any{"revision": "r1", "design": json.RawMessage(design), "answers": json.RawMessage(`[]`), "architect": call("c_arch2", "completed", "claude-x", nil)})
+		w := reuseWorld(t, DesignRun{Run: "run-source", Events: cloneEvents(t, src.j.Events())})
+		out := reuseDecision(t, w)
+		if !out.Reused || out.SourceRevision != "r1" || out.SourceAuditCall != "c_aud2" {
+			t.Errorf("decision %+v, want the reuse of r1", out)
+		}
+	})
+	// an approved audit of the same candidate that lands after r0's ledger does not disqualify r0: the audit that stands before
+	// the revision is the one it rests on
+	t.Run("an audit after the revision", func(t *testing.T) {
+		src := newWorld(t)
+		m := Milestone{ID: "M", Plan: "plan-1", Nodes: []PlanNode{{ID: "A", SliceDigest: "slice-a"}}}
+		src.relay.plan = &m
+		d := designOf("A")
+		src.ledgered(true, d)
+		design, _ := json.Marshal(d)
+		src.must("designAudit", "M", 2, Candidate{Design: json.RawMessage(design), Answers: json.RawMessage(`[]`)}, call("c_arch2", "completed", "claude-x", nil),
+			call("c_aud2", "completed", "gpt-y", map[string]any{"verdict": "approved", "findings": []any{}, "summary": "ok"}))
+		w := reuseWorld(t, DesignRun{Run: "run-source", Events: cloneEvents(t, src.j.Events())})
+		out := reuseDecision(t, w)
+		if !out.Reused || out.SourceRevision != "r0" || out.SourceAuditCall != "c_aud" {
+			t.Errorf("decision %+v, want the reuse of r0 over its own audit", out)
+		}
+	})
+}
+
+// TestImportedDesignNeedsRecordedReuse (CRW-1329): the imported revision is approved by the run's own recorded reuse decision, and
+// only by it - a ledger without one, a decision that did not reuse, or a ledger whose data does not match the decision releases
+// nothing.
+func TestImportedDesignNeedsRecordedReuse(t *testing.T) {
+	// the imported revision releases its node, its provenance on the release row
+	t.Run("release under the import", func(t *testing.T) {
+		w := reuseWorld(t, DesignRun{Run: "run-source", Events: sourceRunEvents(t, true, designOf("A"))})
+		w.must(NameDesignReuse, "M")
+		w.must("designLedger", "M", map[string]any{"revision": "r0", "reuse": true})
+		raw := w.must("release", "plan-1", "A", "M")
+		var out struct {
+			Released bool `json:"released"`
+		}
+		if err := json.Unmarshal(raw, &out); err != nil || !out.Released {
+			t.Fatalf("the release under the imported design: %s", raw)
+		}
+		rels, _ := rows(w.j.Events()).opRows(OpRelease).last(func(ev engine.Event) bool { return true })
+		if str := dataStr(rels, "source_run"); str != "run-source" || dataStr(rels, "source_revision") != "r0" || dataStr(rels, "reuse_call") == "" {
+			t.Errorf("the release's provenance %v", rels.Data)
+		}
+	})
+	// a ledger without a decision is refused; a decision that did not reuse is refused
+	for name, decide := range map[string]bool{"no decision": false, "a decision that did not reuse": true} {
+		t.Run(name, func(t *testing.T) {
+			w := reuseWorld(t, DesignRun{Run: "run-source", Events: sourceRunEvents(t, false, designOf("A"))})
+			if decide {
+				if out := reuseDecision(t, w); out.Reused {
+					t.Fatalf("the fixture reused: %+v", out)
+				}
+			} else {
+				w.lane.d.DesignHistory = nil
+			}
+			if _, err := w.op("designLedger", "M", map[string]any{"revision": "r0", "reuse": true}); err == nil {
+				t.Fatal("the ledger imported without a reuse decision")
+			}
+		})
+	}
+	// a ledger row whose data does not match the decision is no approval: mutated fields of a cloned journal
+	base := func(t *testing.T) (*world, []engine.Event) {
+		w := reuseWorld(t, DesignRun{Run: "run-source", Events: sourceRunEvents(t, true, designOf("A"))})
+		w.must(NameDesignReuse, "M")
+		w.must("designLedger", "M", map[string]any{"revision": "r0", "reuse": true})
+		return w, cloneEvents(t, w.j.Events())
+	}
+	releaseOn := func(t *testing.T, w *world, events []engine.Event) string {
+		t.Helper()
+		j := engine.NewMemoryJournal()
+		for _, e := range events {
+			e.Seq = 0
+			j.Append(e)
+		}
+		lane := NewLane(w.lane.d)
+		argsJSON, _ := json.Marshal([]any{"plan-1", "A", "M"})
+		res, err := lane.Ops()[NameRelease].Run(context.Background(), engine.OpRequest{RunID: "run-1", Args: argsJSON, Journal: j})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out struct {
+			Released bool   `json:"released"`
+			Reason   string `json:"reason"`
+		}
+		if err := json.Unmarshal(res.Result, &out); err != nil {
+			t.Fatal(err)
+		}
+		return out.Reason
+	}
+	mutate := func(field string, value any) func(*testing.T) {
+		return func(t *testing.T) {
+			w, events := base(t)
+			for i := range events {
+				if events[i].Op == OpDesignLedger && events[i].Event == engine.EvCompleted {
+					events[i].Data[field] = value
+				}
+			}
+			if reason := releaseOn(t, w, events); reason != "design_not_audited" {
+				t.Errorf("a ledger with %s=%v released: %q, want design_not_audited", field, value, reason)
+			}
+			if len(w.relay.releases) != 0 {
+				t.Errorf("the relay was asked %v over a forged ledger", w.relay.releases)
+			}
+		}
+	}
+	t.Run("a mutated digest", mutate("digest", "deadbeef"))
+	t.Run("a mutated source run", mutate("source_run", "run-other"))
+	t.Run("a mutated architect model", mutate("architect_model", "gpt-z"))
+	t.Run("a mutated reuse call", mutate("reuse_call", "c_forged"))
+	// a superseded reuse decision approves nothing
+	t.Run("a superseded decision", func(t *testing.T) {
+		w, events := base(t)
+		_, reuseRow := rowOf(events, OpDesignReuse)
+		events = append(events, engine.Event{Seq: events[len(events)-1].Seq + 1, Kind: engine.KindCall, Op: OpDesignReuse, Event: engine.EvSuperseded, CallID: reuseRow.CallID})
+		if reason := releaseOn(t, w, events); reason != "design_not_audited" {
+			t.Errorf("a superseded decision released: %q", reason)
+		}
+	})
+}
+
+// TestReusedDesignPreservesOriginalAuthor (CRW-1329): the crosscheck's authors hold the source run's architect model for an
+// imported design, so a current role pair cannot hide the family the DESIGN was actually written by.
+func TestReusedDesignPreservesOriginalAuthor(t *testing.T) {
+	w := reuseWorld(t, DesignRun{Run: "run-source", Events: sourceRunEvents(t, true, designOf("A"))})
+	w.must(NameDesignReuse, "M")
+	w.must("designLedger", "M", map[string]any{"revision": "r0", "reuse": true})
+	authors, undecided := (&crosscheckOp{}).authors(&Crosscheck{Authors: map[string]string{"architect": "gpt-current", "executor": "gpt-current"}}, rows(w.j.Events()))
+	if len(undecided) != 0 {
+		t.Fatalf("undecided authors %v", undecided)
+	}
+	found := false
+	for _, a := range authors {
+		if a.Source == "design_reuse" && a.Name == "run-source:r0" && a.Model == "claude-x" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the authors %+v hold no design_reuse author of run-source:r0", authors)
+	}
+	families := authorFamilies(authors)
+	if len(families) < 2 {
+		t.Errorf("the author families %v hide the source architect's family", families)
 	}
 }

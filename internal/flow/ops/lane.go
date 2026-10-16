@@ -58,6 +58,7 @@ const (
 	NameArchive        = "archive"
 	NameMergeRequest   = "mergeRequest"
 	NameCrosscheck     = "crosscheck"
+	NameDesignReuse    = "designReuse"
 )
 
 // The Ops that have no constant in proofs.go.
@@ -73,6 +74,7 @@ const (
 	OpStepRecord     = "crw." + NameStepRecord
 	OpEscalate       = "crw." + NameEscalate
 	OpHold           = "crw." + NameHold
+	OpDesignReuse    = "crw." + NameDesignReuse
 	OpReleaseChild   = engine.OpLegacyReleaseChild // an old run's recording call, read only: the lane installs no crw.releaseChild (CRW-1415)
 	OpDecide         = "crw." + NameDecide
 	OpMilestoneClose = "crw." + NameMilestoneClose
@@ -122,6 +124,10 @@ type Deps struct {
 	// UnitCheck is what crw.unitCheck runs the unit check of a node with (CRW-1463); nil answers that no unit checker is wired, never a
 	// passing check.
 	UnitCheck *UnitCheck
+	// DesignHistory is what crw.designReuse searches (CRW-1329): the earlier runs of the plan in the same repository, newest first,
+	// each with its journal's events or the reason it is not a source. nil answers that no source is wired: the decision is
+	// no_approved_design.
+	DesignHistory func(ctx context.Context, plan string) ([]DesignRun, error)
 	// Crosscheck is what crw.crosscheck runs the crosscheck of a milestone with (CRW-1473); nil answers that no crosschecker is wired,
 	// never a pass.
 	Crosscheck *Crosscheck
@@ -152,6 +158,7 @@ func (l *Lane) Ops() map[string]engine.Op {
 		NameMilestone:        &milestoneOp{l},
 		NameDesignAudit:      &designAuditOp{l},
 		NameDesignLedger:     &designLedgerOp{l},
+		NameDesignReuse:      &designReuseOp{l},
 		NameRelease:          &releaseOp{l},
 		NameIssuePlan:        &issuePlanOp{l},
 		NameSpawnDecision:    &spawnDecisionOp{l},

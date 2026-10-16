@@ -24,8 +24,7 @@ const (
 )
 
 // DefaultCriticPair is the critic's compiled default pair, the one a policy file's agent-roles section that declares no critic
-// gives it (every file written before the critic existed): a gpt pair at xhigh, on another model family than the architect's
-// usual one. It matches the role store's compiled default of the critic key.
+// gives it (every file written before the critic existed). It matches the role store's compiled default of the critic key.
 var DefaultCriticPair = RolePair{Model: "gpt-6.1-sol", Effort: "xhigh"}
 
 // AgentUnitCheck is the role the row of a unit check (the op crw.unitCheck) names in the flow journal. It is a name
@@ -157,7 +156,7 @@ func defaultAliasRows() []AliasRow {
 
 // ModelFamily is the vendor family a model name belongs to: the name without its provider prefix, lower case, up to
 // its first dash ("anthropic/claude-haiku-5" and "claude-opus-5-5" are claude, "gpt-6.1-sol" and "openai/gpt-5.6-sol"
-// are gpt). Two roles on models of one family do not give an independent second opinion.
+// are gpt). This value supports legacy policy and record interpretation.
 func ModelFamily(model string) string {
 	name := strings.ToLower(model[strings.LastIndexByte(model, '/')+1:])
 	family, _, _ := strings.Cut(name, "-")
@@ -436,11 +435,10 @@ func ignoredAgentSections(err error) string {
 	return fmt.Sprintf("agent-roles/agent-aliases ignored: %v; the flow reads its roles from the helper role store, not from this file, so the sections are not used and can be removed", err)
 }
 
-// checkAgentRoles applies the cross-role rules and answers what breaks them as warnings: the pairs the allowed list
-// approves (of the roles the file declares; a filled critic, criticFilled, is the code's pair, not the file's), and a reviewer
-// family that is not an author's. A flow run no longer reads agent-roles (CRW-1330: its pairs come
+// checkAgentRoles checks whether the declared role pairs are approved by the allowed list
+// (of the roles the file declares; a filled critic, criticFilled, is the code's pair, not the file's). A flow run no longer reads agent-roles (CRW-1330: its pairs come
 // from the helper role store), so a disagreement in a section nothing runs on is reported, never a refusal of the policy
-// the relay and the bridge run on; the runtime independence gate still judges every review.
+// the relay and the bridge run on.
 func checkAgentRoles(roles map[string]AgentRole, allowed map[string][]string, criticFilled bool) []string {
 	var warnings []string
 	for _, name := range AgentRoleNames {
@@ -452,33 +450,7 @@ func checkAgentRoles(roles map[string]AgentRole, allowed map[string][]string, cr
 			warnings = append(warnings, fmt.Sprintf("agent role %s is declared to run %s at %s, which this file's allowed list does not approve; no such task could be created, so the two sections disagree rather than one narrowing the other", repr(name), repr(role.Pair.Model), repr(role.Pair.Effort)))
 		}
 	}
-	pairs := map[string]string{}
-	for name, role := range roles {
-		pairs[name] = role.Pair.Model
-	}
-	return append(warnings, FamilyOverlaps(pairs, AgentExecutor, AgentExecutorT1)...)
-}
-
-// FamilyOverlaps describes the reviewer role when its model is of the family of one of the author
-// roles named, and the critic when its model is of the architect's family (the critic audits the architect's design, whichever
-// authors are named), in a table of role -> model; a role with no model is not compared. A review is independent only when it
-// comes from another family than the author's, so each overlap is a warning for whoever decided the pairs.
-func FamilyOverlaps(models map[string]string, authors ...string) []string {
-	var out []string
-	overlap := func(reviewer, author string) {
-		if models[reviewer] == "" || models[author] == "" {
-			return
-		}
-		family := ModelFamily(models[reviewer])
-		if family == ModelFamily(models[author]) {
-			out = append(out, fmt.Sprintf("agent role %s runs %s, the same model family (%s) as agent role %s on %s; a review is independent only when it comes from another family than the author's", repr(reviewer), repr(models[reviewer]), repr(family), repr(author), repr(models[author])))
-		}
-	}
-	for _, author := range authors {
-		overlap(AgentReviewer, author)
-	}
-	overlap(AgentCritic, AgentArchitect)
-	return out
+	return warnings
 }
 
 // DefaultModelAliases is the model aliases of an agent role a file states none for, and of every role of a table the flow

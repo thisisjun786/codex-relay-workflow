@@ -311,7 +311,7 @@
     },
     {
       "file": "references/delegation.md",
-      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
+      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed. CRW-1515: REVIEW-DECORRELATE-01 drops the model-family rule; a separate review execution is preferred and an observed same-thread review is a recorded warning",
       "hunks": [
         {
           "line": 64,
@@ -333,6 +333,17 @@
           ],
           "new": [
             "[Waiting on work](../../crw-loop/references/waiting.md) rules in either HITL or HOTL.\n"
+          ]
+        },
+        {
+          "line": 277,
+          "old": [
+            "- **REVIEW-DECORRELATE-01:** prefer an independent context; use a different model family\n",
+            "  only when host policy and user authorization permit the override. Otherwise inherit\n",
+            "  and record that family-level independence was not established.\n"
+          ],
+          "new": [
+            "- **REVIEW-DECORRELATE-01:** prefer a separate review execution context when available; model family is provenance, not a review constraint. If the host actually reports that an agent review reused the author's thread, record a warning and continue. Tool reviews run as separate invocations and have no agent thread id; never invent one.\n"
           ]
         },
         {

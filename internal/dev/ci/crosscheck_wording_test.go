@@ -10,7 +10,7 @@ import (
 )
 
 // CRW-1442 (bundle 1442-r3-close, part A): the milestone close runs the crosscheck in place of reviewer-final (CRW-1473):
-// crw.crosscheck, one round of two passes by a review engine of another model family than every author, merged into one verdict by
+// crw.crosscheck, one round of two passes by a review engine in a separate tool invocation, merged into one verdict by
 // one rule (ops.CrosscheckRule); a needs_changes verdict stops the close as crosscheck_pending, and land-head has its fix rounds
 // (CRW-1490). The pages a reader takes the close from say so: script.md's close section with the round-1 lines of the engine
 // configuration table the parent decided, its land-head section, journal.md's rows and report body, and crw-run's account of what
@@ -46,11 +46,8 @@ func crosscheckRuleOf(t *testing.T) string {
 // crosscheckRoundOne is the round-1 column of the engine configuration table (the parent's decision of 10-16 00:0x): the authors of
 // the milestone by a word of the row's first cell, and what round 1 runs on or is refused with.
 var crosscheckRoundOne = []struct{ authors, roundOne string }{
-	{"claude only", "astra"},
-	{"a gpt author", "grok"},
-	{"a grok author", "astra"},
-	{"gpt and grok authors", "crosscheck_no_independent_engine"},
-	{"undecided", "crosscheck_author_undecided"},
+	{"any author family", "astra"},
+	{"first profile unavailable", "grok"},
 }
 
 // closeDocs are the texts the check reads.
@@ -64,8 +61,8 @@ func closeDocsProblems(d closeDocs, rule string) []string {
 	if flat == "" {
 		return []string{"script.md has no section \"The milestone close\""}
 	}
-	for _, want := range []string{"`crw.crosscheck", "crosscheck_pending", "crosscheck_no_verdict", "crosscheck_no_independent_engine", "crosscheck_author_undecided",
-		"crosscheck_no_run_dir", "close_unverified"} {
+	for _, want := range []string{"`crw.crosscheck", "crosscheck_pending", "crosscheck_no_verdict", "crosscheck_no_run_dir", "crosscheck_no_engine", "crosscheck_no_independent_engine", "crosscheck_author_undecided",
+		"author_warnings", "no profile is configured", "separate tool invocation", "warning-only", "recorded", "continues", "no agent thread id"} {
 		if !strings.Contains(flat, want) {
 			problems = append(problems, "the close section lacks "+want)
 		}
@@ -103,8 +100,11 @@ func closeDocsProblems(d closeDocs, rule string) []string {
 			problems = append(problems, "journal.md lacks "+want)
 		}
 	}
-	if !strings.Contains(normalized(d.run), "crosscheck_pending") {
-		problems = append(problems, "crw-run/SKILL.md lacks crosscheck_pending")
+	run := normalized(d.run)
+	for _, want := range []string{"crosscheck_pending", "crosscheck_no_engine", "author_warnings", "same-thread review", "warning-only", "recorded", "separate tool invocation", "agent thread id"} {
+		if !strings.Contains(run, want) {
+			problems = append(problems, "crw-run/SKILL.md lacks "+want)
+		}
 	}
 	return problems
 }
@@ -120,12 +120,12 @@ func TestCloseDocsNameTheCrosscheck(t *testing.T) {
 		good := closeDocs{
 			script: "## Landing a head made outside a run\n\nA `fix_round` under `LAND_FIX_ROUNDS` hands a fix packet; at the cap `land_fix_rounds`.\n\n" +
 				"## The milestone close\n\n`crw.crosscheck(milestone, gate, opts)` runs. " + rule + " A needs_changes stops `crosscheck_pending`; " +
-				"`crosscheck_no_verdict`, `crosscheck_no_run_dir`, `close_unverified`. The table is the parent's decision.\n\n" +
-				"| Authors of the milestone | Round 1 |\n|---|---|\n| claude only | astra |\n| a gpt author | grok |\n| a grok author | astra |\n" +
-				"| gpt and grok authors | refused `crosscheck_no_independent_engine` |\n| an undecided author pair | refused `crosscheck_author_undecided` |\n\n" +
+				"`crosscheck_no_verdict`, `crosscheck_no_run_dir`, `close_unverified`. The profile order is the parent's decision.\n\n" +
+				"| Authors of the milestone | Round 1 |\n|---|---|\n| any author family, including mixed or unknown | astra |\n| first profile unavailable | grok |\n\n" +
+				"The crosscheck runs in a separate tool invocation. When no profile is configured, the round is refused `crosscheck_no_engine`. Author model information is journaled under `author_warnings` and does not block. Legacy `crosscheck_no_independent_engine` and `crosscheck_author_undecided` remain readable. A same-thread review, if observed, is warning-only, recorded, and the run continues. Tool reviews have no agent thread id.\n\n" +
 				"## The next section\n",
 			journal: "A row `crw.crosscheck`; the refusal `close_unverified`; the body lines `Crosscheck:` and `Reflection:`.",
-			run:     "a crosscheck_pending goes up",
+			run:     "a crosscheck_pending goes up; `crosscheck_no_engine` is current, author_warnings do not block, same-thread review is warning-only and recorded, the crosscheck runs in a separate tool invocation with no agent thread id",
 		}
 		if p := closeDocsProblems(good, rule); len(p) > 0 {
 			t.Fatalf("the good text is reported: %v", p)
@@ -156,11 +156,11 @@ func TestCloseDocsNameTheCrosscheck(t *testing.T) {
 				return d
 			},
 			"gpt row on astra": func(d closeDocs) closeDocs {
-				d.script = strings.Replace(d.script, "| a gpt author | grok |", "| a gpt author | astra |", 1)
+				d.script = strings.Replace(d.script, "| any author family, including mixed or unknown | astra |", "| any author family, including mixed or unknown | grok |", 1)
 				return d
 			},
-			"no undecided row": func(d closeDocs) closeDocs {
-				d.script = strings.Replace(d.script, "| an undecided author pair | refused `crosscheck_author_undecided` |\n", "", 1)
+			"no author row": func(d closeDocs) closeDocs {
+				d.script = strings.Replace(d.script, "| any author family, including mixed or unknown | astra |\n", "", 1)
 				return d
 			},
 			"no fix rounds": func(d closeDocs) closeDocs {

@@ -50,7 +50,7 @@ The run makes **clean worktrees** of the commit being verified under the work ro
 (`git worktree add --detach`), with `HOME` and the XDG directories pointed into a
 temporary home and `TZ=UTC`, so uncommitted changes in the caller's checkout and the host's
 caches cannot change the result. The record names the commit and its tree, never the caller's
-working state. The worktrees are removed afterwards. The engine that decides the steps is the caller's own source (`internal/dev/ci`, `cmd/crw-dev`, `Makefile`, and `internal/crwconfig`, whose tool-root code the engine runs to build every step's environment), so the run refuses with `engine_differs_from_commit` when the working tree under any of those paths differs from the commit's files byte for byte: an edited, deleted or extra file, whatever the index marks (assume-unchanged, skip-worktree) or the ignore files say. An ignored file is let through only when Go does not compile it (a log, a coverage file); a FIFO, device or other special file in place of an engine file is a difference and is never opened. A prebuilt `crw-dev` is held to the same rule: `go build` stamps the revision and the modified flag in it, and the run refuses with `engine_differs_from_commit` when the binary was built from a modified tree or from a revision whose engine paths differ from the verified commit's (`make crw-dev` from a clean checkout of the commit builds the right one). A binary with no revision (`go run`, `go test`, `-buildvcs=false`) is compiled from the working tree that the byte comparison has just checked, so the comparison is all there is to bind it. No record is written or reused from such a checkout. The `secrets` step fetches the linux x64 Gitleaks archive and calls `sha256sum`, so a plan that carries it refuses any other host with `unsupported_platform` before a step runs.
+working state. The worktrees are removed afterwards. The engine that decides the steps is the caller's own source (`internal/dev/ci`, `cmd/crw-dev`, `Makefile`, `internal/crwconfig`, whose tool-root code the engine runs to build every step's environment, and `internal/gitprobe`, whose repository marker check refuses a step TMPDIR before the steps run), so the run refuses with `engine_differs_from_commit` when the working tree under any of those paths differs from the commit's files byte for byte: an edited, deleted or extra file, whatever the index marks (assume-unchanged, skip-worktree) or the ignore files say. An ignored file is let through only when Go does not compile it (a log, a coverage file); a FIFO, device or other special file in place of an engine file is a difference and is never opened. A prebuilt `crw-dev` is held to the same rule: `go build` stamps the revision and the modified flag in it, and the run refuses with `engine_differs_from_commit` when the binary was built from a modified tree or from a revision whose engine paths differ from the verified commit's (`make crw-dev` from a clean checkout of the commit builds the right one). A binary with no revision (`go run`, `go test`, `-buildvcs=false`) is compiled from the working tree that the byte comparison has just checked, so the comparison is all there is to bind it. No record is written or reused from such a checkout. The `secrets` step fetches the linux x64 Gitleaks archive and calls `sha256sum`, so a plan that carries it refuses any other host with `unsupported_platform` before a step runs.
 
 Each job has its own checkout, home/XDG directories, `TMPDIR`, runner output/scripts,
 and `GOCACHE`. Job caches override the caller's inherited or configured build cache.
@@ -150,10 +150,12 @@ record when one fails:
    judged before anything is written there;
 2. it exists, is a directory and is writable (`temp_dir_unusable`, naming the directory and its
    source);
-3. no `.git` (of any type) is at or above it, because the repository's own tests find a checkout by
-   walking up from `TMPDIR` for a `.git` (a sandbox's stray `/tmp/.git` made them judge the wrong
-   tree): `temp_dir_unusable: <dir> is below <.git>`, set `TMPDIR` to a directory with no `.git` at or
-   above it;
+3. no repository is at or above it, because the repository's own tests find a checkout by walking up
+   from `TMPDIR` for a `.git` (a sandbox's stray `/tmp/.git` made them judge the wrong tree): a `.git`
+   counts only when it resolves to a Git directory — a directory holding a regular `HEAD` and an
+   `objects` directory (the objects reached through `commondir` for a linked worktree), or a
+   `gitdir: ` file naming one — so an empty or garbage `.git` is no marker and is ignored (CRW-1588):
+   `temp_dir_unusable: <dir> is below <.git>`, set `TMPDIR` to a directory outside every repository;
 4. a socket folder made (and removed) below `/tmp` leaves room for the longest socket path a test puts
    below it within the 103-byte bound of a Unix socket path: `socket_dir_unusable`, naming the folder
    and, when it does not fit, the bytes needed, the bound and how far over.

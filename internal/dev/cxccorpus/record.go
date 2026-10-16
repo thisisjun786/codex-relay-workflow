@@ -13,6 +13,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/gitprobe"
 )
 
 // preload is the --import module every Node process of a recording runs first.
@@ -159,13 +161,12 @@ func (r *Recorder) Check() error {
 			return errors.New("scratch root is the operator's home")
 		}
 	}
-	for dir := scratch; ; dir = filepath.Dir(dir) {
-		if _, err := os.Lstat(filepath.Join(dir, ".git")); err == nil {
-			return fmt.Errorf("scratch root %s is inside the git checkout %s", scratch, dir)
-		}
-		if dir == "/" {
-			break
-		}
+	checkout, err := gitprobe.RepositoryAbove(scratch, gitprobe.RepositorySearch{})
+	if err != nil {
+		return fmt.Errorf("scratch root: %w", err)
+	}
+	if checkout != "" {
+		return fmt.Errorf("scratch root %s is inside the git checkout %s", scratch, checkout)
 	}
 	manifest, err := os.ReadFile(filepath.Join(r.Oracle, "plugins/codexclaw/.codex-plugin/plugin.json"))
 	if err != nil {

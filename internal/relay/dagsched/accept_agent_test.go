@@ -1,7 +1,9 @@
 package dagsched
 
 import (
+	"bytes"
 	"context"
+	"log"
 	"strings"
 	"testing"
 
@@ -28,9 +30,8 @@ func (k *agentKit) agentAcceptanceRows() int {
 	return k.count("SELECT COUNT(*) FROM dag_agent_acceptances")
 }
 
-// The reviewer of an agent acceptance is a recorded, completed, verified call whose model family differs from the family of every author pair the run observed for the node. The acceptance keeps the
-// call, its thread and turn, its pair and the digest of the author pairs it was judged against; each other case is refused by name and writes nothing.
-func TestAgentAcceptRequiresDistinctFamilyReview(t *testing.T) {
+// Model family does not gate a recorded, completed, verified review. The acceptance keeps the call, its thread and turn, its pair and the digest of the author pairs it was judged against.
+func TestAgentAcceptDoesNotRequireDistinctModelFamily(t *testing.T) {
 	t.Parallel()
 	one := func(n string) agentSpec { return agentSpec{name: n, files: map[string]string{n + ".txt": n + "\n"}} }
 	// the project holds six slots: the cases are two kits of five nodes
@@ -55,30 +56,36 @@ func TestAgentAcceptRequiresDistinctFamilyReview(t *testing.T) {
 		t.Fatalf("the row = %+v", row)
 	}
 
-	// the reviewer's family is the author's
+	// same-family reviews remain acceptable while the observed author-pair digest is retained
 	k.author("same", authorModel)
 	k.review("same", "claude-fake-opus", "verified", criteria)
-	_, err = k.accept("same")
-	wantAgentRefusal(t, "a reviewer of the author's family", err, contract.RefusalDispositionConflict, IndependenceRefused)
+	same, err := k.accept("same")
+	if err != nil || same.AcceptanceID == "" {
+		t.Fatalf("accept a same-family reviewer: %+v, %v", same, err)
+	}
+	if row := k.currentAcceptance("same").Agent; row.ReviewerModel != "claude-fake-opus" || row.AuthorPairsDigest != authorPairsDigest([]agentPair{{authorModel, "high"}}) {
+		t.Fatalf("same-family acceptance lost reviewer or author-pair provenance: %+v", row)
+	}
 
 	// no author pair was observed: the reviewer cannot be shown to differ from it
 	k.review("noauthor", reviewerModel, "verified", criteria)
-	_, err = k.accept("noauthor")
-	wantAgentRefusal(t, "no observed author", err, contract.RefusalDispositionConflict, IndependenceUnproven)
+	if got, err := k.accept("noauthor"); err != nil || got.AcceptanceID == "" {
+		t.Fatalf("a missing author model-pair record must not block a verified review: %+v, %v", got, err)
+	}
 
 	// the pair a call ran on was never read back from its thread, so the reviewer's family is unknown
 	k.author("nopair", authorModel)
 	k.record(journalCall{role: "reviewer", node: "nopair", model: reviewerModel, head: k.heads["nopair"], verdict: "verified", criteria: criteria, noPair: true})
 	_, err = k.accept("nopair")
-	wantAgentRefusal(t, "a reviewer whose pair was not read back", err, contract.RefusalDispositionConflict, IndependenceUnproven)
+	wantAgentRefusal(t, "a reviewer call without host-read model provenance", err, contract.RefusalDispositionConflict, ReviewerMissing)
 
 	// the verdict decides
 	k.author("nonverdict", authorModel)
 	k.review("nonverdict", reviewerModel, "needs_changes", criteria)
 	_, err = k.accept("nonverdict")
 	wantAgentRefusal(t, "a verdict that is not verified", err, contract.RefusalDispositionConflict, ReviewerNotVerified)
-	if n := k.agentAcceptanceRows(); n != 1 {
-		t.Fatalf("dag_agent_acceptances holds %d rows after the refusals, want the one accepted", n)
+	if n := k.agentAcceptanceRows(); n != 3 {
+		t.Fatalf("dag_agent_acceptances holds %d rows, want three verified reviews accepted", n)
 	}
 
 	k2.author("norev", authorModel)
@@ -91,12 +98,13 @@ func TestAgentAcceptRequiresDistinctFamilyReview(t *testing.T) {
 	_, err = k2.accept("later")
 	wantAgentRefusal(t, "a later verdict that withdraws the first", err, contract.RefusalDispositionConflict, ReviewerNotVerified)
 
-	// one author of the reviewer's family among several is enough to refuse
+	// family overlap across any author calls does not block acceptance
 	k2.author("second", authorModel)
 	k2.record(journalCall{role: "executor-t1", node: "second", model: reviewerModel, head: k2.heads["second"]})
 	k2.review("second", reviewerModel, "verified", criteria)
-	_, err = k2.accept("second")
-	wantAgentRefusal(t, "a second author of the reviewer's family", err, contract.RefusalDispositionConflict, IndependenceRefused)
+	if got, err := k2.accept("second"); err != nil || got.AcceptanceID == "" {
+		t.Fatalf("multiple author families must not block a verified review: %+v, %v", got, err)
+	}
 
 	// the call has to be one the run that holds the execution recorded, on the head the acceptance stands on
 	k2.author("otherrun", authorModel)
@@ -107,8 +115,67 @@ func TestAgentAcceptRequiresDistinctFamilyReview(t *testing.T) {
 	k2.record(journalCall{role: "reviewer", node: "otherhead", model: reviewerModel, head: k2.base, verdict: "verified", criteria: criteria})
 	_, err = k2.accept("otherhead")
 	wantAgentRefusal(t, "a review of another head", err, contract.RefusalDispositionConflict, ReviewerMissing)
-	if n := k2.agentAcceptanceRows(); n != 0 {
-		t.Fatalf("dag_agent_acceptances holds %d rows after the refusals, want none", n)
+	if n := k2.agentAcceptanceRows(); n != 1 {
+		t.Fatalf("dag_agent_acceptances holds %d rows, want the verified same-family review", n)
+	}
+}
+
+// An observed reviewer/author thread collision is journaled as a warning while the verified acceptance remains fail-open.
+func TestAgentAcceptRecordsSameThreadWarning(t *testing.T) {
+	t.Parallel()
+	k := newAgentKit(t, agentSpec{name: "same-thread", files: map[string]string{"same-thread.txt": "change\n"}})
+	criteria := releaseCriteriaDigest()
+	k.author("same-thread", authorModel)
+	reviewerCall := k.review("same-thread", reviewerModel, "verified", criteria)
+	thread := "thread-" + reviewerCall
+	authorCall := k.record(journalCall{role: "executor", node: "same-thread", model: authorModel, head: k.heads["same-thread"], resumeOf: reviewerCall})
+
+	first, err := k.accept("same-thread")
+	if err != nil || first.AcceptanceID == "" {
+		t.Fatalf("same-thread review remains accepted: %+v, %v", first, err)
+	}
+	second, err := k.accept("same-thread")
+	if err != nil || !second.Replayed || second.AcceptanceID != first.AcceptanceID {
+		t.Fatalf("repeat acceptance result = %+v, %v; want replay of %s", second, err, first.AcceptanceID)
+	}
+	var kind, payload string
+	var seq int64
+	if err := k.s.DB.QueryRow("SELECT seq, kind, payload_json FROM flow_events WHERE run_id = 'run-1' AND call_id = ? AND node_id = 'same-thread'", reviewerCall).Scan(&seq, &kind, &payload); err != nil {
+		t.Fatalf("read warning journal event: %v", err)
+	}
+	if seq < 1<<40 || kind != "review_same_thread" || !strings.Contains(payload, `"_kind":"flow"`) || !strings.Contains(payload, `"warning":"review_same_thread"`) || !strings.Contains(payload, authorCall) || !strings.Contains(payload, thread) {
+		t.Fatalf("warning event = seq %d, %s %s", seq, kind, payload)
+	}
+	if n := k.count("SELECT COUNT(*) FROM flow_events WHERE run_id = 'run-1' AND call_id = ? AND node_id = 'same-thread' AND kind = 'review_same_thread'", reviewerCall); n != 1 {
+		t.Fatalf("repeat acceptance wrote %d same-thread warnings, want one", n)
+	}
+}
+
+// Warning persistence errors are logged but fail open: the verified acceptance is still recorded.
+func TestAgentSameThreadWarningStorageFailureDoesNotBlockAcceptance(t *testing.T) {
+	var output bytes.Buffer
+	previousOutput := log.Writer()
+	log.SetOutput(&output)
+	defer log.SetOutput(previousOutput)
+
+	k := newAgentKit(t, agentSpec{name: "warning-storage", files: map[string]string{"warning-storage.txt": "change\n"}})
+	criteria := releaseCriteriaDigest()
+	reviewerCall := k.review("warning-storage", reviewerModel, "verified", criteria)
+	k.record(journalCall{role: "executor", node: "warning-storage", model: authorModel, head: k.heads["warning-storage"], resumeOf: reviewerCall})
+	k.exec("CREATE TRIGGER reject_same_thread_warning BEFORE INSERT ON flow_events WHEN NEW.kind = 'review_same_thread' BEGIN SELECT RAISE(ABORT, 'warning storage unavailable'); END")
+
+	got, err := k.accept("warning-storage")
+	if err != nil || got.AcceptanceID == "" {
+		t.Fatalf("warning storage failure blocked verified acceptance: %+v, %v", got, err)
+	}
+	if count := k.agentAcceptanceRows(); count != 1 {
+		t.Fatalf("warning storage failure left %d acceptance rows, want one", count)
+	}
+	if count := k.count("SELECT COUNT(*) FROM flow_events WHERE run_id = 'run-1' AND kind = 'review_same_thread'"); count != 0 {
+		t.Fatalf("failed warning write left %d warning events, want none", count)
+	}
+	if !strings.Contains(output.String(), "failed to persist review_same_thread warning") || !strings.Contains(output.String(), "warning storage unavailable") {
+		t.Fatalf("warning storage failure was not reported: %q", output.String())
 	}
 }
 
@@ -387,8 +454,7 @@ func TestAgentAcceptCriteriaDigestIsTheRecordedInput(t *testing.T) {
 }
 
 // A continued call (agent.call with resume) is read through its prepared row: the engine records resume_of and the pair the thread was read back with (configured_model, configured_effort) there and emits
-// no thread_started row for the continuation. A continued reviewer is judged on that pair, and a continued author counts among the author pairs, so a resumed author of the reviewer's family refuses a
-// fresh reviewer of that family even when the author's first call never completed (CRW-1213, evaluation d2).
+// no thread_started row for the continuation. A continued reviewer is judged on that pair, and a continued author counts among the author pairs for provenance, regardless of family overlap.
 func TestAgentAcceptReadsContinuedCalls(t *testing.T) {
 	t.Parallel()
 	one := func(n string) agentSpec { return agentSpec{name: n, files: map[string]string{n + ".txt": n + "\n"}} }
@@ -407,12 +473,13 @@ func TestAgentAcceptReadsContinuedCalls(t *testing.T) {
 		t.Fatalf("the row = %+v (%v, %v), want the continued call %s on %s/high", row, found, err, again, reviewerModel)
 	}
 
-	// the node's author is a continuation of a call that never completed, on the reviewer's family; the first author is another family
+	// the node's author is a continuation of a call that never completed, on the reviewer's family
 	k.author("resumedauthor", authorModel)
 	k.record(journalCall{role: "executor", node: "resumedauthor", model: reviewerModel, head: k.heads["resumedauthor"], resumeOf: "call-that-ended-held"})
 	k.review("resumedauthor", reviewerModel, "verified", criteria)
-	_, err = k.accept("resumedauthor")
-	wantAgentRefusal(t, "a continued author of the reviewer's family", err, contract.RefusalDispositionConflict, IndependenceRefused)
+	if got, err := k.accept("resumedauthor"); err != nil || got.AcceptanceID == "" {
+		t.Fatalf("a resumed same-family author must not block a verified review: %+v, %v", got, err)
+	}
 }
 
 // TestAgentAcceptReadsAnOldReviewerFinalCall: the role key reviewer-final is retired (CRW-1450), and the journal of a run an old build

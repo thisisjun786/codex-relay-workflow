@@ -23,7 +23,7 @@ import (
 )
 
 // This file is crw.crosscheck (CRW-1473): the review of a milestone's integrated range at its close, after the final gate passed, by
-// two passes of a review engine of another model family than every author of the milestone. The op runs the engine itself, in Go,
+// two passes of a review engine in a separate invocation from the authors. The op runs the engine itself, in Go,
 // through the review adapter's seam (UnitChecker, the shipped reviewadapter.Adapter); no agent call is made. Pass A judges coverage
 // (every criterion and decision, met or not, with evidence), pass B hunts bugs; each runs in a checkout of the gate head of its own
 // under the run's directory, and their findings are merged into one verdict by one rule (CrosscheckRule, premerge.Blocks).
@@ -57,8 +57,10 @@ const (
 
 // The reasons of a refused or failed crosscheck that the op itself decides.
 const (
+	// Retained for readers of records written before CRW-1515; no new family gate emits these.
 	ReasonCrosscheckAuthorUndecided     = "crosscheck_author_undecided"
 	ReasonCrosscheckNoIndependentEngine = "crosscheck_no_independent_engine"
+	ReasonCrosscheckNoEngine            = "crosscheck_no_engine"
 	ReasonCrosscheckPriorInvalid        = "crosscheck_prior_invalid"
 	ReasonCrosscheckNoRunDir            = "crosscheck_no_run_dir"
 	ReasonCrosscheckPromptTooLarge      = "crosscheck_prompt_too_large"
@@ -117,7 +119,7 @@ type CrosscheckOpts struct {
 	EvidenceRound int             `json:"evidence_round"`
 }
 
-// CrosscheckAuthor is one author of the milestone the engine must be independent of: where it was read (role: the run's role table;
+// CrosscheckAuthor records one author of the milestone: where it was read (role: the run's role table;
 // call: an author call row of the journal; thread: a correction author's thread), its name there, its model and the model's family.
 type CrosscheckAuthor struct {
 	Source string `json:"source"`
@@ -223,7 +225,7 @@ func followUp(f reviewadapter.Finding) string {
 // crosscheckOp is crw.crosscheck(milestone, gate, opts): one round of the crosscheck of a milestone over the gate the close passed. In
 // order: the round (round 1, or the recorded-prior recheck round 2; every other prior is refused), the authors (an undecided pair
 // refuses), the run's directory (it must be
-// absolute), the engine (the first profile whose family is no author's), the executor receipts of the milestone's nodes (one that
+// absolute), the engine (the first configured profile), the executor receipts of the milestone's nodes (one that
 // cannot be handed over holds), the prompts (over the limit fails), both checkouts (one that is not the head's tree fails, and the
 // checkout already made for the other pass is removed), then the two passes, together, and both their results are read before the round
 // is judged: a pass that failed fails it; both void (not_read) give no_verdict at once; one that gave no judgment holds it; one void
@@ -341,11 +343,10 @@ func (o *crosscheckOp) Run(ctx context.Context, req engine.OpRequest) (engine.Op
 		}
 	}
 
-	// the authors: every pair the run's role table gives and every author call of the journal, none undecided
+	// Author models remain provenance, not an engine-selection gate (CRW-1515).
 	authors, undecided := o.authors(cc, r)
 	if len(undecided) > 0 {
-		return finish(CrosscheckOutcome{State: CrosscheckStateRefused, Reason: ReasonCrosscheckAuthorUndecided,
-			Detail: "the model of an author is not known, so no engine can be shown to be of another family: " + strings.Join(undecided, "; ")})
+		data["author_warnings"] = undecided
 	}
 	families := authorFamilies(authors)
 
@@ -356,19 +357,15 @@ func (o *crosscheckOp) Run(ctx context.Context, req engine.OpRequest) (engine.Op
 			Detail: fmt.Sprintf("the run's directory %q is not an absolute path (Deps.LandRoot); nothing was written and no pass ran", root)})
 	}
 
-	// the engine: the first profile whose family is no author's
+	// The configured profile order does not depend on the authors' model families.
 	profiles, err := cc.Profiles(root)
 	if err != nil {
 		return engine.OpResult{}, fmt.Errorf("crw.crosscheck: milestone %s: the engine profiles: %w", ms, err)
 	}
-	profile, family, found := pickEngine(profiles, families)
+	profile, family, found := pickEngine(profiles)
 	if !found {
-		tried := make([]string, 0, len(profiles))
-		for _, p := range profiles {
-			tried = append(tried, p.Name+" ("+profileFamily(p)+")")
-		}
-		return finish(CrosscheckOutcome{State: CrosscheckStateRefused, Reason: ReasonCrosscheckNoIndependentEngine,
-			Detail: fmt.Sprintf("no engine of %s is of another family than every author (%s)", strings.Join(tried, ", "), strings.Join(families, ", "))})
+		return finish(CrosscheckOutcome{State: CrosscheckStateRefused, Reason: ReasonCrosscheckNoEngine,
+			Detail: "no crosscheck engine profile is configured"})
 	}
 
 	v := &CrosscheckVerdictRecord{Findings: []reviewadapter.Finding{}, Carried: []string{}, FollowUps: []string{}, GuideRev: CrosscheckGuideRev, EngineFamily: family,
@@ -666,7 +663,7 @@ func (r rows) milestoneAuthorCalls() []authorCall {
 	return out
 }
 
-// authors are the authors the engine must be independent of: the run's role pairs (Crosscheck.Authors, by role name) and the author calls
+// authors records the run's role pairs (Crosscheck.Authors, by role name) and the author calls
 // of the journal, and what of them is undecided (a role with no model, a call that names none). With neither, the authors are unknown.
 func (o *crosscheckOp) authors(cc *Crosscheck, r rows) ([]CrosscheckAuthor, []string) {
 	var out []CrosscheckAuthor
@@ -690,6 +687,20 @@ func (o *crosscheckOp) authors(cc *Crosscheck, r rows) ([]CrosscheckAuthor, []st
 			continue
 		}
 		out = append(out, CrosscheckAuthor{Source: "call", Name: c.CallID, Model: c.Model, Family: execution.ModelFamily(c.Model)})
+	}
+	// the architect of an imported DESIGN (CRW-1329) authored what the range stands on without a call of this run: the author of
+	// the crosscheck's independence is the model the recorded source audit names
+	for _, led := range r.current(OpDesignLedger) {
+		if dataStr(led, "source_run") == "" || !reusedLedgerApproved(r, dataStr(led, "milestone"), led) {
+			continue
+		}
+		model := dataStr(led, "architect_model")
+		name := dataStr(led, "source_run") + ":" + dataStr(led, "source_revision")
+		if strings.TrimSpace(model) == "" {
+			undecided = append(undecided, fmt.Sprintf("the imported design of run %s names no architect model", name))
+			continue
+		}
+		out = append(out, CrosscheckAuthor{Source: "design_reuse", Name: name, Model: model, Family: execution.ModelFamily(model)})
 	}
 	if len(out) == 0 && len(undecided) == 0 {
 		undecided = append(undecided, "the run names no author pair and the journal no author call")
@@ -724,13 +735,11 @@ func profileFamily(p reviewadapter.Profile) string {
 	return f
 }
 
-// pickEngine is the first profile whose family is known and is none of the authors' families.
-func pickEngine(profiles []reviewadapter.Profile, families []string) (reviewadapter.Profile, string, bool) {
-	for _, p := range profiles {
-		f := profileFamily(p)
-		if f != "" && !slices.Contains(families, f) {
-			return p, f, true
-		}
+// pickEngine takes the configured first profile. The adapter validates the chosen profile;
+// author model families never exclude it, and family metadata stays in the record.
+func pickEngine(profiles []reviewadapter.Profile) (reviewadapter.Profile, string, bool) {
+	if len(profiles) > 0 {
+		return profiles[0], profileFamily(profiles[0]), true
 	}
 	return reviewadapter.Profile{}, "", false
 }
