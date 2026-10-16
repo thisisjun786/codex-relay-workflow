@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 
@@ -23,6 +24,35 @@ func TestScriptResumeGivesItsCallsTheRepositoryTools(t *testing.T) {
 	if err := os.WriteFile(config, []byte(`{"verifier":{"go_root":"`+root+`"}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	got := scriptResumeCallTools(t, home, config, nil)
+	want := []string{"PATH=" + filepath.Join(root, "bin") + ":/usr/bin", "GOROOT=" + root, "GOTOOLCHAIN=local"}
+	if got == nil || !slices.Equal(got.Env, want) || len(got.Facts) != 1 {
+		t.Errorf("the resumed run's call was started with tools %+v, want env %q", got, want)
+	}
+}
+
+// CRW-1570: the resumed run's calls get the run's recorded TMPDIR (env.TMPDIR of its spec) first among their tools, not the TMPDIR
+// of the shell that resumes it, as the run process's calls do.
+func TestScriptResumeGivesItsCallsTheRunsTMPDIR(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	config := filepath.Join(home, "config.json")
+	root := filepath.Join(home, "go")
+	if err := os.WriteFile(config, []byte(`{"verifier":{"go_root":"`+root+`"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a := t.TempDir()
+	got := scriptResumeCallTools(t, home, config, map[string]string{"TMPDIR": a})
+	want := []string{"TMPDIR=" + a, "PATH=" + filepath.Join(root, "bin") + ":/usr/bin", "GOROOT=" + root, "GOTOOLCHAIN=local"}
+	if got == nil || !slices.Equal(got.Env, want) || !strings.HasPrefix(got.Prefix, "TMPDIR="+shellWord(a)+" ") || len(got.Facts) != 2 {
+		t.Errorf("the resumed run's call was started with tools %+v, want env %q and the TMPDIR first in the prefix", got, want)
+	}
+}
+
+// scriptResumeCallTools resumes a paused App Server run whose spec records env with `crw flow resume RUN SCRIPT`, from a process
+// whose TMPDIR is the world's, and returns the tools its one call's thread was started with.
+func scriptResumeCallTools(t *testing.T, home, config string, env map[string]string) *engine.RepositoryTools {
+	t.Helper()
 	w := newWorld(t)
 	td := w.deps()
 	td.Getenv = td.w.withTemp(func(k string) (string, bool) {
@@ -34,7 +64,7 @@ func TestScriptResumeGivesItsCallsTheRepositoryTools(t *testing.T) {
 	if err := os.WriteFile(script, []byte("export const meta = { name: 'look' }\nconst a = await agent.call('look around', { agentType: 'explorer', label: 'exp' })\nreturn [a.status]\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	spec := Spec{Schema: SpecSchema, RunID: run, Workflow: "look", Script: script, Thread: owner, Backend: BackendAppServer, CreatedAt: "2026-10-14T00:00:00Z"}
+	spec := Spec{Schema: SpecSchema, RunID: run, Workflow: "look", Script: script, Thread: owner, Backend: BackendAppServer, CreatedAt: "2026-10-14T00:00:00Z", Env: env}
 	if err := WriteSpec(w.state, spec); err != nil {
 		t.Fatal(err)
 	}
@@ -83,9 +113,5 @@ func TestScriptResumeGivesItsCallsTheRepositoryTools(t *testing.T) {
 	if len(specs) != 1 {
 		t.Fatalf("%d threads started, want 1", len(specs))
 	}
-	got := specs[0].Tools
-	want := []string{"PATH=" + filepath.Join(root, "bin") + ":/usr/bin", "GOROOT=" + root, "GOTOOLCHAIN=local"}
-	if got == nil || !slices.Equal(got.Env, want) || len(got.Facts) != 1 {
-		t.Errorf("the resumed run's call was started with tools %+v, want env %q", got, want)
-	}
+	return specs[0].Tools
 }

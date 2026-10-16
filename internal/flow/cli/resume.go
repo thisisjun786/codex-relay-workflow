@@ -346,12 +346,15 @@ func (c *command) resumeHold(state, run string) engine.ResumeHold {
 			}
 		}
 	}}
-	// the resumed run's calls get the go the verifier runs, as the run process's do (CRW-1488)
-	hold.Tools = repositoryTools(c.getenv)
+	// the resumed run's calls get the run's recorded TMPDIR (CRW-1570) and the go the verifier runs (CRW-1488), as the run process's
+	// do; a run without a spec records no env
+	var rec map[string]string
 	if spec, err := ReadSpec(state, run); err == nil {
+		rec = spec.Env
 		hold.Backend = spec.Backend
 		hold.Budget = func(spent, asked int64) (int64, error) { return runBudget(spec, spent, asked) }
 	}
+	hold.Tools = repositoryTools(c.getenv, rec)
 	return hold
 }
 
