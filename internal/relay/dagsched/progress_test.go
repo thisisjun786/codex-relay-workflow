@@ -119,13 +119,13 @@ func TestProgressForkJoinDistribution(t *testing.T) {
 		StageVerifying:          {"impl-b"},
 		StageWaitingPredecessor: {"join"},
 		StageWaitingDecision:    {"ship"},
-		StageWaitingResource:    {"stack2"},
+		StageReady:              {"stack2"},
 	})
 	if p.Cumulative.Accepted != (Measure{Nodes: 3, Of: 7}) || p.Cumulative.Integrated != (Measure{Nodes: 1, Of: 7}) {
 		t.Errorf("cumulative part way = %+v, want accepted 3 of 7 and integrated 1 of 7", p.Cumulative)
 	}
-	if n := p.nodeNamed("stack2"); n.Reason != DeferEditOverlap {
-		t.Errorf("stack2 = %+v, want it held back by the undeclared edit regions of the running node", n)
+	if n := p.nodeNamed("stack2"); n.Reason != "" || n.Disposition != DispReady {
+		t.Errorf("stack2 = %+v, want it ready: the undeclared edit regions of the running node are unknown, not an overlap (CRW-1576)", n)
 	}
 	assertEveryNonMovingNodeHasAReason(t, p)
 	assertNoFalseCompletionRate(t, p)

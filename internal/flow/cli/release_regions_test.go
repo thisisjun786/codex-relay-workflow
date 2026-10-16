@@ -4,13 +4,15 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/compile"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
 )
 
 // CRW-1391: the run's release declares the node's admission regions (ops.ReleaseRequest.Regions: the plan's regions and the DESIGN's
 // edit_regions) through dag_node_regions before the relay's agent release, when the node has no declaration in force; a declaration the
-// relay refuses is a warning of the release, which goes on as for an undeclared node.
+// relay refuses is a warning of the release, which goes on (fail open). A release that asks for none over a node with no declaration
+// in force answers regions unknown with the same warning: the edit overlap is unknown and does not block (CRW-1576).
 
 // labRegions are the declared regions of a node in force, as the relay reads them.
 func (l *laneLab) labRegions(node string) []dagsched.Region {
@@ -106,9 +108,9 @@ func TestReleaseGoesOnWhenTheDeclarationFails(t *testing.T) {
 }
 
 // TestReleaseDeclaresTheMilestonesOtherNodes: the release judgment reads every ready node ranked before the one released as a holder of
-// its declaration, so a node released while an earlier node of its milestone is still undeclared was held back (defer:edit_overlap) by
-// that node however disjoint their regions (the race of the cap-2 session milestone, whose lanes release in either order). The release
-// declares the milestone's other admitted nodes that have no declaration in force too, so A-2 released before A-1 is released.
+// its declaration — an undeclared one blocks nothing (CRW-1576), and a clash of declared regions is judged on the declarations of both
+// sides (the race of the cap-2 session milestone, whose lanes release in either order). The release declares the milestone's other
+// admitted nodes that have no declaration in force too, so A-2 released before A-1 is released, and A-1's own release keeps it.
 func TestReleaseDeclaresTheMilestonesOtherNodes(t *testing.T) {
 	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"}, labIssue{Key: "A-2", Milestone: "M1"})
 	r := l.buildLane("run-regions004", l.handoffBytes(nil), LaneOptions{})
@@ -125,5 +127,79 @@ func TestReleaseDeclaresTheMilestonesOtherNodes(t *testing.T) {
 		Admitted: map[string][]string{a2: {"node-A-2.txt"}}})
 	if err != nil || !next.Released || next.RegionsDeclared != "kept" {
 		t.Fatalf("A-1 after A-2: %+v %v", next, err)
+	}
+}
+
+// TestUndeclaredNodeReleasesAfterEarlierExecutionCloses (CRW-1576): a node with no declaration does not overlap every other. Two
+// issues that declare no regions: the first is released and its execution closed (an escalation or the run's cancel, each of which
+// returns the slot), and the second is released next. The closed node becomes a planned candidate of the pass again and, undeclared,
+// once counted as an exclusive overlap with everything — the release it gated now goes on, with the regions' status unknown and a
+// warning that the overlap is unknown.
+func TestUndeclaredNodeReleasesAfterEarlierExecutionCloses(t *testing.T) {
+	for _, reason := range []string{"tiers_exhausted", "flow_cancel"} {
+		t.Run(reason, func(t *testing.T) {
+			l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1", Regions: []compile.Region{}}, labIssue{Key: "A-2", Milestone: "M1", Regions: []compile.Region{}})
+			r := l.buildLane("run-unknown-close", l.handoffBytes(nil), LaneOptions{})
+			first, err := r.Release(ctx, ops.ReleaseRequest{Plan: l.plan, Node: l.nodeOf["A-1"], RunID: r.RunID, RequestID: "req-a1"})
+			if err != nil || !first.Released {
+				t.Fatalf("first release: %+v %v", first, err)
+			}
+			closed, err := r.Close(ctx, ops.CloseRequest{Plan: l.plan, Node: l.nodeOf["A-1"], Reason: reason, RequestID: "close-a1"})
+			if err != nil || !closed.Closed || !closed.SlotReleased {
+				t.Fatalf("close: %+v %v", closed, err)
+			}
+			second, err := r.Release(ctx, ops.ReleaseRequest{Plan: l.plan, Node: l.nodeOf["A-2"], RunID: r.RunID, RequestID: "req-a2"})
+			if err != nil || !second.Released {
+				t.Fatalf("second release after %s: %+v %v", reason, second, err)
+			}
+			if second.RegionsDeclared != "unknown" || second.RegionsWarning == "" {
+				t.Fatalf("missing undeclared warning: %+v", second)
+			}
+		})
+	}
+}
+
+// TestUndeclaredNodesReleaseConcurrentlyWithWarnings (CRW-1576): two nodes with no regions on either side hold no regions, so the
+// second does not wait for the first to land or close. Both are released with the regions' status unknown and its warning.
+func TestUndeclaredNodesReleaseConcurrentlyWithWarnings(t *testing.T) {
+	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1", Regions: []compile.Region{}}, labIssue{Key: "A-2", Milestone: "M1", Regions: []compile.Region{}})
+	r := l.buildLane("run-unknown-parallel", l.handoffBytes(nil), LaneOptions{})
+	second, err := r.Release(ctx, ops.ReleaseRequest{Plan: l.plan, Node: l.nodeOf["A-2"], RunID: r.RunID, RequestID: "req-a2-first"})
+	if err != nil || !second.Released {
+		t.Fatalf("the release of A-2: %+v %v", second, err)
+	}
+	if second.RegionsDeclared != "unknown" || second.RegionsWarning == "" {
+		t.Fatalf("the release of A-2 = %+v, want regions unknown with the warning", second)
+	}
+	first, err := r.Release(ctx, ops.ReleaseRequest{Plan: l.plan, Node: l.nodeOf["A-1"], RunID: r.RunID, RequestID: "req-a1-second"})
+	if err != nil || !first.Released {
+		t.Fatalf("the release of A-1 beside A-2 still running: %+v %v", first, err)
+	}
+	if first.RegionsDeclared != "unknown" || first.RegionsWarning == "" {
+		t.Fatalf("the release of A-1 = %+v, want regions unknown with the warning", first)
+	}
+	for _, key := range []string{"A-1", "A-2"} {
+		if regions := l.labRegions(l.nodeOf[key]); len(regions) != 0 {
+			t.Fatalf("the regions of %s = %+v, want none declared", key, regions)
+		}
+	}
+}
+
+// TestReleaseKeepsDeclaredRegionsWhenAdmissionListIsEmpty (CRW-1576): a node whose regions somebody declared keeps the declaration
+// even when the release asks for no admission regions — an empty list marks an undeclared node, it does not turn a declared one
+// unknown.
+func TestReleaseKeepsDeclaredRegionsWhenAdmissionListIsEmpty(t *testing.T) {
+	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1", Regions: []compile.Region{}})
+	r := l.buildLane("run-unknown-kept", l.handoffBytes(nil), LaneOptions{})
+	node := l.nodeOf["A-1"]
+	if _, err := r.Sched.DeclareRegions(ctx, l.plan, node, labOwner, []dagsched.Region{{Repository: l.repo, Path: "node-A-1.txt", Kind: "file", Grade: "local"}}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := r.Release(ctx, ops.ReleaseRequest{Plan: l.plan, Node: node, RunID: r.RunID, RequestID: "req-kept-empty"})
+	if err != nil || !got.Released || got.RegionsDeclared != "kept" || got.RegionsWarning != "" {
+		t.Fatalf("the release = %+v %v, want released with the declaration kept and no warning", got, err)
+	}
+	if regions := l.labRegions(node); len(regions) != 1 || regions[0].Path != "node-A-1.txt" {
+		t.Fatalf("the regions of A-1 = %+v, want the declaration made before the run", regions)
 	}
 }

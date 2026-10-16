@@ -223,13 +223,10 @@ func (r *FakeRelay) plannedRegions(node string, texts []string) []ops.LaneRegion
 
 // relayRegionRule is the relay's region judgment of a release (dagsched.Overlaps over the declared normal forms, with the planned change
 // and hold): a release whose regions overlap a region another released node holds is held back defer:edit_overlap. A node with no
-// regions, on either side, overlaps every other.
+// regions, on either side, is unknown — not an overlap (CRW-1576): the loops find no pair and the release goes on.
 func (r *FakeRelay) relayRegionRule(req ops.ReleaseRequest, holding map[string][]ops.LaneRegion) string {
 	mine := r.plannedRegions(req.Node, req.Regions)
 	for _, theirs := range holding {
-		if len(mine) == 0 || len(theirs) == 0 {
-			return dagsched.DeferEditOverlap
-		}
 		for _, a := range mine {
 			for _, b := range theirs {
 				if dagsched.Overlaps(relayRegion(a), relayRegion(b)) {

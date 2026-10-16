@@ -201,9 +201,10 @@ func newLaneLab(t *testing.T, issues ...labIssue) *laneLab {
 	return newLaneLabFor(t, labOwner, "integration", issues...)
 }
 
-// labRegionsOf are the planned regions of a lab issue: its own, or the file node-<key>.txt.
+// labRegionsOf are the planned regions of a lab issue: its own, or the file node-<key>.txt. nil is the default; an explicitly empty
+// list means the issue declares no regions, so its node is undeclared.
 func labRegionsOf(is labIssue) []compile.Region {
-	if len(is.Regions) > 0 {
+	if is.Regions != nil {
 		return is.Regions
 	}
 	return []compile.Region{{Path: "node-" + is.Key + ".txt", Kind: "file"}}

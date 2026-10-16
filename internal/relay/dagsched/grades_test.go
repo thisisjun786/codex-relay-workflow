@@ -142,21 +142,22 @@ func TestHoldersAddedDuringThePassAreJudgedToo(t *testing.T) {
 	}
 }
 
-// An undeclared node is unknown, and the unknown overlaps everything: that stays an exclusive overlap, and the row says which side is undeclared.
-func TestUndeclaredNodesStayExclusive(t *testing.T) {
+// An undeclared node is unknown, and the unknown is not an overlap (CRW-1576): it counts nothing and cuts no release, and the basis
+// keeps a row that says which side is undeclared.
+func TestUndeclaredNodesAreUnknownNotAnOverlap(t *testing.T) {
 	t.Parallel()
 	_, reading := gradedFixture(t, map[string][]Region{"q": {gr("a.go", "local", "")}}, "p", "q")
 	q := reading.node("q")
-	if got := strings.Join(reading.readyIDs(), ","); got != "p" || q.Release.Rule != RuleDefer || q.Release.Overlaps != (OverlapCounts{Exclusive: 1}) {
+	if got := strings.Join(reading.readyIDs(), ","); got != "p,q" || q.Release.Rule != RuleIndependent || q.Release.Overlaps != (OverlapCounts{}) {
 		t.Fatalf("ready = %q q = %+v %+v", got, q, q.Release)
 	}
-	if len(q.Release.Basis) != 1 || q.Release.Basis[0].Undeclared != "holder" || q.Release.Basis[0].Holder != "p" || q.Release.Basis[0].Grade != GradeExclusive {
-		t.Fatalf("basis = %+v, want one exclusive row naming the undeclared holder", q.Release.Basis)
+	if len(q.Release.Basis) != 1 || q.Release.Basis[0].Undeclared != "holder" || q.Release.Basis[0].Holder != "p" || q.Release.Basis[0].Grade != "" {
+		t.Fatalf("basis = %+v, want one ungraded row naming the undeclared holder", q.Release.Basis)
 	}
 	_, reading = gradedFixture(t, map[string][]Region{"p": {gr("a.go", "local", "")}}, "p", "q")
 	q = reading.node("q")
-	if got := strings.Join(reading.readyIDs(), ","); got != "p" || q.Release.Rule != RuleDefer || len(q.Release.Basis) != 1 || q.Release.Basis[0].Undeclared != "candidate" {
-		t.Fatalf("ready = %q q = %+v %+v, want the undeclared candidate cut", got, q, q.Release)
+	if got := strings.Join(reading.readyIDs(), ","); got != "p,q" || q.Release.Rule != RuleIndependent || len(q.Release.Basis) != 1 || q.Release.Basis[0].Undeclared != "candidate" {
+		t.Fatalf("ready = %q q = %+v %+v, want the undeclared candidate released", got, q, q.Release)
 	}
 }
 

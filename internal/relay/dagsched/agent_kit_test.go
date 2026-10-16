@@ -84,7 +84,7 @@ func newAgentKitOn(t *testing.T, repo *gitRepo, specs ...agentSpec) *agentKit {
 		changes = append(changes, addRelNode(n.name, dag.NodeImplementation))
 	}
 	k.putPlan("g", 0, "g-r1", changes...)
-	// the nodes of one issue edit their own places: an undeclared region overlaps every other node that is running or accepted
+	// the nodes of one issue edit their own places: each is declared, so the judgment reads real regions and never an unknown side
 	for _, n := range specs {
 		if !n.nonPR {
 			k.declare("g", n.name, "node-"+n.name+".txt")

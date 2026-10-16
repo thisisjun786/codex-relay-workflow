@@ -55,8 +55,8 @@ func TestRegionsOverlapMatchesTheRelay(t *testing.T) {
 		a, b []string
 		want bool
 	}{
-		{"nil is undeclared", nil, []string{"a.go"}, true},
-		{"two empty lists", []string{}, []string{}, true},
+		{"nil is unknown, not an overlap", nil, []string{"a.go"}, false},
+		{"two empty lists", []string{}, []string{}, false},
 		{"one pair of two lists", []string{"a.go", "b.go"}, []string{"c.go", "./b.go"}, true},
 		{"disjoint lists", []string{"a.go"}, []string{"b.go"}, false},
 	}
@@ -230,8 +230,8 @@ func TestRegionOpsRefuseARegionWithNoText(t *testing.T) {
 			t.Errorf("admissionRegions(%v, [a.go]) = %s, want an error", bad, out)
 		}
 	}
-	if got := string(w.must(NameRegionsOverlap, nil, []string{"a.go"})); got != "true" {
-		t.Errorf("regionsOverlap(null, [a.go]) = %s, want true", got)
+	if got := string(w.must(NameRegionsOverlap, nil, []string{"a.go"})); got != "false" {
+		t.Errorf("regionsOverlap(null, [a.go]) = %s, want false: undeclared is unknown, not an overlap", got)
 	}
 	if b, _ := json.Marshal([]LaneRegion{{Text: "a.go", Change: "edit"}, {Text: "b.go", Change: "edit", Exclusive: true}}); string(b) != `["a.go",{"text":"b.go","change":"edit","exclusive":true}]` {
 		t.Errorf("encoded %s: an edit with no hold is its text", b)
@@ -249,8 +249,8 @@ func TestRegionOpsAnswerThroughTheLane(t *testing.T) {
 	if got := string(w.must(NameRegionsOverlap, []string{"a.go"}, []string{"b.go"})); got != "false" {
 		t.Errorf("regionsOverlap([a.go], [b.go]) = %s, want false", got)
 	}
-	if got := string(w.must(NameRegionsOverlap, nil, []string{"b.go"})); got != "true" {
-		t.Errorf("regionsOverlap(null, [b.go]) = %s, want true", got)
+	if got := string(w.must(NameRegionsOverlap, nil, []string{"b.go"})); got != "false" {
+		t.Errorf("regionsOverlap(null, [b.go]) = %s, want false: undeclared is unknown, not an overlap", got)
 	}
 	var adm []string
 	if err := json.Unmarshal(w.must(NameAdmissionRegions, []string{"a.go"}, []string{"./a.go", "b.go"}), &adm); err != nil {
@@ -259,8 +259,14 @@ func TestRegionOpsAnswerThroughTheLane(t *testing.T) {
 	if !slices.Equal(adm, []string{"a.go", "b.go"}) {
 		t.Errorf("admissionRegions([a.go], [./a.go, b.go]) = %q, want [a.go b.go]", adm)
 	}
-	if got := string(w.must(NameAdmissionRegions, []string{"a.go"}, nil)); got != "[]" {
-		t.Errorf("admissionRegions([a.go], null) = %s, want []", got)
+	if got := string(w.must(NameAdmissionRegions, []string{"a.go"}, nil)); got != `["a.go"]` {
+		t.Errorf("admissionRegions([a.go], null) = %s, want [a.go]: the named side is kept", got)
+	}
+	if got := string(w.must(NameAdmissionRegions, nil, []string{"a.go"})); got != `["a.go"]` {
+		t.Errorf("admissionRegions(null, [a.go]) = %s, want [a.go]: the named side is kept", got)
+	}
+	if got := string(w.must(NameAdmissionRegions, nil, nil)); got != "[]" {
+		t.Errorf("admissionRegions(null, null) = %s, want []", got)
 	}
 	deleteF := map[string]any{"text": "a.go#F", "change": "delete"}
 	if got := string(w.must(NameRegionsOverlap, []any{"b.go", deleteF}, []string{"a.go#G"})); got != "true" {
@@ -275,6 +281,9 @@ func TestRegionOpsAnswerThroughTheLane(t *testing.T) {
 	// a planned region keeps its change through admission, and an edit region that names it in another spelling is that region
 	if got := string(w.must(NameAdmissionRegions, []any{deleteF}, []string{"./a.go#F", "b.go"})); got != `[{"text":"a.go#F","change":"delete"},"b.go"]` {
 		t.Errorf("admissionRegions([{a.go#F delete}], [./a.go#F, b.go]) = %s", got)
+	}
+	if got := string(w.must(NameAdmissionRegions, []any{deleteF}, nil)); got != `[{"text":"a.go#F","change":"delete"}]` {
+		t.Errorf("admissionRegions([{a.go#F delete}], null) = %s, want the planned region kept", got)
 	}
 	if _, err := w.op(NameRegionsOverlap, []any{map[string]any{"text": "a.go", "change": "move"}}, []string{"b.go"}); err == nil {
 		t.Error("regionsOverlap with an unknown change did not fail")

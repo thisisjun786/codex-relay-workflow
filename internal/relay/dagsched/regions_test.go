@@ -94,13 +94,16 @@ func TestEditRegionOverlapFixture(t *testing.T) {
 	scenario("a rename conflicts with an edit of the same file", map[string][]Region{"p": {{Repository: "owner/repo", Path: "a.go", Kind: "file", Change: "rename"}}, "q": {region("a.go", "file", "")}}, "p")
 }
 
-// Contract 7.1: a node with no declaration counts as overlapping every other node. Each row is one way the rule can be wrong.
-func TestUnknownRegionsOverlap(t *testing.T) {
+// Contract 7.1 (CRW-1576): a node with no declaration is unknown, and the unknown is not an overlap — it counts nothing and blocks no
+// release; the basis keeps a row that says which side is undeclared. Each row is one way the rule can be wrong.
+func TestUnknownRegionsDoNotBlockRelease(t *testing.T) {
 	t.Parallel()
 	type tc struct {
 		name  string
 		setup func(f *fixture)
 		want  map[string]string // node -> reason ("" = ready)
+		// undeclared are the nodes whose release basis must hold a row that names this side undeclared ("candidate" or "holder").
+		undeclared map[string]string
 	}
 	impl := func(f *fixture, ids ...string) {
 		var changes []doc
@@ -111,18 +114,18 @@ func TestUnknownRegionsOverlap(t *testing.T) {
 	}
 	cases := []tc{
 		{name: "an undeclared candidate with no holder is released", setup: func(f *fixture) { impl(f, "c") }, want: map[string]string{"c": ""}},
-		{name: "an undeclared candidate against a declared holder waits", setup: func(f *fixture) {
+		{name: "an undeclared candidate against a declared holder is released", setup: func(f *fixture) {
 			impl(f, "h", "c")
 			f.declare("u", "h", "a.go")
 			f.startNode("u", "h")
-		}, want: map[string]string{"c": DeferEditOverlap}},
-		{name: "a declared candidate against an undeclared holder waits", setup: func(f *fixture) {
+		}, want: map[string]string{"c": ""}, undeclared: map[string]string{"c": "candidate"}},
+		{name: "a declared candidate against an undeclared holder is released", setup: func(f *fixture) {
 			impl(f, "h", "c")
 			f.declare("u", "c", "a.go")
 			f.startNode("u", "h")
-		}, want: map[string]string{"c": DeferEditOverlap}},
-		{name: "two undeclared candidates: the first is released, the second waits", setup: func(f *fixture) { impl(f, "c1", "c2") },
-			want: map[string]string{"c1": "", "c2": DeferEditOverlap}},
+		}, want: map[string]string{"c": ""}, undeclared: map[string]string{"c": "holder"}},
+		{name: "two undeclared candidates are both released", setup: func(f *fixture) { impl(f, "c1", "c2") },
+			want: map[string]string{"c1": "", "c2": ""}, undeclared: map[string]string{"c2": "candidate"}},
 		{name: "a node that edits no repository never conflicts", setup: func(f *fixture) {
 			f.putPlan("u", 0, "u-r1", addNode("h", dag.NodeImplementation), addNode("c", dag.NodeNonPR))
 			f.startNode("u", "h")
@@ -151,6 +154,23 @@ func TestUnknownRegionsOverlap(t *testing.T) {
 				n := reading.node(node)
 				if n.Reason != reason || (reason == "" && n.Disposition != DispReady) {
 					t.Errorf("%s: %+v, want reason %q (%s)", node, n, reason, reading.brief())
+				}
+			}
+			for node, side := range c.undeclared {
+				n := reading.node(node)
+				if n.Release == nil || n.Release.Overlaps.Counted() != 0 {
+					t.Errorf("%s: release %+v, want no counted overlap", node, n.Release)
+				}
+				found := false
+				if n.Release != nil {
+					for _, row := range n.Release.Basis {
+						if row.Undeclared == side {
+							found = true
+						}
+					}
+				}
+				if !found {
+					t.Errorf("%s: basis %+v, want a row with undeclared %q", node, n.Release.Basis, side)
 				}
 			}
 		})

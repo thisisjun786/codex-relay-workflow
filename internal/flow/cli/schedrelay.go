@@ -358,13 +358,23 @@ func (r *SchedRelay) Release(ctx context.Context, req ops.ReleaseRequest) (ops.R
 	}
 	defer done()
 	// the node's admission regions are declared before the relay judges its release (CRW-1391); a declaration that fails is the release's
-	// warning, and the release goes on as for an undeclared node (fail open)
+	// warning, and the release goes on (fail open). A release that asks for no admission regions reports what the node stands on instead
+	// (CRW-1576): a declaration in force is kept, and none is undeclared — the edit overlap is unknown and does not block the release.
 	var declared, warning string
+	if len(req.Regions) == 0 {
+		if _, found, err := r.Sched.NodeRegions(ctx, req.Plan, req.Node); err != nil {
+			declared, warning = regionsFailed, "the node's declaration in force cannot be read: " + err.Error()
+		} else if found {
+			declared = regionsKept
+		} else {
+			declared, warning = regionsUnknown, "no admission regions were declared; edit overlap is unknown and does not block release"
+		}
+	}
 	if len(req.Regions) > 0 && request.Base != nil {
 		declared, warning = r.declareRegions(ctx, req.Plan, req.Node, request.Base.Repository, is, req.Regions)
-		// the milestone's other admitted nodes are declared too: the judgment reads an earlier-ranked ready node that has no declaration as
-		// overlapping every other, so a lane released before the one of an earlier node would be held back by it. A failure is that node's
-		// own release's to warn of.
+		// the milestone's other admitted nodes are declared too: the judgment reads an earlier-ranked ready node as the holder of its
+		// declaration, so a clash of declared regions is judged on the declarations of both sides. A failure is that node's own release's
+		// to warn of.
 		others := make([]string, 0, len(req.Admitted))
 		for other := range req.Admitted {
 			others = append(others, other)
@@ -417,11 +427,13 @@ func (r *SchedRelay) Release(ctx context.Context, req ops.ReleaseRequest) (ops.R
 		HeldRunState: state, RegionsDeclared: declared, RegionsWarning: warning}, nil
 }
 
-// The answers of declareRegions (ops.ReleaseResult.RegionsDeclared).
+// The answers of declareRegions (ops.ReleaseResult.RegionsDeclared); regionsUnknown is the answer of a release that asks for no
+// admission regions over a node with no declaration in force (CRW-1576).
 const (
 	regionsDeclared = "declared"
 	regionsKept     = "kept"
 	regionsFailed   = "failed"
+	regionsUnknown  = "unknown"
 )
 
 // declareRegions declares a node's admission regions in the target repository (dag-region-declare, dagsched.DeclareRegions) when the
