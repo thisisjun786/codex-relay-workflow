@@ -637,8 +637,8 @@ replayed enter the first signal that runs again, in the journal's order. A trigg
 revision that stands: a node whose slice is the one that revision was made against keeps its replay and a flow row `release_rebind` says so (its packet is still the one of the
 revision it was built from); any other node is released again under the revision that stands - with a new packet when it had not started, from its first position (the position is live, so
 is every later one of the lane) when it had started and was not accepted - and a node an acceptance rests on is refused (`accepted_node_changed`, with the route: a plan revision with
-`update_node` or `dag-correct`). A milestone that closed with a reason to re-plan is `replanned`: the revision is recorded, the owner thread is asked for the correction issues
-(`crw-add-issue` and a plan revision), and the milestone does not report.
+`update_node` or `dag-correct`). A milestone that closed with a reason to re-plan is `replanned`: the close runs every final step first, the audit and then the report up that carries the gate, the crosscheck and the reflection, and only then the re-plan; the revision is recorded and the owner thread is asked for the correction issues
+(`crw-add-issue` and a plan revision).
 
 **The run process's scheduler (CRW-1277).** The shipped binary installs the lane's operations in the run process (`cmd/crw` assigns
 `cli.OpsFor = cli.SchedulerLane`): `ops.NewLane` over `cli.SchedRelay` (the `Relay` over `internal/relay/dagsched`), `CILocalVerifier`,
