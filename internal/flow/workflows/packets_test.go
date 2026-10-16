@@ -197,11 +197,19 @@ func TestCriticReplanPacketListsReleasedPlans(t *testing.T) {
 			t.Errorf("the critic packet of a re-plan lacks %q:\n%s", want, replan)
 		}
 	}
-	// a node sized for a split started too: it is listed with how it started
-	split := packetText(t, "critic-released-split-packet", "designAuditPacket",
-		"designAuditPacket(ms, "+cand+", 1, [], { head: 'tip1', base_tip: 'base0', landed: [], unstarted: [], released: [{ node: 'n2', kind: 'split', revision: 'r0', design_digest: 'dg0', plan: { issue: 'CRW-2', size_fit: 'split' }, decisions: [] }] })")
-	if !strings.Contains(split, "- n2 (CRW-2), sized for a split under r0 (no executor started; its lane escalated it as size_split)\n  plan: {") {
-		t.Errorf("a node sized for a split:\n%s", split)
+	// a node sized for a split with no sub-tasks (a legacy row), a child or a bundle split started too: it is listed with how it
+	// started; a split with sub-tasks is released to an executor and listed as released (CRW-1459)
+	for _, row := range []struct{ kind, want string }{
+		{"split", "- n2 (CRW-2), sized for a split under r0 with no sub-tasks (a legacy split row: no executor started; its lane escalated it as size_split)\n  plan: {"},
+		{"child", "- n2 (CRW-2), sized for a child under r0 (no executor started; its lane escalated it as size_split)\n  plan: {"},
+		{"bundle_split", "- n2 (CRW-2), sized for a bundle split under r0 (no executor started; the parent was asked: bundle_split_request)\n  plan: {"},
+		{"released", "- n2 (CRW-2), released under r0\n  plan: {"},
+	} {
+		sized := packetText(t, "critic-released-"+row.kind+"-packet", "designAuditPacket",
+			"designAuditPacket(ms, "+cand+", 1, [], { head: 'tip1', base_tip: 'base0', landed: [], unstarted: [], released: [{ node: 'n2', kind: '"+row.kind+"', revision: 'r0', design_digest: 'dg0', plan: { issue: 'CRW-2', size_fit: 'split' }, decisions: [] }] })")
+		if !strings.Contains(sized, row.want) {
+			t.Errorf("a released entry of kind %s:\n%s", row.kind, sized)
+		}
 	}
 	// an entry of the flat form an earlier lane binary recorded is rendered, not thrown on
 	flat := packetText(t, "critic-released-flat-packet", "designAuditPacket",
@@ -328,6 +336,8 @@ func TestPacketWithoutLastStateIsUnchanged(t *testing.T) {
 		{"receipt-without-summary", "null", ", { findings: [], ci: null, receipt: { summary: null } }", body + tail},
 		{"checkpoint-no-last", "{ head: 'h1', tree: 't1' }", "", body + checkpoint + tail},
 		{"checkpoint-empty-last", "{ head: 'h1', tree: 't1' }", ", { findings: [], ci: null, receipt: null }", body + checkpoint + tail},
+		// a plan with no sub-tasks has this packet whatever progress the lane passes (CRW-1459)
+		{"split-progress-no-sub-tasks", "null", ", { findings: [], ci: null, receipt: null, split: { done: 0, failed: {} } }", body + tail},
 	} {
 		got := packetText(t, "executor-packet-"+row.name, "packet", "packet('n1', "+packetPlan+", "+row.cp+row.last+")")
 		if got != row.want {
@@ -481,5 +491,70 @@ func TestLandFixPacketNamesTheFindingsTheRangeAndTheNextRound(t *testing.T) {
 		if !strings.Contains(packet, want) {
 			t.Errorf("the land fix packet lacks %q:\n%s", want, packet)
 		}
+	}
+}
+
+// splitPlan is the plan of a node sized for a split with two sub-tasks, as crw.issuePlan gives it (CRW-1459).
+const splitPlan = "{ issue: 'CRW-1', node: 'n1', title: 'first', revision: 'r0', design_digest: 'sha256:d0', approach: 'guard the store', regions: ['a/'], " +
+	"tests_first: ['TestGuard'], done_condition: 'go test ./a', criteria: ['the guard holds'], decisions: [{ id: 'D1', change: 'split the store' }], answers: [], size_fit: 'split', " +
+	"sub_tasks: [{ id: 'store', summary: 'split the store', edit_regions: ['a/store.go'], done_condition: 'go test ./a -run Store', after: null }, " +
+	"{ id: 'guard', summary: 'guard the store', edit_regions: ['a/guard.go', 'a/guard_test.go'], done_condition: 'go test ./a -run Guard', after: ['store'] }] }"
+
+// TestPacketNamesTheSubTasksOfASplit (CRW-1459, S-3): the packet of a fresh executor thread of a split node lists its sub-tasks in
+// order, each marked done or to do with its regions and done condition, and says to do the first one not done now, and only it; the
+// sub-tasks that reported failed are named with their summary and gap. With every sub-task done it says to finish the node.
+func TestPacketNamesTheSubTasksOfASplit(t *testing.T) {
+	first := packetText(t, "executor-packet-split-first", "packet", "packet('n1', "+splitPlan+", null, { findings: [], ci: null, receipt: null, split: { done: 0, failed: {} } })")
+	for _, want := range []string{
+		"\n\nSUB-TASKS (this node is split: ",
+		"\n- 1. store (to do): split the store\n  edit regions: a/store.go\n  done condition: go test ./a -run Store",
+		"\n- 2. guard (to do): guard the store\n  edit regions: a/guard.go, a/guard_test.go\n  done condition: go test ./a -run Guard",
+		"\n\nDo sub-task 1 (store) now, and only it: ",
+	} {
+		if !strings.Contains(first, want) {
+			t.Errorf("the first packet of a split lacks %q:\n%s", want, first)
+		}
+	}
+	if strings.Contains(first, "REPORTED FAILED") {
+		t.Errorf("the first packet names a failed sub-task:\n%s", first)
+	}
+	if noArg := packetText(t, "executor-packet-split-noarg", "packet", "packet('n1', "+splitPlan+", null)"); !strings.Contains(noArg, "Do sub-task 1 (store) now") {
+		t.Errorf("a split packet with no progress does not start at the first sub-task")
+	}
+	again := packetText(t, "executor-packet-split-again", "packet", "packet('n1', "+splitPlan+", { head: 'h1', tree: 't1' }, { findings: [], ci: null, receipt: null, split: { done: 1, failed: { store: { summary: 'half of the store', gap: 'the index is missing' } } } })")
+	for _, want := range []string{
+		"\n- 1. store (done): split the store",
+		"\n- 2. guard (to do): guard the store",
+		"REPORTED FAILED (",
+		"it is part of this node and is judged with it",
+		"\n- 1. store: half of the store\n  gap: the index is missing",
+		"\n\nDo sub-task 2 (guard) now, and only it: ",
+	} {
+		if !strings.Contains(again, want) {
+			t.Errorf("the packet of a fresh thread at sub-task 2 lacks %q:\n%s", want, again)
+		}
+	}
+	if i, j := strings.Index(again, "SUB-TASKS"), strings.Index(again, "CHECKPOINT"); i < 0 || j < 0 || i > j {
+		t.Errorf("the sub-tasks do not come before the checkpoint:\n%s", again)
+	}
+	all := packetText(t, "executor-packet-split-all", "packet", "packet('n1', "+splitPlan+", { head: 'h1', tree: 't1' }, { findings: [], ci: null, receipt: null, split: { done: 2, failed: {} } })")
+	if !strings.Contains(all, "- 2. guard (done)") || strings.Contains(all, "(to do)") || strings.Contains(all, "Do sub-task") || !strings.Contains(all, "Every sub-task is done and committed in your worktree") {
+		t.Errorf("the packet with every sub-task done:\n%s", all)
+	}
+}
+
+// TestSubTaskPacketIsTheNextSubTaskOnTheThread (CRW-1459, S-2): the next turn of a split node's thread names the sub-task by its place,
+// id and summary, its regions and done condition, and the earlier sub-tasks that reported failed.
+func TestSubTaskPacketIsTheNextSubTaskOnTheThread(t *testing.T) {
+	got := packetText(t, "subtask-packet", "subTaskPacket", "subTaskPacket("+splitPlan+", 1, {})")
+	want := "ROLE: executor. Node n1: sub-task 2 of 2 (guard): guard the store. The run committed the sub-tasks before it in your worktree; do this one now, and only it, in the same worktree, and answer with RECEIPT when it is done.\n\n" +
+		"EDIT REGIONS:\n- a/guard.go\n- a/guard_test.go\n\n" +
+		"DONE CONDITION:\ngo test ./a -run Guard"
+	if got != want {
+		t.Errorf("the sub-task packet\n%q\nwant\n%q", got, want)
+	}
+	failed := packetText(t, "subtask-packet-failed", "subTaskPacket", "subTaskPacket("+splitPlan+", 1, { store: { summary: 'half of the store', gap: 'the index is missing' } })")
+	if !strings.HasPrefix(failed, want+"\n\nREPORTED FAILED (") || !strings.Contains(failed, "\n- 1. store: half of the store\n  gap: the index is missing") {
+		t.Errorf("the sub-task packet after a failed sub-task:\n%s", failed)
 	}
 }

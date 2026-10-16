@@ -1,7 +1,7 @@
 import { RECEIPT, DESIGN, DESIGN_AUDIT, REFLECTION } from 'crw:lib/schemas'
 import { install } from 'crw:lib/lane'
 import { reportClose } from 'crw:lib/close'
-import { answeredQuestions, architectPacket, auditFindings, designAnswersPacket, designAuditPacket, designFixPacket, reflectionPacket, replanPacket, packet, answerPacket, fixPacket } from 'crw:lib/packets'
+import { answeredQuestions, architectPacket, auditFindings, designAnswersPacket, designAuditPacket, designFixPacket, reflectionPacket, replanPacket, packet, answerPacket, fixPacket, subTaskPacket } from 'crw:lib/packets'
 export const meta = { name: 'project-lane', description: 'Run the issues of a milestone: background explorers, architect, design audit by the critic, explorers, one lane per issue node, milestone close and report', phases: ['explore', 'design', 'build', 'milestone'], args: { plan: 'string', milestone: 'string', cap: 'number' } }
 
 // The project lane. Explorers first read the repository for each node of the milestone (the background questions, CRW-1466), the
@@ -246,7 +246,8 @@ async function nodeLane(n, rel, sig) {
     const esc = await crw.escalate(node, { reason: 'size_split', detail: plan.size_reason, ask: 'bundle_split_request', evidence: { size_reason: plan.size_reason } })
     return { node, state: 'escalated', reason: 'size_split', escalation: esc.id }
   }
-  if (plan.size_fit === 'split') {
+  if (plan.size_fit === 'split' && !(plan.sub_tasks && plan.sub_tasks.length)) {
+    // a split of a DESIGN recorded before S-1 names no sub-tasks (CRW-1435): no executor was released for it, it goes up as a size split
     const esc = await crw.escalate(node, { reason: 'size_split', detail: plan.size_reason })
     return { node, state: 'escalated', reason: 'size_split', escalation: esc.id }
   }
@@ -266,6 +267,16 @@ async function nodeLane(n, rel, sig) {
   // verification and the summary of its last receipt, all from the node's own calls and checks. A fresh thread has none of the turns
   // before it, so its packet carries them; the first build has none.
   const last = { findings: [], ci: null, receipt: null }
+  // the sub-tasks of a node sized for a split (CRW-1459) run in their order on one executor thread: done is the sub-tasks with a
+  // checkpoint commit of the node, from the first, and failed the receipts of those that reported failed, by id. A sub-task before the
+  // last is checked like any work of the node (a commit holds only checked work) and then committed as a checkpoint, with no
+  // verification and no land, and the same thread goes on to the next; the receipt of the last, and every one after it, goes on to the
+  // node's commit, verification and land, so the node is judged once, as a whole. A fresh thread (a rebuild, the executor-t1 build)
+  // starts at the node's last commit, which holds the done ones, and its packet starts at the first one not done: the progress is part
+  // of the node's last state (last.split), which a fresh thread's packet carries.
+  const subs = (plan.size_fit === 'split' && plan.sub_tasks) || []
+  const split = { done: 0, failed: {} }
+  if (subs.length) last.split = split
 
   // a fresh executor thread of the tier: the first build, the rebuild after a refusal or a null_model, the executor-t1 build
   async function start(label, checkpoint) {
@@ -368,8 +379,20 @@ async function nodeLane(n, rel, sig) {
           continue
         }
       }
+      if (!stepDue && split.done + 1 < subs.length) {
+        // a sub-task before the last: a checkpoint commit of its checked tree against its own regions, and the next sub-task on the
+        // same thread; a sub-task that reported failed is no judgement of the node, which judges it with the rest after the last
+        const sub = subs[split.done]
+        await crw.commit(node, ex, sub.edit_regions)
+        if (s === 'self_failed') split.failed[sub.id] = { summary: (ex.output && ex.output.summary) || '', gap: (ex.output && ex.output.gap) || '' }
+        split.done++
+        fixes = 0
+        ex = await agent.call(subTaskPacket(plan, split.done, split.failed), { resume: ex, schema: RECEIPT, label: 'subtask:' + node + ':' + tier + ':s' + (split.done + 1) })
+        continue
+      }
       if (!stepDue) {
         head = await crw.commit(node, ex, plan.regions)
+        split.done = subs.length
         const ci = await crw.verify(node, head)
         if (!ci.ran) {
           await crw.hold(node, { reason: 'verify_unavailable', call: ex.callId, source: 'verify' })
