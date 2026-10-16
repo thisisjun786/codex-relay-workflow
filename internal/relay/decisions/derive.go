@@ -89,6 +89,7 @@ func Derive(obs Observation, existing *Record) (Record, error) {
 	repeat.State = existing.State
 	repeat.AnsweredAt, repeat.AnsweredBy, repeat.AnsweredVia = existing.AnsweredAt, existing.AnsweredBy, existing.AnsweredVia
 	repeat.AnswerText = existing.AnswerText
+	repeat.AnswerNote = existing.AnswerNote
 	repeat.AppliedAt, repeat.AppliedEvent, repeat.AppliedGeneration = existing.AppliedAt, existing.AppliedEvent, existing.AppliedGeneration
 	repeat.WithdrawnReason, repeat.ExpiredReason = existing.WithdrawnReason, existing.ExpiredReason
 	merged, err := Merge(*existing, repeat)

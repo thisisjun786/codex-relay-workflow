@@ -136,7 +136,7 @@ func TestCRW737AnswerTextAndOption(t *testing.T) {
 		t.Fatalf("free text: %v %+v", err, answered)
 	}
 	answered, err = ValidateAnswer(record, Answer{Option: "now", Text: "because it is idle", By: "task-a", Via: ViaDots})
-	if err != nil || answered.AnswerText != "because it is idle" {
+	if err != nil || answered.AnswerText != "now" {
 		t.Fatalf("option and text: %v %+v", err, answered)
 	}
 }

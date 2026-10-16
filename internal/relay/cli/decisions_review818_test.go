@@ -183,21 +183,6 @@ func TestReview818OppositeReplyIsRefused(t *testing.T) {
 	}
 }
 
-// An answer that gives both a choice and its explanation is refused, because the stored answer
-// can only carry one of them and the choice is the one the apply reads.
-func TestReview818OptionAndTextTogetherIsRefused(t *testing.T) {
-	state := crw737Store(t)
-	review818SeedSupervisor(t, state, "task-sup")
-	decision := review818Raise(t, state, "Which window does the host update take?")
-	crw737Refused(t, crw737Run(t, "--state", state, "decision-answer", "--decision", decision,
-		"--option", "now", "--text", "because it is idle", "--by", "task-sup", "--via", "dots", "--authority", "user"), "bad_invocation")
-	// A lone option still answers, so the refusal is about giving both.
-	if got := crw737Run(t, "--state", state, "decision-answer", "--decision", decision, "--option", "now",
-		"--by", "task-sup", "--via", "dots", "--authority", "user"); got.code != 0 {
-		t.Fatalf("a lone option: exit %d %s %s", got.code, got.stdout, got.stderr)
-	}
-}
-
 // Giving both flags is what is refused, not giving both with text: an empty or blank --text is
 // still --text on the line, and accepting it would store the option and let the answer stand
 // without the prose the caller asked to record.

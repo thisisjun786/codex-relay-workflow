@@ -379,6 +379,7 @@ func TestC3ValidateRefusesControlCharacters(t *testing.T) {
 		{"answered_by", func(r *Record) { r.AnsweredBy = bad }},
 		{"answered_via", func(r *Record) { r.AnsweredVia = bad }},
 		{"answer_text", func(r *Record) { r.AnswerText = bad }},
+		{"answer_note", func(r *Record) { r.AnswerNote = bad }},
 		{"applied_at", func(r *Record) { r.AppliedAt = bad }},
 		{"applied_event", func(r *Record) { r.AppliedEvent = bad }},
 		{"withdrawn_reason", func(r *Record) { r.WithdrawnReason = bad }},

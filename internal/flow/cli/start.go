@@ -16,6 +16,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/workflows"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -373,6 +374,27 @@ func (c *command) start(args []string) int {
 		}
 	}
 	spec.Preflight = short
+	if rerr == nil && planOf(spec.Args) != "" {
+		project, found, err := dag.PlanProject(c.ctx, r.St.DB, planOf(spec.Args))
+		if err != nil {
+			return c.fail("the run's binding cannot be read: %v", err)
+		}
+		if found {
+			write := c.Writer
+			if write == nil {
+				write = OpenWriter
+			}
+			st, _, openErr := write(c.ctx, sel.Path, cm.socket)
+			if openErr != nil {
+				return c.fail("the run's binding cannot be pinned: %v", openErr)
+			}
+			spec.Binding, err = (&registry.Registry{Store: st}).PinProjectBinding(c.ctx, project, spec.Thread, spec.RunID)
+			_ = st.Close()
+			if err != nil {
+				return c.fail("the run's binding cannot be pinned: %v", err)
+			}
+		}
+	}
 	if resolved, err := repository(c.ctx, *repo); err == nil {
 		spec.Repo = resolved
 	} else if *repo != "" {

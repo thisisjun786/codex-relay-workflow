@@ -348,6 +348,9 @@ func (c *command) settleOwnCancel(state string, spec Spec) {
 		return
 	}
 	c.saySettled(spec.RunID, settled)
+	if err := c.releaseCancelledBinding(st, state, spec.RunID); err != nil {
+		failed(err)
+	}
 }
 
 // compactJSON is a JSON value without insignificant white space, "" and "null" for no value: the form the run's arguments are

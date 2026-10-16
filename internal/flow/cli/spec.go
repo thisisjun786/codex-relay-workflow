@@ -18,6 +18,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/compile"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/script"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/workflows"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 )
 
 // SpecSchema names the run spec.
@@ -27,9 +28,11 @@ const SpecSchema = "crw-flow-run/1"
 // and the host. `crw flow start` writes it before it starts the process, so a run that died is resumed from its journal and this
 // file, with nothing the first caller held in its head. It holds no secret.
 type Spec struct {
-	Schema   string `json:"schema"`
-	RunID    string `json:"run_id"`
-	Workflow string `json:"workflow"`
+	// Binding is the project tenure observed at start; a cancel never guesses one.
+	Binding  *registry.ProjectBinding `json:"binding,omitempty"`
+	Schema   string                   `json:"schema"`
+	RunID    string                   `json:"run_id"`
+	Workflow string                   `json:"workflow"`
 	// Script is the absolute path of the workflow file; empty for a built-in workflow.
 	Script      string          `json:"script,omitempty"`
 	Args        json.RawMessage `json:"args"`

@@ -620,6 +620,10 @@ JSON, matching what every relay command already emits. A filled example is in
 [check-result.example.json](operations/check-result.example.json).
 
 A measurement time is the time an observation was actually made. When no timed observation stands
+behind the record yet, read `date -u +%Y-%m-%dT%H:%M:%SZ` immediately before writing it; when the
+record describes a relay event, use that event's timestamp and id as the event time, apart from
+the observation time. This is the [recorded time rule](../../crw-canon/references/tracking-model.md#tracking-operating-model).
+When no timed observation stands
 behind a field, the time is `unknown`, and `unknown` is the honest answer rather than a defect to be
 tidied away. Never supply a plausible time to satisfy the shape, and never copy another field's
 time: both produce a record that reads as a host measurement nobody performed, which is worse than

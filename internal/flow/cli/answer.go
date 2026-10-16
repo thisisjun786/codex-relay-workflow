@@ -552,6 +552,11 @@ func (c *command) settleEndedRun(state string, cm *common, rec RunRecord) (Settl
 		return Settlement{}, c.fail("%v", err)
 	}
 	c.saySettled(rec.RunID, settled)
+	if Summarize(rec, events, false, 0).State == StateCancelled {
+		if err := c.releaseCancelledBinding(st, state, rec.RunID); err != nil {
+			return settled, c.fail("the run ended but its binding could not be released: %v", err)
+		}
+	}
 	return settled, 0
 }
 
@@ -635,6 +640,9 @@ func (c *command) cancelDead(state string, cm *common, rec RunRecord) int {
 	j.Append(engine.Event{RunID: rec.RunID, Kind: engine.KindRun, Event: "finished", Data: row})
 	if err := j.Close(); err != nil || j.Err() != nil {
 		return c.fail("the row could not be stored: %v", errors.Join(err, j.Err()))
+	}
+	if err := c.releaseCancelledBinding(st, state, rec.RunID); err != nil {
+		return c.fail("the run ended but its binding could not be released: %v", err)
 	}
 	fmt.Fprintf(c.stdout, "run %s had no process; it is cancelled (%d execution(s) given up, %d slot(s) returned)\n", rec.RunID, settled.Closed, settled.SlotsReturned)
 	return 0
