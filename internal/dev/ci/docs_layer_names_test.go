@@ -555,6 +555,11 @@ func TestRelayDocsKeepLinkedHeadings(t *testing.T) {
 // is not rewritten. An entry whose line is gone, or whose line no longer holds the words, is stale and fails, so the
 // list cannot outlive the text it covers. The rewrite is tools/reword.py of the lane; a line it leaves alone is one
 // that is an inline code span or an old record quoted as it was written (packet templates and quoted samples are live text and are reworded).
+//
+// CRW-1555 adds the two files at the repository root that a person reads first, README.md and AGENTS.md, to the
+// text read (a file name in the list of tops below is read as a single file). port/cxc/records/*.json, the skillport
+// edit records that quote old skill text, are not under docs/ or plugins/ and no test reads them for these words, so
+// they need no entry here.
 
 // issueChildWord is the retired layer name: "issue" and "child" joined by a hyphen or by whitespace.
 var issueChildWord = regexp.MustCompile(`(?i)issue(?:-|\s+)child`)
@@ -631,7 +636,7 @@ func TestDocsAndPluginsNameNoIssueChild(t *testing.T) {
 	}
 	used := map[string]map[string]bool{}
 	var problems []string
-	for _, top := range []string{"docs", "plugins"} {
+	for _, top := range []string{"docs", "plugins", "README.md", "AGENTS.md"} {
 		err := filepath.WalkDir(filepath.Join(root, top), func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return err
@@ -687,7 +692,7 @@ func TestDocsAndPluginsNameNoIssueChild(t *testing.T) {
 	}
 	if len(problems) > 0 {
 		sort.Strings(problems)
-		t.Errorf("text under docs/ and plugins/ still names an \"issue child\" (%d file(s) and exceptions); name the relay role id `child` by its id (\"a `child` session\") and make no layer name of it, or list the line in issueChildExceptions with the reason:\n  %s", len(problems), strings.Join(problems, "\n  "))
+		t.Errorf("text under docs/ and plugins/, README.md or AGENTS.md still names an \"issue child\" (%d file(s) and exceptions); name the relay role id `child` by its id (\"a `child` session\") and make no layer name of it, or list the line in issueChildExceptions with the reason:\n  %s", len(problems), strings.Join(problems, "\n  "))
 	}
 
 	t.Run("fixture: every spelling is found and the other words are not", func(t *testing.T) {

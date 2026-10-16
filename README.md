@@ -243,7 +243,7 @@ $crw-refactor 추천한 1번을 crw-add-issue로 Linear 이슈로 만들어줘. 
 These are invocation examples, not requests to execute while reading this file.
 
 A submitted `$crw-run <Linear project link>` executes one project's agreed scope:
-restore the fixed parent, reuse/create independent issue children, verify/integrate
+restore the fixed parent, reuse/create independent `child` sessions, verify/integrate
 their deliveries and start newly ready successors as capacity opens. Run creates no
 parent goal; the first ready batch is not its finish boundary. An explicit issue,
 milestone or batch request narrows the assignment. Status-only requests remain read-only.
@@ -267,7 +267,7 @@ authorized option. Keep narrower scope, pause and delivery limits in either mode
 
 `crw-run` keeps implementation in the responsible independent child task for
 one issue, including that issue’s worktree and PR repairs. Each child (project session)
-runs one project and each issue child one issue. The coordinator selects scope,
+runs one project and each `child` session one issue. The coordinator selects scope,
 reviews results, checks CI, and performs authorized integration. Internal
 subagents assist within those tasks and do not replace the independent child.
 
