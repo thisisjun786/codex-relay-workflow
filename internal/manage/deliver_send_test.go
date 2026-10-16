@@ -337,6 +337,155 @@ func TestDeliverReconcilesAPreDispatchRefusalIntoAResendUnderANewID(t *testing.T
 	}
 }
 
+// deliverAtCapSeed is the record a process left when it minted the last retry id the cap allows, saved it, and stopped before the send:
+// m1 at m1-r2, unsettled.
+func deliverAtCapSeed(t *testing.T, cfg *Config) {
+	t.Helper()
+	seed := deliverSeedRecord(deliverStateUnknown)
+	seed.RequestID = deliverRetryRequestID("m1", deliverRetryLimit)
+	if err := deliverSave(cfg, seed); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// deliverAttemptExcerpts are the receipt excerpts a record's attempts hold, oldest first.
+func deliverAttemptExcerpts(record deliverRecord) []string {
+	var excerpts []string
+	for _, a := range record.Attempts {
+		excerpts = append(excerpts, a.ReceiptExcerpt)
+	}
+	return excerpts
+}
+
+// CRW-1548: a retry id saved before its send and never sent is answered Unknown request_id on resume. With SendUnrecordedAtCap the
+// message goes out under that same id even when the cap is spent: the bridge holds nothing under it, so no attempt is duplicated, and no
+// retry is spent and no new id minted.
+func TestDeliverResumesAnUnsentRetryAtTheCap(t *testing.T) {
+	const capID = "m1-r2"
+	t.Run("send", func(t *testing.T) {
+		e := deliverSendTestEnv(t)
+		bridge, log := deliverFakeBridge(t, []map[string]any{
+			{"isError": true, "text": "Error executing tool get_operation: Unknown request_id"},
+			{"payload": map[string]any{"observation": "idle"}},
+			{"payload": map[string]any{"status": "accepted", "delivery": "turn_started"}},
+		})
+		cfg := deliverSendConfig(t, bridge)
+		deliverAtCapSeed(t, cfg)
+		out, err := Deliver(context.Background(), e, cfg, Message{LogicalID: "m1", Thread: "thread-1", Text: "hello", SendUnrecordedAtCap: true})
+		if err != nil || out.Class != deliverClassAccepted || out.RequestID != capID {
+			t.Fatalf("Deliver: %q %q %v, want accepted under %s", out.Class, out.RequestID, err, capID)
+		}
+		var sends []string
+		for _, call := range deliverSendCallsOf(t, log) {
+			if call["tool"] == deliverToolSend {
+				sends = append(sends, deliverSendRequestIDOf(t, call))
+			}
+		}
+		if len(sends) != 1 || sends[0] != capID {
+			t.Errorf("the sends were %v, want one under %s", sends, capID)
+		}
+		record := deliverRecordOf(t, cfg, "m1")
+		if record.State != deliverStateAccepted || record.RequestID != capID {
+			t.Errorf("the record settled %q under %q, want accepted under %s", record.State, record.RequestID, capID)
+		}
+		for _, excerpt := range deliverAttemptExcerpts(record) {
+			if strings.Contains(excerpt, "the retry cap is spent") {
+				t.Errorf("the resume spent the cap: %v", deliverAttemptExcerpts(record))
+			}
+		}
+		if excerpts := deliverAttemptExcerpts(record); len(excerpts) == 0 || excerpts[0] != "get_operation: the bridge never recorded this id; sending under it" {
+			t.Errorf("the attempts were %v, want the never-recorded resume first", excerpts)
+		}
+	})
+	t.Run("SteerOnly", func(t *testing.T) {
+		e := deliverSendTestEnv(t)
+		bridge, log := deliverFakeBridge(t, []map[string]any{
+			{"isError": true, "text": "Error executing tool get_operation: Unknown request_id"},
+			{"payload": map[string]any{"observation": "active", "activeTurnId": "turn-1"}},
+			{"payload": map[string]any{"status": "accepted", "delivery": "accepted_not_applied"}},
+		})
+		cfg := deliverSendConfig(t, bridge)
+		deliverAtCapSeed(t, cfg)
+		out, err := Deliver(context.Background(), e, cfg, Message{LogicalID: "m1", Thread: "thread-1", Text: "hello", SteerOnly: true, SendUnrecordedAtCap: true})
+		if err != nil || out.Class != deliverClassAccepted || out.RequestID != capID {
+			t.Fatalf("Deliver: %q %q %v, want accepted under %s", out.Class, out.RequestID, err, capID)
+		}
+		var steers []string
+		for _, call := range deliverSendCallsOf(t, log) {
+			if call["tool"] == deliverToolSteer {
+				steers = append(steers, deliverSendRequestIDOf(t, call))
+			}
+		}
+		if len(steers) != 1 || steers[0] != capID {
+			t.Errorf("the steers were %v, want one under %s", steers, capID)
+		}
+		if record := deliverRecordOf(t, cfg, "m1"); record.State != deliverStateAccepted || record.RequestID != capID || record.Tool != deliverToolSteer {
+			t.Errorf("the record %+v, want an accepted steer under %s", record, capID)
+		}
+	})
+	t.Run("second crash", func(t *testing.T) {
+		e := deliverSendTestEnv(t)
+		cfg := deliverSendConfig(t, "unused")
+		// The send step answers with the outbox record as it stood when the send arrived: the record saved before the send.
+		bridge, _ := deliverFakeBridge(t, []map[string]any{
+			{"isError": true, "text": "Error executing tool get_operation: Unknown request_id"},
+			{"payload": map[string]any{"observation": "idle"}},
+			{"read": deliverOutboxPath(cfg, "m1")},
+		})
+		cfg.Bridge.Binary = bridge
+		deliverAtCapSeed(t, cfg)
+		out, err := Deliver(context.Background(), e, cfg, Message{LogicalID: "m1", Thread: "thread-1", Text: "hello", SendUnrecordedAtCap: true})
+		if err != nil || out.Class != deliverClassUnknown || out.RequestID != capID {
+			t.Fatalf("Deliver: %q %q %v, want unknown under %s", out.Class, out.RequestID, err, capID)
+		}
+		if id, _ := out.Receipt["request_id"].(string); id != capID {
+			t.Errorf("the outbox named %q when the send went out, want %s", id, capID)
+		}
+		if state, _ := out.Receipt["state"].(string); state != deliverStateUnknown {
+			t.Errorf("the outbox held state %q when the send went out, want %s", state, deliverStateUnknown)
+		}
+		// The process stopped there and the bridge never recorded the send: the next resume sends under the same id once more.
+		restarted, restartLog := deliverFakeBridge(t, []map[string]any{
+			{"isError": true, "text": "Error executing tool get_operation: Unknown request_id"},
+			{"payload": map[string]any{"observation": "idle"}},
+			{"payload": map[string]any{"status": "accepted", "delivery": "turn_started"}},
+		})
+		cfg.Bridge.Binary = restarted
+		again, err := Deliver(context.Background(), e, cfg, Message{LogicalID: "m1", Thread: "thread-1", Text: "hello", SendUnrecordedAtCap: true})
+		if err != nil || again.Class != deliverClassAccepted || again.RequestID != capID {
+			t.Fatalf("the second resume: %q %q %v, want accepted under %s", again.Class, again.RequestID, err, capID)
+		}
+		for _, call := range deliverSendCallsOf(t, restartLog) {
+			if id := deliverSendRequestIDOf(t, call); id != "" && id != capID {
+				t.Errorf("the second resume used request id %q, want %s", id, capID)
+			}
+		}
+	})
+}
+
+// Guard (CRW-1548): without SendUnrecordedAtCap an at-cap retry id the bridge never recorded settles refused, and nothing is sent.
+func TestDeliverAtCapUnrecordedIDStaysRefusedWithoutTheFlag(t *testing.T) {
+	e := deliverSendTestEnv(t)
+	bridge, log := deliverFakeBridge(t, []map[string]any{
+		{"isError": true, "text": "Error executing tool get_operation: Unknown request_id"},
+		{"payload": map[string]any{"observation": "idle"}},
+		{"payload": map[string]any{"status": "accepted", "delivery": "turn_started"}},
+	})
+	cfg := deliverSendConfig(t, bridge)
+	deliverAtCapSeed(t, cfg)
+	out, err := Deliver(context.Background(), e, cfg, Message{LogicalID: "m1", Thread: "thread-1", Text: "hello"})
+	if err != nil || out.Class != deliverClassRefused {
+		t.Fatalf("Deliver: %q %v, want refused", out.Class, err)
+	}
+	if tools := deliverSendToolsOf(t, log); len(tools) != 1 || tools[0] != deliverToolOperation {
+		t.Errorf("the bridge saw %v, want only get_operation", tools)
+	}
+	excerpts := deliverAttemptExcerpts(deliverRecordOf(t, cfg, "m1"))
+	if len(excerpts) == 0 || excerpts[len(excerpts)-1] != "get_operation: nothing was sent; the retry cap is spent" {
+		t.Errorf("the attempts were %v, want the spent cap last", excerpts)
+	}
+}
+
 // The contract inputs of the issue body's table classify as the allowlist says, and an unknown
 // response neither deletes the record nor confirms that it was sent.
 func TestDeliverClassifiesTheContractInputs(t *testing.T) {
