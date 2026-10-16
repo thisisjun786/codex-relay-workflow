@@ -1144,8 +1144,9 @@ any row is written. `crw flow shadow` replays either from the trace and names th
   satisfies). An App Server call's turn text ends with the same section (after the task; the journaled input is the script's), and
   its thread also gets the entries in its shell: the thread/start and thread/fork carry them as the leaf config keys
   `shell_environment_policy.set.<NAME>`, which Codex applies key by key over the server's own overrides, so the policy the server
-  set stays. A thread resumed after an App Server restart gets the repository tools from its turn text, not from its shell
-  environment.
+  set stays. A thread resumed after an App Server restart, which the host rebuilds from its own configuration, gets them again in
+  its shell: the backend's thread/resume for the call's turn (or for following a turn an earlier process started) carries the
+  same leaf keys, taken from that call's run and kept nowhere (CRW-1559), and the turn text still names them.
 - The owner reports what it spawned with a dispatch report in `<state>/flow/<run>/inbox/` and reads the run's answer from
   `replies/` (the commands are the CLI's). The run binds a subagent only when the host shows it is the owner thread's
   (`parentThreadId`), carries the marker in a turn's first user message and is configured with the role's pair. The answers:

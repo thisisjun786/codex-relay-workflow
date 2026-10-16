@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"os"
 	"slices"
 	"strings"
@@ -120,5 +121,43 @@ return [a.status]`))
 		if row.Event == EvTurnRequested && rowStr(row.Data, "input") != "look around" {
 			t.Errorf("the journaled input is %q, want the script's", rowStr(row.Data, "input"))
 		}
+	}
+}
+
+// turnSpecRecorder is the fake backend with every turn's spec kept.
+type turnSpecRecorder struct {
+	*Fake
+	mu    sync.Mutex
+	specs []TurnSpec
+}
+
+func (r *turnSpecRecorder) RunTurn(ctx context.Context, spec TurnSpec) (TurnOutcome, error) {
+	r.mu.Lock()
+	r.specs = append(r.specs, spec)
+	r.mu.Unlock()
+	return r.Fake.RunTurn(ctx, spec)
+}
+
+// CRW-1559: an App Server call's turn carries the run's tools on its spec, so the backend can resume a thread the host loaded
+// cold with them; a run without tools gives none.
+func TestAppServerTurnSpecCarriesRepositoryTools(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		tools *RepositoryTools
+	}{{"with", testRepositoryTools()}, {"without", nil}} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			h.cfg.Tools = tc.tools
+			rec := &turnSpecRecorder{Fake: h.fake}
+			h.cfg.Backend = rec
+			value[[]string](t, h.run(`const a = await agent.call('look around', { agentType: 'explorer', label: 'exp' })
+return [a.status]`))
+			if len(rec.specs) != 1 {
+				t.Fatalf("%d turns, want 1", len(rec.specs))
+			}
+			if got := rec.specs[0].Tools; got != tc.tools {
+				t.Errorf("the turn's spec carries tools %+v, want the run's %+v", got, tc.tools)
+			}
+		})
 	}
 }

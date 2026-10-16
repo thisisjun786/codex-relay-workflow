@@ -143,7 +143,7 @@ func (s *stubHost) HarvestTurn(ctx context.Context, thread, turn, op string) (Tu
 	return TurnOutcome{}, false, errors.New("not implemented")
 }
 
-func (s *stubHost) AwaitTurn(ctx context.Context, thread, turn, op string) (TurnOutcome, error) {
+func (s *stubHost) AwaitTurn(ctx context.Context, thread, turn, op string, tools *RepositoryTools) (TurnOutcome, error) {
 	return TurnOutcome{}, errors.New("not implemented")
 }
 

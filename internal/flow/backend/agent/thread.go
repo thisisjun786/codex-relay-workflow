@@ -15,7 +15,8 @@ import (
 // only thing written to developerInstructions: the 0.154 Thread has no such member, so an identity put there could never
 // be read back. The run's repository tools (CRW-1488) are config overrides of their own leaf keys, shell_environment_policy.set.<NAME>
 // (engine.RepositoryTools.ShellOverrides), which the host applies key by key over the server's own overrides: the policy the server
-// set stays. Nil tools add none.
+// set stays. Nil tools add none. A thread the host loads cold again after a restart gets the same keys on the hold's thread/resume
+// (Backend.hold, CRW-1559).
 func (b *Backend) threadParams(role string, qa bool, cwd, sandbox string, pair engine.Pair, limit *int64, tools *engine.RepositoryTools) (map[string]any, error) {
 	if !filepath.IsAbs(cwd) {
 		return nil, &engine.RPCError{Message: "a thread starts in an absolute working directory, got " + cwd, CodexErrorInfo: "badRequest"}

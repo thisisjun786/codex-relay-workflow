@@ -8,7 +8,14 @@ import (
 	"net/url"
 )
 
-// ImportLegacy copies the supplied alias ledger atomically without replacing conflicts.
+// ImportLegacy copies the supplied alias ledger atomically without replacing conflicts. It runs on every start through
+// the alias while the alias ledger exists, so a row canonical already holds is compared, not copied:
+//   - an equal fingerprint and an equal receipt is the row already imported;
+//   - an equal fingerprint whose alias receipt is not_attempted is no conflict either, and canonical's row is kept as
+//     it is: an alias row that never dispatched cannot conflict with canonical's later state of the same request (a
+//     Retire of the imported reservation, or a Begin retry of it) (CRW-1561);
+//   - every other difference (another fingerprint, or an alias row past not_attempted whose receipt differs) is the
+//     refused conflict, and nothing of the import is kept.
 func (l *Ledger) ImportLegacy(ctx context.Context, path string) error {
 	u := url.URL{Scheme: "file", Path: path, RawQuery: "mode=ro"}
 	source, err := sql.Open("sqlite", u.String())
@@ -64,6 +71,11 @@ func (l *Ledger) ImportLegacy(ctx context.Context, path string) error {
 		other, err := json.Marshal(b)
 		if err != nil {
 			return err
+		}
+		if fp == r.fingerprint && string(equal) != string(other) {
+			if alias, ok := b.(map[string]any); ok && alias["status"] == "not_attempted" {
+				continue
+			}
 		}
 		if fp != r.fingerprint || string(equal) != string(other) {
 			//lint:ignore ST1005 a caller-visible message that is a sentence
