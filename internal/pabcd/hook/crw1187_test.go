@@ -65,9 +65,10 @@ func crw1187Write(t *testing.T, dir string, files map[string]string) {
 	}
 }
 
-// CRW-1187 item 1, end to end: python3 -m json.tool and -m py_compile import keyword (3.14, after it sets sys.path[0]) from the
-// working directory, and a keyword.py there writes the memory note. Both guards refuse the run with the file and python -I; the
-// run with -I is allowed and the interpreter does not import the shadow.
+// CRW-1187: json.tool and py_compile can import a working-directory keyword shadow.
+// CRW-1596 isolates the execution premise from site startup, which may cache stdlib
+// keyword before -m adds the cwd. Both original and -S commands retain guard checks;
+// the real -S run imports the shadow and -I keeps it out.
 func TestCRW1187StdlibShadowIsRefusedByBothGuardsEndToEnd(t *testing.T) {
 	python, bash := crw1178Python(t)
 	for _, module := range []string{"json.tool d.json", "py_compile app.py"} {
@@ -80,17 +81,40 @@ func TestCRW1187StdlibShadowIsRefusedByBothGuardsEndToEnd(t *testing.T) {
 			crw1187Write(t, cwd, map[string]string{"d.json": "{}\n", "app.py": "x = 1\n",
 				"keyword.py": "open(" + "'" + marker + "'" + ", 'w').write('shadow ran')\nkwlist = []\nsoftkwlist = []\niskeyword = frozenset().__contains__\nissoftkeyword = iskeyword\n"})
 			home := filepath.Dir(root)
+			// A site startup may cache stdlib keyword before -m adds the cwd.
+			// Give every host that condition instead of depending on its Python installation.
+			siteProbe := exec.Command(python, "-I", "-S", "-c", "import site; print(site.getusersitepackages())")
+			siteProbe.Dir = cwd
+			siteProbe.Env = []string{"HOME=" + home, "PATH=" + filepath.Dir(python) + ":/usr/bin:/bin", "TZ=UTC"}
+			siteRaw, err := siteProbe.CombinedOutput()
+			if err != nil {
+				t.Fatalf("user-site fixture: %v %s", err, siteRaw)
+			}
+			userSite := strings.TrimSpace(string(siteRaw))
+			if !filepath.IsAbs(userSite) || !strings.HasPrefix(userSite, home+string(os.PathSeparator)) {
+				t.Fatalf("user site %q is outside the isolated home %q", userSite, home)
+			}
+			crw1187Write(t, userSite, map[string]string{"crw1596_preload_keyword.pth": "import keyword\n"})
+			if got := crw1178Run(t, bash, python, cwd, home, `python3 -B -c "import sys; print('keyword' in sys.modules)"`); strings.TrimSpace(got) != "True" {
+				t.Fatalf("the fixture did not preload stdlib keyword: %s", got)
+			}
 			plain := "python3 -B -m " + module
 			crw1187Refused(t, cwd, env, plain, "keyword.py", "python -I")
 			crw1187Refused(t, cwd, env, "python3 -E -s -B -m "+module, "keyword.py", "python -I")
 			isolated := "python3 -I -B -m " + module
 			crw1187Allowed(t, cwd, env, isolated)
-			// The premise: the plain run imports the shadow, the -I run does not.
-			got := crw1178Run(t, bash, python, cwd, home, isolated)
+			// Disable site startup for the execution premise so a cached stdlib module
+			// cannot mask the working-directory shadow. -S alone does not isolate cwd.
+			plainNoSite := "python3 -S -B -m " + module
+			isolatedNoSite := "python3 -I -S -B -m " + module
+			crw1187Refused(t, cwd, env, plainNoSite, "keyword.py", "python -I")
+			crw1187Allowed(t, cwd, env, isolatedNoSite)
+			// The premise: the -S run imports the shadow, the -I -S run does not.
+			got := crw1178Run(t, bash, python, cwd, home, isolatedNoSite)
 			if _, err := os.Stat(marker); !os.IsNotExist(err) {
 				t.Fatalf("the -I run imported the shadow: %v %s", err, got)
 			}
-			got = crw1178Run(t, bash, python, cwd, home, plain)
+			got = crw1178Run(t, bash, python, cwd, home, plainNoSite)
 			if b, err := os.ReadFile(marker); err != nil || string(b) != "shadow ran" {
 				t.Fatalf("the shadow never ran, so this test proves nothing: %v %s", err, got)
 			}
