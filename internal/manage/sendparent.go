@@ -96,7 +96,10 @@ func sendParentDispatch(ctx context.Context, e *Env, cfg *Config, parsed sendPar
 		}
 		return sendParentReport(e, sendParentClassQueued, "", logicalID)
 	}
-	out, err := Deliver(ctx, e, cfg, Message{LogicalID: logicalID, Thread: parsed.thread, Text: string(text), Role: "parent", Settings: cfg.Settings.Parent})
+	// A summary notice's retry id that was saved and never sent is sent under that id on resume, also at the retry cap (CRW-1548):
+	// refusing it would raise a summary_notice_refused for a notice no send was spent on. Every other logical id keeps the cap.
+	out, err := Deliver(ctx, e, cfg, Message{LogicalID: logicalID, Thread: parsed.thread, Text: string(text), Role: "parent", Settings: cfg.Settings.Parent,
+		SendUnrecordedAtCap: summaryIsLogical(logicalID)})
 	if err != nil {
 		fmt.Fprintf(e.Stderr, "crw manage send-parent: error: %v\n", err)
 	}

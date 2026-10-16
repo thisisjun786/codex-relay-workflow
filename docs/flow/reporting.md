@@ -125,16 +125,26 @@ committed batch:
    and the same batch again is the entry the relay already holds (`Replayed`).
 2. Telling the child's thread is judged by rows, not by `Replayed`. For the newest entry, when it is owed (`pending`, `claimed` or
    `failed`) and no `summary_notice` row names its summary id, the run writes one (the summary id, the plan, the document, the logical id
-   `summary-<summary id>`); the row is written once for a summary id, whether the entry is new or the relay answered one it held.
+   `summary-<summary id>`, and `text`, the notice in this build's words); the row is written once for a summary id, whether the entry is
+   new or the relay answered one it held. The run reads the rows again after the write, so an intent another writer stored first is the
+   one whose text goes. An intent that only this second read finds, for an entry newer than the states the run read, is neither sent nor
+   settled: the next reconcile reads both again and sends it.
 3. Every `summary_notice` of the stream without a `summary_notice_settled` row is delivered: when its entry is confirmed or superseded
    first, the settlement is `obsolete` and nothing is sent (the new entry has an intent of its own); otherwise
    `crw manage send-parent --thread <child thread> --logical-id summary-<summary id>` carries the `summary_owed` notice (the summary
-   id, the plan, the document) and the settlement is `accepted` or `queued`. A refusal settles `refused` and the run escalates
-   (`summary_notice_refused`). An outcome nobody knows, or no answer, writes no settlement, and the next reconcile sends the notice again
+   id, the plan, the document) and the settlement is `accepted` or `queued`. Every send carries the `text` of the earliest
+   `summary_notice` row of the summary id, never words composed again: the manage outbox keys `summary-<summary id>` to the sha256 of
+   the first text it carried, so a retry in other words would be refused locally. A row without `text` (the rows of every build before
+   CRW-1548) is sent in the words those builds composed. Two writers that both wrote the intent send the earliest row's text; only a
+   second writer that sends before the earliest row is on record can still send other words. A refusal settles `refused` and the run
+   escalates (`summary_notice_refused`). An outcome nobody knows, or no answer, writes no settlement, and the next reconcile sends the notice again
    under the same logical id. A run that died between any two of these steps finds its place in the rows when it is resumed, so an owed
    entry is not left without a notice.
 
-The logical id makes the notice idempotent in `crw manage`. A direct send replays the settled record of the delivery ledger. The
+The logical id makes the notice idempotent in `crw manage`. A direct send replays the settled record of the delivery ledger. A retry id of
+a summary notice that was saved before its send and never sent (`get_operation` answers that the bridge never recorded it) is sent under that same
+id when the delivery resumes, also once the retry cap is spent: nothing is keyed to the id at the bridge, so no attempt is duplicated, and no
+retry is spent; any other logical id in that state settles refused. The
 `--queue` path of an id that starts with `summary-` writes the notice only when the parent queue holds none of it: not pending, not in a
 batch the pump pinned, not in `sent/`, not refused. The answer names the state (`state`: `pending`, `in_flight`, `sent`, `refused`) and
 the run records it as the settlement. The pump leaves a summary notice that `sent/` already holds out of its batches, and leaves a
@@ -259,7 +269,7 @@ All of these are rows of `flow_events` (`kind` is the first column of the table,
 | `message_delivery` | `message_id`, `kind`, `subject`, `result` (`accepted`, `refused`, `unknown`), `request_id`, `turn_id`, `observation`, `reason`, and `wake_id` for a step wake (written by the daemon as a `report_delivery` row is); the row's `node_id` is the escalation's node for an escalation |
 | `report_read` | `report_id`, `turn` |
 | `summary_document` | `document` |
-| `summary_notice` | `summary_id`, `plan`, `document`, `logical_id`, `run` |
+| `summary_notice` | `summary_id`, `plan`, `document`, `logical_id`, `run`, `text` (the notice every send of the summary id carries; absent in the rows of the builds before CRW-1548, which are sent in those builds' words) |
 | `summary_notice_settled` | `summary_id`, `plan`, `document`, `result` (`accepted`, `queued`, `obsolete`, `refused`), `request_id`, `logical_id`, `run` |
 | `escalation_notice` | `escalation_id`, `result`, `request_id`, `thread` (the thread the notice was addressed to) |
 | `completion_notice` | `notice_key`, `status` (the engine status), `result`, `request_id`, and with an outcome `state`, `reason` and `lanes` (`node:state/reason` of each lane that did not land) |

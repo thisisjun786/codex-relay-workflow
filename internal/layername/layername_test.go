@@ -146,8 +146,10 @@ func TestLayernameFindsBareRoleWords(t *testing.T) {
 
 // TestFindSkipsCommandWords is D3 of plan r3 (CRW-1477): a role word that is a crw command name 1.0
 // keeps is no layer, so Find does not count it. Two forms are exempt and nothing wider: the command word
-// right after `crw <family> ` (crw manage supervisor), and the skill command parent-title next to
-// parent-class. Running text around a command, or another word built on parent-, still counts.
+// right after `crw <family> ` when the whole command token is one of that family's command names
+// (crw manage supervisor, crw relay supervisor-stage), and the skill command parent-title next to
+// parent-class. Running text around a command, a token that is no command of the family (crw relay
+// supervisor-authored, crw manage supervisor-authored), or another word built on parent-, still counts.
 func TestFindSkipsCommandWords(t *testing.T) {
 	cases := []struct {
 		name string
@@ -162,6 +164,9 @@ func TestFindSkipsCommandWords(t *testing.T) {
 		{"choice list", "{hook-probe,parent-title,start-policy}", nil},
 		{"choose from", "choose from issue-ready, parent-title", nil},
 		{"skill command", "crw skill parent-title replay", nil},
+		{"relay command with flags", "crw relay supervisor-stage --event x", nil},
+		{"relay standing command", "crw relay supervisor-standing", nil},
+		{"relay report-recorded command", "crw relay supervisor-report-recorded", nil},
 
 		// Still hits.
 		{"running text", "the supervisor said", []Hit{{"supervisor", 4}}},
@@ -178,6 +183,13 @@ func TestFindSkipsCommandWords(t *testing.T) {
 		{"parent-made", "parent-made", []Hit{{"parent", 0}}},
 		{"section after the command", "crw manage supervisor: error: the supervisor section", []Hit{{"supervisor", 34}}},
 		{"the supervisor section", "the supervisor section", []Hit{{"supervisor", 4}}},
+
+		// Still hits: the whole command token is checked against the family's command names
+		// (CRW-1546), so a word built on a command name is no command.
+		{"manage word built on the command", "crw manage supervisor-authored", []Hit{{"supervisor", 11}}},
+		{"relay word built on supervisor", "crw relay supervisor-authored", []Hit{{"supervisor", 10}}},
+		{"relay word built on parent", "crw relay parent-titled", []Hit{{"parent", 10}}},
+		{"bare relay supervisor", "crw relay supervisor", []Hit{{"supervisor", 10}}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

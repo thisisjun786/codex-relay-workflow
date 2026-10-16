@@ -135,7 +135,7 @@ func (n NoticeChannel) StageNotice(ctx context.Context, notice map[string]any) (
 			}
 		}
 		if !same {
-			if err = n.journal(ctx, "supervisor_message_restated", id, map[string]any{"at": "staging", "reason": "what the notification says about its fault moved and nothing had been sent"}); err != nil {
+			if err = n.journal(ctx, "supervisor_message_restated", id, map[string]any{"at": "staging", "reason": "what the notification says about its fault, or the words it is written in, moved and nothing had been sent"}); err != nil {
 				return err
 			}
 		}
