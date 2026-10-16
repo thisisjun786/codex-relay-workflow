@@ -486,6 +486,56 @@ func TestDeliverAtCapUnrecordedIDStaysRefusedWithoutTheFlag(t *testing.T) {
 	}
 }
 
+// Guard (CRW-1548): SendUnrecordedAtCap sends at the cap only an id the bridge never recorded. An at-cap id that get_operation answers
+// with a not_delivered receipt is recorded there, so it settles refused with the cap spent, and nothing goes out under it, then or on the
+// next delivery of the message.
+func TestDeliverAtCapNotDeliveredIDStaysRefusedWithTheFlag(t *testing.T) {
+	e := deliverSendTestEnv(t)
+	bridge, log := deliverFakeBridge(t, []map[string]any{
+		{"payload": map[string]any{"status": "failed", "delivery": "not_delivered"}},
+		{"payload": map[string]any{"observation": "idle"}},
+		{"payload": map[string]any{"status": "accepted", "delivery": "turn_started"}},
+	})
+	cfg := deliverSendConfig(t, bridge)
+	deliverAtCapSeed(t, cfg)
+	capID := deliverRetryRequestID("m1", deliverRetryLimit)
+	m := Message{LogicalID: "m1", Thread: "thread-1", Text: "hello", SendUnrecordedAtCap: true}
+	out, err := Deliver(context.Background(), e, cfg, m)
+	if err != nil || out.Class != deliverClassRefused || out.RequestID != capID {
+		t.Fatalf("Deliver: %q %q %v, want refused under %s", out.Class, out.RequestID, err, capID)
+	}
+	if tools := deliverSendToolsOf(t, log); len(tools) != 1 || tools[0] != deliverToolOperation {
+		t.Errorf("the bridge saw %v, want only get_operation", tools)
+	}
+	record := deliverRecordOf(t, cfg, "m1")
+	if record.State != deliverStateRefused || record.RequestID != capID {
+		t.Errorf("the record settled %q under %q, want refused under %s", record.State, record.RequestID, capID)
+	}
+	excerpts := deliverAttemptExcerpts(record)
+	if len(excerpts) == 0 || excerpts[len(excerpts)-1] != "get_operation: nothing was sent; the retry cap is spent" {
+		t.Errorf("the attempts were %v, want the spent cap last", excerpts)
+	}
+	for _, excerpt := range excerpts {
+		if excerpt == "get_operation: the bridge never recorded this id; sending under it" {
+			t.Errorf("the recorded id was resumed as never recorded: %v", excerpts)
+		}
+	}
+	again, againLog := deliverFakeBridge(t, []map[string]any{
+		{"payload": map[string]any{"observation": "idle"}},
+		{"payload": map[string]any{"status": "accepted", "delivery": "turn_started"}},
+	})
+	cfg.Bridge.Binary = again
+	replay, err := Deliver(context.Background(), e, cfg, m)
+	if err != nil || replay.Class != deliverClassRefused || replay.RequestID != capID {
+		t.Fatalf("the next delivery: %q %q %v, want the refusal under %s replayed", replay.Class, replay.RequestID, err, capID)
+	}
+	for _, call := range deliverSendCallsOf(t, againLog) {
+		if call["tool"] == deliverToolSend || call["tool"] == deliverToolSteer {
+			t.Errorf("the next delivery sent %v under %q", call["tool"], deliverSendRequestIDOf(t, call))
+		}
+	}
+}
+
 // The contract inputs of the issue body's table classify as the allowlist says, and an unknown
 // response neither deletes the record nor confirms that it was sent.
 func TestDeliverClassifiesTheContractInputs(t *testing.T) {
