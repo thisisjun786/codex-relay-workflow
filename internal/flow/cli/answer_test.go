@@ -173,6 +173,8 @@ func TestAnswerRefusesOtherNode(t *testing.T) {
 		{"another run", func(b *Binding, _ *decisions.Record, _ *decisions.Answer) { b.Run = "run-z" }, nil, RefusedOtherRun},
 		{"a question the run never asked", func(b *Binding, _ *decisions.Record, _ *decisions.Answer) { b.Question = "esc_ghost" }, []string{"--question", "esc_ghost"}, RefusedNoQuestion},
 		{"a record that binds no question", func(b *Binding, r *decisions.Record, _ *decisions.Answer) { b.Source = "supervisor_obligation" }, nil, RefusedBadBinding},
+		// a report source binds through a report row of the run (CRW-1574): a ref that is no report of the run binds nothing
+		{"a report source the run has no report of", func(b *Binding, r *decisions.Record, _ *decisions.Answer) { b.Source = SourceReport }, nil, RefusedBadBinding},
 	}
 	for i, tc := range cases {
 		id := a.answered(t, "ud-node-"+itoa(i), tc.mutate)
