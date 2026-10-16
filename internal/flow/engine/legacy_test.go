@@ -81,3 +81,141 @@ func TestRunRefusesTheResumeOfAnIssueLaneWorkflow(t *testing.T) {
 		t.Errorf("recover of a legacy run: %v, rows %d -> %d", err, before, len(j.Events()))
 	}
 }
+
+// The rows of the old reviewer paths (CRW-1429): helpers of the predicate tests below.
+func startedRow(run, workflow string) Event {
+	return Event{RunID: run, Kind: KindRun, Event: "started", Data: map[string]any{"workflow": workflow}}
+}
+
+func opRow(run, callID, path string, position int, op string, data map[string]any) Event {
+	return Event{RunID: run, Kind: KindCall, CallID: callID, Path: path, Position: position, Op: op, Label: op, Event: EvCompleted, Data: data}
+}
+
+func agentRow(run, callID, path string, position int, role, node string) Event {
+	return Event{RunID: run, Kind: KindCall, CallID: callID, Path: path, Position: position, Op: "agent", Label: role + ":" + node, Event: EvPrepared, Data: map[string]any{"role": role, "node": node}}
+}
+
+func openedRow(run, path string, position int, label, callID string) Event {
+	return Event{RunID: run, Kind: KindFlow, Path: path, Position: position, Op: "workflow", Label: label, Event: "workflow_opened", Data: map[string]any{"call_id": callID, "script_digest": "d"}}
+}
+
+// TestLegacyReviewerRunNamesTheRetiredRow (CRW-1429): a run whose journal holds a row of the retired node reviewer or reviewer-final path
+// is a legacy run, and the reason names the row (its op or role, its call id, its node or milestone), the retired path and CRW-1429.
+// A crw.review or crw.reviewerFinal row is one in any run; a reviewer or reviewer-final agent call and a spawn decision of a retired
+// rule are one only where an old lane wrote them: the whole run when it was started as a lane workflow, else the subtree of a lane it
+// nested with workflow() (by name or by {scriptPath}), whose reason also names the nested label and its workflow_opened call.
+func TestLegacyReviewerRunNamesTheRetiredRow(t *testing.T) {
+	const run = "run-1"
+	nested := nestedPathID(RootPath, 3)
+	for name, tc := range map[string]struct {
+		events []Event
+		want   []string
+	}{
+		"a crw.review row": {[]Event{startedRow(run, "project-lane"), opRow(run, "c_rev", RootPath, 7, OpLegacyReview, map[string]any{"node": "A", "call": "c_r"})},
+			[]string{OpLegacyReview, "c_rev", "node A", "the retired node reviewer path (CRW-1429)", "which the current project lane does not replay", legacyReadOnly}},
+		"a crw.review row of a custom run": {[]Event{startedRow(run, "custom"), opRow(run, "c_rev", RootPath, 2, OpLegacyReview, map[string]any{"node": "B"})},
+			[]string{OpLegacyReview, "c_rev", "node B", "CRW-1429"}},
+		"a crw.reviewerFinal row": {[]Event{startedRow(run, "custom"), opRow(run, "c_revf", RootPath, 4, OpLegacyReviewerFinal, map[string]any{"milestone": "M1"})},
+			[]string{OpLegacyReviewerFinal, "c_revf", "milestone M1", "the retired reviewer-final path (CRW-1429)"}},
+		"a reviewer agent call of the project lane, before its crw.review row": {[]Event{startedRow(run, "project-lane"), agentRow(run, "c_r", RootPath, 7, "reviewer", "A")},
+			[]string{"reviewer agent call", "c_r", "node A", "the retired node reviewer path (CRW-1429)"}},
+		"a reviewer-final agent call of the land-head workflow": {[]Event{startedRow(run, "land-head"), agentRow(run, "c_rf", RootPath, 9, "reviewer-final", "")},
+			[]string{"reviewer-final agent call", "c_rf", "the retired reviewer-final path (CRW-1429)"}},
+		"a decision of a retired rule": {[]Event{startedRow(run, "night-batch"), opRow(run, "c_sp", RootPath, 6, opSpawnDecision, map[string]any{"rule": "SP-REV-1", "node": "A", "role": "reviewer"})},
+			[]string{opSpawnDecision, "SP-REV-1", "c_sp", "node A", "CRW-1429"}},
+		"the decision and the reviewer call under a nested project lane": {[]Event{startedRow(run, "custom"), openedRow(run, RootPath, 3, "workflow:project-lane", "c_wf"),
+			opRow(run, "c_sp", nested, 12, opSpawnDecision, map[string]any{"rule": "SP-REV-1", "node": "A", "role": "reviewer"}),
+			agentRow(run, "c_r", nested, 13, "reviewer", "A")},
+			[]string{"reviewer agent call", "c_r", "node A", "workflow:project-lane", "c_wf", "CRW-1429"}},
+		"a reviewer call under a lane nested by its script path": {[]Event{startedRow(run, "custom"), openedRow(run, RootPath, 3, "workflow:lanes/project-lane.js", "c_wf"),
+			agentRow(run, "c_r", nested+"/4:A", 1, "reviewer", "A")},
+			[]string{"reviewer agent call", "c_r", "workflow:lanes/project-lane.js", "c_wf"}},
+		"a decision of the retired evidence explorer under a nested night batch": {[]Event{startedRow(run, "custom"), openedRow(run, RootPath, 3, "workflow:night-batch", "c_wf"),
+			opRow(run, "c_sp", nested, 2, opSpawnDecision, map[string]any{"rule": "SP-EXPL-3", "node": "A"})},
+			[]string{"SP-EXPL-3", "c_sp", "workflow:night-batch"}},
+	} {
+		got := LegacyReviewerRun(tc.events, run)
+		for _, w := range tc.want {
+			if !strings.Contains(got, w) {
+				t.Errorf("%s: %q does not name %q", name, got, w)
+			}
+		}
+		if j := LegacyJournal(tc.events, run); j != got {
+			t.Errorf("%s: LegacyJournal %q, LegacyReviewerRun %q", name, j, got)
+		}
+		if r := LegacyRun(tc.events, run, "custom"); r != got {
+			t.Errorf("%s: LegacyRun %q, LegacyReviewerRun %q", name, r, got)
+		}
+	}
+	// a legacy `child` session run is named as one first
+	both := []Event{startedRow(run, "project-lane"), opRow(run, "c_child", RootPath, 2, OpLegacyReleaseChild, map[string]any{"node": "A"}), opRow(run, "c_rev", RootPath, 3, OpLegacyReview, map[string]any{"node": "B"})}
+	if got := LegacyJournal(both, run); !strings.Contains(got, "legacy `child` session run") {
+		t.Errorf("a run with both: %q", got)
+	}
+}
+
+// TestCurrentLaneRunIsNotTakenForALegacyReviewerRun (CRW-1429): what the current lane writes is no legacy row (the unit check, the
+// critic, the close's audit, archive and report), and neither is a reviewer call or a crw.archive of a user workflow outside any
+// nested lane, a reviewer call under a nested workflow that is not a lane, or a row of another run.
+func TestCurrentLaneRunIsNotTakenForALegacyReviewerRun(t *testing.T) {
+	const run = "run-1"
+	for name, events := range map[string][]Event{
+		"the current project lane": {startedRow(run, "project-lane"), agentRow(run, "c_crit", RootPath, 3, "critic", ""),
+			opRow(run, "c_sp", RootPath, 4, opSpawnDecision, map[string]any{"rule": "SP-AUD-1", "role": "critic"}),
+			opRow(run, "c_uc", RootPath+"/9:A", 5, "crw.unitCheck", map[string]any{"node": "A", "role": "unit-check"}),
+			opRow(run, "c_aud", RootPath, 20, "crw.audit", map[string]any{"milestone": "M1"}),
+			opRow(run, "c_arc", RootPath, 21, OpLegacyArchive, map[string]any{"milestone": "M1"}),
+			opRow(run, "c_up", RootPath, 22, "crw.reportUp", map[string]any{"milestone": "M1"})},
+		"a custom with a direct archive and a reviewer call": {startedRow(run, "custom"), agentRow(run, "c_r", RootPath, 1, "reviewer", "A"),
+			opRow(run, "c_sp", RootPath, 2, opSpawnDecision, map[string]any{"rule": "SP-REV-1", "role": "reviewer"}),
+			opRow(run, "c_arc", RootPath, 3, OpLegacyArchive, map[string]any{"milestone": "M1"})},
+		"a reviewer call under a nested helper": {startedRow(run, "custom"), openedRow(run, RootPath, 3, "workflow:helper", "c_wf"),
+			agentRow(run, "c_r", nestedPathID(RootPath, 3), 1, "reviewer", "A")},
+		"a reviewer call under a helper nested by its script path": {startedRow(run, "custom"), openedRow(run, RootPath, 3, "workflow:lanes/helper.js", "c_wf"),
+			agentRow(run, "c_r", nestedPathID(RootPath, 3), 1, "reviewer-final", "")},
+		"a reviewer call beside a nested lane, on a path the lane's is a prefix of": {startedRow(run, "custom"), openedRow(run, RootPath, 3, "workflow:project-lane", "c_wf"),
+			openedRow(run, RootPath, 30, "workflow:helper", "c_wf2"), agentRow(run, "c_r", nestedPathID(RootPath, 30), 1, "reviewer", "A")},
+		"another run's rows": {startedRow(run, "project-lane"), startedRow("run-2", "project-lane"),
+			opRow("run-2", "c_rev", RootPath, 2, OpLegacyReview, map[string]any{"node": "A"}), agentRow("run-2", "c_r", RootPath, 3, "reviewer", "A")},
+	} {
+		if got := LegacyJournal(events, run); got != "" {
+			t.Errorf("%s: refused %q", name, got)
+		}
+	}
+}
+
+// TestNestedPathIDIsTheEnginesChildPath (CRW-1429): the lane scope of a nested workflow reads its rows by nestedPathID, so the engine
+// writes the rows of a workflow() child under nestedPathID(the workflow_opened row's path, its position), and a join item's path is
+// still childID's.
+func TestNestedPathIDIsTheEnginesChildPath(t *testing.T) {
+	h := newHarness(t)
+	child, err := script.Load(script.Source{Name: "kid.js", Text: []byte("export const meta = { name: 'kid' }\nconst r = await agent.call('child work', { agentType: 'explorer', label: 'child-call' })\nawait parallel([async () => agent.call('item', { agentType: 'explorer', label: 'item-call' })], { keys: ['x'] })\nreturn r\n")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.cfg.Workflows = func(string, string) (*script.Program, error) { return child, nil }
+	h.run("await agent.call('first', { agentType: 'explorer', label: 'first' })\nreturn await workflow('kid')")
+	var open *Event
+	for _, ev := range h.journal.Events() {
+		if ev.Event == "workflow_opened" {
+			ev := ev
+			open = &ev
+		}
+	}
+	if open == nil {
+		t.Fatal("no workflow_opened row")
+	}
+	nested := nestedPathID(open.Path, open.Position)
+	if want := (&pathState{id: open.Path}).childID(open.Position, "workflow"); nested != want {
+		t.Errorf("nestedPathID %q, childID %q", nested, want)
+	}
+	paths := map[string]string{}
+	for _, ev := range h.journal.Events() {
+		if ev.Kind == KindCall && ev.Op == "agent" && ev.Event == EvPrepared {
+			paths[ev.Label] = ev.Path
+		}
+	}
+	if paths["child-call"] != nested || paths["item-call"] != (&pathState{id: nested}).childID(2, "x") || paths["first"] != RootPath {
+		t.Errorf("the child's rows are on %v, nestedPathID is %q", paths, nested)
+	}
+}

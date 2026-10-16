@@ -1,8 +1,11 @@
 package workflows
 
 import (
+	"regexp"
 	"slices"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 )
 
 // Every built-in workflow loads: its header parses, its helpers resolve inside the embedded library and the strict-schema check of
@@ -35,5 +38,27 @@ func TestBuiltinWorkflowsHaveNoIssueLane(t *testing.T) {
 	}
 	if _, err := Load("issue-lane"); err == nil {
 		t.Errorf("the issue-lane workflow still loads")
+	}
+}
+
+// TestLegacyLaneWorkflowsAreTheLaneBuiltins (CRW-1429): the lane scope of the legacy refusal (engine.LegacyLaneWorkflows) is the built-in
+// workflows that ran the lane library: each name is a built-in, and every built-in whose source imports crw:lib/lane or crw:lib/close,
+// or nests the project lane, is in the list.
+func TestLegacyLaneWorkflowsAreTheLaneBuiltins(t *testing.T) {
+	names := Names()
+	for _, name := range engine.LegacyLaneWorkflows {
+		if !slices.Contains(names, name) {
+			t.Errorf("engine.LegacyLaneWorkflows names %q, which is no built-in workflow (%v)", name, names)
+		}
+	}
+	lane := regexp.MustCompile(`from 'crw:lib/(lane|close)'|workflow\('project-lane'`)
+	for _, name := range names {
+		src, err := Source(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if lane.Match(src) && !slices.Contains(engine.LegacyLaneWorkflows, name) {
+			t.Errorf("%s runs the lane library and is not in engine.LegacyLaneWorkflows %v", name, engine.LegacyLaneWorkflows)
+		}
 	}
 }
