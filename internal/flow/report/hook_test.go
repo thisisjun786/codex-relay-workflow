@@ -350,8 +350,8 @@ func TestRunFinishedDoesNotSendARecordedCompletionAgain(t *testing.T) {
 	}
 }
 
-// A node sized bundle_split escalates size_split with the ask bundle_split_request (CRW-1437): a bundle split is the parent's to make, so
-// the notice names that request (a bundle split of the node's issue, read from the run's plan) and how the child raises it (`crw flow
+// A node sized bundle_split escalates size_split with the ask bundle_split_request (CRW-1437): a bundle split is the 부모's to make, so
+// the notice names that request (a bundle split of the node's issue, read from the run's plan) and how the 자식 raises it (`crw flow
 // report-up --kind project_decision_request`), in place of the generic line that the run waits for a decision. Another ask keeps that
 // line; a node the plan does not hold is named by its id, and the notice still goes out.
 func TestBundleSplitNoticeNamesTheParentRequest(t *testing.T) {
@@ -379,8 +379,8 @@ func TestBundleSplitNoticeNamesTheParentRequest(t *testing.T) {
 		"run escalation run=" + testRun + " node=A reason=size_split",
 		"two packages, about 1500 lines",
 		"bundle split of issue CRW-A (node A)",
-		"the parent",
-		"`crw flow report-up --kind project_decision_request --run " + testRun + " --evidence FILE`",
+		"is the 부모's to make",
+		"The 자식 (the project session) asks the 부모 for it with `crw flow report-up --kind project_decision_request --run " + testRun + " --evidence FILE`",
 		"(bundle_split_request)",
 	} {
 		if !strings.Contains(text, want) {

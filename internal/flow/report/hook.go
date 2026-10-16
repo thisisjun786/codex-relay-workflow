@@ -242,7 +242,7 @@ func (h *RunHook) document() string {
 // about each escalation row of the run that was not told yet. The escalation_notice row names the thread the notice was addressed to.
 // An escalation that asks bundle_split_request (a node sized for a bundle split, CRW-1437) names the request in place of the line that
 // the run waits for a decision: a bundle split of the node's issue (read from the run's plan, else the node is named by its id) is the
-// parent's to make, and the child asks for it with `crw flow report-up --kind project_decision_request`.
+// 부모's to make, and the 자식 asks for it with `crw flow report-up --kind project_decision_request`.
 func (h *RunHook) escalations(ctx context.Context, run RunInfo) error {
 	const askBundleSplit = "bundle_split_request"
 	var issues map[string]string // node -> issue of the run's plan, read once and only for a bundle split
@@ -288,7 +288,7 @@ func (h *RunHook) escalations(ctx context.Context, run RunInfo) error {
 			if issue := issueOf(node); issue != "" {
 				what = "issue " + issue + " (node " + node + ")"
 			}
-			text += "\nThe node is sized for a bundle split: a bundle split of " + what + " is the parent's to make. The child asks the parent for it with `crw flow report-up --kind project_decision_request --run " + h.Run + " --evidence FILE` (" + ask + ")."
+			text += "\nThe node is sized for a bundle split: a bundle split of " + what + " is the 부모's to make (the repository session). The 자식 (the project session) asks the 부모 for it with `crw flow report-up --kind project_decision_request --run " + h.Run + " --evidence FILE` (" + ask + ")."
 		default:
 			text += "\nThe run waits for your decision (" + ask + ")."
 		}
