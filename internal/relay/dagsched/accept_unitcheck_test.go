@@ -226,27 +226,23 @@ func TestAgentReadsTheDeclaredFamilyOfAUnitCheckCanonically(t *testing.T) {
 	}
 }
 
-// CRW-1459: the check of one sub-task of a split node (its detail names the sub) judged that sub-task alone, not the node's criteria, so it
-// is no basis and withdraws nothing, whatever it ruled: with only such a check on the tree of the head the node is refused reviewer_missing,
-// and the verified check of the node's whole change on the head accepts it, also when a sub-task's check that asked for changes comes after.
-func TestAgentTakesNoSubTaskCheckAsTheBasis(t *testing.T) {
+// CRW-1459: a split node's sub-tasks are committed with no unit check between them, and the node's acceptance rests on the one check of
+// its whole change, the committed check that names the head: with no such check the node is refused reviewer_missing (its checkpoint
+// commits were never checked), and the verified check of the whole change on the head accepts it.
+func TestAgentTakesTheCheckOfTheWholeChangeAsTheBasis(t *testing.T) {
 	t.Parallel()
 	one := func(n string) agentSpec { return agentSpec{name: n, files: map[string]string{n + ".txt": n + "\n"}} }
-	k := newAgentKit(t, one("alone"), one("whole"))
+	k := newAgentKit(t, one("unchecked"), one("whole"))
 	criteria := releaseCriteriaDigest()
 
-	k.author("alone", authorModel)
-	k.unitCheck(unitCheckCall{node: "alone", res: passingUnitCheck(), tree: k.treeOf(k.heads["alone"]), criteria: criteria, sub: "two"})
-	_, err := k.accept("alone")
-	wantAgentRefusal(t, "a lone check of a sub-task", err, contract.RefusalDispositionConflict, ReviewerMissing)
+	k.author("unchecked", authorModel)
+	_, err := k.accept("unchecked")
+	wantAgentRefusal(t, "a split node with no check of its whole change", err, contract.RefusalDispositionConflict, ReviewerMissing)
 
 	k.author("whole", authorModel)
 	call := k.unitCheck(unitCheckCall{node: "whole", res: passingUnitCheck(), commit: k.heads["whole"], tree: k.treeOf(k.heads["whole"]), criteria: criteria})
-	needs := passingUnitCheck()
-	needs.Verdict = reviewadapter.VerdictNeedsChanges
-	k.unitCheck(unitCheckCall{node: "whole", res: needs, tree: k.treeOf(k.heads["whole"]), criteria: criteria, sub: "two"})
 	if _, err := k.accept("whole"); err != nil {
-		t.Fatalf("accept on the check of the whole change under a later check of a sub-task: %v", err)
+		t.Fatalf("accept on the check of the whole change: %v", err)
 	}
 	if a := k.currentAcceptance("whole").Agent; a.ReviewerCallID != call {
 		t.Fatalf("the acceptance stands on %s, want the check of the whole change %s", a.ReviewerCallID, call)

@@ -428,9 +428,9 @@ func TestRunSkillNamesTheBundleSplitRequest(t *testing.T) {
 }
 
 // A node the architect sized `split` with sub-tasks (CRW-1459) is released to one executor: the sub-tasks run in their order on the node's one
-// executor thread, each next one a `subtask:<node>:<tier>:s<k>` turn of that thread; each before the last is unit-checked and committed as a
-// checkpoint against its own regions, with no verification and no land; the last goes through the node's commit, verification and land, so the
-// node is judged once. A sub-task that reported failed is named in the next packet and judged with the node; a fresh thread starts at the
+// executor thread, each next one a `subtask:<node>:<tier>:s<k>` turn of that thread; each before the last is committed as a checkpoint against
+// its own regions, with no unit check, no verification and no land; the last goes through the node's commit, verification, the one check of
+// the node's whole change and land, so the node is judged once. A sub-task that reported failed is named in the next packet and judged with the node; a fresh thread starts at the
 // node's last commit and its packet at the first sub-task not done. A split with no sub-tasks (a DESIGN recorded before S-1) still goes up as
 // `size_split`. crw-run, the task packet page and the two flow documents say so, and none of them still sends every split up.
 
@@ -442,9 +442,8 @@ func splitRunProblems(section string) []string {
 		`(?i)sized \x60split\x60[^.]*sub-tasks[^.]*released to one executor`,
 		`(?i)sub-tasks run in their order on the node's one executor thread`,
 		"`subtask:<node>:<tier>:s<k>`",
-		`(?i)before the last[^.]*unit[- ]check[^.]*checkpoint[^.]*no verification and no land`,
+		`(?i)before the last[^.]*checkpoint[^.]*no unit check, no verification and no land`,
 		`(?i)judged once`,
-		`(?i)unit-checked against that sub-task alone`,
 		`(?i)check of the node's whole change[^.]*every criterion of the node[^.]*acceptance rests`,
 		`(?i)reported failed[^.]*named in the next[^.]*judged with the node`,
 		`(?i)fresh thread[^.]*node's last commit[^.]*first sub-task not done`,
@@ -456,8 +455,15 @@ func splitRunProblems(section string) []string {
 	if m := regexp.MustCompile(`(?i)sizes as a split goes up as|the child divides the plan's node`).FindString(flat); m != "" {
 		problems = append(problems, "the section still sends every split up ("+m+")")
 	}
+	if m := splitSubTaskCheck.FindString(flat); m != "" {
+		problems = append(problems, "the section still checks each sub-task ("+m+")")
+	}
 	return problems
 }
+
+// splitSubTaskCheck is wording of a unit check of each sub-task alone, which the run does not make: a split node is checked once, on its
+// whole change (a check of each sub-task is CRW-1564's).
+var splitSubTaskCheck = regexp.MustCompile(`(?i)unit-checked against that sub-task alone|later sub-tasks are not due yet|later ones as not due yet|opts\.sub\b|row records the \x60sub\x60`)
 
 // splitDocProblems judges a flow document (script.md, journal.md) for the checkpoint commits of a split node.
 func splitDocProblems(text string) []string {
@@ -473,6 +479,9 @@ func splitDocProblems(text string) []string {
 	}
 	if m := regexp.MustCompile(`(?i)a node sized for a child or a split is not released to an executor`).FindString(flat); m != "" {
 		problems = append(problems, "the document still releases no split to an executor ("+m+")")
+	}
+	if m := splitSubTaskCheck.FindString(flat); m != "" {
+		problems = append(problems, "the document still checks each sub-task ("+m+")")
 	}
 	return problems
 }
@@ -507,19 +516,23 @@ func TestRunSkillSaysASplitRunsSubTasksOnOneExecutor(t *testing.T) {
 			t.Errorf("%s:\n  %s", doc, strings.Join(p, "\n  "))
 		}
 	}
-	// The pages name what the lane really does: the sub-task turn's label and the checkpoint commit against the sub-task's regions.
+	// The pages name what the lane really does: the sub-task turn's label, the checkpoint commit against the sub-task's regions, a branch
+	// of its own for a split node's receipts and the committed check of the whole change; no check names a sub-task.
 	lane := readRepoText(t, "internal/flow/workflows/project-lane.js")
 	for _, want := range []string{"label: 'subtask:' + node + ':' + tier + ':s'", "crw.commit(node, ex, sub.edit_regions)", "!(plan.sub_tasks && plan.sub_tasks.length)",
-		"if (sub) opts.sub = sub.id", "commit: head, base: ci.base"} {
+		"} else if (subs.length) {", "commit: head, base: ci.base"} {
 		if !strings.Contains(lane, want) {
 			t.Errorf("project-lane.js no longer has %s; revisit crw-run, task-packet.md, script.md and journal.md", want)
 		}
+	}
+	if strings.Contains(lane, "opts.sub") {
+		t.Errorf("project-lane.js checks a sub-task alone (opts.sub); revisit crw-run, script.md and journal.md")
 	}
 
 	t.Run("fixture: a section without the sub-task loop is reported", func(t *testing.T) {
 		good := "## Run a milestone with a flow run\n\n" +
 			"A node the architect sized `split` with sub-tasks is released to one executor. Its sub-tasks run in their order on the node's one executor thread: the build does the first, each next one is a `subtask:<node>:<tier>:s<k>` turn of the same thread. " +
-			"A sub-task before the last is unit-checked against that sub-task alone and then committed as a checkpoint against its own regions, with no verification and no land. " +
+			"A sub-task before the last is committed as a checkpoint against its own regions, with no unit check, no verification and no land. " +
 			"The last goes through the node's commit, verification, the check of the node's whole change against every criterion of the node, on which the acceptance rests, and land, so the node is judged once. A sub-task that reported failed is named in the next packet and judged with the node. " +
 			"A fresh thread starts at the node's last commit, and its packet at the first sub-task not done. A split with no sub-tasks still goes up as `size_split`. " +
 			"This thread sends no task packet for a sub-task.\n"
@@ -533,11 +546,15 @@ func TestRunSkillSaysASplitRunsSubTasksOnOneExecutor(t *testing.T) {
 			},
 			"no label": func(s string) string { return strings.Replace(s, "`subtask:<node>:<tier>:s<k>`", "next", 1) },
 			"verified": func(s string) string {
-				return strings.Replace(s, "with no verification and no land", "verified and landed", 1)
+				return strings.Replace(s, "with no unit check, no verification and no land", "verified and landed", 1)
 			},
 			"judged often": func(s string) string { return strings.Replace(s, "judged once", "judged each time", 1) },
-			"node criteria": func(s string) string {
-				return strings.Replace(s, "unit-checked against that sub-task alone", "unit-checked like any work of the node", 1)
+			"sub-task check": func(s string) string {
+				return strings.Replace(s, "is committed as a checkpoint against its own regions, with no unit check,",
+					"is unit-checked against that sub-task alone and then committed as a checkpoint against its own regions, with", 1)
+			},
+			"checked": func(s string) string {
+				return strings.Replace(s, "with no unit check, no verification", "with no verification", 1)
 			},
 			"no whole check": func(s string) string {
 				return strings.Replace(s, "the check of the node's whole change against every criterion of the node, on which the acceptance rests, ", "", 1)
@@ -566,11 +583,12 @@ func TestRunSkillSaysASplitRunsSubTasksOnOneExecutor(t *testing.T) {
 			t.Fatalf("the good text is reported: %v", p)
 		}
 		for label, bad := range map[string]string{
-			"no checkpoint": strings.Replace(good, "one checkpoint `crw.commit` per sub-task", "one commit", 1),
-			"judged often":  strings.Replace(good, "is judged once", "is judged after each", 1),
-			"no label":      strings.Replace(good, ", each after a `subtask:<node>:<tier>:s<k>` turn", "", 1),
-			"old release":   good + "A node sized for a child or a split is not released to an executor.\n",
-			"no whole":      strings.Replace(good, ", on the check of its whole change", "", 1),
+			"no checkpoint":  strings.Replace(good, "one checkpoint `crw.commit` per sub-task", "one commit", 1),
+			"judged often":   strings.Replace(good, "is judged once", "is judged after each", 1),
+			"no label":       strings.Replace(good, ", each after a `subtask:<node>:<tier>:s<k>` turn", "", 1),
+			"old release":    good + "A node sized for a child or a split is not released to an executor.\n",
+			"no whole":       strings.Replace(good, ", on the check of its whole change", "", 1),
+			"sub-task check": good + "The unit check of a sub-task judges it alone, with the later ones as not due yet; the row records the `sub`.\n",
 		} {
 			if p := splitDocProblems(bad); len(p) == 0 {
 				t.Errorf("%s: the changed text is accepted", label)

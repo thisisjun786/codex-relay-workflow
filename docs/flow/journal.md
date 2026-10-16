@@ -168,9 +168,9 @@ as such:
   call of the node as a fix is, and the checkpoint commit of each sub-task before the last is one more `crw.commit` row of the chain, made
   against the sub-task's `edit_regions`. A split node makes one checkpoint `crw.commit` per sub-task before the last and is judged once:
   no `crw.verify` or `crw.land` row of the node precedes the last sub-task's commit, and verify and land read the node's last commit, as
-  they read the last of a fix round's. Each sub-task's `crw.unitCheck` row names the sub-task (`sub`) and judged it alone; after the
-  verification of the node's commit a committed `crw.unitCheck` row (no `sub`) judges the node's whole change, `base..commit` from the
-  verification's base, and the node's `crw.accept` rests on it (its `reviewer_call`), never on a row with a `sub`. A fresh attempt (a rebuild, a tier step) starts at that last commit, so the sub-tasks it holds stay
+  they read the last of a fix round's. No `crw.unitCheck` row of the node precedes the last sub-task's commit either: after the
+  verification of a commit of the node a committed `crw.unitCheck` row judges the node's whole change, `base..commit` from the
+  verification's base, and the node's `crw.accept` rests on it alone (its `reviewer_call`). A fresh attempt (a rebuild, a tier step) starts at that last commit, so the sub-tasks it holds stay
   proven while the current `HEAD` descends from it, by the rule above.
 - A worktree a resume restored (below) holds the pending tree P of the last build or fix of the replayed prefix. It is the node's
   current worktree from the call that adopts it on, and it proves the calls of the prefix - the call P belongs to and the calls
@@ -203,8 +203,9 @@ which names the milestone), and the QA evidence a `crw.qaReceipt` row (it holds 
 the review adapter; no agent call, no reviewer thread). Its data: `node`; `mode` (`uncommitted`: the changes the judged executor call left in
 the node's worktree, or `committed`: the range `base..commit` checked out in it); `call` (the executor call it judged, uncommitted mode) or
 `commit` and `base` (committed mode; a committed check of a run's node, the check of a split node's whole change, also names the `call`
-whose receipt the range ends on); `sub` (the sub-task of a split node an uncommitted check judged, CRW-1459; absent for a check of the
-node); `round` and `final` as the lane passed them; `execution_id` and `criteria_digest` of the node's release
+whose receipt the range ends on, and `range_receipts`, oldest first, the `call` and `receipt` of every other executor call a `crw.commit`
+row of the range was made from; a receipt of such a call that is not taken holds the check as the judged call's would, the row naming it
+`hold_call`); `round` and `final` as the lane passed them; `execution_id` and `criteria_digest` of the node's release
 row; `tree` (the fingerprint the check saw, the snapshot `crw.commit` commits as its `tree`); `role` `unit-check`; `state`, `verdict` and
 `findings` (their count); `retried` and `first_state` `invalid` when an invalid answer was asked once more and the second record kept;
 `fallback_from` (the name of the first profile, such as `codex-review`), `fallback_state` (`quota`), `fallback_model` and, when that

@@ -1885,10 +1885,10 @@ func (c *acceptCapture) Accept(_ context.Context, r AcceptRequest) (AcceptResult
 	return AcceptResult{Accepted: true, AcceptanceID: "acc-A"}, nil
 }
 
-// CRW-1459: the check of one sub-task of a split node judged that sub-task, not the node's criteria, so crw.accept never rests on it,
-// even when it saw the head's tree: with only such a check the head has no basis (reviewer_missing), and the check of the node's whole
-// change, the committed range base..head, is the basis once it is recorded, also when a sub-task's check comes after it.
-func TestAcceptRestsOnNoCheckOfASubTask(t *testing.T) {
+// CRW-1459: a split node's sub-tasks are committed with no unit check between them, and crw.accept rests on the one check of the node's
+// whole change, the committed range base..head: a check of an earlier tree (a checkpoint's) is no basis of the head (reviewer_missing),
+// and the check of the whole change is the basis once it is recorded.
+func TestAcceptRestsOnTheCheckOfASplitNodesWholeChange(t *testing.T) {
 	head, base := strings.Repeat("a", 40), strings.Repeat("b", 40)
 	w := newWorld(t)
 	w.relay.plan = planOfNodes(map[string]string{"A": "a1"}, "A")
@@ -1917,15 +1917,14 @@ func TestAcceptRestsOnNoCheckOfASubTask(t *testing.T) {
 		}
 		appendRow(OpUnitCheck, callID, data)
 	}
-	check("c_sub_two", map[string]any{"mode": UnitCheckUncommitted, "sub": "two"})
+	check("c_checkpoint", map[string]any{"mode": UnitCheckUncommitted, "tree": "t-checkpoint"})
 	if _, err := w.op("accept", "A", head); err == nil || ReasonOf(err.Error()) != "reviewer_missing" {
-		t.Errorf("crw.accept on a sub-task's check alone: %v, want refused reviewer_missing", err)
+		t.Errorf("crw.accept on the check of a checkpoint's tree: %v, want refused reviewer_missing", err)
 	}
 	if len(capture.got) != 0 {
-		t.Fatalf("the relay was asked to accept on a sub-task's check: %+v", capture.got)
+		t.Fatalf("the relay was asked to accept on the check of a checkpoint's tree: %+v", capture.got)
 	}
 	check("c_whole", map[string]any{"mode": UnitCheckCommitted, "commit": head, "base": base})
-	check("c_sub_late", map[string]any{"mode": UnitCheckUncommitted, "sub": "two"})
 	if _, err := w.op("accept", "A", head); err != nil {
 		t.Fatalf("crw.accept on the check of the whole change: %v", err)
 	}
@@ -3561,8 +3560,8 @@ func TestUnitCheckCarriesTheExecutorReceiptToTheCheckAndTheAcceptance(t *testing
 
 // TestACommittedCheckOfAnExecutorsRangeCarriesItsReceipt (CRW-1459): the check of a split node's whole change is a committed check that
 // names the executor call the range ends on. That call's accepted receipt is read, put in the prompt and recorded on the row as an
-// uncommitted check's is, and crw.accept rests on the committed check and names the receipt in the premerge record. A committed check
-// of one sub-task is refused: a sub-task is judged in its uncommitted change.
+// uncommitted check's is, and crw.accept rests on the committed check and names the receipt in the premerge record. The row names no
+// sub-task: the check judges the node's whole change.
 func TestACommittedCheckOfAnExecutorsRangeCarriesItsReceipt(t *testing.T) {
 	u := newUCWorld(t)
 	body := "RED-FIRST: go test -run TestA ./a: FAIL TestA\n"
@@ -3574,9 +3573,6 @@ func TestACommittedCheckOfAnExecutorsRangeCarriesItsReceipt(t *testing.T) {
 	var commit CommitOutcome
 	_ = json.Unmarshal(u.must("commit", "A", ex, []string{"a.txt"}), &commit)
 	u.must("verify", "A", commit.Commit)
-	if _, err := u.op("unitCheck", "A", ex, map[string]any{"round": 1, "commit": commit.Commit, "base": commit.Parent, "sub": "one"}); err == nil {
-		t.Errorf("a committed check of a sub-task was run")
-	}
 	u.checkOnTree(u.snapshot())
 	u.checker.replies[0].res.PromptSent = true
 	out := decodeCheck(t, u.must("unitCheck", "A", ex, map[string]any{"round": 1, "final": true, "commit": commit.Commit, "base": commit.Parent}))
@@ -3591,6 +3587,9 @@ func TestACommittedCheckOfAnExecutorsRangeCarriesItsReceipt(t *testing.T) {
 	if rc := checkReceiptOf(row); str(rc, "state") != "accepted" || str(rc, "sha256") != digest || rc["handed"] != true || dataStr(row, "call") != ex.CallID ||
 		dataStr(row, "commit") != commit.Commit || dataStr(row, "base") != commit.Parent {
 		t.Errorf("the committed check's row %v", row.Data)
+	}
+	if _, ok := row.Data["sub"]; ok {
+		t.Errorf("the committed check's row names a sub-task: %v", row.Data)
 	}
 	capture := &acceptCapture{stubRelay: u.relay}
 	u.lane.d.Relay = capture
@@ -3609,6 +3608,95 @@ func TestACommittedCheckOfAnExecutorsRangeCarriesItsReceipt(t *testing.T) {
 			t.Errorf("criterion %s evidence %q does not name the executor receipt", id, c.Evidence)
 		}
 	}
+}
+
+// TestACommittedCheckReadsTheReceiptOfEveryCallItsRangeHolds (CRW-1459, bugbot x1425-r2-1): a split node's sub-tasks before the last are
+// committed as checkpoints with no check of their own, so the check of the node's whole change reads the receipt of every executor call a
+// commit of its range was made from, not only the call the range ends on. A checkpoint call whose receipt is missing holds the check:
+// the tool is not run and the row names the held call, its receipt and no range. Calls whose receipts are taken are recorded on the
+// row (range_receipts), oldest first.
+func TestACommittedCheckReadsTheReceiptOfEveryCallItsRangeHolds(t *testing.T) {
+	body := "RED-FIRST: go test -run TestA ./a: FAIL TestA\n"
+	twoCommits := func(u *ucWorld, first map[string]any) (CallRef, CallRef, CommitOutcome) {
+		copyPath, digest := receiptCopy(t, body)
+		var ex1 CallRef
+		if first == nil {
+			ex1 = u.build("c_ex1", "one\n")
+		} else {
+			ex1 = u.buildWithReceipt("c_ex1", "one\n", first)
+		}
+		var c1, c2 CommitOutcome
+		_ = json.Unmarshal(u.must("commit", "A", ex1, []string{"a.txt"}), &c1)
+		ex2 := u.buildWithReceipt("c_ex2", "two\n", map[string]any{"assignment": "as2", "state": "accepted", "path": "/p/receipt.md", "sha256": digest,
+			"agent_id": "agent-1", "turn_id": "turn-2", "turn_match": true, "copy": copyPath})
+		_ = json.Unmarshal(u.must("commit", "A", ex2, []string{"a.txt"}), &c2)
+		if c2.Parent != c1.Commit {
+			t.Fatalf("the second commit %+v is not on the first %+v", c2, c1)
+		}
+		u.must("verify", "A", c2.Commit)
+		return ex1, ex2, CommitOutcome{Commit: c2.Commit, Parent: c1.Parent}
+	}
+	t.Run("a checkpoint call with a missing receipt holds the check", func(t *testing.T) {
+		u := newUCWorld(t)
+		_, ex2, rng := twoCommits(u, map[string]any{"assignment": "as1", "state": "missing", "detail": "no receipt was written"})
+		u.checkOnTree(u.snapshot())
+		out := decodeCheck(t, u.must("unitCheck", "A", ex2, map[string]any{"round": 1, "commit": rng.Commit, "base": rng.Parent}))
+		if out.State != StateReceiptHeld || out.Hold != "receipt_missing" || out.Call != "c_ex1" {
+			t.Fatalf("answer %+v, want held receipt_missing on the checkpoint call c_ex1", out)
+		}
+		if len(u.checker.got) != 0 {
+			t.Errorf("the tool was run %d times on a range with an untaken receipt", len(u.checker.got))
+		}
+		row := u.lastCheck()
+		if dataStr(row, "hold") != "receipt_missing" || dataStr(row, "hold_call") != "c_ex1" || dataStr(row, "role") != "" {
+			t.Errorf("the held row %v", row.Data)
+		}
+		for _, k := range []string{"commit", "base", "range_receipts"} {
+			if _, ok := row.Data[k]; ok {
+				t.Errorf("the held row has %s: %v", k, row.Data)
+			}
+		}
+	})
+	t.Run("the receipts taken are recorded", func(t *testing.T) {
+		u := newUCWorld(t)
+		_, ex2, rng := twoCommits(u, nil)
+		u.checkOnTree(u.snapshot())
+		out := decodeCheck(t, u.must("unitCheck", "A", ex2, map[string]any{"round": 1, "commit": rng.Commit, "base": rng.Parent}))
+		if out.State != reviewadapter.StateOK || out.Hold != "" {
+			t.Fatalf("answer %+v", out)
+		}
+		row := u.lastCheck()
+		got, _ := json.Marshal(row.Data["range_receipts"])
+		if string(got) != `[{"call":"c_ex1","receipt":{"state":"not_assigned"}}]` {
+			t.Errorf("range_receipts %s, want the checkpoint call c_ex1 with its receipt not_assigned", got)
+		}
+		if rc := checkReceiptOf(row); str(rc, "state") != "accepted" || dataStr(row, "call") != ex2.CallID {
+			t.Errorf("the receipt of the call the range ends on %v", row.Data)
+		}
+		if prompt := u.checker.got[len(u.checker.got)-1].Prompt; !strings.Contains(prompt, "EARLIER EXECUTOR RECEIPTS") || !strings.Contains(prompt, "- call c_ex1: no evidence receipt was assigned") {
+			t.Errorf("the prompt does not name the checkpoint call's receipt:\n%s", prompt)
+		}
+	})
+	t.Run("an accepted receipt of a checkpoint call is named in the prompt by its file", func(t *testing.T) {
+		u := newUCWorld(t)
+		first := "RED-FIRST of the first sub-task\n"
+		copyPath, digest := receiptCopy(t, first)
+		_, ex2, rng := twoCommits(u, map[string]any{"assignment": "as1", "state": "accepted", "path": "/p/receipt1.md", "sha256": digest,
+			"agent_id": "agent-1", "turn_id": "turn-1", "turn_match": true, "copy": copyPath})
+		u.checkOnTree(u.snapshot())
+		decodeCheck(t, u.must("unitCheck", "A", ex2, map[string]any{"round": 1, "commit": rng.Commit, "base": rng.Parent}))
+		prompt := u.checker.got[len(u.checker.got)-1].Prompt
+		if want := fmt.Sprintf("- call c_ex1: sha256 %s, %d bytes, the file %s", digest, len(first), copyPath); !strings.Contains(prompt, want) {
+			t.Errorf("the prompt lacks %q:\n%s", want, prompt)
+		}
+		taken, _ := u.lastCheck().Data["range_receipts"].([]any)
+		if len(taken) != 1 {
+			t.Fatalf("range_receipts %v, want the checkpoint call's", u.lastCheck().Data["range_receipts"])
+		}
+		if e, _ := taken[0].(map[string]any); str(e, "call") != "c_ex1" || str(checkReceiptOf(engine.Event{Data: e}), "sha256") != digest || str(checkReceiptOf(engine.Event{Data: e}), "state") != "accepted" {
+			t.Errorf("range_receipts %v, want c_ex1 accepted with sha256 %s", taken, digest)
+		}
+	})
 }
 
 // acceptOnHead commits the pending change of call ex, verifies the head and accepts it, and answers the premerge record crw.accept

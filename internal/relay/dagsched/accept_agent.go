@@ -334,7 +334,7 @@ func unitCheckOnHead(commit, treeDigest, head, tree string) bool {
 }
 
 // agentReview reads, in the caller's transaction, the verdict that decides an acceptance and the author pairs it is judged against. The latest completed reviewer call or unit check of the execution on
-// the head decides (tree is the tree of the head, which a check run before the commit is matched on; a unit check that gave no judgment, or that judged one sub-task of a split node, is skipped): it has to be verified, to have seen the criteria set
+// the head decides (tree is the tree of the head, which a check run before the commit is matched on; a unit check that gave no judgment is skipped): it has to be verified, to have seen the criteria set
 // in force (compared by the caller), and its pair's model family has to differ from the family of every author pair observed for the node. It answers the author pairs observed, sorted, for the digest the
 // acceptance keeps.
 func (s *Scheduler) agentReview(ctx context.Context, q store.Querier, plan, node string, e AgentExecution, head, tree string) (reviewerCall, []agentPair, error) {
@@ -369,14 +369,6 @@ func (s *Scheduler) agentReview(ctx context.Context, q store.Querier, plan, node
 			// a unit check on the head that gave a judgment; one that gave none (no answer, quota, a failed tool, a changed worktree, an invalid answer) is no basis and withdraws nothing
 			check = unitCheckResult{}
 			if json.Unmarshal([]byte(resultText), &check) != nil || check.State != "ok" || !unitCheckOnHead(commit, treeDigest, head, tree) {
-				continue
-			}
-			// the check of one sub-task of a split node (its detail names the sub) judged that sub-task, not the node's criteria: it is no
-			// basis and withdraws nothing, and the node's acceptance stands on the check of its whole change (CRW-1459)
-			var scope struct {
-				Sub string `json:"sub"`
-			}
-			if json.Unmarshal([]byte(detailText), &scope) == nil && scope.Sub != "" {
 				continue
 			}
 			review.CallID, run, detail, unit, decided = call, runID, detailText, true, true
