@@ -174,7 +174,9 @@ func gitHead(dir string) string {
 }
 
 // gitHeadOf is the commit HEAD names in dir: "" with no error when git answers that dir is in no repository or that HEAD names no
-// commit yet, and an error when git gave no answer (it could not start, timed out or failed otherwise). A flow record is never made
+// commit yet, and an error when git gave no answer (it could not start, timed out or failed otherwise) or when HEAD names an object
+// git cannot read as a commit (a corrupt or unreadable object, CRW-1561): git reads that as no commit as well, so the name HEAD
+// holds is asked for without reading the object, and only a HEAD that names nothing is the unborn one. A flow record is never made
 // from no answer (CRW-1496): an empty Head asks no ancestry of a later receipt.
 func gitHeadOf(dir string) (string, error) {
 	out, err := probeGit(dir, gitProbeOptions, "rev-parse", "--verify", "-q", "HEAD^{commit}")
@@ -184,8 +186,17 @@ func gitHeadOf(dir string) (string, error) {
 			return head, nil
 		}
 		return "", fmt.Errorf("git rev-parse HEAD in %s printed no commit", dir)
-	case gitExitCode(err) == 1, source.NotARepository(err):
+	case source.NotARepository(err):
 		return "", nil
+	case gitExitCode(err) == 1:
+		named, nerr := probeGit(dir, gitProbeOptions, "rev-parse", "--verify", "-q", "HEAD")
+		switch {
+		case gitExitCode(nerr) == 1:
+			return "", nil // HEAD names no commit yet
+		case nerr != nil:
+			return "", fmt.Errorf("git rev-parse HEAD in %s: %w", dir, nerr)
+		}
+		return "", fmt.Errorf("HEAD of %s names %s, which cannot be read as a commit", dir, text.Trim(string(named)))
 	}
 	return "", fmt.Errorf("git rev-parse HEAD in %s: %w", dir, err)
 }
@@ -789,7 +800,8 @@ var beforeClaim func()
 // treeMatch reports whether the tree of assignment a is still the one it was recorded for: Root is absolute and names the same real
 // path, device and inode now, and a recorded Head is an ancestor of HEAD now (a Head of "" asks nothing). The ancestry is git's
 // answer: yes, no (not an ancestor, a commit this history does not have, no commit or no repository now), or an error when git gave
-// none, which is never read as a mismatch (CRW-1496). It is the tree half of the claim's check (assignedReceiptValid), and
+// none or a commit it names (the recorded Head or HEAD now) is there but cannot be read as one (CRW-1561), which is never read as a
+// mismatch (CRW-1496). It is the tree half of the claim's check (assignedReceiptValid), and
 // EnsureFlowAssignment and replaceOpen ask it before they reuse or replace an open record, so the reuse check and the claim stay one
 // rule.
 func treeMatch(a Assignment) (bool, error) {
@@ -819,7 +831,16 @@ func treeMatch(a Assignment) (bool, error) {
 		return false, nil
 	}
 	if _, oerr := probeGit(a.Root, gitProbeOptions, "rev-parse", "--verify", "-q", a.Head+"^{commit}"); gitExitCode(oerr) == 1 {
-		return false, nil
+		// no commit by that name: the recorded Head is absent from this history, or its object is there and cannot be read as a
+		// commit (CRW-1561), which is no answer
+		_, eerr := probeGit(a.Root, gitProbeOptions, "cat-file", "-e", a.Head)
+		switch {
+		case eerr == nil:
+			return false, fmt.Errorf("the recorded HEAD %s exists in %s but cannot be read as a commit", a.Head, a.Root)
+		case gitExitCode(eerr) == 1:
+			return false, nil
+		}
+		return false, fmt.Errorf("git cat-file -e %s in %s: %w", a.Head, a.Root, eerr)
 	}
 	return false, fmt.Errorf("git merge-base --is-ancestor %s HEAD in %s: %w", a.Head, a.Root, err)
 }
