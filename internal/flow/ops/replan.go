@@ -376,18 +376,101 @@ func planTriggerCall(occurrence, digest string) string {
 	return "plan:" + occurrence + ":" + digest
 }
 
-// lanes says which nodes of the milestone had started and which had not: a node is started from its release on, or from the design
-// row that sized it for a split or a child (startRowOf).
-func lanes(r rows, nodes []string) (started, unstarted []string) {
-	started, unstarted = []string{}, []string{}
+// lanes says which nodes of the milestone had started, which can no longer start and which had not, over the milestone's nodes in
+// the order the scheduler offers them (CRW-1439). A node is started from its release on, or from the design row that sized it for a
+// split or a child (startRowOf), or when its newest release row that stands ended it without an executor (terminalUnreleased). A node
+// that has not started is blocked when a node it waits for (After, restricted to the milestone's nodes) ended unreleased, was given
+// up by the run (givenUp), or is blocked itself: as in crw:lib/lane's dag, it never starts. A predecessor that is held, waits on an
+// open escalation or is running does not block: it can still land after a resume or a decision. The rest are unstarted.
+func lanes(r rows, nodes []PlanNode) (started, unstarted, blocked []string) {
+	started, unstarted, blocked = []string{}, []string{}, []string{}
+	byID := make(map[string]PlanNode, len(nodes))
 	for _, n := range nodes {
-		if _, _, ok := startRowOf(r, n); ok {
-			started = append(started, n)
-		} else {
-			unstarted = append(unstarted, n)
+		byID[n.ID] = n
+	}
+	isStarted, ends := map[string]bool{}, map[string]bool{}
+	for _, n := range nodes {
+		term := terminalUnreleased(r, n.ID)
+		if _, _, ok := startRowOf(r, n.ID); ok || term {
+			isStarted[n.ID] = true
+		}
+		ends[n.ID] = term || givenUp(r, n.ID)
+	}
+	// the fixpoint over After: a node seen on the walk and not decided yet (a cycle no plan has) blocks nothing
+	const visiting, yes, no = 1, 2, 3
+	state := map[string]int{}
+	var isBlocked func(id string) bool
+	isBlocked = func(id string) bool {
+		switch state[id] {
+		case visiting, no:
+			return false
+		case yes:
+			return true
+		}
+		state[id] = visiting
+		out := false
+		if !isStarted[id] {
+			for _, p := range byID[id].After {
+				if _, member := byID[p]; member && p != id && (ends[p] || isBlocked(p)) {
+					out = true
+					break
+				}
+			}
+		}
+		state[id] = no
+		if out {
+			state[id] = yes
+		}
+		return out
+	}
+	for _, n := range nodes {
+		switch {
+		case isStarted[n.ID]:
+			started = append(started, n.ID)
+		case isBlocked(n.ID):
+			blocked = append(blocked, n.ID)
+		default:
+			unstarted = append(unstarted, n.ID)
 		}
 	}
-	return started, unstarted
+	return started, unstarted, blocked
+}
+
+// terminalUnreleased says whether the node's newest crw.release row that stands ended it without an executor: released false, and
+// sized for a child, a split or a bundle split, or refused for a plan that dropped the node (node_not_in_plan) or an epoch another
+// session claimed (epoch_lost). A newest row that refused it for a changed plan (plan_changed, relay_plan_changed), found no design
+// for it or held the run is not: the lane asks again.
+func terminalUnreleased(r rows, node string) bool {
+	row, ok := r.current(OpRelease).last(func(ev engine.Event) bool { return dataStr(ev, "node") == node })
+	if !ok || dataBool(row, "released") {
+		return false
+	}
+	switch dataStr(row, "kind") {
+	case "child", "split", "bundle_split":
+		return true
+	}
+	switch dataStr(row, "reason") {
+	case "node_not_in_plan", ReasonEpochLost:
+		return true
+	}
+	return false
+}
+
+// givenUp says whether the run gave the node up after it released it: a release row that stands, a later completed escalation of
+// the node that closed its execution, and no later integration of the node (the first branch of endedByRun, over rows that stand).
+func givenUp(r rows, node string) bool {
+	rel, ok := releaseRowOf(r, node)
+	if !ok || r.superseded(rel) {
+		return false
+	}
+	esc, ok := r.current(OpEscalate).last(func(ev engine.Event) bool {
+		return ev.Seq > rel.Seq && dataStr(ev, "node") == node && dataBool(ev, "closed")
+	})
+	if !ok {
+		return false
+	}
+	_, landed := r.current(OpIntegrate).last(func(ev engine.Event) bool { return ev.Seq > esc.Seq && dataStr(ev, "node") == node })
+	return !landed
 }
 
 // startRowOf is the row a node started under, and how: a release to an executor that stands (released), or, for a node no executor
@@ -515,16 +598,19 @@ type PlanRead struct {
 
 // SignalBind is the answer of crw.signalBind.
 type SignalBind struct {
-	Milestone  string    `json:"milestone"`
-	K          int       `json:"k"`
-	Prev       string    `json:"prev"`
-	Members    []Trigger `json:"members"`
-	Started    []string  `json:"started"`
-	Unstarted  []string  `json:"unstarted"`
-	Tip        string    `json:"tip"`
-	Revision   string    `json:"revision"`
-	PlanRead   PlanRead  `json:"revision_read"`
-	Superseded []string  `json:"superseded"`
+	Milestone string    `json:"milestone"`
+	K         int       `json:"k"`
+	Prev      string    `json:"prev"`
+	Members   []Trigger `json:"members"`
+	Started   []string  `json:"started"`
+	Unstarted []string  `json:"unstarted"`
+	// Blocked are the nodes that have not started and never will under this run: a node they wait for ended unreleased, was given up
+	// or is blocked (lanes). A row recorded before CRW-1439 has none.
+	Blocked    []string `json:"blocked"`
+	Tip        string   `json:"tip"`
+	Revision   string   `json:"revision"`
+	PlanRead   PlanRead `json:"revision_read"`
+	Superseded []string `json:"superseded"`
 }
 
 func (o *signalBindOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResult, error) {
@@ -557,13 +643,17 @@ func (o *signalBindOp) Run(ctx context.Context, req engine.OpRequest) (engine.Op
 	out := SignalBind{Milestone: ms, K: k, Prev: prev, Members: members, Tip: tip, Revision: dataStr(led, "revision")}
 	out.PlanRead = PlanRead{Digest: digestOf(live), Previous: lastPlanDigest(r, ms)}
 	out.PlanRead.Changed = out.PlanRead.Previous != "" && out.PlanRead.Digest != out.PlanRead.Previous
-	out.Started, out.Unstarted = lanes(r, milestoneNodes(r, ms))
+	var nodes []PlanNode
+	if m, _, err := milestoneOf(r, ms); err == nil {
+		nodes = m.Nodes
+	}
+	out.Started, out.Unstarted, out.Blocked = lanes(r, nodes)
 	out.Superseded = o.l.markSuperseded(r, ms)
 	if out.Superseded == nil {
 		out.Superseded = []string{}
 	}
 	return engine.OpResult{Result: result(out), Data: map[string]any{
-		"milestone": ms, "k": k, "prev": prev, "members": members, "started": out.Started, "unstarted": out.Unstarted, "tip": tip, "revision": out.Revision,
+		"milestone": ms, "k": k, "prev": prev, "members": members, "started": out.Started, "unstarted": out.Unstarted, "blocked": out.Blocked, "tip": tip, "revision": out.Revision,
 		"plan_digest": out.PlanRead.Digest, "revision_read": out.PlanRead, "superseded": out.Superseded, "attempt": attempt,
 	}}, nil
 }
