@@ -128,8 +128,9 @@ const (
 	// text of the recorded answer (CRW-1381): input errors.
 	RefusedPartQuestion = "unknown_question_digest"
 	RefusedPartText     = "answer_part_not_recorded"
-	// RefusedLegacyRun is an answer to a legacy `child` session run (CRW-1415): its records are read only, and an answer is not appended; every
-	// other command that would write to it (cancel, pause, recover, dispatched, report-up) refuses it with the same code (legacyRefused).
+	// RefusedLegacyRun is the code of every legacy refusal: an answer to a legacy run (a `child` session run, CRW-1415; a run of the retired
+	// node reviewer or reviewer-final path, CRW-1429) is not appended, its records being read only, and every other command that would write
+	// to it (cancel, pause, recover, dispatched, report-up) refuses it with the same code (legacyRefused); the reason names the path.
 	RefusedLegacyRun = "legacy_issue_child_run"
 )
 

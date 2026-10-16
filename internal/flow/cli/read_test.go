@@ -95,8 +95,10 @@ func TestShowTreeIncludesRecoveryHold(t *testing.T) {
 	if !strings.Contains(out, "run-a  running  project-lane") {
 		t.Errorf("ps:\n%s", out)
 	}
-	if _, _, errOut := td.do("pause", "run-a", "--state", w.state); errOut != "" {
-		t.Errorf("pause: %q", errOut)
+	// the seeded run holds a node reviewer's crw.review row, a row of the retired node reviewer path (CRW-1429): show reads it, and a
+	// pause, which would make its process write, is refused as for every legacy run (a pause of a current run: process_test.go)
+	if code, _, errOut := td.do("pause", "run-a", "--state", w.state); code == 0 || !strings.Contains(errOut, RefusedLegacyRun) || !strings.Contains(errOut, "c_review") {
+		t.Errorf("pause of the old reviewer run: exit %d %q", code, errOut)
 	}
 }
 

@@ -167,6 +167,9 @@ func TestRuleIDsHaveOneSource(t *testing.T) {
 		if strings.Contains(filepath.ToSlash(path), "/tracetest/") {
 			return nil // the test builder of the trace package is a test double, not a writer
 		}
+		if filepath.ToSlash(path) == "../engine/legacy.go" {
+			return nil // the legacy refusal reads old rows by the retired ids; engine/legacy_ops_test.go pins them to ops/rules.go
+		}
 		b, err := os.ReadFile(path)
 		if err != nil {
 			return err

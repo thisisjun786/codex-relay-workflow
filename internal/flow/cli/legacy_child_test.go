@@ -220,18 +220,55 @@ func TestResumeRefusedReadsTheJournalOnce(t *testing.T) {
 	}
 }
 
-// TestEveryJournalWriterRefusesALegacyRun (CRW-1415, PR #889 round 2): every command that can write to a run's journal refuses a legacy
-// `child` session run with legacy_issue_child_run before it writes, whether a process holds the run or not: `crw flow cancel` (which ends a
-// run no process holds with a finished row and gives its executions up), `crw flow pause`, `crw flow recover` (which appends recovery
-// rows) and `crw flow dispatched` (whose report the run journals when it answers it). Nothing is appended, no execution is given up, the
-// recovery's engine is not reached and no report is put in the run's inbox; `crw flow show` still reads the run.
+// legacyShape is the row of a legacy run's journal that makes it one, and what the refusal of the run names.
+type legacyShape struct {
+	name string
+	row  func(run string) engine.Event
+	want []string
+}
+
+// legacyShapes are the legacy journals every writer refuses: an old `child` session start (CRW-1415), and a row of the retired node
+// reviewer path and of the retired reviewer-final path (CRW-1429).
+var legacyShapes = []legacyShape{
+	{"child", func(run string) engine.Event {
+		return engine.Event{RunID: run, Kind: engine.KindCall, CallID: "c_child", Path: "root", Position: 9, Op: engine.OpLegacyReleaseChild, Label: engine.OpLegacyReleaseChild, Event: engine.EvCompleted, Data: map[string]any{"node": "n2", "child": "child-n2", "started": true}}
+	}, []string{"legacy `child` session run", engine.OpLegacyReleaseChild}},
+	{"reviewer", func(run string) engine.Event {
+		return engine.Event{RunID: run, Kind: engine.KindCall, CallID: "c_rev", Path: "root", Position: 9, Op: ops.OpReview, Label: ops.OpReview, Event: engine.EvCompleted, Data: map[string]any{"node": "n2", "head": "h2", "state": "verdict", "verdict": "verified", "call": "c_r"}}
+	}, []string{ops.OpReview, "c_rev", "node n2", "the retired node reviewer path (CRW-1429)"}},
+	{"reviewer-final", func(run string) engine.Event {
+		return engine.Event{RunID: run, Kind: engine.KindCall, CallID: "c_revf", Path: "root", Position: 9, Op: ops.OpReviewerFinal, Label: ops.OpReviewerFinal, Event: engine.EvCompleted, Data: map[string]any{"milestone": "M1", "state": "verdict", "verdict": "verified", "call": "c_rf"}}
+	}, []string{ops.OpReviewerFinal, "c_revf", "milestone M1", "the retired reviewer-final path (CRW-1429)"}},
+}
+
+func (s legacyShape) named(text string) bool {
+	for _, w := range s.want {
+		if !strings.Contains(text, w) {
+			return false
+		}
+	}
+	return true
+}
+
+// TestEveryJournalWriterRefusesALegacyRun (CRW-1415, PR #889 round 2; CRW-1429): every command that can write to a run's journal refuses a
+// legacy run (an old `child` session start, a row of the retired node reviewer or reviewer-final path) with legacy_issue_child_run before
+// it writes, whether a process holds the run or not: `crw flow cancel` (which ends a run no process holds with a finished row and gives
+// its executions up), `crw flow pause`, `crw flow recover` (which appends recovery rows) and `crw flow dispatched` (whose report the run
+// journals when it answers it). Nothing is appended, no execution is given up, the recovery's engine is not reached and no report is put
+// in the run's inbox; `crw flow show` still reads the run.
 func TestEveryJournalWriterRefusesALegacyRun(t *testing.T) {
+	for _, shape := range legacyShapes {
+		t.Run(shape.name, func(t *testing.T) { everyJournalWriterRefuses(t, shape) })
+	}
+}
+
+func everyJournalWriterRefuses(t *testing.T, shape legacyShape) {
 	w := newWorld(t)
 	td := w.deps()
 	run := "run-legacy-writers"
 	r := w.newRun(run, "thread-owner")
 	r.hold("c_hold", "executor", "n1")
-	r.op("c_child", engine.OpLegacyReleaseChild, map[string]any{"node": "n2", "child": "child-n2", "started": true})
+	r.j.Append(shape.row(run))
 	r.close()
 	if err := WriteSpec(w.state, Spec{Schema: SpecSchema, RunID: run, Workflow: "project-lane", Thread: "thread-owner", CreatedAt: "2026-10-12T08:00:00Z"}); err != nil {
 		t.Fatal(err)
@@ -266,7 +303,7 @@ func TestEveryJournalWriterRefusesALegacyRun(t *testing.T) {
 		t.Helper()
 		for _, argv := range commands {
 			code, out, errOut := td.do(argv...)
-			if code == 0 || !strings.Contains(errOut, RefusedLegacyRun) || !strings.Contains(errOut, "legacy `child` session run") || !strings.Contains(errOut, engine.OpLegacyReleaseChild) {
+			if code == 0 || !strings.Contains(errOut, RefusedLegacyRun) || !shape.named(errOut) {
 				t.Errorf("%s: %s of a legacy run: exit %d %q %q", when, argv[0], code, out, errOut)
 			}
 		}
@@ -346,10 +383,17 @@ func TestPreFirstRowIssueLaneRunIsRefusedAsLegacy(t *testing.T) {
 	}
 }
 
-// TestReportUpAndAuditWriteNothingToALegacyRun (CRW-1415, PR #889 round 2): `crw flow report-up` about a legacy `child` session run is
-// refused with legacy_issue_child_run before its report row is written, and `crw flow audit` of a legacy run that has finished prints
-// its results and records no audit row (not_recorded_because names legacy_issue_child_run).
+// TestReportUpAndAuditWriteNothingToALegacyRun (CRW-1415, PR #889 round 2; CRW-1429): `crw flow report-up` about a legacy run (an old
+// `child` session start, a row of the retired node reviewer or reviewer-final path) is refused with legacy_issue_child_run before its
+// report row is written, and `crw flow audit` of a legacy run that has finished prints its results and records no audit row
+// (not_recorded_because names legacy_issue_child_run and the row).
 func TestReportUpAndAuditWriteNothingToALegacyRun(t *testing.T) {
+	for _, shape := range legacyShapes {
+		t.Run(shape.name, func(t *testing.T) { reportUpAndAuditWriteNothing(t, shape) })
+	}
+}
+
+func reportUpAndAuditWriteNothing(t *testing.T, shape legacyShape) {
 	w := newCLIWorld(t)
 	run := "run-legacy-up"
 	j, err := journal.Open(ctx, w.st, run, journal.Identity{PlanID: "plan-1", PlanRevision: 1, ActorTaskID: "orch-task", EpochNonce: "n"}, journal.Options{Immediate: true})
@@ -357,7 +401,7 @@ func TestReportUpAndAuditWriteNothingToALegacyRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	j.Append(engine.Event{RunID: run, Kind: engine.KindRun, Event: "started", Data: map[string]any{"workflow": "project-lane", "script_digest": "d", "args_digest": "a"}})
-	j.Append(engine.Event{RunID: run, Kind: engine.KindCall, CallID: "c_child", Path: "root", Position: 2, Op: engine.OpLegacyReleaseChild, Label: engine.OpLegacyReleaseChild, Event: engine.EvCompleted, Data: map[string]any{"node": "A", "child": "child-A", "started": true}})
+	j.Append(shape.row(run))
 	if err := j.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -373,7 +417,7 @@ func TestReportUpAndAuditWriteNothingToALegacyRun(t *testing.T) {
 	if err := os.WriteFile(evidence, []byte("the legacy run is blocked"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if code := w.run("report-up", "--kind", "project_blocked", "--run", run, "--evidence", evidence, "--subject", "legacy"); code == ExitOK || !strings.Contains(w.errOut.String(), RefusedLegacyRun) || !strings.Contains(w.errOut.String(), "legacy `child` session run") {
+	if code := w.run("report-up", "--kind", "project_blocked", "--run", run, "--evidence", evidence, "--subject", "legacy"); code == ExitOK || !strings.Contains(w.errOut.String(), RefusedLegacyRun) || !shape.named(w.errOut.String()) {
 		t.Errorf("report-up about a legacy run: exit %d %q", code, w.errOut.String())
 	}
 	if got := rowsOf(); got != rows || len(w.sender.supervisor) != 0 {
@@ -382,7 +426,7 @@ func TestReportUpAndAuditWriteNothingToALegacyRun(t *testing.T) {
 
 	fixedClock(t)
 	mj := acceptedWithNoReview(true)
-	mj.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: "c_child", Op: engine.OpLegacyReleaseChild, Event: engine.EvCompleted, Data: map[string]any{"node": "B", "child": "child-B", "started": true}})
+	mj.Append(shape.row("run-1"))
 	useEnv(t, mj, true, nil)
 	before := len(mj.Events())
 	code, out, _ := auditCmd("--run", "run-1", "--json")
@@ -392,7 +436,7 @@ func TestReportUpAndAuditWriteNothingToALegacyRun(t *testing.T) {
 		Why      string         `json:"not_recorded_because"`
 	}
 	_ = json.Unmarshal([]byte(out), &rep)
-	if code != 1 || len(rep.Results) != 1 || rep.Recorded || !strings.Contains(rep.Why, RefusedLegacyRun) || len(mj.Events()) != before {
+	if code != 1 || len(rep.Results) != 1 || rep.Recorded || !strings.Contains(rep.Why, RefusedLegacyRun) || !shape.named(rep.Why) || len(mj.Events()) != before {
 		t.Errorf("audit of a legacy run: exit %d %+v, rows %d -> %d", code, rep, before, len(mj.Events()))
 	}
 }
