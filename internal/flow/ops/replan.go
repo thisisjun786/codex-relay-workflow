@@ -546,10 +546,12 @@ func decisionsOf(d Design, id string) []Decision {
 
 // revisionKeepsStarted is the rule crw.designLedger holds a revision after the first to (CRW-1472): every started node keeps the
 // issue it started under (releasedPlans, the plans the critic of the re-plan was given), every field of it, and every decision its
-// decision_refs name there, every field of each; and every node the milestone still needs has an issue. A node the milestone needs
+// decision_refs name there, every field of each; every decision of the revision before it (the ledger's current one) is still a
+// decision of the DESIGN, whatever node names it; and every node the milestone still needs has an issue. A node the milestone needs
 // is one of the nodes the run read (milestoneNodes) that the plan of the revision holds (slices: the plan the decision evaluated, or
 // the live one), or one that has started: a node the plan dropped and that never started is not demanded, and one a plan revision
-// added, which the run never runs, is not either. An unstarted node, and a decision no started node names, change freely.
+// added, which the run never runs, is not either. An unstarted node changes freely, and so do the fields of a decision no started
+// node names; such a decision is not dropped.
 func revisionKeepsStarted(r rows, ms string, design Design, plan map[string]string) error {
 	plans, err := releasedPlans(r, ms)
 	if err != nil {
@@ -590,12 +592,38 @@ func revisionKeepsStarted(r rows, ms string, design Design, plan map[string]stri
 			}
 		}
 	}
+	if err := keepsDecisions(r, ms, design); err != nil {
+		return err
+	}
 	for _, node := range milestoneNodes(r, ms) {
 		if _, held := plan[node]; !held || started[node] {
 			continue
 		}
 		if _, ok := issues[node]; !ok {
 			return fmt.Errorf("node %s of milestone %s, which the plan of the revision holds, has no issue", node, ms)
+		}
+	}
+	return nil
+}
+
+// keepsDecisions refuses a DESIGN that drops a decision of the revision before it (CRW-1472 c6): every decision id of the ledger's
+// current revision of the milestone is the id of a decision of the DESIGN, whether a started node, an unstarted one or none names it.
+func keepsDecisions(r rows, ms string, design Design) error {
+	prev, ok := currentLedger(r, ms)
+	if !ok {
+		return nil
+	}
+	before, err := ledgerDesign(prev)
+	if err != nil {
+		return fmt.Errorf("revision %s: %w", dataStr(prev, "revision"), err)
+	}
+	have := make(map[string]bool, len(design.Decisions))
+	for _, dec := range design.Decisions {
+		have[dec.ID] = true
+	}
+	for _, dec := range before.Decisions {
+		if !have[dec.ID] {
+			return fmt.Errorf("decision %s of revision %s is missing: a revision keeps every decision of the revision before it", dec.ID, dataStr(prev, "revision"))
 		}
 	}
 	return nil

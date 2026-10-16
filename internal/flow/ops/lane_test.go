@@ -549,8 +549,10 @@ func TestAChildSizedNodeHasStarted(t *testing.T) {
 // drops a node the run still needs. A is released to an executor and B is sized for a bundle split (an unreleased sized row): both
 // have started (startRowOf, the predicate crw.releasedPlans lists by). C has not. A revision is refused when a started node has no
 // issue, when its issue differs in any field from the one it started under, when a decision its decision_refs name is missing or
-// differs in any field, and when a node of the milestone that the plan of the revision still holds has no issue. An unstarted node
-// changes freely, a started node kept as it started passes, and a node the plan dropped and that never started is not demanded.
+// differs in any field, when a decision of the revision before it is missing (whatever node names it, CRW-1472 c6), and when a node of
+// the milestone that the plan of the revision still holds has no issue. An unstarted node changes freely and so do the fields of a
+// decision no started node names, a started node kept as it started passes, and a node the plan dropped and that never started is not
+// demanded.
 func TestDesignLedgerRefusesARevisionMissingANodeOrDecision(t *testing.T) {
 	r0 := func() Design {
 		d := designOf("A", "B", "C")
@@ -652,6 +654,36 @@ func TestDesignLedgerRefusesARevisionMissingANodeOrDecision(t *testing.T) {
 		drop(&d, "A")
 		if err := revise(w, d, nil); err == nil || !strings.Contains(err.Error(), "crw.designLedger: revision r1") || !strings.Contains(err.Error(), "A") {
 			t.Fatalf("crw.designLedger: %v, want a refusal naming A", err)
+		}
+	})
+	// the crosscheck's case: r0 has A on D1 and the unstarted C on D2; a revision that keeps A on D1 and drops C's ref to D2 together
+	// with D2 drops a decision of the revision before it, which no started node names, and is refused; one that keeps D2 and changes
+	// it passes (a decision no started node names changes freely, it is not dropped)
+	onD2 := func() Design {
+		d := r0()
+		d.Decisions = append(d.Decisions, Decision{ID: "D2", Evidence: []string{}, Change: "for C", Alternatives: []string{}, Assumptions: []string{}})
+		issue(&d, "C").DecisionRefs = []string{"D2"}
+		return d
+	}
+	t.Run("refused/a decision of the revision before it that only an unstarted node named is dropped", func(t *testing.T) {
+		w := startWith(t, onD2())
+		d := onD2()
+		d.Decisions = d.Decisions[:1]
+		issue(&d, "C").DecisionRefs = []string{}
+		err := revise(w, d, nil)
+		if err == nil || !strings.Contains(err.Error(), "crw.designLedger: revision r1") || !strings.Contains(err.Error(), "decision D2 of revision r0") {
+			t.Fatalf("crw.designLedger: %v, want a refusal of revision r1 naming decision D2 of r0", err)
+		}
+		if cur, _ := currentLedger(rows(w.j.Events()), "M"); dataStr(cur, "revision") != "r0" {
+			t.Errorf("the revision that stands is %v, want r0", cur.Data["revision"])
+		}
+	})
+	t.Run("passes/a decision of the revision before it that only an unstarted node names changes", func(t *testing.T) {
+		w := startWith(t, onD2())
+		d := onD2()
+		d.Decisions[1].Change, d.Decisions[1].Alternatives = "for C, otherwise", []string{"another way"}
+		if err := revise(w, d, nil); err != nil {
+			t.Fatalf("crw.designLedger: %v, want revision r1", err)
 		}
 	})
 	// a decision the started node names twice is one decision: the revision that keeps it passes

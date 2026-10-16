@@ -627,9 +627,10 @@ decisions its `decision_refs` name; a node whose issue was sized for a child, a 
 listed with that plan and is no unstarted node of the re-plan - and a started node whose issue differs from it in any field, or a decision such a plan names that the DESIGN drops or changes
 in any field, is a P1 finding). `crw.designLedger` holds the revision to the same rule and refuses it otherwise: a started node (the one predicate of
 `crw.releasedPlans`) has no issue, its issue differs in any field from its released plan (an absent list reads as an empty one), or a decision that plan
-names is missing or differs in any field from the decision of the revision the node started under; and it refuses a revision that has no issue for a node
-the run read that the plan of the revision (the evaluated plan, else the live one) still holds. A node that has not started changes freely, a node the plan
-dropped and that never started is not demanded, and a started node is demanded whatever the plan. The nodes that have not started are
+names is missing or differs in any field from the decision of the revision the node started under; it refuses a revision that drops a decision of the
+revision before it (the ledger's current one), whatever node names it; and it refuses a revision that has no issue for a node
+the run read that the plan of the revision (the evaluated plan, else the live one) still holds. A node that has not started changes freely, and so do the fields of a
+decision no started node names, which is kept all the same; a node the plan dropped and that never started is not demanded, and a started node is demanded whatever the plan. The nodes that have not started are
 released under a revision only after that, because the signal that re-plans keeps every new release back until it is decided. A lane that started keeps the
 revision it was released under; it ends under it and lands or is held as usual. Each revision records the slice digest of every node of the plan it was made
 against - for a revision after the first, the plan the architect and the auditor evaluated (`plan` of `crw.replanSignals`, handed to `crw.designLedger`), so that a plan revision made while
