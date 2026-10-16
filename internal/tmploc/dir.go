@@ -110,6 +110,24 @@ func Check() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return checkDir(dir, source)
+}
+
+// sourceGiven is the source CheckDir reports: a directory its caller gives (a run's recorded TMPDIR).
+const sourceGiven = "given"
+
+// CheckDir is Check over a directory its caller gives instead of Dir(): the same checks and the same
+// temp_dir_unusable refusal, with source "given"; a directory that is not absolute is refused
+// before anything is looked up.
+func CheckDir(dir string) (string, error) {
+	if !filepath.IsAbs(dir) {
+		return "", unusable(dir, sourceGiven, errors.New("is not absolute"))
+	}
+	return checkDir(dir, sourceGiven)
+}
+
+// checkDir is the body of Check and CheckDir for an absolute dir from source.
+func checkDir(dir, source string) (string, error) {
 	resolved, err := filepath.EvalSymlinks(dir)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {

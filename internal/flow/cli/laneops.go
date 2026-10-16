@@ -317,8 +317,8 @@ func laneVerifierTools(getenv func(string) (string, bool)) (crwconfig.VerifierTo
 // The command is the one the verifier's tools name (crwconfig.VerifierTools.Command): with a Go root configured it is the merged tree's
 // own crw-dev, so the merged tree verifies itself. A command that comes from PATH because nothing configured it writes its note to notes,
 // and one that cannot start is a host error that names the setting. The command does not get the caller's environment (CRW-1463): it
-// runs under integrationEnv with a HOME and TMPDIR of its own, made for the verification and removed after it, then the tools' env,
-// then the batch's CRW_VERIFY_*.
+// runs under integrationEnv with a HOME and TMPDIR of its own, made for the verification directly below this process's TMPDIR
+// (integrationTempDir) and removed after it, then the tools' env, then the batch's CRW_VERIFY_*.
 func CILocalIntegration(tools crwconfig.VerifierTools, notes io.Writer) dagsched.IntegrationBatchVerifier {
 	return func(ctx context.Context, dir string, env []string) error {
 		vars := map[string]string{}

@@ -738,6 +738,11 @@ worktree before it asks, the run's buffered rows are stored first, and the run's
 node's calls and the reviewer's input criteria digest on the reviewer's completed row, which the acceptance reads. `integrate` names the node's current acceptance and the head it accepted (anything else is refused before the batch, `acceptance_not_current` or `head_not_accepted`) and is one
 `IntegrateBatch` of the node with the wiring of `crw relay dag-integrate` (`dagsched.IntegrationDeps`: `crw-dev ci local` over the
 merged tree, the merged tree's own crw-dev when the configuration names a Go root, git's compare-and-swap of the branch) onto the plan's target branch, followed by the observation of the landing there;
+the batch's crw-dev gets a HOME and TMPDIR of its own, a fresh `crw-<8 hex>` directory (mode 0700, removed after) directly below the
+run process's TMPDIR resolved, which is the TMPDIR the run's start recorded (below), so it and the node's land-head `crw.verify`
+(whose crw-dev inherits the run process's environment) both work below the run's directory whatever shell relaunched the run and
+however long the directory is; there is no length rule and no other parent, and a directory that cannot be used is a host error
+naming it;
 `close` is `AgentClose`. A node sized `child` is released to no one: it goes up as a `size_split` escalation with detail
 `child_retired` (the evidence carries the plan's `size_reason`), and no child is started.
 
@@ -1241,9 +1246,13 @@ any row is written. `crw flow shadow` replays either from the trace and names th
 
   A `send_input` message is the marker line and the turn's input. The packet is self-contained: where the subagent works (only
   under the absolute path P; a role that writes nothing changes nothing; nobody runs `git commit`, `add`, `branch`, `reset` or
-  `checkout`), the repository tools when the configuration names them (CRW-1488: a `Repository tools` section with the go of
+  `checkout`), the repository tools when the run has them (CRW-1488: a `Repository tools` section with the go of
   `verifier.go_root`, the file that sets it, and the prefix `PATH=<go_root>/bin:"$PATH" GOROOT=<go_root> GOTOOLCHAIN=local` that
-  every command running go takes, because the subagent's shell is the owner session's and spawn_agent takes no environment), the
+  every command running go takes, because the subagent's shell is the owner session's and spawn_agent takes no environment;
+  CRW-1570: the run's recorded TMPDIR, `env.TMPDIR` of its run.json and never the TMPDIR of the shell that relaunched the run, is
+  a tool of its own, first: a fact that names the directory and run.json, `TMPDIR=<dir>` first in the prefix, which then goes in
+  front of every command the subagent runs, and `TMPDIR=<dir>` first in the entries; a configuration with no go gives the TMPDIR
+  alone, a spec without env the tools of before; on the session backend the packet is its only carrier), the
   role's overlay of `internal/flow/roles` without its native-spawn section, the earlier attempts, for a continuation the packet of
   the call it continues and a file with that call's answer, the task, and the output contract (the schema the final message
   satisfies). An App Server call's turn text ends with the same section (after the task; the journaled input is the script's), and
@@ -1383,8 +1392,13 @@ A session run is started, stepped and resumed from its owner thread with the com
 run's directory `<state>/flow/<run>/` and none writes the journal, which only the run process writes.
 
 - `crw flow start WORKFLOW [--backend session|app-server]` starts a session run by default; `--backend app-server` opens a thread
-  per call, for the tests and shadow runs. The spec records the `backend`. A session run's pool is `min(pool, agents.max_threads - 1)`
-  (the owner keeps a slot for a helper of its own; `agents.max_threads` is read from `<CODEX_HOME>/config.toml`, default 6), the
+  per call, for the tests and shadow runs. The spec records the `backend`, and the run's temporary location: `env.TMPDIR` in
+  `run.json` (`crw-flow-run/1`; an optional member, absent from a spec written before it, which reads as before) is what the one temp
+  function (`internal/tmploc`, `DirFrom`) answers for the starting environment, as written, also when that is its default. It is asked
+  once, at the start, and no other variable of the caller's environment is recorded (no `PATH`, `GOFLAGS` or `GOTOOLCHAIN`); a TMPDIR
+  that is not absolute, or a directory that is missing, not a directory or not writable, stops the start (exit 1, with tmploc's
+  reason) before the spec is written and before any process starts or owner is bound. A session run's pool is
+  `min(pool, agents.max_threads - 1)` (the owner keeps a slot for a helper of its own; `agents.max_threads` is read from `<CODEX_HOME>/config.toml`, default 6), the
   preview lists the spawn format of each of the six roles (`spawn_agent(agent_type, message, model, reasoning_effort,
   fork_context=false)`) and the six session facts below, and the answer names the command the steps are taken with
   (`next`). Before the process starts the owner thread is bound (below).
@@ -1428,6 +1442,20 @@ run's directory `<state>/flow/<run>/` and none writes the journal, which only th
   (exit 2); a run whose first process stored no started row goes on with its spec's. Every one of them holds a session run alike
   (the foreground command through `engine.ResumeHold`): at most `agents.max_threads - 1` calls in flight whatever `--pool` says,
   and the owner thread bound to the run while the resume runs and its line closed when the run ends.
+- Every detached launch of the run's process (the start, `crw flow answer`, `crw flow resume RUN --detach` and the resume `next`
+  starts) gives the process the caller's environment with the variables the spec records in place (`env`, today `TMPDIR`; exactly
+  one entry each), so a run relaunched from a shell with another TMPDIR, or none, runs below the TMPDIR its start recorded; a spec
+  written before the record leaves the environment the caller's, as before. A recorded TMPDIR that is missing, not a directory or not
+  writable is refused before anything of the run changes: `crw flow answer` (without `--no-resume`) refuses with `run_env_unusable`
+  (exit 1, nothing appended, nothing drained, no process started), and the same answer applies once and resumes the run once the
+  directory is made again; `crw flow resume RUN --detach` exits 1 naming the directory; `next` resumes nothing and warns "its resume
+  did not start" with the reason. `--no-resume` starts nothing and is not asked; the later relaunch refuses. The spec is never
+  rewritten: the directory is made again.
+- A run that works in the process that reads its spec (the run process `crw flow _run`, the foreground `crw flow resume RUN` and
+  the engine's `crw flow resume RUN SCRIPT`) puts the env its spec records into that process's environment before it takes a lock
+  and puts back what was there when the run is done, so everything the run reads from its own environment (the land-head ci local,
+  the integration batch's TMPDIR, the temporary files of its operations) is below the recorded TMPDIR. A recorded TMPDIR that is
+  missing, not a directory or not writable refuses that process (exit 2, the reason naming the directory) before any lock or row.
 - The owner thread is bound to a session run by the `orchestrator` line of its flow-bound file (`internal/flow/bound`
   `BindOrchestrator`: `kind: orchestrator`, `run_id`, the `policyDigest` of the role table and the `helperPairs` of the six roles
   architect, executor, executor-t1, reviewer, explorer, critic; `Line.Validate` takes no orchestrator line without the first five;
