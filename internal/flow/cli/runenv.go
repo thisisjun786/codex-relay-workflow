@@ -2,6 +2,8 @@ package cli
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
@@ -33,4 +35,26 @@ func checkRunEnv(spec Spec) error {
 		return fmt.Errorf("the run's recorded TMPDIR %s is not usable: %v; make the directory again", dir, err)
 	}
 	return nil
+}
+
+// runEnviron is the environment a relaunched run process starts with (CRW-1570): base, the caller's, with each variable the run's spec
+// records in place of the caller's value, exactly one entry per recorded variable, the recorded ones last in sorted order. A shell that
+// relaunches the run with another TMPDIR, or none, gives the process the run's own.
+func runEnviron(base []string, rec map[string]string) []string {
+	out := make([]string, 0, len(base)+len(rec))
+	for _, kv := range base {
+		name, _, _ := strings.Cut(kv, "=")
+		if _, recorded := rec[name]; !recorded {
+			out = append(out, kv)
+		}
+	}
+	names := make([]string, 0, len(rec))
+	for name := range rec {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		out = append(out, name+"="+rec[name])
+	}
+	return out
 }

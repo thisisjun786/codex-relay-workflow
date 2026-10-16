@@ -39,6 +39,11 @@ type AnswerReply struct {
 // ask (an older crw) goes on, and is paused with `crw flow pause RUN` before the answer.
 const RefusedRunDraining = "run_draining"
 
+// RefusedRunEnv is the refusal of an answer that would resume a run whose recorded TMPDIR (run.json env, CRW-1570) cannot be used: it
+// is refused before the drain, the lock and the decision_applied row, so the same answer, run again once the directory is made again,
+// applies once and resumes the run. An answer with --no-resume starts nothing and is not asked.
+const RefusedRunEnv = "run_env_unusable"
+
 // answer is `crw flow answer`: it compares the manager's answer record with the run's journal, appends the one `decision_applied`
 // row that resumes the wait, and resumes that wait. The record is the only input: what the caller names (the run, the node, the
 // question and its revision) is a claim that has to be the record's and the journal's too. A run a process holds is asked to stop
@@ -100,7 +105,14 @@ func (c *command) answer(args []string) int {
 		return c.fail("%v", err)
 	}
 	defer st.Close()
-	reply, code := c.applyAnswer(st, state, Claim{Decision: *decision, Run: *runID, Node: *node, Question: *question, Revision: *revision, By: by, Answers: parts}, time.Duration(*wait)*time.Second)
+	// an answer that resumes the run asks first whether the run's recorded TMPDIR can still be used (CRW-1570): a refusal is made
+	// before the drain, the lock and the row, so nothing of the run changes and the same answer applies once the directory is back
+	var reply AnswerReply
+	if refusal := c.runEnvRefusal(state, *runID, *noResume); refusal != nil {
+		reply, code = AnswerReply{Run: *runID, Refusal: refusal}, 1
+	} else {
+		reply, code = c.applyAnswer(st, state, Claim{Decision: *decision, Run: *runID, Node: *node, Question: *question, Revision: *revision, By: by, Answers: parts}, time.Duration(*wait)*time.Second)
+	}
 	for _, w := range rowWarnings(reply.Row) {
 		fmt.Fprintf(c.stderr, "crw flow answer: warning: %s\n", w)
 	}
@@ -129,6 +141,22 @@ func (c *command) answer(args []string) int {
 		fmt.Fprintln(c.stdout)
 	}
 	return code
+}
+
+// runEnvRefusal is the refusal of an answer that would resume a run whose recorded TMPDIR cannot be used (RefusedRunEnv); nil for an
+// answer with --no-resume, which starts nothing, and for a run whose spec does not read (the resume says why, as before).
+func (c *command) runEnvRefusal(state, run string, noResume bool) *Refusal {
+	if noResume {
+		return nil
+	}
+	spec, err := ReadSpec(state, run)
+	if err != nil {
+		return nil
+	}
+	if err := checkRunEnv(spec); err != nil {
+		return &Refusal{Code: RefusedRunEnv, Detail: err.Error()}
+	}
+	return nil
 }
 
 // rowWarnings are the warnings of a decision_applied row (CRW-1381).

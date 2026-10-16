@@ -40,7 +40,9 @@ type SpawnRequest struct {
 
 // DetachedCommand is the command SpawnDetached starts: the same executable, in a session of its own with no descriptor of the
 // caller's, no input, and its output in <state>/flow/<run>/process.log. It is exported so that the way a run is detached is a
-// thing a test reads.
+// thing a test reads. A spec that records an environment (env, CRW-1570) gives the process the caller's with the recorded variables
+// in place (runEnviron), so the run's TMPDIR is the one its start recorded whatever shell relaunches it; a spec without one (a run
+// started before the record) leaves the environment the caller's, as before.
 func DetachedCommand(self string, req SpawnRequest, log *os.File) *exec.Cmd {
 	args := []string{"flow", ProcessCommand, "--state", req.State}
 	if req.Resume {
@@ -52,6 +54,9 @@ func DetachedCommand(self string, req SpawnRequest, log *os.File) *exec.Cmd {
 	cmd.Stdin = nil
 	cmd.Stdout, cmd.Stderr = log, log
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if len(req.Spec.Env) > 0 {
+		cmd.Env = runEnviron(os.Environ(), req.Spec.Env)
+	}
 	return cmd
 }
 
@@ -64,8 +69,12 @@ var executable = os.Executable
 var markInherited = fdsweep.MarkInherited
 
 // SpawnDetached starts the process of a run and lets go of it. The caller's descriptors are marked close-on-exec first; when that
-// cannot be done the run is not started.
+// cannot be done the run is not started. A run whose recorded TMPDIR cannot be used is not started either (checkRunEnv): the commands
+// that relaunch a run ask it before they change anything, and this is the last guard for any other caller.
 func SpawnDetached(ctx context.Context, req SpawnRequest) (int, error) {
+	if err := checkRunEnv(req.Spec); err != nil {
+		return 0, err
+	}
 	self, err := executable()
 	if err != nil {
 		return 0, err
