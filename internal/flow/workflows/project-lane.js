@@ -45,25 +45,29 @@ async function auditedDesign(first, tag, context, designHead) {
   // the head every call of the loop reads: a re-plan's pinned head, or the design head the first DESIGN's phase sampled
   // (crw.designHead), so the open questions' explorers, the critic and the architect's turns judge the code the DESIGN was written for
   const at = (context && context.head) || designHead || undefined
-  // the tokens of the loop are those its calls report (meta.tokens; crw.explore's tokens for its explorers), and its cap is made of
-  // budget.run: both are the same on a resume that replays them, whatever ceiling the resume has
+  // Count uncached input plus output from meta.tokens (crw.explore keeps the same split for its explorers).
+  // Cached input stays in the usage records and the detail, outside this cap. budget.run fixes the cap across resumes.
   const cap = budget.run === null ? DESIGN_TOKEN_CAP : Math.min(DESIGN_TOKEN_CAP, budget.run * DESIGN_TOKEN_WARN)
   const capText = budget.run === null ? 'the cap of DESIGN_TOKEN_CAP ' + DESIGN_TOKEN_CAP + ' tokens (the run has no budget)'
     : 'the cap of ' + cap + ' tokens (DESIGN_TOKEN_CAP ' + DESIGN_TOKEN_CAP + ', DESIGN_TOKEN_WARN ' + DESIGN_TOKEN_WARN + ' of the run budget of ' + budget.run + ')'
   let used = 0
+  let cachedInput = 0
   let warned = false
   // the findings of the rounds so far, by id, each round with the dispositions the architect's design-fix answer gave (null when it
   // gave none): the critic's PRIOR FINDINGS
   const prior = []
   async function tokenCap(tokens, round) {
-    used += tokens || 0
+    const usage = tokens || {}
+    const cached = usage.cached_input || 0
+    used += Math.max(0, (usage.input || 0) - cached) + (usage.output || 0)
+    cachedInput += cached
     if (warned || used < cap) return
     warned = true
-    const detail = 'tokens: the design loop ' + (tag ? tag + ' ' : 'of the milestone ') + 'used ' + used + ' tokens by audit round ' + round + ', ' + capText
+    const detail = 'tokens: the design loop ' + (tag ? tag + ' ' : 'of the milestone ') + 'used ' + used + ' tokens by audit round ' + round + ' (uncached input + output; cached input ' + cachedInput + ' excluded), ' + capText
     log('warn design_loop_cap ' + detail)
     await crw.escalate(null, { reason: 'design_loop_tokens', detail })
   }
-  const tokensOf = (call) => (call && call.meta && call.meta.tokens && call.meta.tokens.total) || 0
+  const tokensOf = (call) => (call && call.meta && call.meta.tokens) || {}
   await tokenCap(tokensOf(first), 0)
   for (let round = 1; round <= AUDIT_ROUNDS; round++) {
     // the end condition commands of the issues are run once, by the first explorer of the first DESIGN's first round (CRW-1382)
@@ -72,7 +76,7 @@ async function auditedDesign(first, tag, context, designHead) {
     // the first DESIGN's open questions keep the reuse key of their text (no head in the route's context): every answer of its loop reads
     // the same design head; their explorers are placed at it (opts.head)
     const asked = await crw.explore('open_questions', arch.output.open_questions, context && context.head ? { milestone: ms.id, head: context.head } : { milestone: ms.id }, { endConditions: ends, head: at })
-    await tokenCap(asked.tokens, round)
+    await tokenCap(asked.token_usage, round)
     // the authority questions of the round are asked now, approved or not (CRW-1366): an answer is the next round's
     await askOrchestrator(asked.answers, 'out_of_authority', asked.carried)
     if (asked.failed) return { ok: false, result: await crw.milestoneHalt(ms, 'explorer', asked.failed.status, asked.failed.reason, asked.failed.callId) }

@@ -548,6 +548,15 @@ export async function explore(kind, questions, ctx, opts) {
   const found = {}
   let failed = null
   let tokens = 0
+  // Keep the inclusive total for existing callers and the input/cache/output split for the design cap.
+  const tokenUsage = { input: 0, cached_input: 0, output: 0 }
+  const addTokens = (call) => {
+    const usage = (call && call.meta && call.meta.tokens) || {}
+    tokens += usage.total || 0
+    tokenUsage.input += usage.input || 0
+    tokenUsage.cached_input += usage.cached_input || 0
+    tokenUsage.output += usage.output || 0
+  }
   // a background explorer (CRW-1466) is labelled explore-bg:<milestone>:<digest12>, so a reader of the explore: labels (an open
   // question's, a research or evidence question's) never takes one for its own; every other kind keeps its label
   const prefix = kind === 'background' ? 'explore-bg:' : 'explore:'
@@ -566,7 +575,7 @@ export async function explore(kind, questions, ctx, opts) {
       agentType: 'explorer', node: ctx.node || undefined, head: callHead, schema: FINDINGS, label: label(r) + suffix,
     })
   const settle = (r, call) => {
-    tokens += (call && call.meta && call.meta.tokens && call.meta.tokens.total) || 0
+    addTokens(call)
     if (!call || call.status !== 'completed') {
       if (!failed) failed = call ? { callId: call.callId, status: call.status, reason: call.reason } : { callId: null, status: 'failed', reason: 'explorer_thrown' }
       return
@@ -581,7 +590,7 @@ export async function explore(kind, questions, ctx, opts) {
     wave.forEach((r, i) => {
       const call = calls[i]
       if (call && call.status === 'null_model') {
-        tokens += (call.meta && call.meta.tokens && call.meta.tokens.total) || 0
+        addTokens(call)
         again.push({ r, first: call })
         return
       }
@@ -592,7 +601,7 @@ export async function explore(kind, questions, ctx, opts) {
     again.forEach((x, i) => {
       const call = retries[i]
       if (call && call.status === 'null_model') {
-        tokens += (call.meta && call.meta.tokens && call.meta.tokens.total) || 0
+        addTokens(call)
         missing[x.r.digest] = { calls: [x.first.callId, call.callId], status: call.status, reason: call.reason || '' }
         lastMissing = { callId: call.callId, status: call.status, reason: call.reason }
         return
@@ -646,6 +655,7 @@ export async function explore(kind, questions, ctx, opts) {
     carried: plan.carried || [],
     failed,
     tokens,
+    token_usage: tokenUsage,
   }
 }
 
