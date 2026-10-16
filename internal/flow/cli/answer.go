@@ -585,6 +585,7 @@ func (c *command) settleEndedRun(state string, cm *common, rec RunRecord) (Settl
 			return settled, c.fail("the run ended but its binding could not be released: %v", err)
 		}
 	}
+	c.cleanupFinishedUnderLock(state, cm.socket, rec.RunID)
 	return settled, 0
 }
 
@@ -644,12 +645,15 @@ func (c *command) cancelDead(state string, cm *common, rec RunRecord) int {
 	// holds from the rows read under the lock, as a cancel that read the ended run from the start does (settleEndedRun)
 	if now := Summarize(rec, j.Events(), false, 0).State; Over(now) {
 		events := j.Events()
-		_ = j.Close()
+		if err := j.Close(); err != nil || j.Err() != nil {
+			return c.fail("the rows could not be stored: %v", errors.Join(err, j.Err()))
+		}
 		settled, err := c.settle(st, rec.RunID, events)
 		if err != nil {
 			return c.fail("%v", err)
 		}
 		c.saySettled(rec.RunID, settled)
+		c.cleanupFinishedUnderLock(state, cm.socket, rec.RunID)
 		return c.endedCancel(rec.RunID, now, settled)
 	}
 	// the run's executions are given up before the run is marked cancelled: a run that is cancelled in the journal and still holds
@@ -672,6 +676,7 @@ func (c *command) cancelDead(state string, cm *common, rec RunRecord) int {
 	if err := c.releaseCancelledBinding(st, state, rec.RunID); err != nil {
 		return c.fail("the run ended but its binding could not be released: %v", err)
 	}
+	c.cleanupFinishedUnderLock(state, cm.socket, rec.RunID)
 	fmt.Fprintf(c.stdout, "run %s had no process; it is cancelled (%d execution(s) given up, %d slot(s) returned)\n", rec.RunID, settled.Closed, settled.SlotsReturned)
 	return 0
 }

@@ -507,9 +507,10 @@ and architecture, be listed exactly once in `SHA256SUMS` and hash to the listed 
 under the destination or in the host record is created before all three hold.
 
 `--backup-state-to <dir>` (on `install`, `update` and `rollback`) is the acknowledgement that the swap brings the additive DAG zone, or ordinary
-indexes on tables the store already holds, to a store that lacks them: the command copies the whole relay state directory to `<dir>` before
+indexes on tables the store already holds, to a store that lacks them: the command copies the relay databases and record files to `<dir>` before
 promoting, and without it that swap refuses and names the flag ([the route](#why-the-schema-reading-compares-statements-and-not-versions)).
 The same artifact can be taken outside an install, by hand, with `crw install backup-state --to <dir>` ([the operator command](#the-state-backup-outside-an-install)).
+Regenerable flow worktrees are listed in the manifest and omitted from the copy ([backup scope and cleanup](#flow-worktrees-in-backups-and-cleanup)).
 
 What follows is one run, in this order, and the result lists the steps it took:
 
@@ -759,7 +760,7 @@ outside quoted text are normalised away and nothing else is.
 
 The relay applies its whole schema on every write-open, so a candidate whose schema is not the
 store's applies the difference the moment its daemon first starts. OPS-4.5 reserves that for its own
-decision, with a copied backup of the whole state directory taken first, so an update never waves it
+decision, with a copied backup of the state databases and records taken first, so an update never waves it
 through. The Go and Python runtimes execute the same schema statements
 ([decision 14](port/decisions.md)), and no Go release changes them before the commit point
 ([cutover](port/cutover.md#commit-point)).
@@ -786,8 +787,9 @@ too, since it tries the writable open first (a read that opens nothing for writi
 and the refusal names the route: `crw install update --from ... --backup-state-to DIR` (the same flag is on `install` and `rollback`). The flag is the
 operator's acknowledgement, and under it the command itself takes the OPS-4.5 backup, so the backup is guaranteed by the route and not by
 anyone's memory. Inside the promotion lock, after the daemon-stopped and no-open-attempt cells have answered and before anything is promoted,
-it copies the whole state directory the gate read to `DIR`: copy only, byte for byte, the source opened read-only and nothing moved, recreated
-or deleted, here or on a failure. Directories and regular files are copied with their bytes and, once every byte is in place and verified, their permission bits, each synced after its mode is set so the mode and not only the bytes survives a power loss (the directory the backup is made in stays 0700, and a copy always keeps its owner able to open it: a source the installer could read only through its group gets the owner's read bit, and the manifest records both modes); a symbolic link to a regular file is copied as the
+it copies the state databases and records the gate read to `DIR`: included files are copied byte for byte, the source opened read-only and nothing moved, recreated
+or deleted, here or on a failure. Regenerable flow worktrees are omitted and inventoried as described [below](#flow-worktrees-in-backups-and-cleanup).
+The remaining directories and regular files are copied with their bytes and, once every byte is in place and verified, their permission bits, each synced after its mode is set so the mode and not only the bytes survives a power loss (the directory the backup is made in stays 0700, and a copy always keeps its owner able to open it: a source the installer could read only through its group gets the owner's read bit, and the manifest records both modes); outside the excluded worktrees, a symbolic link to a regular file is copied as the
 file's bytes under the link's name (a link alone would back up nothing), and when `relay.sqlite3` is such a link the real file's `-wal`
 is copied beside it, so a restore opens with the commits only the log held; a socket, a FIFO or a device is listed as skipped. The store's two
 sidecars are recognised by the path SQLite resolves the database to, not by their top-level name: with `relay.sqlite3` linked to a file inside
@@ -805,9 +807,9 @@ is still there at the verification must digest to what was copied: one that a ch
 `relay.sqlite3` is the consistency the verification keeps. A store's `-wal` or `-shm` that goes between a listing's directory read and the entry's own
 information is recorded as gone before its copy rather than refusing; every other file's disappearance there still refuses.
 The room check ("the backup would not fit") is made before any byte is copied on the sum of the first listing, which counts the store's files twice (the copy and the scratch duplicate of the integrity gate). The log is a file another connection checkpoints away at any moment, so a refusal on the room reads the state directory once more, still before the first byte is copied, and is judged again only when that listing needs less; a log that went that way is recorded as `gone before its copy`, and one that is still there refuses as before.
-Each file is
+Each copied file is
 hashed while it is read and synced; then the state directory is read again, and the listing, every size and every file's digest, and the digest of
-every file in the copy, must be what was copied. Any difference, in any file, refuses the swap ("the state directory changed under the copy"):
+every file in the copy, must be what was copied. Any difference in a copied file refuses the swap ("the state directory changed under the copy"):
 the copy is of one moment or it is not made. The backup, its manifest and the directories made for them are synced in their parents after the manifest is written, so a power loss cannot keep the files and lose the names that reach them. `DIR` and its manifest must not exist, must not lie inside the state directory, and must not lie
 inside the runtime destination tree (a failed run removes its candidate runtime, and a backup there would go with it); the free space on its
 filesystem must cover the directory. Before the record is written the copy passes the integrity gate: a scratch duplicate of the copied store (its
@@ -816,7 +818,7 @@ the copy, so the backup’s bytes are unchanged by the check, and the duplicate 
 the backup and that duplicate together. The manifest records `integrityCheck` (SQLite’s
 answer) and `restoreCandidate` (true only when the check passed), and a copy that fails the check is not a restore candidate and refuses. The
 record is written last, beside the backup and not inside it (`DIR.manifest.json`: source, destination,
-time, issue, every entry with its size, mode and digest, what was skipped, an aggregate digest, `integrityCheck` and `restoreCandidate`), and the command's
+time, issue, each copied entry with its size, mode and digest, omitted worktree and link entries, what was skipped, an aggregate digest, `integrityCheck` and `restoreCandidate`), and the command's
 result carries the same facts
 as `swapGate.stateBackup`. A backup that fails part-way stays where it is and is reported with `partial: true`; a swap that fails after the backup keeps
 it too, and a rerun needs a new destination.
@@ -880,7 +882,7 @@ command. Run no write command of this build against a live state directory befor
 
 ### The state backup outside an install
 
-`crw install backup-state --to <dir>` takes the same stopped byte copy the install route takes, outside any install, so an operator can
+`crw install backup-state --to <dir>` takes the same stopped copy of databases and record files the install route takes, outside any install, so an operator can
 take the default artifact on demand. It calls the same `backupState` routine, so the copy, its manifest and its `integrityCheck` and
 `restoreCandidate` fields have the same meaning, and the destination rules (`<dir>` and its manifest must not exist, must not lie inside the state
 directory or the runtime destination tree, and the free space must cover the directory) are the same. It is routed before the generic install
@@ -901,6 +903,84 @@ command takes no other lock.
 
 What this command does not do: it does not stop or start the service, it does not restore, and it does not schedule anything. The online
 `sqlite3_backup` snapshot and its schedule are a separate decision and are not built here.
+
+### Flow worktrees in backups and cleanup
+
+The backup keeps databases and durable records, including a run's spec, result, journal, reports and
+call records. These worktree roots, relative to the state directory, are candidates for omission:
+
+- `flow/<run>/land-wt`
+- `flow/<run>/node-wt`
+- `flow/<run>/wt`
+- `flow/<run>/calls/<call>/wt` and later allocations `wt-1`, `wt-2`, and so on.
+
+Omission requires recovery proof: each checkout must still have the HEAD and tree preserved by
+its cleanup ref, with no changed, untracked or ignored files. A directory containing only aliases
+needs no copied payload. Missing proof, new working data or a failed probe keeps the directory's
+files in the backup. This preserves paused and held work, including an uncommitted pending tree.
+Legacy worktrees without preservation records are copied until eligible cleanup preserves and
+removes them; the preview command below identifies accumulated work.
+
+The manifest's `entries` list records an omitted directory as `kind: "workdir"`. A link at a
+worktree root or inside it is recorded as `kind: "symlink"` with its literal
+`linkTarget`. It is not followed or recreated in the backup; a broken link or a link outside the
+state directory therefore does not refuse the backup. This also applies to links inside a worktree
+whose other files must be copied. The manifest's `files` and `bytes` count copied payload only, and
+the space check excludes proven regenerable content. Metadata entries have no copied bytes or file
+digest; their paths, kinds and link targets are included in the aggregate digest.
+
+After a completed or cancelled run has stored its end and closed its world, it removes its own
+worktree roots under the run lock. Before removing a linked Git worktree, it preserves HEAD and
+the current nonignored working files in a snapshot commit under
+`refs/crw/flow/<run>/cleanup/` in the owning repository. The run's `cleanup.jsonl` records the
+worktree path, ref, commit, HEAD and snapshot tree before deletion. The canonical repository,
+commits, run records and journal remain. Call records stay in `calls/<call>`; only that call's
+worktree directories are removed.
+
+QA files receive separate preservation because Git ignores `.crw/evidence`. Cleanup copies files
+below that directory and owned files named by recorded `crw.qaCapture` results into immutable blobs
+under `flow/<run>/cleanup-artifacts/`. The run's `cleanup-artifacts.jsonl` maps each original
+absolute reference to its run-relative path, durable blob, SHA256, size and mode. The journal keeps
+its original references; the mapping provides the capture bytes after their worktree is removed.
+The blobs and mapping are ordinary durable state and are included in backups. Unreadable or
+unsafe evidence prevents deletion and reports a warning. Other ignored build output and caches
+are disposable.
+
+An explicit resume reconstructs missing preserved checkouts at their original HEAD with their
+saved working snapshot and archived QA files, then rebuilds the scheduler's handles from the
+journal. A private staging checkout is completed before it is moved to the original path, so a
+failed artifact restore cannot leave a partial checkout that a retry silently accepts. This happens
+after the resume's input and budget checks, before the engine replays its proofs. The owning
+repository must still be available. Existing checkouts are not overwritten, and malformed
+cleanup records or linked parent directories refuse restoration. Accepted evidence remains
+available in the run's step bus copies and completed journal rows after its original worktree
+receipt is removed.
+
+Paused, held, dead, failed and blocked runs remain available for recovery. A cancelled run with
+unsettled calls or recovery holds is kept too. The cleanup command checks eligibility again after
+taking the run lock. A foreign repository, an independent nested repository, a linked container,
+or a preservation/recording failure keeps the affected work and reports why. An automatic cleanup
+failure is a warning and does not change the run's result.
+
+Existing accumulated worktrees can be inspected without deletion:
+
+```sh
+crw flow cleanup-worktrees --state /path/to/state
+crw flow cleanup-worktrees RUN --state /path/to/state
+```
+
+The default output is a preview of paths and the sizes of their regular files in bytes; link targets are not
+walked and links contribute zero bytes. It writes no cleanup records or Git refs and does not take
+a writer lock. To remove an eligible run's worktrees after inspecting the preview, the operator
+must explicitly request:
+
+```sh
+crw flow cleanup-worktrees RUN --state /path/to/state --apply
+```
+
+Omitting `RUN` with `--apply` processes the eligible recorded runs. Active or unresolved runs are
+kept, and failures are reported. This command does not run as part of installation; only each
+run's own normal termination performs automatic cleanup.
 
 ### The order a swap commits in
 

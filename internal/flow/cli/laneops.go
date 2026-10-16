@@ -358,6 +358,9 @@ func CILocalIntegration(tools crwconfig.VerifierTools, notes io.Writer) dagsched
 		}
 		base := integrationEnv(os.LookupEnv, home, tmp)
 		argv := append(append([]string{}, command.Argv...), "ci", "local", "--commit", vars["CRW_VERIFY_HEAD"], "--base", vars["CRW_VERIFY_BASE"], "--record", vars["CRW_VERIFY_RECORD"], "--runner", "local")
+		if reuse := vars["CRW_VERIFY_REUSE"]; reuse != "" {
+			argv = append(argv, "--reuse", reuse)
+		}
 		err = dagsched.CommandVerifierEnv(argv, func() []string { return base })(ctx, dir, append(append([]string{}, command.Env...), env...))
 		var host *dagsched.IntegrationVerifierHostError
 		if errors.As(err, &host) {
