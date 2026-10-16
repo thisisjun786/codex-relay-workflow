@@ -305,6 +305,94 @@ func TestArchitectPacketNamesAMissingExploration(t *testing.T) {
 	}
 }
 
+// openAnswers are the answers of a round's open questions as crw.explore returns them with nothing missing: one an explorer answered,
+// one asked of the orchestrator.
+const openAnswers = "{ id: 'found', question: 'is the flag documented?', route: 'spawn', reason: '', authority: '', answer: 'yes, README.md says so', call: 'c_9', findings: { answer: 'yes, README.md says so' } }, " +
+	"{ id: 'policy', question: 'does the project ship the flag in 1.0?', route: 'orchestrator', reason: 'out_of_authority', authority: 'authority:policy', answer: '', call: '', findings: null }"
+
+// lostAnswer is an open question whose explorer was asked twice and did not answer (crw.explore's missing member, CRW-1571).
+const lostAnswer = "{ id: 'lost', question: 'where is the retry policy kept?', route: 'spawn', reason: '', authority: '', answer: '', call: '', findings: null, missing: { calls: ['c_1', 'c_2'], status: 'null_model', reason: 'schema_invalid_after_repair' } }"
+
+// TestOpenQuestionPacketsWithoutAMissingExplorationAreUnchanged (CRW-1571): with no missing exploration the critic's answers
+// (answerLines) and the design-answers packet have the bytes they had before CRW-1571.
+func TestOpenQuestionPacketsWithoutAMissingExplorationAreUnchanged(t *testing.T) {
+	cand := "{ design: { decisions: [] }, answers: [" + openAnswers + "] }"
+	audit := packetText(t, "critic-answers-golden-packet", "designAuditPacket", "designAuditPacket(ms, "+cand+", 1, [], undefined)")
+	_, got, ok := strings.Cut(audit, "\n\nANSWERS TO THE OPEN QUESTIONS")
+	if !ok {
+		t.Fatalf("no answers section:\n%s", audit)
+	}
+	want := " (each with its route and what it got):\n" +
+		"- found: is the flag documented?\n  route: an explorer answered it (call c_9)\n  answer: yes, README.md says so\n  findings: {\"answer\":\"yes, README.md says so\"}\n" +
+		"- policy: does the project ship the flag in 1.0?\n  route: asked of the orchestrator (out_of_authority, authority:policy): no answer in this audit; the run raised it in the design_question escalation of this round, the milestone goes on and the plan stands on the assumption the DESIGN states\n\n" +
+		"An open question of the DESIGN with no entry in ANSWERS TO THE OPEN QUESTIONS (one the architect raised when the answers came back to its thread, which no route has taken yet) is a P1 finding that names the question, so the next round routes it."
+	if got != want {
+		t.Errorf("answers section\n%q\nwant\n%q", got, want)
+	}
+	answers := packetText(t, "design-answers-golden-packet", "designAnswersPacket", "designAnswersPacket(["+openAnswers+"], undefined)")
+	wantAnswers := "ROLE: architect. The open questions of your DESIGN got the answers below. Answer with the DESIGN again, with what they say folded into its decisions and plans, before the critic audits it; keep the ids of the decisions and the issues, and give dispositions null (no audit finding is before you). An open question an answer settles leaves open_questions; a question you raise anew in this answer reaches the critic with no answer, which is a P1 finding, and is routed in the next audit round.\n\n" +
+		"ANSWERS:\n- found: is the flag documented?\n  answer: yes, README.md says so\n  findings: {\"answer\":\"yes, README.md says so\"}"
+	if answers != wantAnswers {
+		t.Errorf("design-answers packet\n%q\nwant\n%q", answers, wantAnswers)
+	}
+	replan := packetText(t, "design-answers-replan-golden-packet", "designAnswersPacket", "designAnswersPacket(["+openAnswers+"], { head: 'tip1', base_tip: 'base0', landed: [] })")
+	if strings.Contains(replan, "NOT ANSWERED") || !strings.HasPrefix(replan, wantAnswers+"\n\nYour directory P is a read-only checkout") {
+		t.Errorf("design-answers packet of a re-plan:\n%s", replan)
+	}
+}
+
+// TestDesignAnswersPacketNamesTheQuestionsNotAnswered (CRW-1571): a question whose explorer was asked twice and did not answer is
+// not among the ANSWERS; a NOT ANSWERED section right after them names it with both calls and the status and reason of the last.
+func TestDesignAnswersPacketNamesTheQuestionsNotAnswered(t *testing.T) {
+	got := packetText(t, "design-answers-missing-packet", "designAnswersPacket", "designAnswersPacket(["+openAnswers+", "+lostAnswer+"], { head: 'tip1', base_tip: 'base0', landed: [] })")
+	listed, rest, ok := strings.Cut(got, "\n\nNOT ANSWERED")
+	if !ok {
+		t.Fatalf("no NOT ANSWERED section:\n%s", got)
+	}
+	if !strings.HasSuffix(listed, "ANSWERS:\n- found: is the flag documented?\n  answer: yes, README.md says so\n  findings: {\"answer\":\"yes, README.md says so\"}") {
+		t.Errorf("ANSWERS should list the answered question alone:\n%s", listed)
+	}
+	want := " (the explorer of each was asked twice and did not answer; the question stays open):\n" +
+		"- lost: where is the retry policy kept? (calls c_1, c_2: null_model schema_invalid_after_repair)\n\nYour directory P is a read-only checkout"
+	if !strings.HasPrefix(rest, want) {
+		t.Errorf("NOT ANSWERED section\n%q\nwant the prefix\n%q", rest, want)
+	}
+}
+
+// TestOpenQuestionMissingWithNoAnswerGoesToTheCritic (CRW-1571): when no question of the round got an answer and one is missing,
+// the round has no design-answers turn (answeredQuestions is empty, project-lane.js unchanged) and the critic's packet names the
+// missing one: its route line says its explorer was asked twice and did not answer, never that an explorer answered it, and the
+// other questions' lines are as before. (In a run the round then halts unless an explorer it spawned completed - D1.4 - so the
+// line reaches the critic beside an answered question; TestOpenQuestionExplorerThatFailsTwiceIsNotAnswered runs that.)
+func TestOpenQuestionMissingWithNoAnswerGoesToTheCritic(t *testing.T) {
+	policy := "{ id: 'policy', question: 'does the project ship the flag in 1.0?', route: 'orchestrator', reason: 'out_of_authority', authority: 'authority:policy', answer: '', call: '', findings: null }"
+	answers := "[" + lostAnswer + ", " + policy + "]"
+	got := packetText(t, "critic-missing-packet", "answeredQuestions, designAuditPacket",
+		"String(answeredQuestions("+answers+").length) + '|' + designAuditPacket(ms, { design: { decisions: [] }, answers: "+answers+" }, 1, [], undefined)")
+	count, audit, _ := strings.Cut(got, "|")
+	if count != "0" {
+		t.Errorf("%s answered questions, want none (no design-answers turn)", count)
+	}
+	_, section, ok := strings.Cut(audit, "ANSWERS TO THE OPEN QUESTIONS (each with its route and what it got):\n")
+	if !ok {
+		t.Fatalf("no answers section:\n%s", audit)
+	}
+	want := "- lost: where is the retry policy kept?\n  route: an explorer was asked twice and did not answer (calls c_1, c_2: null_model schema_invalid_after_repair)\n" +
+		"- policy: does the project ship the flag in 1.0?\n  route: asked of the orchestrator (out_of_authority, authority:policy): no answer"
+	if !strings.HasPrefix(section, want) {
+		t.Errorf("answers section\n%q\nwant the prefix\n%q", section, want)
+	}
+	if strings.Contains(section, "an explorer answered it") {
+		t.Errorf("the missing question reads as answered:\n%s", section)
+	}
+	// a repeat in the round of the missing question (its reuse carries the missing member too) reads the same
+	repeat := "{ id: 'again', question: 'where is the retry policy kept?', route: 'reuse', reason: 'same_question_in_round', authority: '', origin: 'spawn', answer: '', call: '', findings: null, missing: { calls: ['c_1', 'c_2'], status: 'null_model', reason: 'schema_invalid_after_repair' } }"
+	reused := packetText(t, "critic-missing-reuse-packet", "designAuditPacket", "designAuditPacket(ms, { design: { decisions: [] }, answers: ["+lostAnswer+", "+repeat+"] }, 1, [], undefined)")
+	if !strings.Contains(reused, "- again: where is the retry policy kept?\n  route: an explorer was asked twice and did not answer (calls c_1, c_2: null_model schema_invalid_after_repair)") {
+		t.Errorf("the repeat of the missing question:\n%s", reused)
+	}
+}
+
 // TestArchitectPacketAsksForTheSubTasksOfASplit (S-1, CRW-1435): the architect's first packet asks, with each issue's size_fit, for
 // the sub_tasks of a split node, and the size fit section of the architect overlay names every size_fit value and every member of a
 // sub-task the DESIGN schema has, and no other size: a value or a member the schema gains or drops moves the overlay with it.
