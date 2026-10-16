@@ -18,6 +18,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/cxccorpus"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // What a claim can need that no replay provides; each text says what the claimant can do about it.
@@ -67,6 +68,7 @@ type cxcReplayer struct {
 	rules       *cxccorpus.Normaliser
 	decls       map[string]cxccorpus.Declaration
 	long        []string       // fixtures whose answer depends on the case-root length
+	longScratch string         // the parent of their case roots: cxccorpus.RecordedScratch (a test sets another)
 	mask        *regexp.Regexp // text no rule may rename: upstream addresses and rewrite-rule text
 	rewrite     *regexp.Regexp // text a rewrite-kind rule (R19, R29, R30) names
 
@@ -87,7 +89,7 @@ type cxcReplayer struct {
 }
 
 func newCXCReplayer(root, crw string) (*cxcReplayer, error) {
-	r := &cxcReplayer{crw: crw, plugin: filepath.Join(root, "plugins", "crw")}
+	r := &cxcReplayer{crw: crw, plugin: filepath.Join(root, "plugins", "crw"), longScratch: cxccorpus.RecordedScratch}
 	var err error
 	if r.exe, err = os.Executable(); err != nil {
 		return nil, err
@@ -314,8 +316,13 @@ func (r *cxcReplayer) check(id string, fix cxccorpus.Fixture, claim cxcClaim, tm
 	if needs := r.needs(fix, scenario.Given, claim.State == cxcIdentical); len(needs) > 0 {
 		return fmt.Errorf("%s: the %s claim by %s needs %s", id, claim.State, claim.Issue, strings.Join(needs, " and "))
 	}
-	scratch := "/var/tmp" // a case root /var/tmp/cxc-rec-<16 hex> is the recorded 33 bytes
-	if !slices.Contains(r.long, id) {
+	var scratch string
+	if slices.Contains(r.long, id) {
+		if err := r.longCaseRoot(); err != nil {
+			return fmt.Errorf("%s: %w", id, err)
+		}
+		scratch = r.longScratch
+	} else {
 		scratch = tmp()
 	}
 	got, err := cxccorpus.RunScenario(r, cxccorpus.RunOptions{Scratch: scratch, HomeVar: "CRW_HOME", Rules: r.rules, Seed: r.seed}, scenario)
@@ -338,6 +345,34 @@ func (r *cxcReplayer) check(id string, fix cxccorpus.Fixture, claim cxcClaim, tm
 	}
 	if err := compare(flatten(want), flatten(got), claim, r.light); err != nil {
 		return fmt.Errorf("%s (%s by %s): %w", id, claim.State, claim.Issue, err)
+	}
+	return nil
+}
+
+// longCaseRoot says whether the path_length_dependent fixtures can run: their case roots lie below
+// r.longScratch (cxccorpus.RecordedScratch), whose case root is the recorded 33 bytes, and they run
+// nowhere else (CRW-1579, D7). A parent that is missing, not a directory or not writable is
+// cxc_long_case_root_unusable with the reason and the need, before any case is made; there is no
+// skip and no second place.
+func (r *cxcReplayer) longCaseRoot() error {
+	need := len(cxccorpus.RecordedScratch) + 1 + len("cxc-rec-") + 16 // <RecordedScratch>/cxc-rec-<16 hex>
+	unusable := func(why error) error {
+		return fmt.Errorf("cxc_long_case_root_unusable: %s: %w; the %d path_length_dependent fixtures need the recorded %d-byte case root",
+			r.longScratch, why, len(r.long), need)
+	}
+	fi, err := os.Stat(r.longScratch)
+	if err != nil {
+		return unusable(err)
+	}
+	if !fi.IsDir() {
+		return unusable(errors.New("not a directory"))
+	}
+	probe, err := tmploc.MkdirTempIn(r.longScratch, "cxc-probe-")
+	if err != nil {
+		return unusable(fmt.Errorf("not writable: %w", err))
+	}
+	if err := os.Remove(probe); err != nil {
+		return unusable(fmt.Errorf("the write probe %s could not be removed: %w", probe, err))
 	}
 	return nil
 }

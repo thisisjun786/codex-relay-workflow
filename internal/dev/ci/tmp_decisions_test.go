@@ -69,9 +69,15 @@ var tmpRecordedPayload = tmpEntry{
 	"E4 recorded hook payload text, the same as contract/fixtures/hook: not a location this program chooses",
 }
 
-// E5 (the cxccorpus RecordedScratch line, the recorded oracle condition of the 9
-// path_length_dependent fixtures) is added by U-A5-5 together with the constant; until then the
-// two lines it replaces are pending.
+// E5: the cxccorpus RecordedScratch line, the recorded oracle condition of the path_length_dependent
+// fixtures: their case root <RecordedScratch>/cxc-rec-<16 hex> is the recorded 33 bytes, and the
+// recorder's default and the long cases' replay both use it (a replay that cannot use it fails with
+// the reason). It is matched by file and exact line text.
+var tmpRecordedScratch = tmpEntry{
+	"internal/dev/cxccorpus/engine.go",
+	`const RecordedScratch = "/var/tmp"`,
+	"E5 the recorded case-root parent of the path_length_dependent fixtures (33 bytes): the recorded oracle condition, not a location this program chooses",
+}
 
 // E6: port history prose that quotes code or Python literals. These are records of what was, not
 // locations; a new docs file with a hit fails.
@@ -101,7 +107,6 @@ var tmpGlobs = []tmpGlob{
 
 // The units that move the pending sites (plan-r2 of bundle 1566-tmp-arch).
 const (
-	tmpU5 = "U-A5-5 laneparity, cxcfuzz, cxccorpus: the recorded scratch constant"
 	tmpU6 = "U-A5-6 testsupport and sandboxroottest: no fallbacks, no empty parent"
 	tmpU7 = "U-A5-7 contracttest temp sites"
 	tmpU8 = "U-A5-8 product implicit MkdirTemp(\"\") sites"
@@ -112,15 +117,10 @@ const (
 // own entries; U-A5-9 deletes the mechanism and adds TestNoPendingTempDecisions.
 var tmpPending = []tmpEntry{
 	{"internal/contracttest/cxc_hookfire.go", `base = os.TempDir()`, tmpU7},
-	{"internal/contracttest/cxc_replay.go", `scratch := "/var/tmp" // a case root /var/tmp/cxc-rec-<16 hex> is the recorded 33 bytes`, tmpU5},
 	{"internal/contracttest/git.go", `root, err := os.MkdirTemp("/dev/shm", "crw-git-contract-")`, tmpU7},
 	{"internal/contracttest/hook.go", `dir, err := os.MkdirTemp("", "crw-hc-standin-")`, tmpU7},
 	{"internal/contracttest/mcp.go", `if err := testsupport.WriteSandboxConfig(filepath.Join(userHome, ".config", "crw", "config.json"), os.TempDir()); err != nil {`, tmpU7},
 	{"internal/contracttest/records.go", `home, err := os.MkdirTemp("", "crw-hc-doc-")`, tmpU7},
-	{"internal/dev/cxccorpus/command.go", `scratch := set.String("scratch", "/var/tmp", "parent directory of every case root")`, tmpU5},
-	{"internal/dev/cxcfuzz/root.go", `if err := homeguard.Refuse(os.TempDir()); err != nil {`, tmpU5},
-	{"internal/dev/cxcfuzz/root.go", `return os.MkdirTemp("", pattern)`, tmpU5},
-	{"internal/dev/laneparity/scratch.go", `dir = os.TempDir()`, tmpU5},
 	{"internal/flow/ops/gitsnap.go", `dir, err := os.MkdirTemp("", "crw-snapshot-")`, tmpU8},
 	{"internal/flow/ops/gitsnap.go", `dir, err := os.MkdirTemp("", "crw-restore-")`, tmpU8},
 	{"internal/relay/dagsched/baserefresh_git.go", `dir, err := os.MkdirTemp("", "dag-base-refresh-")`, tmpU8},
@@ -200,7 +200,6 @@ var tmpNeverEmptyParents = []tmpEntry{
 // its file.
 var tmpPendingParents = []tmpEntry{
 	{"internal/contracttest/cxc_hookfire.go", `dir, mkErr := os.MkdirTemp(in.Scratch, "fire-")`, tmpU7},
-	{"internal/dev/laneparity/scratch.go", `return os.MkdirTemp(parent, pattern)`, tmpU5},
 	{"internal/sandboxroot/sandboxroottest/sandboxroottest.go", `fakes, err := os.MkdirTemp(parent, "crw-sandboxroot-test-")`, tmpU6},
 	{"internal/testsupport/outside_repositories.go", `dir, err := os.MkdirTemp(parent, pattern)`, tmpU6},
 }
@@ -274,6 +273,9 @@ func tmpCovered(h tmpHit) string {
 	if tmpRecordedPayload.matches(h) {
 		return "E4"
 	}
+	if tmpRecordedScratch.matches(h) {
+		return "E5"
+	}
 	for _, e := range tmpPending {
 		if e.matches(h) {
 			return "pending " + e.why
@@ -338,6 +340,7 @@ func TestTempDecisionExceptionsAreLive(t *testing.T) {
 	}{
 		{"E1", tmpTmplocLines, hits},
 		{"E4", []tmpEntry{tmpRecordedPayload}, hits},
+		{"E5", []tmpEntry{tmpRecordedScratch}, hits},
 		{"the pending list", tmpPending, hits},
 		{"tmpNeverEmptyParents", tmpNeverEmptyParents, parentHits},
 		{"tmpPendingParents", tmpPendingParents, parentHits},

@@ -90,6 +90,20 @@ func TestTemporaryRoots_neverLieInTheAccountHome(t *testing.T) {
 	}
 }
 
+// CRW-1579 (D7): a case or worker root takes its parent from tmploc, the one place. A relative TMPDIR is
+// refused with tmploc's reason; os.MkdirTemp("") would make the root below the working directory.
+func TestMkdirTempRoot_relativeTMPDIRIsAnError(t *testing.T) {
+	cwd := t.TempDir()
+	t.Chdir(cwd)
+	t.Setenv("TMPDIR", "rel-tmp")
+	if dir, err := MkdirTempRoot("cxcfuzz-case-"); err == nil || !strings.Contains(err.Error(), "tmpdir_not_absolute") {
+		t.Errorf("MkdirTempRoot with TMPDIR=rel-tmp = %q, %v; want the tmpdir_not_absolute refusal", dir, err)
+	}
+	if entries, _ := os.ReadDir(cwd); len(entries) != 0 {
+		t.Errorf("a refused root made %d entries below the working directory", len(entries))
+	}
+}
+
 // CRW-1186 verification round 1: a link below the destination that leads into the account's home.
 func TestSaveCases_refusesACasesFileThatIsALinkIntoTheAccountHome(t *testing.T) {
 	home := fakeAccount(t)

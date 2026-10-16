@@ -7,7 +7,7 @@ import { writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { join } from 'node:path';
 
-const oracleRoot = process.env.ORACLE_ROOT || '/var/tmp/cxc-v0.2.40/plugins/codexclaw/components/pabcd-state';
+const oracleRoot = process.env.ORACLE_ROOT; if (!oracleRoot) throw new Error('ORACLE_ROOT is unset; set it to the extracted CXC v0.2.40 tree\'s plugins/codexclaw/components/pabcd-state');
 const outIdx = process.argv.indexOf('--out');
 const out = outIdx >= 0 ? process.argv[outIdx + 1] : undefined;
 if (!out) {
