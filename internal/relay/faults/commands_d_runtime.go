@@ -417,7 +417,7 @@ func dSettle(ctx context.Context, l *Ledger, name string, a map[string]string) (
 			return nil, e
 		}
 		if went == nil {
-			return nil, fmt.Errorf("fault_state_conflict: notification %s cannot be settled yet: it was reserved by the relay daemon's deliverer, whose transport is the 부모 channel, and the channel has not recorded its message as sent; the deliverer settles it after a readback on the 부모 channel records an arrival", id)
+			return nil, fmt.Errorf("fault_state_conflict: notification %s cannot be settled yet: it was reserved by the relay daemon's deliverer, whose transport is the 부모 channel, and the channel has not recorded its message as sent; the deliverer settles it after crw relay supervisor-read records an arrival", id)
 		}
 	}
 	if !delivered {

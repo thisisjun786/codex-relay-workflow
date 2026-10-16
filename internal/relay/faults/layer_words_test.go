@@ -133,6 +133,7 @@ func TestFaultNoticeTextNamesTheLayers(t *testing.T) {
 		l, ctx = seed(t, fault, "INSERT INTO fault_notifications (notification_id, fault_id, product, kind, cycle, state, owner, created_at, updated_at) VALUES ('n1','abc123','crw','blocking',1,'uncertain','relay-daemon','t','t')")
 		_, err = executeD(ctx, l, "fault-notification-reconcile", map[string]string{"--notification": "n1", "--delivered": "yes", "--ref": "somebody says it arrived"})
 		requireNames(t, "the reconcile refusal", refusalText(err), "whose transport is the 부모 channel")
+		requireNames(t, "the reconcile refusal", refusalText(err), "crw relay supervisor-read")
 		requireNoRoleWords(t, "the reconcile refusal", refusalText(err))
 
 		seedNoticeMessage(t, ctx, l.Store, "m1", "supervisor", "sending", "2023-11-14T22:13:20.000000+00:00", "obligation_kind='fault_notification'", "obligation_id='n1'")
