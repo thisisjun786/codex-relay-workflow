@@ -235,6 +235,10 @@
   {"flag":"--ack-turn","required":true},
   {"flag":"--ack-proof","required":true},
   {"flag":"--reject"}]},
+{"name":"receipt-pull","summary":"pull a completion the daemon deferred as busy into the caller's own live turn, without a send; the caller is the recipient task (CODEX_THREAD_ID must equal --task) and the host confirms the turn is in progress; the completion is then acknowledged from that same turn","options":[
+  {"flag":"--event","required":true},
+  {"flag":"--turn","required":true,"help":"the caller's own in-progress turn id, which pulls the completion and must acknowledge it"},
+  {"flag":"--task","required":true,"help":"the recipient task id, the calling thread itself"}]},
 {"name":"verdict","options":[
   {"flag":"--event","required":true},
   {"flag":"--verdict","required":true,"choices":["verified","needs_changes","unverified","aborted"]},

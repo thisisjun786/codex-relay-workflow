@@ -264,6 +264,10 @@ func (a *Ack) Acknowledge(ctx context.Context, eventID, ackTurn, proof string, a
 			}
 			return refuse(NotClaimable, "%s became %s before this acknowledgement could be written", strconv.Quote(eventID), strconv.Quote(what))
 		}
+		// A pulled completion is acknowledged only from the turn that pulled it (CRW-1310), judged on the row the write reads.
+		if fresh.S("dispatch_evidence") == ReceiptPullEvidence && ackTurn != fresh.S("dispatch_turn_id") {
+			return refuse(AckTurnUnverified, "turn %s did not pull %s; it is acknowledged from turn %s, which pulled it", strconv.Quote(ackTurn), strconv.Quote(eventID), strconv.Quote(fresh.S("dispatch_turn_id")))
+		}
 		isUnconfirmed := slices.Contains(unconfirmed, fresh.S("state"))
 		kept := isUnconfirmed || basis(fresh) != basis(row)
 		why := "changed while its turn was read"
@@ -345,6 +349,10 @@ func certainlyBefore(started float64, sentAt string) bool {
 }
 
 func (a *Ack) verifyAckTurn(ctx context.Context, row Row, ackTurn string, adapter Adapter) (string, error) {
+	// A completion pulled into its parent's turn (CRW-1310) is acknowledged from that turn only.
+	if row.S("dispatch_evidence") == ReceiptPullEvidence && ackTurn != row.S("dispatch_turn_id") {
+		return "", refuse(AckTurnUnverified, "turn %s did not pull %s; it is acknowledged from turn %s, which pulled it", strconv.Quote(ackTurn), strconv.Quote(row.S("event_id")), strconv.Quote(row.S("dispatch_turn_id")))
+	}
 	if adapter == nil {
 		return "unverified_turn", nil
 	}
@@ -355,6 +363,11 @@ func (a *Ack) verifyAckTurn(ctx context.Context, row Row, ackTurn string, adapte
 	turn, err := adapter.ReadTurn(ctx, row.S("recipient_thread_id"), ackTurn)
 	if err != nil || turn == nil || TurnStartedAt(turn) == nil {
 		return "unverified_turn", nil
+	}
+	// A pulled completion names its turn and the host has just confirmed that turn, so an earlier attempt
+	// whose timestamps predate or follow the turn says nothing about this acknowledgement (CRW-1310).
+	if row.S("dispatch_evidence") == ReceiptPullEvidence {
+		return "verified", nil
 	}
 	if attempt != nil {
 		sentAt := attempt.S("sent_at")
