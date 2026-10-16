@@ -251,7 +251,7 @@ func agentTypeOf(role string) string {
 	switch role {
 	case "executor-t1":
 		return "executor"
-	case "reviewer-final", "critic":
+	case "critic":
 		return "reviewer"
 	}
 	return role

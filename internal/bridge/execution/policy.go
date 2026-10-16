@@ -47,10 +47,14 @@ func fromMapping(value any, digest string) (Policy, error) {
 	// that does not parse is ignored with a warning; it never refuses the policy the relay and the bridge run on.
 	agentDeclared := has(data, "agent-roles") || has(data, "agent-aliases")
 	var warnings []string
-	agentRoles, criticFilled, err := parseAgentSections(data)
+	agentRoles, criticFilled, retired, err := parseAgentSections(data)
 	if err != nil {
 		warnings = append(warnings, ignoredAgentSections(err))
 		agentRoles = nil
+	}
+	if agentRoles != nil && len(retired) > 0 {
+		// A file written before CRW-1450 loads; its reviewer-final entry and alias rows are skipped, which the warning says.
+		warnings = append(warnings, retiredKeyWarning(retired))
 	}
 	if agentRoles != nil && criticFilled {
 		// A file written before the critic (CRW-1434) loads; its critic runs the compiled default, which the warning names.

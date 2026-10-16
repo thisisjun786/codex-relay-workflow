@@ -15,7 +15,7 @@ import (
 func TestCRW1330_MalformedAgentRolesDoNotStopTheFlow(t *testing.T) {
 	store := withRoleStore(t, roleStore("anthropic/claude-haiku-5", "gpt-6.1-sol"))
 	policyPath := filepath.Join(t.TempDir(), "policy.json")
-	// the agent-roles of the time before executor-t1 and reviewer-final, and an alias table whose rows overlap
+	// the agent-roles of the time before executor-t1, and an alias table whose rows overlap
 	writeFile(t, policyPath, `{"agent-roles": {
   "architect": {"model": "claude-opus", "reasoningEffort": "xhigh"},
   "executor": {"model": "claude-haiku", "reasoningEffort": "xhigh"},

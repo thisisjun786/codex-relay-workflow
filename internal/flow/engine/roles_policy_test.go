@@ -19,7 +19,6 @@ func policyFile(executorModel, executorEffort string) string {
   "executor": {"model": "` + executorModel + `", "reasoningEffort": "` + executorEffort + `"},
   "executor-t1": {"model": "claude-sonnet", "reasoningEffort": "xhigh"},
   "reviewer": {"model": "gpt-sol", "reasoningEffort": "high"},
-  "reviewer-final": {"model": "gpt-sol", "reasoningEffort": "xhigh"},
   "explorer": {"model": "claude-haiku", "reasoningEffort": "high"}}}`
 }
 
@@ -87,13 +86,19 @@ func TestPolicyFromExecutionTable(t *testing.T) {
 	want := map[string]struct{ family, sandbox, model string }{
 		"architect": {"architect", SandboxReadOnly, "claude-opus"}, "executor": {"executor", SandboxWorkspaceWrite, "claude-haiku"},
 		"executor-t1": {"executor", SandboxWorkspaceWrite, "claude-sonnet"}, "reviewer": {"reviewer", SandboxReadOnly, "gpt-sol"},
-		"reviewer-final": {"reviewer", SandboxReadOnly, "gpt-sol"}, "explorer": {"explorer", SandboxReadOnly, "claude-haiku"},
+		"explorer": {"explorer", SandboxReadOnly, "claude-haiku"},
 	}
 	for role, w := range want {
 		spec := table.Roles[role]
 		if spec.Family != w.family || spec.Sandbox != w.sandbox || spec.Pair.Model != w.model {
 			t.Errorf("%s: %+v", role, spec)
 		}
+	}
+	// A file written before CRW-1450 still declares reviewer-final: it loads, and the table has no such role (a retired key).
+	old := loadPolicy(t, strings.Replace(policyFile("claude-haiku", "xhigh"), `"explorer":`, `"reviewer-final": {"model": "gpt-sol", "reasoningEffort": "xhigh"},
+  "explorer":`, 1))
+	if _, ok := old.Roles["reviewer-final"]; ok || len(old.Roles) != len(execution.AgentRoleNames) {
+		t.Errorf("the table of an old file: %+v", old.Roles)
 	}
 	// A policy without agent-roles is not a flow policy.
 	exec, err := execution.FromBytes([]byte(`{"allowed": [{"model": "m", "efforts": ["high"]}]}`), "p.json")
@@ -184,7 +189,8 @@ const unknownModel = await agent.call('verify', { model: 'gpt-x', label: 'unknow
 const nothing = await agent.call('verify', { label: 'nothing' })
 return { high, xhigh, asModel, asModelXhigh, unknown, unknownModel, nothing }`)
 	got := callViews(t, res)
-	for label, role := range map[string]string{"high": "reviewer", "xhigh": "reviewer-final", "asModel": "reviewer", "asModelXhigh": "reviewer-final"} {
+	// ocx-gpt-6-1-sol is the reviewer at any effort: the xhigh row of the retired reviewer-final is gone (CRW-1450).
+	for label, role := range map[string]string{"high": "reviewer", "xhigh": "reviewer", "asModel": "reviewer", "asModelXhigh": "reviewer"} {
 		if c := got[label]; c.Status != StatusCompleted || c.Meta.Role != role {
 			t.Errorf("%s: %+v, want %s", label, c, role)
 		}
@@ -192,8 +198,8 @@ return { high, xhigh, asModel, asModelXhigh, unknown, unknownModel, nothing }`)
 	if c := got["high"]; c.Meta.RequestedPair != (Pair{"gpt-sol", "high"}) || c.Meta.ConfiguredPair != (Pair{"gpt-sol", "high"}) {
 		t.Errorf("the reviewer pair: %+v", c.Meta)
 	}
-	if c := got["xhigh"]; c.Meta.ConfiguredPair != (Pair{"gpt-sol", "xhigh"}) {
-		t.Errorf("the reviewer-final pair: %+v", c.Meta)
+	if c := got["xhigh"]; c.Meta.RequestedPair != (Pair{"gpt-sol", "xhigh"}) || c.Meta.ConfiguredPair != (Pair{"gpt-sol", "high"}) {
+		t.Errorf("the reviewer pair of an xhigh call: %+v", c.Meta)
 	}
 	for _, label := range []string{"unknown", "unknownModel", "nothing"} {
 		if c := got[label]; c.Status != StatusRefused || c.Reason != ReasonPolicyRefused {
@@ -351,7 +357,7 @@ func TestPolicyLoadedFromEnvironmentIsRecordedInTheRun(t *testing.T) {
 }
 
 func TestFlowRolesShowsPolicyAndDigest(t *testing.T) {
-	// CRW-1330: the source and the digest are the helper role store's path and the canonical digest of its seven pairs.
+	// CRW-1330: the source and the digest are the helper role store's path and the canonical digest of its six pairs.
 	store := withRoleStore(t, roleStore("anthropic/claude-haiku-5", "gpt-6.1-sol"))
 	dir := t.TempDir()
 	path := dir + "/policy.json"
@@ -370,7 +376,7 @@ func TestFlowRolesShowsPolicyAndDigest(t *testing.T) {
 	if report.Source == nil || *report.Source != store || *report.Digest != digest || report.Placeholder || report.Mode != "presence_only" {
 		t.Fatalf("%+v", report)
 	}
-	if len(report.Roles) != len(execution.AgentRoleNames) || report.Roles[len(report.Roles)-1].Role != "critic" || report.Roles[0].Role != "architect" || report.Roles[1].Sandbox != SandboxWorkspaceWrite || len(report.Aliases) != 6 {
+	if len(report.Roles) != len(execution.AgentRoleNames) || report.Roles[len(report.Roles)-1].Role != "critic" || report.Roles[0].Role != "architect" || report.Roles[1].Sandbox != SandboxWorkspaceWrite || len(report.Aliases) != 5 {
 		t.Fatalf("%+v", report)
 	}
 	code, out, _ = runFlow(t, "roles")

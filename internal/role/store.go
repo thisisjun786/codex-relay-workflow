@@ -280,6 +280,9 @@ func setRole(env host.LookupEnv, role RoleName, patch RolePatch, rename func(tmp
 // setRoleSettings is setRole's write with the settings it left, read before the store's lock is released: the answer of a write is the
 // state that write made, whatever another writer then does (CRW-1120).
 func setRoleSettings(env host.LookupEnv, role RoleName, patch RolePatch, rename func(tmp, finalPath string) error, sleep func(time.Duration)) (Settings, error) {
+	if retiredRole(role) { // no writer sets the retired key (CRW-1450); a reset removes it
+		return Settings{}, fmt.Errorf("cannot update subagent config: %s (crw role helper reset %s removes an entry the store still holds)", RetiredKeyNotice, role)
+	}
 	path, raw, release, err := open(env, role, sleep)
 	if err != nil {
 		return Settings{}, err

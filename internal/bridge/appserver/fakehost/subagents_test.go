@@ -124,7 +124,7 @@ func TestSubagent_readsAsASubagentThreadAndIsNotLoadedAfterItsTurn(t *testing.T)
 	h := newSubagentHost(t)
 	gate := make(chan struct{})
 	child := h.threads.Spawn(fakehost.SubagentSpec{Parent: h.owner, ToolUseID: "exec-0001", AgentType: "reviewer", Nickname: "Scout",
-		Model: "gpt-6.1-sol", Effort: "xhigh", Message: "crw-flow-op: c_abc/t1-a1\nCRW-ROLE: reviewer-final\n\nread the packet",
+		Model: "gpt-6.1-sol", Effort: "xhigh", Message: "crw-flow-op: c_abc/t1-a1\nCRW-ROLE: critic\n\nread the packet",
 		RolloutPath: "/rollouts/child.jsonl", Plan: fakehost.TurnPlan{Gate: gate, Commentary: "looking", Message: `{"verdict":"pass"}`}})
 	if child == "" {
 		t.Fatal("Spawn made no thread")
@@ -155,7 +155,7 @@ func TestSubagent_readsAsASubagentThreadAndIsNotLoadedAfterItsTurn(t *testing.T)
 		}
 	}
 	if collab == nil || collab["id"] != "exec-0001" || collab["tool"] != "spawnAgent" || collab["senderThreadId"] != h.owner ||
-		fmt.Sprint(collab["receiverThreadIds"]) != fmt.Sprint([]any{child}) || collab["prompt"] != "crw-flow-op: c_abc/t1-a1\nCRW-ROLE: reviewer-final\n\nread the packet" ||
+		fmt.Sprint(collab["receiverThreadIds"]) != fmt.Sprint([]any{child}) || collab["prompt"] != "crw-flow-op: c_abc/t1-a1\nCRW-ROLE: critic\n\nread the packet" ||
 		collab["model"] != "gpt-6.1-sol" || collab["reasoningEffort"] != "xhigh" {
 		t.Errorf("the owner's collabAgentToolCall: %v", collab)
 	}
