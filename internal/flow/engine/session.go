@@ -1455,16 +1455,19 @@ func (c *callRun) startCommit() (string, int) {
 func (c *callRun) sessionPacket(k int, marker, input string, repair bool, action string) string {
 	e, s, p := c.e, c.sess, c.plan
 	var b strings.Builder
-	fmt.Fprintf(&b, "# CRW flow task packet %s\n\n- Operation: crw-flow-op: %s\n- Role: %s\n- Workspace P: %s\n\n", marker, marker, p.role, c.cwd)
+	// the head, everything before "## Task", is the same bytes for every call of a role and variant (p.qa and the role's family), so a
+	// host that caches prompt prefixes reuses it; the call's own values (marker, P, attempts, the input) come after it (CRW-1497)
+	b.WriteString("# CRW flow task packet\n\n")
 	b.WriteString("## Where you work\n\n")
-	fmt.Fprintf(&b, "Your shell starts in a directory that is NOT your workspace. Your workspace is %s: run every command with workdir %s, and work only under the absolute path %s.\n", c.cwd, c.cwd, c.cwd)
+	b.WriteString("Your shell starts in a directory that is NOT your workspace. Your workspace is the Workspace P under Run values below: " +
+		"run every command with workdir P, and work only under the absolute path P.\n")
 	switch {
 	case p.qa:
-		fmt.Fprintf(&b, "%s is a scratch worktree at the head the gate pinned: whatever you edit there is discarded, and the run reads the tree you end in.\n", c.cwd)
+		b.WriteString("P is a scratch worktree at the head the gate pinned: whatever you edit there is discarded, and the run reads the tree you end in.\n")
 	case !readsOnly(p.spec.Family):
-		fmt.Fprintf(&b, "Edit files only under %s. The run snapshots %s when your turn ends; an edit anywhere else is not part of your work and is recorded as a warning.\n", c.cwd, c.cwd)
+		b.WriteString("Edit files only under P. The run snapshots P when your turn ends; an edit anywhere else is not part of your work and is recorded as a warning.\n")
 	default:
-		fmt.Fprintf(&b, "Read the files under %s and change nothing, there or anywhere else.\n", c.cwd)
+		b.WriteString("Read the files under P and change nothing, there or anywhere else.\n")
 	}
 	b.WriteString("Never run `git commit`, `git add`, `git branch`, `git reset` or `git checkout`: the run records and commits the work itself.\n")
 	b.WriteString("You are a leaf subagent: never spawn agents.\n\n")
@@ -1474,6 +1477,10 @@ func (c *callRun) sessionPacket(k int, marker, input string, repair bool, action
 		b.WriteString(strings.TrimSpace(text))
 		b.WriteString("\n\n")
 	}
+	b.WriteString("## Task\n\n")
+	b.WriteString("## Run values\n\n")
+	fmt.Fprintf(&b, "- Operation: crw-flow-op: %s\n- Role: %s\n- Workspace P: %s\n\n", marker, p.role, c.cwd)
+	fmt.Fprintf(&b, "Your workspace is %s: run every command with workdir %s, and work only under the absolute path %s.\n\n", c.cwd, c.cwd, c.cwd)
 	if s.note != "" && action == StepSpawn {
 		b.WriteString("## Earlier attempts\n\n" + s.note + "\n\n")
 	}
@@ -1488,7 +1495,7 @@ func (c *callRun) sessionPacket(k int, marker, input string, repair bool, action
 		}
 		b.WriteString(" The task below is what to do now.\n\n")
 	}
-	b.WriteString("## Task\n\n")
+	b.WriteString("## Your task\n\n")
 	if repair && action == StepSpawn {
 		b.WriteString(strings.TrimSpace(s.task) + "\n\n")
 		if s.lastText != "" {
