@@ -1054,6 +1054,67 @@ func TestCrosscheckServesRoundOneOnly(t *testing.T) {
 	}
 }
 
+// TestCrosscheckServesRoundTwoWithTheRecordedPrior (CRW-1490): round 2 is the recheck of the close's one correction or evidence
+// round: it runs only with the verdict this run's recorded round 1 wrote (a needs_changes of this milestone and base), and a prior
+// the script changed - another verdict, head, base, milestone or run - or no recorded round 1 is refused crosscheck_prior_invalid
+// before anything runs. The recheck names its prior in V (prior_head, prior_run, prior_digest).
+func TestCrosscheckServesRoundTwoWithTheRecordedPrior(t *testing.T) {
+	mk := func() (*ccWorld, json.RawMessage, engine.Event) {
+		w := newCCWorld(t)
+		w.checker.script("A", ccAnswer{Verdict: reviewadapter.VerdictNeedsChanges, Findings: []reviewadapter.Finding{{Severity: "P1", Impact: "core_function", File: "a.go", Line: 3, Text: "the finding"}}})
+		out, row := w.crosscheck(ccHead, nil)
+		if out.State != CrosscheckStateVerdict || out.Verdict == nil || out.Verdict.Verdict != reviewadapter.VerdictNeedsChanges {
+			t.Fatalf("the recorded round 1: %+v", out)
+		}
+		raw, _ := json.Marshal(out.Verdict)
+		return w, raw, row
+	}
+	t.Run("round 2 with the recorded prior runs", func(t *testing.T) {
+		w, prior, _ := mk()
+		out, row := w.crosscheck(headTwo, map[string]any{"round": 2, "prior": prior})
+		if out.State != CrosscheckStateVerdict || out.Verdict == nil || out.Verdict.Round != 2 {
+			t.Fatalf("the recheck: %+v", out)
+		}
+		if out.Verdict.PriorHead != ccHead || out.Verdict.PriorRun != "run-1" || out.Verdict.PriorDigest == "" {
+			t.Errorf("the recheck does not name its prior: %+v", out.Verdict)
+		}
+		if dataStr(row, "base") != "base000" {
+			t.Errorf("the recheck's row has no base: %v", row.Data)
+		}
+	})
+	for name, mutate := range map[string]func(v map[string]any){
+		"a verified prior":             func(v map[string]any) { v["verdict"] = "verified" },
+		"a prior of another head":      func(v map[string]any) { v["head"] = headTwo },
+		"a prior of another base":      func(v map[string]any) { v["base"] = "other000" },
+		"a prior of another run":       func(v map[string]any) { v["run"] = "run-2" },
+		"a prior of another milestone": func(v map[string]any) { v["milestone"] = "M2" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			w, prior, _ := mk()
+			var v map[string]any
+			if err := json.Unmarshal(prior, &v); err != nil {
+				t.Fatal(err)
+			}
+			mutate(v)
+			before := len(w.checker.requests())
+			out, _ := w.crosscheck(headTwo, map[string]any{"round": 2, "prior": v})
+			if out.State != CrosscheckStateRefused || out.Reason != ReasonCrosscheckPriorInvalid || out.Verdict != nil {
+				t.Errorf("outcome %+v", out)
+			}
+			if len(w.checker.requests()) != before {
+				t.Errorf("a pass ran for a forged prior")
+			}
+		})
+	}
+	t.Run("round 3 is never served", func(t *testing.T) {
+		w, prior, _ := mk()
+		out, _ := w.crosscheck(headTwo, map[string]any{"round": 3, "prior": prior})
+		if out.State != CrosscheckStateRefused || out.Reason != ReasonCrosscheckPriorInvalid {
+			t.Errorf("outcome %+v", out)
+		}
+	})
+}
+
 // TestMilestoneCloseCarriesTheCrosscheckEvidence: crw.milestoneClose carries the crosscheck of its evidence into its answer as it is,
 // and records a close whose evidence has a final review and no crosscheck as before, with a null crosscheck.
 func TestMilestoneCloseCarriesTheCrosscheckEvidence(t *testing.T) {
@@ -1078,6 +1139,13 @@ func TestMilestoneCloseCarriesTheCrosscheckEvidence(t *testing.T) {
 		t.Errorf("close %+v", out)
 	}
 	// a needs_changes crosscheck is not a close: crw.milestoneClose refuses it (close_unverified, TestMilestoneCloseRefusesWithoutAVerifiedCrosscheck)
+	// and a close that claims a repair the journal does not record is refused close_repair_unverified before the relay is asked
+	// (CRW-1490): the stub relay has no repair publisher, so a reach past the record checks would fail, not publish.
+	_, err := w.op(NameMilestoneClose, "M1", map[string]any{"gate": map[string]any{"head": tip}, "crosscheck": v,
+		"repair": map[string]any{"base": headOne, "head": tip}})
+	if err == nil || !strings.Contains(err.Error(), "close_repair_unverified") {
+		t.Fatalf("a close over an unrecorded repair: %v", err)
+	}
 	nc := json.RawMessage(`{"verdict":"needs_changes"}`)
 	if _, err := w.op(NameMilestoneClose, "M1", map[string]any{"gate": map[string]any{"head": tip}, "crosscheck": nc}); err == nil || ReasonOf(err.Error()) != "close_unverified" {
 		t.Errorf("a close with a needs_changes crosscheck: %v", err)
