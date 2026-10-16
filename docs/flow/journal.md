@@ -40,6 +40,14 @@ saw. A row is never updated.
   is an object, else `""`), sorted by call id. Each op it names writes its own terminal row after it, and the `finished` row
   comes last. No op in flight, or another end (a script error, a pause, a deadline or budget stop), writes no such row. A cancelled run does not resume,
   so no replay reads it.
+- A run process whose run ends cancelled gives up the run's executions itself (CRW-1573): after its world is closed, still under
+  its run lock, it settles the releases the run's rows show it did not end, as the cancel of an ended run does, and prints
+  `N execution(s) of run R given up, M slot(s) returned`; a failed settle is told and changes no exit status. So one cancel is
+  enough, whether the cancel's wait ran out, the cancel was killed, or a plain SIGTERM ended the run; the settle of the cancel that
+  sees the lock go finds nothing more (it is replay-safe). A `crw flow cancel` whose `--wait` ends while the process still holds
+  the run reads the run's rows again and names what the run is ending - the ops of its latest `cancel_waiting` row as
+  `<op> (call <id>, node <n>)` and the agent calls whose last row is a start row as `<label> (call <id>)`, or "no call in flight
+  is known" - says that the run gives up its executions itself when they end (no second cancel), and exits 1.
 - A run no process holds is ended by `crw flow cancel` itself: under the run lock it appends one `finished` row (`status`
   `script_error`, `error_kind` `cancelled`, `by` `operator`, `executions_closed`, `slots_returned`), and `dead: true` only when
   the rows it reads under the lock show a `started` row with no end row after it (a run whose last end is `run/paused`, or a held

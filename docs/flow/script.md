@@ -549,7 +549,7 @@ The composites (`crw:lib/lane` and `crw:lib/close`, made members of `crw` by `in
 `crw.review`, `crw.reviewHalt`, `crw.explore`, `crw.exploreEvidence`, `crw.land`, `crw.tierStep`, `crw.evidence`, `crw.skip`,
 `crw.closeMilestone`, `crw.settleReviews` and `crw.milestoneHalt`; `crw.review`, `crw.reviewHalt` and `crw.exploreEvidence` are the old
 reviewer path, kept for the journals of old runs, and no shipped script calls them. `crw.dag` takes an `onSignal` function (below). The seams the operations are built on - `Relay` (the scheduler: milestone, release, agent
-acceptance and integration, the close of an execution), `Verifier` (`CILocalVerifier` runs `crw-dev ci local` through the verifier's tools of the configuration, [the verifier's tools](../runtime-install.md#the-verifiers-tools)), `Decisions`
+acceptance and integration, the close of an execution), `Verifier` (`CILocalVerifier` runs `crw-dev ci local` through the verifier's tools of the configuration, [the verifier's tools](../runtime-install.md#the-verifiers-tools); the command leads its own process group, and a cancel kills the whole group, so a cancelled `crw.verify` and a cancelled integration batch end within `execgroup.KillGrace`, 5 s, CRW-1573), `Decisions`
 (`StoreDecisions` writes the relay store), `Threads` (the host the close reads the reviewer threads from and archives them on) and
 `Reporter` (F11) - are interfaces in `internal/flow/ops/seams.go`; the dagsched-backed `Relay` belongs to the run process.
 
@@ -614,7 +614,9 @@ call and fixes nothing. Its steps:
   to the land: `crw.release` answers `land_node_held` with that run and its execution, before the run claims the plan's coordinator
   epoch, and no gate runs. The answer names what settles it: `crw flow resume` of a run that has not ended, and `crw flow cancel` of
   one that has (the row records `held_run_state` and the warning `land_node_held_by_ended_run`), whose cancel gives up the executions
-  the run still holds - the ones its rows show, and the ones the relay records under its run id that its rows do not name.
+  the run still holds - the ones its rows show, and the ones the relay records under its run id that its rows do not name. A run that
+  ended cancelled no longer holds its node: its run process gave its executions up at its cancelled end (CRW-1573), so a land after
+  a cancel during the verification is released, not `land_node_held`.
 - A land-head run is a run of the plan: its release claims the plan's coordinator epoch like any run's, so a run of the same plan that
   is still going stops `epoch_lost` at its next fenced write (one run orchestrates one plan). A head made outside a run is landed when
   no other run of its plan is going: `crw flow start land-head` warns of one with the preflight fact `plan_live_run`, which names the
@@ -1432,7 +1434,9 @@ its own for each call, is the backend of tests and shadow runs and of a run star
   unreadable, not empty: the call stays with the reconcile pass.
 - An executor turn never carries a `cwd`: a turn `cwd` moves the thread's working directory for that turn and every later one, so
   an executor's directory is fixed by `thread/start` or `thread/fork` alone. An architect turn carries its call's directory.
-- If a run pauses, the turns in flight are interrupted with `turn/interrupt`; the same request is sent for a cancelled run.
+- If a run pauses, the turns in flight are interrupted with `turn/interrupt`; the same request is sent for a cancelled run. The
+  command an op of a cancelled run started (the `crw-dev ci local` of `crw.verify`, the integration batch) is killed with its whole
+  process group, so the run's wait for its ops ends within `execgroup.KillGrace` (CRW-1573).
 - The backend is the host side of reconcile (`engine.ReconHost`): it lists threads by cwd and `appServer` source to the end of the
   cursor, reads turns in full, archives an orphan, and says what is known about a creation request
   (`CreationState`). For every `thread/start` and `thread/fork` it records the connection the frame went out on before it is
