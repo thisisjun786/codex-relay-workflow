@@ -691,6 +691,20 @@ func (o *crosscheckOp) authors(cc *Crosscheck, r rows) ([]CrosscheckAuthor, []st
 		}
 		out = append(out, CrosscheckAuthor{Source: "call", Name: c.CallID, Model: c.Model, Family: execution.ModelFamily(c.Model)})
 	}
+	// the architect of an imported DESIGN (CRW-1329) authored what the range stands on without a call of this run: the author of
+	// the crosscheck's independence is the model the recorded source audit names
+	for _, led := range r.current(OpDesignLedger) {
+		if dataStr(led, "source_run") == "" || !reusedLedgerApproved(r, dataStr(led, "milestone"), led) {
+			continue
+		}
+		model := dataStr(led, "architect_model")
+		name := dataStr(led, "source_run") + ":" + dataStr(led, "source_revision")
+		if strings.TrimSpace(model) == "" {
+			undecided = append(undecided, fmt.Sprintf("the imported design of run %s names no architect model", name))
+			continue
+		}
+		out = append(out, CrosscheckAuthor{Source: "design_reuse", Name: name, Model: model, Family: execution.ModelFamily(model)})
+	}
 	if len(out) == 0 && len(undecided) == 0 {
 		undecided = append(undecided, "the run names no author pair and the journal no author call")
 	}

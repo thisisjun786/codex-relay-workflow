@@ -12,9 +12,12 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/compile"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/journal"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/reviewadapter"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -1596,4 +1599,363 @@ func jsonEqualCLI(t *testing.T, a, b any) bool {
 	na, _ := json.Marshal(x)
 	nb, _ := json.Marshal(y)
 	return a != nil && b != nil && string(na) == string(nb)
+}
+
+// ---- the design reuse of another run (CRW-1329) ----
+
+// stopAfterDesign kills the next process of the lab the moment its journal records a completed row of op (state "", or that
+// state): the source run of a design-reuse test stops after its recorded DESIGN - an approved ledger, or a rejected audit - and
+// before any release, so its journal ends at the point the reuse reads.
+func stopAfterDesign(l *laneLab, op, state string) {
+	l.afterRow = func(e engine.Event) {
+		if e.Kind != engine.KindCall || e.Op != op || e.Event != engine.EvCompleted || (state != "" && str(e.Data, "state") != state) {
+			return
+		}
+		l.mu.Lock()
+		cur := l.cur
+		l.mu.Unlock()
+		if f, ok := cur.Journal.(interface{ Flush() error }); ok {
+			if err := f.Flush(); err != nil {
+				l.t.Fatal(err)
+			}
+		}
+		l.kill()
+	}
+}
+
+// designedSource runs a project lane for M1 only to the moment op ("" for the design ledger) records a completed row of the state,
+// and answers the run that wrote it; the journal was flushed, so the rows another run reads stand in the store.
+func designedSource(t *testing.T, l *laneLab, op, state string) string {
+	t.Helper()
+	spec := l.start("start", "project-lane", "--args", fmt.Sprintf(`{"plan":%q,"milestone":"M1"}`, l.plan), "--handoff", l.file)
+	if _, killed := l.process(spec.RunID, false); !killed {
+		t.Fatalf("the source run was not killed after %s", op)
+	}
+	l.afterRow = nil
+	return spec.RunID
+}
+
+// designReuseRows are the completed crw.designReuse rows of the current process's journal, their results decoded.
+func designReuseRows(t *testing.T, l *laneLab) []map[string]any {
+	t.Helper()
+	var out []map[string]any
+	rows, _ := labRows(l, "crw.designReuse")
+	for _, row := range rows {
+		var res map[string]any
+		if err := json.Unmarshal([]byte(str(row.Data, "result")), &res); err != nil {
+			t.Fatalf("the designReuse row's result: %v", err)
+		}
+		out = append(out, res)
+	}
+	return out
+}
+
+// TestProjectLaneReusesApprovedDesignFromAnotherRun (CRW-1329): a second project-lane run of the same milestone over the same node
+// slices and the same milestone digest reuses the approved DESIGN of an earlier run: no background explorer, architect, audit or
+// design-fix call of its own, the ledger records the new run's revision 0 over the original design with the original run's
+// provenance, and the release of the node stands on the imported design - the run executes and closes on it.
+func TestProjectLaneReusesApprovedDesignFromAnotherRun(t *testing.T) {
+	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+	node := l.nodeOf["A-1"]
+	l.designEdit = func(d *ops.Design) { d.Issues[0].Approach = "reuse the approved store guard" }
+	stopAfterDesign(l, ops.OpDesignLedger, "")
+	srcRun := designedSource(t, l, "", "")
+
+	// the source run persisted an approved audit, its r0 ledger, and no release
+	srcEvents, hasRun, err := journal.Load(context.Background(), l.w.st, srcRun)
+	if err != nil || !hasRun {
+		t.Fatalf("the source run's journal: %v %v", hasRun, err)
+	}
+	var ledger engine.Event
+	approved := false
+	for _, e := range srcEvents {
+		if e.Kind != engine.KindCall || e.Event != engine.EvCompleted {
+			continue
+		}
+		switch e.Op {
+		case ops.OpDesignAudit:
+			approved = approved || str(e.Data, "state") == "approved"
+		case ops.OpDesignLedger:
+			ledger = e
+		case ops.OpRelease:
+			t.Errorf("the source run released %v: it was stopped after its DESIGN", e.Data)
+		}
+	}
+	if ledger.Data == nil || !approved {
+		t.Fatalf("the source run's journal holds ledger %v and approved audit %v", ledger.Data == nil, approved)
+	}
+	srcDigest, srcBase := str(ledger.Data, "digest"), str(ledger.Data, "base_tip")
+	if srcDigest == "" || srcBase == "" {
+		t.Fatalf("the source ledger's data %v, want its digest and base tip", ledger.Data)
+	}
+
+	// the second run of the same milestone and plan reuses it: no design phase of its own
+	l.designEdit = nil
+	spec := l.start("start", "project-lane", "--args", fmt.Sprintf(`{"plan":%q,"milestone":"M1"}`, l.plan), "--handoff", l.file)
+	res := l.runToEnd(spec.RunID)
+	l.closed(res)
+
+	// neither background explorer nor architect nor audit nor design-fix call was made; a reflection's architect resume is the
+	// close's own and may stand
+	for _, c := range labCalls(l) {
+		if c.Label == "architect" || strings.HasPrefix(c.Label, "explore-bg:") || strings.HasPrefix(c.Label, "design-audit") || strings.HasPrefix(c.Label, "design-fix") {
+			t.Errorf("the reusing run made the design call %s (%s)", c.Label, c.Role)
+		}
+	}
+	// one designReuse row: reused, of the source run and its revision
+	reuses := designReuseRows(t, l)
+	if len(reuses) != 1 || reuses[0]["reused"] != true {
+		t.Fatalf("the designReuse rows %+v, want the one that reused", reuses)
+	}
+	if reuses[0]["source_run"] != srcRun || reuses[0]["source_revision"] != "r0" || reuses[0]["digest"] != srcDigest || reuses[0]["base_tip"] != srcBase {
+		t.Errorf("the reuse %+v does not name the source run %s, r0, the digest %s and base %s", reuses[0], srcRun, srcDigest, srcBase)
+	}
+	// the ledger records the run's r0 over the original design and names its source; no foreign engine handle is imported
+	leds, _ := labRows(l, ops.OpDesignLedger)
+	if len(leds) != 1 || str(leds[0].Data, "revision") != "r0" {
+		t.Fatalf("the ledger rows %+v, want the run's r0", leds)
+	}
+	led := leds[0]
+	if str(led.Data, "digest") != srcDigest || str(led.Data, "source_run") != srcRun || str(led.Data, "source_revision") != "r0" ||
+		str(led.Data, "source_audit_call") == "" || str(led.Data, "reuse_call") == "" || str(led.Data, "architect_handle") != "" {
+		t.Errorf("the imported ledger %+v", led.Data)
+	}
+	if d, _ := led.Data["design"].(map[string]any); d == nil || !strings.Contains(fmt.Sprint(d["issues"]), "reuse the approved store guard") {
+		t.Errorf("the imported design %v does not carry the source's payload", led.Data["design"])
+	}
+	// the release stands on the imported design: the executor's packet carries the approach of the source's DESIGN, and the run
+	// lands and closes the node on it
+	rels, _ := labRows(l, ops.OpRelease)
+	if len(rels) != 1 || str(rels[0].Data, "design_digest") != srcDigest || str(rels[0].Data, "source_run") != srcRun || str(rels[0].Data, "source_revision") != "r0" {
+		t.Errorf("the release rows %+v, want the one release under the imported design's digest and provenance", rels)
+	}
+	if text := l.texts["build:"+node+":executor"]; !strings.Contains(text, "reuse the approved store guard") {
+		t.Errorf("the executor's packet does not carry the reused design's approach:\n%s", text)
+	}
+	// the close's reflection runs on a fresh LOCAL architect thread - never the source run's handle - and its packet carries the
+	// reused design's provenance and payload, so the reflection reads what the run actually stood on
+	reflections := 0
+	for _, c := range labCalls(l) {
+		if c.Label == "reflection:M1" {
+			reflections++
+			if c.ResumeOf != "" {
+				t.Errorf("the reflection resumed the foreign thread %s", c.ResumeOf)
+			}
+		}
+	}
+	if reflections != 1 {
+		t.Errorf("the run made %d reflection calls, want the one", reflections)
+	}
+	if text := l.texts["reflection:M1"]; !strings.Contains(text, srcRun) || !strings.Contains(text, "REUSED APPROVED DESIGN") || !strings.Contains(text, "reuse the approved store guard") {
+		t.Errorf("the reflection's packet does not carry the reused design and its provenance:\n%s", text)
+	}
+	refls, _ := labRows(l, "crw.reflection")
+	if len(refls) != 1 || str(refls[0].Data, "state") != "verdict" || str(refls[0].Data, "alignment") != "ALIGNED" {
+		t.Errorf("the reflection rows %+v, want the one ALIGNED verdict", refls)
+	}
+	// a resume of the finished run replays the recorded decision and import: no new decision, ledger or release rows are
+	// written, and no design-phase call is made
+	if code, killed := l.process(spec.RunID, true); code != 0 || killed {
+		t.Fatalf("the resume of the reused DESIGN: exit %d killed %v", code, killed)
+	}
+	resumed, ok := ReadResult(l.w.state, spec.RunID)
+	if !ok {
+		t.Fatal("the resumed run left no result")
+	}
+	l.closed(resumed)
+	loaded, hasRun, err := journal.Load(context.Background(), l.w.st, spec.RunID)
+	if err != nil || !hasRun {
+		t.Fatalf("the resumed run's journal: %v %v", hasRun, err)
+	}
+	counts := map[string]int{}
+	for _, e := range loaded {
+		if e.Kind == engine.KindCall && e.Event == engine.EvCompleted {
+			counts[e.Op]++
+		}
+		if e.Kind == engine.KindCall && e.Event == engine.EvPrepared && (e.Label == "architect" || strings.HasPrefix(e.Label, "explore-bg:") || strings.HasPrefix(e.Label, "design-audit") || strings.HasPrefix(e.Label, "design-fix")) {
+			t.Errorf("the resumed run made the design call %s", e.Label)
+		}
+	}
+	if counts["crw.designReuse"] != 1 || counts[ops.OpDesignLedger] != 1 || counts[ops.OpRelease] != 1 {
+		t.Errorf("the resumed journal's rows %v, want the one decision, ledger and release", counts)
+	}
+}
+
+// TestProjectLaneRejectsChangedDesignReuse (CRW-1329): a milestone whose digest changed (its title), or one whose node slices
+// changed (an issue's criteria, a new plan revision), is not the one the earlier run designed: the run says why the reuse was
+// rejected - the slice change checked first - then designs and audits its own DESIGN as before.
+func TestProjectLaneRejectsChangedDesignReuse(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		mutate func(in *compile.Input)
+		replan bool
+		reason string
+	}{
+		{"a changed milestone digest", func(in *compile.Input) {
+			in.Projects[0].Milestones[0].Title = "milestone M1, renamed"
+		}, false, "milestone_digest_changed"},
+		{"a changed node slice", func(in *compile.Input) {
+			in.Projects[0].Issues[0].Criteria = []string{"the work of A-1 is different now"}
+		}, true, "node_slices_changed"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+			stopAfterDesign(l, ops.OpDesignLedger, "")
+			srcRun := designedSource(t, l, "", "")
+			raw := l.handoffBytes(c.mutate)
+			if c.replan {
+				edited, err := DecodeHandoff(raw)
+				if err != nil {
+					t.Fatal(err)
+				}
+				res, err := compile.Compile(edited, compile.Options{Bases: map[string]dag.State{l.plan: dag.StateFromSnapshot(l.snapshot(0))}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if res.Plans[0].Change == nil {
+					t.Fatal("the criteria change made no new plan revision")
+				}
+				if _, err := (&dag.Repo{Store: l.w.st}).Put(context.Background(), *res.Plans[0].Change); err != nil {
+					t.Fatal(err)
+				}
+			}
+			file := filepath.Join(t.TempDir(), "handoff.json")
+			if err := os.WriteFile(file, raw, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			spec := l.start("start", "project-lane", "--args", fmt.Sprintf(`{"plan":%q,"milestone":"M1"}`, l.plan), "--handoff", file)
+			res := l.runToEnd(spec.RunID)
+			l.closed(res)
+
+			reuses := designReuseRows(t, l)
+			if len(reuses) != 1 || reuses[0]["reused"] != false {
+				t.Fatalf("the designReuse rows %+v, want the one that refused the reuse", reuses)
+			}
+			attempts, _ := reuses[0]["attempts"].([]any)
+			found := false
+			for _, a := range attempts {
+				am, _ := a.(map[string]any)
+				if am["source_run"] == srcRun && am["source_revision"] == "r0" && am["reason"] == c.reason {
+					found = true
+				}
+			}
+			if !found {
+				t.Errorf("the reuse's attempts %+v name no rejection of %s r0 with reason %q", attempts, srcRun, c.reason)
+			}
+			// the run designed and audited its own DESIGN
+			architect, audit := false, false
+			for _, c2 := range labCalls(l) {
+				architect = architect || c2.Label == "architect"
+				audit = audit || strings.HasPrefix(c2.Label, "design-audit")
+			}
+			if !architect || !audit {
+				t.Errorf("the rejecting run made architect %v and audit %v of its own", architect, audit)
+			}
+			// the fresh DESIGN was audited locally (the same payload a deterministic architect may emit is audited again, not
+			// trusted by digest) and its ledger names no source
+			audits, _ := labRows(l, ops.OpDesignAudit)
+			if len(audits) != 1 || str(audits[0].Data, "state") != "approved" {
+				t.Errorf("the local audits %+v, want the one approved audit of the fresh design", audits)
+			}
+			leds, _ := labRows(l, ops.OpDesignLedger)
+			if len(leds) != 1 || str(leds[0].Data, "source_run") != "" || str(leds[0].Data, "digest") == "" {
+				t.Errorf("the ledger of the fresh design %+v", leds)
+			}
+		})
+	}
+}
+
+// TestProjectLaneDoesNotReuseUnapprovedDesign (CRW-1329): an earlier run that was stopped with a needs_changes audit and no ledger
+// has no approved DESIGN to lend: the reuse is refused, naming that run and why, and the run designs and audits its own.
+func TestProjectLaneDoesNotReuseUnapprovedDesign(t *testing.T) {
+	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+	l.turn = func(c labCall, r fakehost.TurnRequest) (fakehost.TurnPlan, bool) {
+		if c.Role == "critic" && strings.HasPrefix(c.Label, "design-audit") {
+			return labSay(map[string]any{"verdict": "needs_changes", "findings": []any{map[string]any{
+				"ref": l.nodeOf["A-1"], "severity": "P1", "finding": "the design does not hold", "evidence": []string{}}},
+				"summary": "the DESIGN needs changes"}), true
+		}
+		return fakehost.TurnPlan{}, false
+	}
+	stopAfterDesign(l, ops.OpDesignAudit, "needs_changes")
+	srcRun := designedSource(t, l, "", "")
+	srcEvents, _, err := journal.Load(context.Background(), l.w.st, srcRun)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range srcEvents {
+		if e.Kind == engine.KindCall && e.Event == engine.EvCompleted && (e.Op == ops.OpDesignLedger || e.Op == ops.OpRelease) {
+			t.Fatalf("the source run recorded %s: a run without an approved design has nothing to lend", e.Op)
+		}
+	}
+	l.turn = nil
+	spec := l.start("start", "project-lane", "--args", fmt.Sprintf(`{"plan":%q,"milestone":"M1"}`, l.plan), "--handoff", l.file)
+	res := l.runToEnd(spec.RunID)
+	l.closed(res)
+
+	reuses := designReuseRows(t, l)
+	if len(reuses) != 1 || reuses[0]["reused"] != false {
+		t.Fatalf("the designReuse rows %+v, want the one that refused the reuse", reuses)
+	}
+	found := false
+	attempts, _ := reuses[0]["attempts"].([]any)
+	for _, a := range attempts {
+		am, _ := a.(map[string]any)
+		if am["source_run"] == srcRun && (am["reason"] == "design_not_approved" || am["reason"] == "design_missing" || am["reason"] == "no_approved_design") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the reuse %+v names no rejection of %s for want of an approved design", reuses[0], srcRun)
+	}
+	architect, audit := false, false
+	for _, c := range labCalls(l) {
+		architect = architect || c.Label == "architect"
+		audit = audit || strings.HasPrefix(c.Label, "design-audit")
+	}
+	if !architect || !audit {
+		t.Errorf("the run made architect %v and audit %v of its own", architect, audit)
+	}
+}
+
+// TestDesignHistoryFiltersRunAndRepository (CRW-1329): the source search names only the runs of the same plan that the same
+// repository recorded, newest first - the current run never, a run of another repository's spec never, another plan's never.
+func TestDesignHistoryFiltersRunAndRepository(t *testing.T) {
+	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+	stopAfterDesign(l, ops.OpDesignLedger, "")
+	srcRun := designedSource(t, l, "", "")
+	ctx := context.Background()
+
+	// another repository: the run is a source in name only, with a reason and no events
+	hist, err := designHistory(ctx, l.w.st, l.w.state, t.TempDir(), "run-current", l.plan)
+	if err != nil || len(hist) == 0 {
+		t.Fatalf("the history of another repository: %v %v", hist, err)
+	}
+	found := false
+	for _, h := range hist {
+		if h.Run == srcRun {
+			found = true
+			if h.Reason != "repository_mismatch" || h.Events != nil {
+				t.Errorf("the mismatched source %+v, want repository_mismatch with no events", h)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("the history %+v does not name the source run at all", hist)
+	}
+	// the run itself is never a source
+	hist, err = designHistory(ctx, l.w.st, l.w.state, l.repo, srcRun, l.plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, h := range hist {
+		if h.Run == srcRun {
+			t.Errorf("the run is its own source: %+v", h)
+		}
+	}
+	// another plan has no sources
+	hist, err = designHistory(ctx, l.w.st, l.w.state, l.repo, "run-current", "other-plan")
+	if err != nil || len(hist) != 0 {
+		t.Errorf("another plan's history %+v %v, want empty", hist, err)
+	}
 }

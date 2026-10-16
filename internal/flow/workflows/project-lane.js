@@ -136,7 +136,9 @@ async function replan(tag, signal, due, head, misaligned, unstarted) {
   const cur = await crw.currentDesign(ms.id)
   await crw.spawnDecision('ARCH_2', 'spawn', { role: 'architect', reason: due.reasons.join(','), inputs: {
     milestone: ms.id, revision: cur.revision, signal, head, reasons: due.reasons, plan_mismatch: due.plan_mismatch, slice_change: due.slice_change.changed } })
-  const call = await agent.call(replanPacket(ms, cur, due, head, misaligned, unstarted), { resume: cur.handle, schema: DESIGN, head, label: 'replan:' + tag })
+  // a re-plan after an imported DESIGN starts a fresh local architect on the reused design's context (CRW-1329): the foreign
+  // run's thread handle is never resumed
+  const call = await agent.call(replanPacket(ms, cur, due, head, misaligned, unstarted), Object.assign({ schema: DESIGN, head, label: 'replan:' + tag }, cur.handle ? { resume: cur.handle } : { agentType: 'architect' }))
   if (call.status !== 'completed') return { state: 'halted', result: await crw.milestoneHalt(ms, 'replan', call.status, call.reason, call.callId) }
   // the plans the started nodes were released with: the critic compares the whole DESIGN with them (RELEASED PLANS)
   const released = await crw.releasedPlans(ms.id)
@@ -185,22 +187,34 @@ async function onSignal(sig) {
 function backgroundQuestion(n) {
   return 'Background of node ' + n.id + ' (' + n.issue + '): ' + n.title + '. What does the repository hold today that the plan of this issue rests on: the files, types, functions and tests it will change or read, the conventions they follow, and what in them must not change?'
 }
-phase('explore')
-// one design head for the phase (crw.designHead): every background explorer and the architect's first call read it, whatever lands on
-// the integration target meanwhile, and the architect's checkout, and so the head r0 records the DESIGN ran at, is made at it
-const designAt = await crw.designHead(ms.id)
-const background = await crw.explore('background', ms.nodes.map((n) => ({ id: 'bg-' + n.id, question: backgroundQuestion(n), scope: '', files_needed: n.regions.length ? n.regions : null })), { milestone: ms.id, head: designAt.head }, {})
-if (background.failed) return crw.milestoneHalt(ms, 'explorer', background.failed.status, background.failed.reason, background.failed.callId)
+// the DESIGN of an earlier run of this plan and repository is reused when crw.designReuse finds it approved over the same slices
+// and milestone digest (CRW-1329): the run's design phase is skipped and its ledger's first revision imports it
+const reused = await crw.designReuse(ms.id)
+let initialDesign
+if (reused.reused) {
+  phase('design')
+  await crw.spawnDecision('ARCH_1', 'skip', { role: 'architect', reason: 'approved_design_reused', inputs: { milestone: ms.id, source_run: reused.source_run, source_revision: reused.source_revision, digest: reused.digest } })
+  await crw.designLedger(ms.id, { reuse: true })
+  initialDesign = reused.design
+} else {
+  phase('explore')
+  // one design head for the phase (crw.designHead): every background explorer and the architect's first call read it, whatever lands on
+  // the integration target meanwhile, and the architect's checkout, and so the head r0 records the DESIGN ran at, is made at it
+  const designAt = await crw.designHead(ms.id)
+  const background = await crw.explore('background', ms.nodes.map((n) => ({ id: 'bg-' + n.id, question: backgroundQuestion(n), scope: '', files_needed: n.regions.length ? n.regions : null })), { milestone: ms.id, head: designAt.head }, {})
+  if (background.failed) return crw.milestoneHalt(ms, 'explorer', background.failed.status, background.failed.reason, background.failed.callId)
 
-phase('design')
-await crw.spawnDecision('ARCH_1', 'spawn', { role: 'architect', inputs: { milestone: ms.id, nodes: ms.nodes.length } })
-const first = await agent.call(architectPacket(ms, background.answers, designAt.head), { agentType: 'architect', schema: DESIGN, head: designAt.head, label: 'architect' })
-if (first.status !== 'completed') return crw.milestoneHalt(ms, 'architect', first.status, first.reason, first.callId)
-const designed0 = await auditedDesign(first, '', undefined, designAt.head)
-if (!designed0.ok) return designed0.result
-const arch = designed0.arch
-await crw.designLedger(ms.id, { design: arch.output, answers: designed0.answers, architect: arch })
-await askOrchestrator(designed0.answers, 'explorer_cap', designed0.carried)
+  phase('design')
+  await crw.spawnDecision('ARCH_1', 'spawn', { role: 'architect', inputs: { milestone: ms.id, nodes: ms.nodes.length } })
+  const first = await agent.call(architectPacket(ms, background.answers, designAt.head), { agentType: 'architect', schema: DESIGN, head: designAt.head, label: 'architect' })
+  if (first.status !== 'completed') return crw.milestoneHalt(ms, 'architect', first.status, first.reason, first.callId)
+  const designed0 = await auditedDesign(first, '', undefined, designAt.head)
+  if (!designed0.ok) return designed0.result
+  const arch = designed0.arch
+  await crw.designLedger(ms.id, { design: arch.output, answers: designed0.answers, architect: arch })
+  await askOrchestrator(designed0.answers, 'explorer_cap', designed0.carried)
+  initialDesign = arch.output
+}
 
 // A fenced write after another session claimed the plan's coordinator epoch is refused epoch_lost (CRW-1285): the lane ends at that
 // write with the reason, and neither escalates nor writes anything more at the relay; the run ends stopped on it (below).
@@ -479,7 +493,7 @@ phase('build')
 // node edits the DESIGN's edit_regions, so the nodes that run at once must not overlap in those either. A planned region keeps the plan's
 // change and hold (planned_regions, when the plan states one that is not a plain edit), which crw.regionsOverlap judges by (CRW-1461).
 const designed = {}
-for (const is of arch.output.issues) designed[is.node] = is.edit_regions
+for (const is of initialDesign.issues) designed[is.node] = is.edit_regions
 const admitted = []
 for (const n of ms.nodes) admitted.push(Object.assign({}, n, { regions: await crw.admissionRegions(n.planned_regions || n.regions, designed[n.id]) }))
 const lanes = await crw.dag(args.plan, lane, { nodes: admitted, milestone: ms.id, cap: args.cap, onSignal })
@@ -512,7 +526,7 @@ async function closeAndReport() {
   // of it. A call that did not complete is not ALIGNED: held and unknown hold the milestone, everything else escalates.
   const current = await crw.currentDesign(ms.id)
   await crw.spawnDecision('ARCH_3', 'spawn', { role: 'architect', inputs: { milestone: ms.id, revision: current.revision, head: closed.gate.head } })
-  const reflected = await agent.call(reflectionPacket(ms, current, closed), { resume: current.handle, schema: REFLECTION, head: closed.gate.head, label: 'reflection:' + ms.id })
+  const reflected = await agent.call(reflectionPacket(ms, current, closed), Object.assign({ schema: REFLECTION, head: closed.gate.head, label: 'reflection:' + ms.id }, current.handle ? { resume: current.handle } : { agentType: 'architect' }))
   const reflection = await crw.reflection(ms.id, closed.gate, reflected)
   if (reflection.state !== 'verdict') return crw.milestoneHalt(ms, 'reflection', reflection.state, reflection.reason, reflected.callId)
   // A reason to re-plan stands whatever the alignment says: the numbers of the signals, and the alignment the reflection found.

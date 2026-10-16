@@ -59,6 +59,9 @@ type laneLab struct {
 
 	mu  sync.Mutex
 	cur *labJournal
+	// afterRow, when a test sets it, runs with every row the current process's journal appends (CRW-1329): a test kills the
+	// process the moment a row it waits for is written.
+	afterRow func(engine.Event)
 	// kill: the process is ended after the killAt-th effect-bearing call of the relay (0: never), counted over the lab's life.
 	killAt  int
 	writes  int
@@ -284,7 +287,14 @@ func newLaneLabFor(t *testing.T, owner, target string, issues ...labIssue) *lane
 		if err != nil {
 			return World{}, err
 		}
-		j := &labJournal{Journal: w.Journal}
+		j := &labJournal{Journal: w.Journal, after: func(e engine.Event) {
+			l.mu.Lock()
+			hook := l.afterRow
+			l.mu.Unlock()
+			if hook != nil {
+				hook(e)
+			}
+		}}
 		l.mu.Lock()
 		l.cur = j
 		l.mu.Unlock()
@@ -405,8 +415,9 @@ func (l *laneLab) closed(res Result) laneValue {
 // labJournal is the journal of the current process: the model reads the calls from it, and a killed process writes no more rows.
 type labJournal struct {
 	engine.Journal
-	mu   sync.Mutex
-	dead bool
+	mu    sync.Mutex
+	dead  bool
+	after func(engine.Event)
 }
 
 func (j *labJournal) Append(e engine.Event) engine.Event {
@@ -416,7 +427,11 @@ func (j *labJournal) Append(e engine.Event) engine.Event {
 	if dead {
 		return e
 	}
-	return j.Journal.Append(e)
+	written := j.Journal.Append(e)
+	if j.after != nil {
+		j.after(written)
+	}
+	return written
 }
 
 // SetOnCommit forwards the commit notice as runJournal does, so the lab's runs register the engine's upward hook as the shipped binary's do.
