@@ -114,8 +114,10 @@ type ReconHost interface {
 	// HarvestTurn reads one turn by its id as the turn loop would have ended it; running is set while it has not ended. A
 	// turn whose items cannot be read, or that carries another operation, is an error.
 	HarvestTurn(ctx context.Context, thread, turn, op string) (out TurnOutcome, running bool, err error)
-	// AwaitTurn waits until a turn has ended and returns its outcome.
-	AwaitTurn(ctx context.Context, thread, turn, op string) (TurnOutcome, error)
+	// AwaitTurn waits until a turn has ended and returns its outcome. tools are the run's repository tools (nil: none): when
+	// following the turn loads its thread again, the thread's shell gets them there (CRW-1559), since a later turn's own
+	// resume is skipped for a thread this process already holds.
+	AwaitTurn(ctx context.Context, thread, turn, op string, tools *RepositoryTools) (TurnOutcome, error)
 	// Source is the Thread.source of the threads the backend creates and lists by: the one source a thread of this host can
 	// have and be a call's thread.
 	Source() string

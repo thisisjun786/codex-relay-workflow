@@ -7,7 +7,8 @@ import "strings"
 // subagent shell is the owner session's, which the run cannot set: spawn_agent takes no environment) and the text of every App
 // Server turn. An App Server thread also gets Env in its shell, as the leaf keys ShellOverrides names, on the thread/start or
 // thread/fork that creates it, per call and with no state kept anywhere. A thread the host loads again after a restart is rebuilt
-// from the host's configuration without them: it learns its go from the section its turn text ends with.
+// from the host's configuration and that thread/resume's config only: the backend sends the same leaf keys on it, from the turn's
+// TurnSpec.Tools (CRW-1559), and the turn text still names the tools.
 type RepositoryTools struct {
 	// Env are the KEY=value entries set over a call's inherited environment: exactly the ones the verifier's command gets.
 	Env []string
@@ -19,7 +20,7 @@ type RepositoryTools struct {
 
 // PacketSection is the "Repository tools" section of a call's packet: the tools and the prefix every command that runs one takes;
 // "" without tools. The prefix holds wherever the call runs: a session subagent's shell is the owner session's, and an App Server
-// thread loaded again after a host restart is rebuilt from the host's configuration.
+// thread loaded again after a host restart is rebuilt from the host's configuration plus what its resume carries.
 func (t *RepositoryTools) PacketSection() string {
 	if t == nil || len(t.Facts) == 0 {
 		return ""
@@ -34,7 +35,7 @@ func (t *RepositoryTools) PacketSection() string {
 	return b.String()
 }
 
-// ShellOverrides are Env as the config overrides of a thread/start or thread/fork: one leaf key
+// ShellOverrides are Env as the config overrides of a thread/start, thread/fork or thread/resume: one leaf key
 // shell_environment_policy.set.<NAME> for each entry. Codex 0.154 applies a request's override keys one by one, each by its dotted
 // path, over the server's own overrides (app-server config_manager.rs load_with_cli_overrides, config overrides.rs
 // apply_toml_override), so a leaf key changes that variable only and the policy the server set (inherit, exclude, include_only,
@@ -56,8 +57,8 @@ func (t *RepositoryTools) ShellOverrides() map[string]any {
 	return out
 }
 
-// toolsSuffix is what an App Server turn's text ends with: the packet section after the task, so a thread the host loaded again
-// without the tools in its shell still names them (CRW-1488). The journaled input is the script's; "" without tools.
+// toolsSuffix is what an App Server turn's text ends with: the packet section after the task, so the turn names the tools whatever
+// its thread's shell holds (CRW-1488). The journaled input is the script's; "" without tools.
 func toolsSuffix(t *RepositoryTools) string {
 	section := t.PacketSection()
 	if section == "" {

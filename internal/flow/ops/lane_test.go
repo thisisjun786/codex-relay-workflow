@@ -2974,6 +2974,37 @@ func TestUnitCheckReadsTheAcceptedReceiptWhenItsCopyIsMissing(t *testing.T) {
 			t.Errorf("a receipt whose bytes changed since: %+v", out)
 		}
 	})
+	// the receipt the hook accepted is read where it is, never through a symbolic link (readReceiptFile's O_NOFOLLOW): a path that
+	// is a link to a file with the accepted bytes is not read, so the node holds receipt_not_copied and the tool is not run
+	t.Run("a symlink as the original is not read", func(t *testing.T) {
+		u := newUCWorld(t)
+		target, digest := receiptCopy(t, body)
+		link := filepath.Join(t.TempDir(), "receipt.md")
+		if err := os.Symlink(target, link); err != nil {
+			t.Fatal(err)
+		}
+		ex := u.buildWithReceipt("c_ex1", "built\n", map[string]any{"assignment": "as1", "state": "accepted", "path": link, "sha256": digest, "copy_error": "the step bus is full"})
+		u.checkOnTree(u.snapshot())
+		out := decodeCheck(t, u.must("unitCheck", "A", ex, map[string]any{"round": 1}))
+		if out.Hold != "receipt_not_copied" || len(u.checker.got) != 0 || u.proven(u.lastCheck()) {
+			t.Fatalf("answer %+v, %d checker calls: the receipt the hook accepted is a symbolic link", out, len(u.checker.got))
+		}
+		if !strings.Contains(out.Detail, "the receipt the hook accepted cannot be read either") || !strings.Contains(dataStr(u.lastCheck(), "detail"), "cannot be read either") {
+			t.Errorf("detail %q, row %v", out.Detail, u.lastCheck().Data)
+		}
+	})
+	// and a path that is no regular file (a directory) is not read either
+	t.Run("a directory as the original is not read", func(t *testing.T) {
+		u := newUCWorld(t)
+		sum := sha256.Sum256([]byte(body))
+		ex := u.buildWithReceipt("c_ex1", "built\n", map[string]any{"assignment": "as1", "state": "accepted", "path": t.TempDir(), "sha256": hex.EncodeToString(sum[:]),
+			"copy_error": "the step bus is full"})
+		u.checkOnTree(u.snapshot())
+		out := decodeCheck(t, u.must("unitCheck", "A", ex, map[string]any{"round": 1}))
+		if out.Hold != "receipt_not_copied" || len(u.checker.got) != 0 || u.proven(u.lastCheck()) || !strings.Contains(out.Detail, "is not a regular file") {
+			t.Fatalf("answer %+v, %d checker calls: the receipt the hook accepted is a directory", out, len(u.checker.got))
+		}
+	})
 }
 
 // TestAcceptCarriesTheCarriedFindingsIntoThePremergeRecord (CRW-1465, x1436 item 4): the node lane carries a non-blocking finding past
@@ -3170,6 +3201,72 @@ func TestUnitCheckJudgesOnlyTheTreeItSnapped(t *testing.T) {
 		if out.State != StateTreeMoved || *calls != 1 || dataStr(row, "role") != "" || row.Data["tree_moved"] != true {
 			t.Fatalf("%d checker calls, answer %+v, row %v", *calls, out, row.Data)
 		}
+	})
+}
+
+// TestUnitCheckSeesAMovedTreeThroughEachRead (CRW-1556, x1436 DI test gap 1): the op reads a move of the tree two ways, and each read
+// alone holds tree_moved. Read A is the adapter's fingerprint before the call when it is not the snap: a tree that moved and moved back
+// during the call leaves the worktree at the snap, so only the fingerprint shows the tool judged another tree. Read B is a snapshot of
+// the worktree after the call: a move the adapter's fingerprints do not show (both of the snap) is seen in the worktree. Either way the
+// row says tree_moved with the tree seen, carries no role, and crw.accept of the commit made of the snap finds no unit check.
+func TestUnitCheckSeesAMovedTreeThroughEachRead(t *testing.T) {
+	expectMoved := func(t *testing.T, u *ucWorld, ex CallRef, out UnitCheckOutcome, calls int, tree string) {
+		t.Helper()
+		row := u.lastCheck()
+		if out.State != StateTreeMoved || calls != 1 || dataStr(row, "state") != StateTreeMoved || row.Data["tree_moved"] != true || dataStr(row, "tree") != tree ||
+			dataStr(row, "role") != "" {
+			t.Fatalf("%d checker calls, answer %+v, row %v: want tree_moved with tree %s", calls, out, row.Data, tree)
+		}
+		var commit CommitOutcome
+		_ = json.Unmarshal(u.must("commit", "A", ex, []string{"a.txt"}), &commit)
+		u.must("verify", "A", commit.Commit)
+		if _, err := u.op("accept", "A", commit.Commit); err == nil || ReasonOf(err.Error()) != "reviewer_missing" {
+			t.Errorf("crw.accept of %s on a check of another tree: %v, want reviewer_missing", commit.Commit, err)
+		}
+	}
+	t.Run("read A: the fingerprint before the call is of another tree", func(t *testing.T) {
+		u := newUCWorld(t)
+		ex := u.build("c_ex1", "built\n")
+		snap := u.snapshot()
+		calls, moved := 0, ""
+		u.lane.d.UnitCheck.Checker = checkFunc(func(ctx context.Context, req reviewadapter.Request) (reviewadapter.Result, error) {
+			calls++
+			write(t, req.Worktree, "a.txt", "changed during the check\n", 0o644)
+			fp, err := Snapshot(ctx, ExecGit("git"), req.Worktree)
+			if err != nil {
+				return reviewadapter.Result{}, err
+			}
+			moved = fp
+			write(t, req.Worktree, "a.txt", "built\n", 0o644) // back at the snap: only the fingerprint shows the move
+			res := checkRecord(reviewadapter.StateOK, reviewadapter.VerdictVerified)
+			res.FingerprintBefore, res.FingerprintAfter = fp, fp
+			return res, nil
+		})
+		out := decodeCheck(t, u.must("unitCheck", "A", ex, map[string]any{"round": 1}))
+		if moved == "" || moved == snap || u.snapshot() != snap {
+			t.Fatalf("the checker's move %q, snap %s, worktree now %s", moved, snap, u.snapshot())
+		}
+		expectMoved(t, u, ex, out, calls, moved)
+	})
+	t.Run("read B: the worktree after the call is another tree", func(t *testing.T) {
+		u := newUCWorld(t)
+		ex := u.build("c_ex1", "built\n")
+		snap := u.snapshot()
+		calls := 0
+		u.lane.d.UnitCheck.Checker = checkFunc(func(ctx context.Context, req reviewadapter.Request) (reviewadapter.Result, error) {
+			calls++
+			write(t, req.Worktree, "a.txt", "changed during the check\n", 0o644)
+			res := checkRecord(reviewadapter.StateOK, reviewadapter.VerdictVerified)
+			res.FingerprintBefore, res.FingerprintAfter = snap, snap // the fingerprints show no move
+			return res, nil
+		})
+		out := decodeCheck(t, u.must("unitCheck", "A", ex, map[string]any{"round": 1}))
+		now := u.snapshot()
+		if now == snap {
+			t.Fatal("the checker did not move the tree")
+		}
+		write(t, u.wt, "a.txt", "built\n", 0o644) // the snap again, so crw.commit commits the pending tree
+		expectMoved(t, u, ex, out, calls, now)
 	})
 }
 

@@ -25,6 +25,10 @@ type PlanNode struct {
 	// EndCondition are the commands of the done condition of the node's issue, read from the body the handoff carries and never run by
 	// the relay (CRW-1382): the design-stage explorer runs them once. Absent when the handoff carries no body or the body names none.
 	EndCondition []string `json:"end_condition,omitempty"`
+	// PlannedRegions are the node's regions with what it plans of each (CRW-1461): the change (rename or delete of a symbol) and the
+	// exclusive hold the lane admits it by. Set only when some region renames or deletes or is held exclusive, and then the whole
+	// planned list, in the order of Regions and with each Text the same as its Regions entry; absent when every region is a plain edit.
+	PlannedRegions []LaneRegion `json:"planned_regions,omitempty"`
 }
 
 // Milestone is a milestone of a plan: its nodes in the order the scheduler offers them (dagsched.Ready: critical path, then

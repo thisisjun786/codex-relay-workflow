@@ -349,22 +349,28 @@ func (c *callRun) evidenceCallKey() string {
 
 // evidenceHold is the held result of a call whose assignment could not be recorded: nothing was dispatched. unbound is the subagent
 // that took the step and was closed unbound (evidenceUnbound), "" when there is none; the held row names it (evidence_unbound), and a
-// held call that goes on reads it there and starts a new attempt (sessionResumeHeld).
-func (c *callRun) evidenceHold(err error, unbound string) CallResult {
+// held call that goes on reads it there and starts a new attempt (sessionResumeHeld). The held row records P_held (heldSnapshot): the
+// directory may be edited from outside while the call is held, and the unbound subagent may have edited it before it was closed, so a
+// held call goes on in place only over the tree the hold left (heldStateHolds; CRW-1561).
+func (c *callRun) evidenceHold(ctx context.Context, err error, unbound string) CallResult {
 	data := map[string]any{"input_state": "not_delivered",
 		"detail": "the flow evidence assignment of the step could not be recorded, so no subagent was dispatched: " + err.Error()}
 	if unbound != "" {
 		data["evidence_unbound"] = unbound
 	}
+	c.heldSnapshot(ctx, data)
 	return c.terminal(EvHeld, StatusHeld, ReasonEvidenceAssignmentFailed, data)
 }
 
 // evidenceRefreshHold is the held result of a call recovered in place whose record could not be placed again (evidenceRefresh): its
 // step was published, and it may have been delivered, so the held row records the input as it is (inputState), never as
-// not_delivered when a turn of the call was delivered (CRW-1496).
-func (c *callRun) evidenceRefreshHold(err error) CallResult {
-	return c.terminal(EvHeld, StatusHeld, ReasonEvidenceAssignmentFailed, map[string]any{"input_state": c.inputState(),
-		"detail": "the flow evidence assignment of the recovered call could not be placed again: " + err.Error()})
+// not_delivered when a turn of the call was delivered (CRW-1496). The held row records P_held (heldSnapshot), so a held call goes on
+// in place only over the tree the hold left (heldStateHolds; CRW-1561).
+func (c *callRun) evidenceRefreshHold(ctx context.Context, err error) CallResult {
+	data := map[string]any{"input_state": c.inputState(),
+		"detail": "the flow evidence assignment of the recovered call could not be placed again: " + err.Error()}
+	c.heldSnapshot(ctx, data)
+	return c.terminal(EvHeld, StatusHeld, ReasonEvidenceAssignmentFailed, data)
 }
 
 // evidenceStepData adds the step's assignment to its step_published data.
@@ -409,14 +415,14 @@ func (c *callRun) evidenceBind(agent, marker, hostCwd string, data map[string]an
 // and whether there is one. The attempt ends with it: the held row naming the rejected subagent is written first (a process that dies
 // after it never binds that subagent, which the marker search still finds for the step), then the subagent is closed and the
 // attempt's record released. The held call that goes on starts a new attempt, which a new subagent takes (sessionResumeHeld).
-func (c *callRun) evidenceUnbound() (CallResult, bool) {
+func (c *callRun) evidenceUnbound(ctx context.Context) (CallResult, bool) {
 	ev := c.sess.evidence
 	if ev == nil || ev.bindErr == nil {
 		return CallResult{}, false
 	}
 	err, agent := ev.bindErr, ev.unbound
 	ev.bindErr, ev.unbound = nil, ""
-	res := c.evidenceHold(err, agent)
+	res := c.evidenceHold(ctx, err, agent)
 	c.sessionClose(agent, c.sess.attempt)
 	c.evidenceDrop()
 	return res, true

@@ -81,6 +81,48 @@ func TestThreadHold_resumes_once_with_no_overrides_and_keeps_the_subscription(t 
 	}
 }
 
+// CRW-1559: the flow's hold of a call's thread resumes it with the call's run tools, so a thread loaded cold after an App Server
+// restart gets them in its shell. HoldThreadWith sends the given leaf overrides as the resume's config and nothing else; a nil or
+// empty map sends the bare resume HoldThread sends.
+func TestThreadHoldWith_resumes_with_the_leaf_overrides_it_is_given(t *testing.T) {
+	c, host := holdClient(t)
+	config := map[string]any{
+		"shell_environment_policy.set.PATH":        "/opt/go-1.27/bin:/usr/bin",
+		"shell_environment_policy.set.GOTOOLCHAIN": "local",
+	}
+	if err := c.HoldThreadWith(context.Background(), "thread-1", config); err != nil {
+		t.Fatal(err)
+	}
+	if got := host.Count("thread/resume"); got != 1 {
+		t.Fatalf("%d resumes reached the host, want 1", got)
+	}
+	params := holdParams(t, host)
+	if len(params) != 3 || params["threadId"] != "thread-1" || params["excludeTurns"] != true {
+		t.Fatalf("the hold's resume carries %v, want exactly threadId, excludeTurns and config", params)
+	}
+	sent, _ := params["config"].(map[string]any)
+	if len(sent) != len(config) {
+		t.Fatalf("the resume's config is %v, want %v", params["config"], config)
+	}
+	for k, v := range config {
+		if sent[k] != v {
+			t.Fatalf("the resume's config is %v, want %v", sent, config)
+		}
+	}
+	if !c.ThreadHeld("thread-1") {
+		t.Fatal("the hold was not recorded")
+	}
+	for name, none := range map[string]map[string]any{"nil": nil, "empty": {}} {
+		c, host := holdClient(t)
+		if err := c.HoldThreadWith(context.Background(), "thread-1", none); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if params := holdParams(t, host); len(params) != 2 || params["threadId"] != "thread-1" || params["excludeTurns"] != true {
+			t.Fatalf("%s: the hold's resume carries %v, want only threadId and excludeTurns", name, params)
+		}
+	}
+}
+
 func TestThreadHold_takes_no_gate_so_the_deliverys_own_watch_is_admitted(t *testing.T) {
 	c, _ := holdClient(t)
 	if err := c.HoldThread(context.Background(), "thread-1"); err != nil {

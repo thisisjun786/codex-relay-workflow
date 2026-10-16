@@ -148,11 +148,20 @@ func (c *Client) WatchCreatedTurn(ctx context.Context, thread string) (*TurnWatc
 // Only thread/start and thread/resume subscribe a connection, and an admitted watch holds the root's
 // mutation gate until Finish, which would block the delivery's own send. The hold therefore takes no
 // gate and no TurnWatch: it records the root as busy-held, which the release worker treats as not
-// releasable, and the ordinary release path (Finish and its terminal) leaves it standing. The resume
-// carries no overrides and starts no turn; an already loaded thread only reports its state, so a
+// releasable, and the ordinary release path (Finish and its terminal) leaves it standing. HoldThread's
+// resume carries no overrides and starts no turn; an already loaded thread only reports its state, so a
 // busy recipient is never interrupted. A resume the host refuses returns that error and leaves the
 // doubling backoff as the only trigger, which is the behavior when the relay holds nothing.
 func (c *Client) HoldThread(ctx context.Context, thread string) error {
+	return c.HoldThreadWith(ctx, thread, nil)
+}
+
+// HoldThreadWith is HoldThread whose resume carries the caller's config overrides (CRW-1559): the flow
+// holds a call's thread with the run's repository tools as leaf keys, so a thread the App Server loads
+// cold on this resume gets them in its shell. A nil or empty config sends the bare resume HoldThread
+// sends. The overrides reach the host only when this connection resumes the thread; a thread it already
+// receives is not resumed again, and an already loaded thread keeps the configuration it was loaded with.
+func (c *Client) HoldThreadWith(ctx context.Context, thread string, config map[string]any) error {
 	m := c.subscriptions
 	if m == nil {
 		return &TransportError{Reason: "this client has no subscription manager"}
@@ -208,7 +217,11 @@ func (c *Client) HoldThread(ctx context.Context, thread string) error {
 	m.mu.Unlock()
 	c.mu.Unlock()
 	if resume {
-		if _, err := c.request(ctx, conn, "thread/resume", map[string]any{"threadId": thread, "excludeTurns": true}); err != nil {
+		params := map[string]any{"threadId": thread, "excludeTurns": true}
+		if len(config) > 0 {
+			params["config"] = config
+		}
+		if _, err := c.request(ctx, conn, "thread/resume", params); err != nil {
 			// The reply is missing, but the resume may already have landed: a refusal the server
 			// answered is an RPCError and subscribes nothing, while a timeout or a lost socket after
 			// the write can leave a real subscription on this connection with nobody owning it. The

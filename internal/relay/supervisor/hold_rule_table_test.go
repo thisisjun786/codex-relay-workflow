@@ -485,6 +485,12 @@ var holdRuleRows = []holdRuleRow{
 	{"direct_sender/acknowledged/other_text", "direct", "acknowledged", "changed", "direct_stage", false, true, ""},
 	{"direct_sender/acknowledged/recipient_moved", "direct", "acknowledged", "other_recipient", "direct_stage", false, true, ""},
 	{"daemon_pass/direct/acknowledged/seat_moved", "direct", "acknowledged", "seat_moved", "daemon_pass", true, false, ""},
+	// CRW-1558: the default evidence pointer is the channel's, recorded as such in the packet's origin,
+	// so a report staged again by another executable (another Program) is the same statement and keeps
+	// its park; an explicit pointer that only looks like the default is the sender's, so omitting it
+	// later is a new statement, owed through the message, released and sent.
+	{"direct_sender/acknowledged/other_program", "direct", "acknowledged", "other_program", "direct_stage", true, false, ""},
+	{"direct_sender/acknowledged/default_shaped_then_omitted", "direct_default_pointer", "acknowledged", "evidence_omitted", "direct_stage", false, true, ""},
 	// characterization (U6, green before and after): a hold the channel derived on a direct message is
 	// released by its sender's staging, which always owes it, as on dev.
 	{"direct_sender/derived/same", "direct", "derived", "same", "direct_stage", false, true, ""},
@@ -1118,6 +1124,8 @@ func (w *holdWorld) count(t *testing.T, query string) int {
 // holdWorld is one message in one world, the host its turns are opened on (a turn is an attempt of
 // the message that sent), and the clock of its daemon passes. Worlds: event (an event completion,
 // fixture24), direct (a lead report to a management seat), notice (a fault notice, newNoticeWorld).
+// direct_default_pointer is the direct world whose report names as its evidence, explicitly, the exact
+// text of the channel's default pointer; its kind reads direct.
 type holdWorld struct {
 	kind   string
 	ctx    context.Context
@@ -1131,6 +1139,11 @@ type holdWorld struct {
 	direct *storeRecipientWorld
 	text   string
 	answer string // what the last entry answered, when it answers (acknowledge: parked or why not)
+
+	// The direct report's explicit evidence pointers (none: the channel's default pointer) and the
+	// line the caller's tool writes above its text (DirectMessage.Preface).
+	evidence []string
+	preface  string
 }
 
 const holdRuleLead = "01leadNext"
@@ -1144,12 +1157,16 @@ func newHoldWorld(t *testing.T, kind string) *holdWorld {
 		_, staged := w.f.staged(t)
 		w.id, _ = staged["messageId"].(string)
 		w.ctx, w.s, w.c = w.f.ctx, w.f.s, w.f.c
-	case "direct":
+	case "direct", "direct_default_pointer":
 		w.direct = newStoreRecipientWorld(t)
 		w.direct.superviseInitiative()
 		w.direct.manage(directManagement, directManagement, storeRecipientInitiative, storeRecipientSupervisor)
 		w.ctx, w.s, w.c = w.direct.ctx, w.direct.s, w.direct.channel()
 		w.text = "milestone one is done"
+		if kind == "direct_default_pointer" {
+			w.evidence = []string{w.c.command("supervisor-show", "--message", DirectMessageID(w.directMessage()))}
+		}
+		w.kind = "direct"
 		w.id = w.stageDirect(t)
 	case "flow":
 		// A flow run's report (IsFlowKind), whose settle appends the run's delivery row (CRW-1380).
@@ -1178,10 +1195,15 @@ func (w *holdWorld) exec(t *testing.T, query string, args ...any) {
 	}
 }
 
+// directMessage is the direct world's report as its sender gives it now.
+func (w *holdWorld) directMessage() DirectMessage {
+	return DirectMessage{Kind: KindLeadReport, Relationship: "initiative:" + storeRecipientInitiative, Subject: "lrp_1",
+		Summary: "milestone one", Text: w.text, Preface: w.preface, Evidence: w.evidence, At: "2026-10-14T00:00:00.000000+00:00"}
+}
+
 func (w *holdWorld) stageDirect(t *testing.T) string {
 	t.Helper()
-	answer, err := w.c.StageDirect(w.ctx, DirectMessage{Kind: KindLeadReport, Relationship: "initiative:" + storeRecipientInitiative, Subject: "lrp_1",
-		Summary: "milestone one", Text: w.text, At: "2026-10-14T00:00:00.000000+00:00"}, nil)
+	answer, err := w.c.StageDirect(w.ctx, w.directMessage(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1339,6 +1361,12 @@ func (w *holdWorld) apply(t *testing.T, change string) {
 		w.exec(t, "UPDATE work_reports SET pr_number=11,head_sha='a1b2c3d4e5f60718293a4b5c6d7e8f9012345611' WHERE event_id='event-1' AND submission_no=1")
 	case "changed":
 		w.text = "milestone one is done, and two started"
+	case "other_program":
+		// The report is staged again by another executable: the channel's default pointer names it.
+		w.c.Program = "/opt/other/codex-session-relay"
+	case "evidence_omitted":
+		// The sender stages the report again without the evidence it gave before.
+		w.evidence = nil
 	case "sending":
 		// A send claimed the message and its lease still runs past the row's daemon pass.
 		w.exec(t, "UPDATE supervisor_messages SET state='sending',lease_owner='relay-daemon',lease_until=?,attempt_count=attempt_count+1 WHERE message_id=?", w.now+3600, w.id)

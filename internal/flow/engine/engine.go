@@ -302,6 +302,13 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 		if why := LegacyRun(cfg.Journal.Events(), cfg.RunID, workflow); why != "" {
 			return nil, fmt.Errorf("engine: %s", why)
 		}
+		// so is a run whose child workflow changed (CRW-1461): the entry script's digest is gated by the resume, a child's here, after
+		// the legacy refusal so a legacy run keeps its own wording
+		if cfg.Workflows != nil {
+			if why := ChangedChild(cfg.Journal.Events(), cfg.RunID, cfg.Workflows); why != "" {
+				return nil, fmt.Errorf("engine: %s", why)
+			}
+		}
 	}
 	rctx, cancel := context.WithCancel(ctx)
 	defer cancel()

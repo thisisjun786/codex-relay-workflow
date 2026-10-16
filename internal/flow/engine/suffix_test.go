@@ -678,11 +678,12 @@ return [a.status, b.status]`
 }
 
 // A workflow() position is a join of its one child path: it replays when nothing under it ran live and its value is the
-// recorded one, and a change in the child makes the positions after it live.
+// recorded one, and a call in the child that runs live makes the positions after the workflow live. A child whose source changed
+// is refused (CRW-1461): the resume fails before anything is written.
 func TestWorkflowPositionReplaysWithItsChild(t *testing.T) {
 	h := newHarness(t)
 	child := func(prompt string) *script.Program {
-		p, err := script.Load(script.Source{Name: "kid.js", Text: []byte(header + "const r = await agent.call('" + prompt + "', { agentType: 'explorer', label: 'kid' }); return r.status\n")})
+		p, err := script.Load(script.Source{Name: "kid.js", Text: []byte(header + "const r = await agent.call('" + prompt + "', { agentType: 'explorer', node: 'n1', label: 'kid' }); return r.status\n")})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -690,6 +691,8 @@ func TestWorkflowPositionReplaysWithItsChild(t *testing.T) {
 	}
 	prompt := "child work"
 	h.cfg.Workflows = func(name, path string) (*script.Program, error) { return child(prompt), nil }
+	snapshot := "plan revision 1"
+	h.cfg.InputSnapshot = func(_ context.Context, r SnapshotRequest) (string, error) { return r.Node + " at " + snapshot, nil }
 	body := `
 const k = await workflow('kid')
 const after = await agent.call('after the workflow', { agentType: 'explorer', label: 'after' })
@@ -700,11 +703,25 @@ return [k, after.status]`
 	if n := len(h.fake.Requests()) - mark; n != 0 {
 		t.Errorf("an unchanged resume sent %d requests", n)
 	}
+
+	// a child whose source changed is not the run's child
 	prompt = "child work, changed"
+	rows := len(h.journal.Events())
+	mark = len(h.fake.Requests())
+	if _, err := h.resumeErr(body); err == nil || !strings.Contains(err.Error(), "kid") {
+		t.Errorf("a resume whose child changed: %v, live %v", err, h.liveSince(mark))
+	}
+	if n := len(h.journal.Events()); n != rows {
+		t.Errorf("the refused resume wrote rows: %d -> %d", rows, n)
+	}
+
+	// the same child whose call runs live (its input snapshot changed) makes the position after the workflow live
+	prompt = "child work"
+	snapshot = "plan revision 2"
 	mark = len(h.fake.Requests())
 	h.resumeOn(body)
-	if live := h.liveSince(mark); !slices.Equal(live, []string{"child work, changed", "after the workflow"}) {
-		t.Errorf("a changed child ran %v: its call and the position after the workflow", live)
+	if live := h.liveSince(mark); !slices.Equal(live, []string{"child work", "after the workflow"}) {
+		t.Errorf("a child call that ran live ran %v: it and the position after the workflow", live)
 	}
 }
 
