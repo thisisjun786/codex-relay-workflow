@@ -39,7 +39,7 @@ See the [workflow](../.github/workflows/ci.yml) for the exact job inputs.
 versions, and writes a `verification-record/1`. The record of the integration batch is the evidence, and the hosted run is optional: it runs only when started with
 `workflow_dispatch`.
 
-The run makes a **clean worktree** of the commit being verified under the work root (the XDG state directory, or --work-root; never TMPDIR, /tmp or /var/tmp)
+The run makes a **clean worktree** of the commit being verified under the work root (the XDG state directory, or --work-root)
 (`git worktree add --detach`), with `HOME` and the XDG directories pointed into a
 temporary home and `TZ=UTC`, so uncommitted changes in the caller's checkout and the host's
 caches cannot change the result. The record names the commit and its tree, never the caller's
@@ -111,23 +111,31 @@ of its output (a `--- FAIL`, `FAIL` or `panic:` line, at most 20) and the last 4
 output, at most 4 KB; a Go test that outlived its `-timeout` is named with a `timeout:` prefix,
 so a load timeout reads as a timeout, not as a verdict on the code. The steps inherit `PATH`.
 They do not inherit `TMPDIR`: a run gives its steps a fresh, empty `TMPDIR` of its own (CRW-1489),
-`ci<8 hex>` directly below the caller's `TMPDIR` or, when that does not fit, `t<8 hex>` directly
-below the work root, and removes it after the run (`--keep` keeps and prints it; a run killed before
-its cleanup leaves it, see [Leftover verify trees](#leftover-verify-trees)). A candidate's
-parent is taken at its physical place, resolved from the value as written the way the kernel
-resolves it (links followed before a `..`, not a lexical clean first, so `/a/link/../tmp` is the
-`tmp` beside link's target, not `/a/tmp`); a value that does not resolve is skipped with its
-reason, and the record's `callerTmpDir` keeps the raw value while `tmpDir` names the directory
-made. A candidate does not fit when a `.git` (of any type) is at or above its parent, because the repository's own tests find a checkout by walking up from `TMPDIR` for a
-`.git` (a sandbox's stray `/tmp/.git` made them judge the wrong tree); or when its length plus the
-67 bytes the tests' sockets add below `TMPDIR` (the longest, `internal/manage`) is not under the
-Unix socket limit, 108 bytes on Linux and 104 on macOS. The name has a fixed width, so the fit is
-decided before anything is made. When neither fits, the run is refused before any checkout or step
-with `temp_dir_unusable`, naming each candidate's `.git` or byte count, and writes no record: set a
-short `TMPDIR` with no `.git` above it, or pass a short `--work-root`. The default work root
-(`~/.local/state/crw-ci-local`, 35 bytes for a 9-byte home) leaves 45 + 67 = 112 bytes, so a caller
-`TMPDIR=/tmp` below a stray `/tmp/.git` with the default work root is always refused. Keep `TMPDIR`
-short; `crw config check` warns when `temp_root` leaves no room.
+`ci<8 hex>` directly below the caller's temporary directory, and removes it after the run (`--keep`
+keeps and prints it; a run killed before its cleanup leaves it, see
+[Leftover verify trees](#leftover-verify-trees)). The temporary directory is `TMPDIR`, or `/tmp`
+(source `default`) when `TMPDIR` is unset or empty; it is taken at its physical place, resolved from
+the value as written the way the kernel resolves it (links followed before a `..`, not a lexical
+clean first, so `/a/link/../tmp` is the `tmp` beside link's target, not `/a/tmp`), and the record's
+`callerTmpDir` keeps the raw value while `tmpDir` names the directory made. There is one place and
+no second one (CRW-1569): the steps are never moved below the work root or anywhere else, and the
+length of `TMPDIR` is not judged, because no test socket lies below it (tests bind their sockets
+below a short socket folder under `/tmp`, CRW-1568).
+
+Before any checkout or step, the run checks, in this order, and is refused with the reason and no
+record when one fails:
+
+1. the temporary directory is absolute (`tmpdir_not_absolute`) and not in the account's real home,
+   judged before anything is written there;
+2. it exists, is a directory and is writable (`temp_dir_unusable`, naming the directory and its
+   source);
+3. no `.git` (of any type) is at or above it, because the repository's own tests find a checkout by
+   walking up from `TMPDIR` for a `.git` (a sandbox's stray `/tmp/.git` made them judge the wrong
+   tree): `temp_dir_unusable: <dir> is below <.git>`, set `TMPDIR` to a directory with no `.git` at or
+   above it;
+4. a socket folder made (and removed) below `/tmp` leaves room for the longest socket path a test puts
+   below it within the 103-byte bound of a Unix socket path: `socket_dir_unusable`, naming the folder
+   and, when it does not fit, the bytes needed, the bound and how far over.
 
 A step's result is `passed`, `failed`, `missing_tool`,
 `skipped` or `not_applicable`. The whole result is `pass` only when no step
@@ -151,9 +159,9 @@ gitleaks and staticcheck pins are the ones secrets.sh and go.mod fix, and the st
 or run those pins, so they are recorded at the pin.
 
 The clean worktree is made under a work root: the directory given by --work-root, or the XDG
-state directory of the real user. A root inside TMPDIR, /tmp or /var/tmp is refused with the
-name work_root_in_tmp, because the repository's own checkout tests assert the checkout lies
-outside those directories.
+state directory of the real user. A root must be absolute and outside the account's real home; where
+it lies is not judged, so a root inside TMPDIR, /tmp or /var/tmp is accepted. A `.git` above the
+directory the tests make worktrees in is judged by content, on the steps' `TMPDIR` (above).
 
 ### Reuse validation
 
@@ -176,7 +184,7 @@ A heavy step (a Go build, vet, test, the dist builds, the integration test, `npm
 through the command named by `CRW_CI_HEAVY_GATE` when it is set — `<gate> <command>`
 — and directly when it is unset. The gate is the host's; no host path is written into the
 repository. Temporary files go under the step's own `TMPDIR`, whose root the caller still sets: it is
-made directly below the caller's `TMPDIR`, or below the work root when that does not fit (above).
+made directly below the caller's `TMPDIR` (or `/tmp` when that is unset), and nowhere else (above).
 Only the gate's executable is resolved, once, against the directory the run starts in. Its other
 arguments are not resolved: a relative argument is read in each step's own directory, so give absolute paths.
 
