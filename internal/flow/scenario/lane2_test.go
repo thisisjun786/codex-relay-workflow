@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/lint"
@@ -592,6 +593,134 @@ func TestVerifyNamesTheIntegrationTipAsBase(t *testing.T) {
 		if c.Base != start {
 			t.Errorf("verification of %s at %s has base %q, want the tip %s", c.Node, c.Head, c.Base, start)
 		}
+	}
+}
+
+// The lane admits two nodes at once only when the relay's own region rule lets both be released (CRW-1461): crw.dag reads the overlap
+// of two nodes from crw.regionsOverlap, which judges by the relay's rule (dagsched.Overlaps over the normal forms, with the plan's change
+// and hold), so a pair the relay would hold back defer:edit_overlap is never admitted together. Each case is a pair A, B the old
+// script-side comparison of texts took for disjoint - another spelling of one file, a symbol of a file the other edits whole, a symbol
+// of a file the other deletes a symbol of - beside a node C on a file of its own: with two slots, A and C run at once, B is asked for
+// only after A landed, and no release is held back.
+func TestDagAdmitsByTheRelayRule(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		a, b    string
+		planned []ops.LaneRegion
+	}{
+		{"another spelling", "a.go", "./a.go", nil},
+		{"a symbol of the file", "a.go", "a.go#F", nil},
+		{"a symbol of a file a delete makes one place", "pkg/a.go#F", "pkg/a.go#G", []ops.LaneRegion{{Text: "pkg/a.go#F", Change: "delete"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			l := NewLab(t,
+				NodeSpec{ID: "A", Issue: "CRW-A", Title: "issue A", Regions: []string{tc.a}, Planned: tc.planned},
+				NodeSpec{ID: "B", Issue: "CRW-B", Title: "issue B", Regions: []string{tc.b}},
+				NodeSpec{ID: "C", Issue: "CRW-C", Title: "issue C", Regions: []string{"c.go"}},
+			)
+			l.Cap = 2
+			l.Relay.HoldBackIf = l.Relay.relayRegionRule
+			// C's release is answered before A integrates: C runs beside A, and what B waits for is A's landing, not C's
+			cReleased := make(chan struct{})
+			var once sync.Once
+			l.OnRow(func(ev engine.Event) {
+				if ev.Kind == engine.KindCall && ev.Op == ops.OpRelease && ev.Event == engine.EvCompleted && str(ev.Data, "node") == "C" {
+					once.Do(func() { close(cReleased) })
+				}
+			})
+			var mu sync.Mutex
+			startSeq := map[string][]int{}
+			l.Relay.OnRelease = func(req ops.ReleaseRequest) {
+				seq := l.LastSeq()
+				mu.Lock()
+				startSeq[req.Node] = append(startSeq[req.Node], seq)
+				mu.Unlock()
+			}
+			l.Relay.OnIntegrate = func(node string) {
+				if node != "A" {
+					return
+				}
+				select {
+				case <-cReleased:
+				case <-time.After(2 * time.Minute):
+					t.Errorf("A integrated before C's release was answered")
+				}
+			}
+			got := mustRunIncomplete(t, l)
+			for _, ev := range l.Rows(ops.OpRelease) {
+				if str(ev.Data, "reason") == "defer:edit_overlap" {
+					t.Errorf("the release of %s was held back defer:edit_overlap", str(ev.Data, "node"))
+				}
+			}
+			if got.State != "closed" {
+				t.Fatalf("state %q, lanes %+v; calls %v", got.State, got.Lanes, l.Labels())
+			}
+			for _, n := range []string{"A", "B", "C"} {
+				if state, reason := laneOf(t, got, n); state != "landed" {
+					t.Errorf("lane %s: %s %s, want landed", n, state, reason)
+				}
+			}
+			seqOfRow := func(op, node string) int {
+				for _, ev := range l.Rows(op) {
+					if str(ev.Data, "node") == node {
+						return ev.Seq
+					}
+				}
+				t.Fatalf("no completed %s row of %s", op, node)
+				return 0
+			}
+			integratedA := seqOfRow(ops.OpIntegrate, "A")
+			releasedC := seqOfRow(ops.OpRelease, "C")
+			mu.Lock()
+			asksB := append([]int(nil), startSeq["B"]...)
+			mu.Unlock()
+			if len(asksB) == 0 {
+				t.Fatalf("B was never asked for")
+			}
+			if integratedA > asksB[0] {
+				t.Errorf("B was first asked for at seq %d, before A integrated at seq %d", asksB[0], integratedA)
+			}
+			if releasedC >= integratedA {
+				t.Errorf("C was released at seq %d, not before A integrated at seq %d: C did not run beside A", releasedC, integratedA)
+			}
+		})
+	}
+}
+
+// A node whose head is already on the integration tip lands as a replay and frees its slot and its regions as a real land does
+// (CRW-1461): the node B, whose regions overlap the regions of the landed node A, is released and not held back defer:edit_overlap
+// for a node that has landed.
+func TestIntegrateOfHeadOnTipFreesTheNode(t *testing.T) {
+	l := NewLab(t,
+		NodeSpec{ID: "A", Issue: "CRW-A", Title: "issue A", Regions: []string{"a.go"}},
+		NodeSpec{ID: "B", Issue: "CRW-B", Title: "issue B", Regions: []string{"a.go"}},
+	)
+	r := l.Relay
+	r.Slots = 2
+	r.HoldBackIf = r.relayRegionRule
+	ctx := context.Background()
+	relA, err := r.Release(ctx, ops.ReleaseRequest{Node: "A", Regions: []string{"a.go"}})
+	if err != nil || !relA.Released {
+		t.Fatalf("release of A: %+v, %v", relA, err)
+	}
+	// the head is the base, which the integration branch already holds
+	acc := ops.AcceptRequest{Node: "A", Head: l.Base, Base: l.Base}
+	r.mu.Lock()
+	r.accepted["acc-A"] = acc
+	r.mu.Unlock()
+	got, err := r.Integrate(ctx, ops.IntegrateRequest{Node: "A", Head: l.Base, AcceptanceID: "acc-A"})
+	if err != nil || !got.Landed || !got.Replayed {
+		t.Fatalf("integrate of A: %+v, %v; want landed and replayed", got, err)
+	}
+	if r.SlotHeld("A") {
+		t.Errorf("A holds its slot after it landed")
+	}
+	relB, err := r.Release(ctx, ops.ReleaseRequest{Node: "B", Regions: []string{"a.go"}})
+	if err != nil {
+		t.Fatalf("release of B: %v", err)
+	}
+	if !relB.Released {
+		t.Errorf("B was not released: reason %q, want released after A landed", relB.Reason)
 	}
 }
 

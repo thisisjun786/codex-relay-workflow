@@ -170,6 +170,54 @@ func TestSchedRelayMilestoneCarriesTheEndConditionCommands(t *testing.T) {
 	}
 }
 
+// TestMilestoneCarriesPlannedRegionAttributes (CRW-1461): a node whose planned regions rename or delete a symbol, or hold a region
+// exclusive, carries its whole planned list with those attributes as planned_regions, in the order of its regions and with the same
+// texts, so the lane admits it by what it plans; a node whose regions are all plain edits carries no planned_regions key.
+func TestMilestoneCarriesPlannedRegionAttributes(t *testing.T) {
+	l := newLaneLab(t,
+		labIssue{Key: "A-1", Milestone: "M1", Regions: []compile.Region{{Path: "pkg/a.go", Kind: "symbol", Key: "F", Change: "delete"}, {Path: "b.go", Kind: "file", Change: "edit"}}},
+		labIssue{Key: "A-2", Milestone: "M1", Regions: []compile.Region{{Path: "c.go", Kind: "file"}, {Path: "pkg/d.go", Kind: "symbol", Key: "G", Change: "edit"}}},
+		labIssue{Key: "A-3", Milestone: "M1", After: []string{"A-1", "A-2"}, Regions: []compile.Region{{Path: "e.go", Kind: "file", Exclusive: true}}})
+	m, err := l.relayFor("run-plannedat01", l.handoffBytes(nil), 1).Milestone(ctx, l.plan, "M1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"A-1": `[{"text":"pkg/a.go#F","change":"delete"},"b.go"]`,
+		"A-3": `[{"text":"e.go","exclusive":true}]`,
+	}
+	if len(m.Nodes) != 3 {
+		t.Fatalf("the nodes of M1: %+v", m.Nodes)
+	}
+	for _, n := range m.Nodes {
+		raw, err := json.Marshal(n)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			t.Fatal(err)
+		}
+		got, has := fields["planned_regions"]
+		w, planned := want[n.Issue]
+		switch {
+		case !planned && has:
+			t.Errorf("%s plans only edits and carries planned_regions %s", n.Issue, got)
+		case planned && string(got) != w:
+			t.Errorf("%s's planned_regions: %s, want %s", n.Issue, got, w)
+		}
+		if planned {
+			texts := []string{}
+			for _, rg := range n.PlannedRegions {
+				texts = append(texts, rg.Text)
+			}
+			if !slices.Equal(texts, n.Regions) {
+				t.Errorf("%s's planned texts %q are not its regions %q", n.Issue, texts, n.Regions)
+			}
+		}
+	}
+}
+
 // TestSchedRelayMilestoneRefusesHandoffNotAtPinnedRevision (CRW-1277 c): the run reads the plan at the revision it pinned, so a handoff
 // that is not the one that revision was compiled from is refused, naming what to do: an issue with no node, and criteria whose digest is
 // not the node's. A plan that moved on after the run pinned it does not change what the run reads.

@@ -249,8 +249,15 @@ func (r *SchedRelay) Milestone(ctx context.Context, plan, milestone string) (ops
 		if pn.After == nil {
 			pn.After = []string{}
 		}
+		attributed := false
 		for _, rg := range is.Regions {
 			pn.Regions = append(pn.Regions, rg.String())
+			pn.PlannedRegions = append(pn.PlannedRegions, ops.LaneRegion{Text: rg.String(), Change: rg.Change, Exclusive: rg.Exclusive})
+			attributed = attributed || rg.Change == "rename" || rg.Change == "delete" || rg.Exclusive
+		}
+		// the planned change and hold reach the lane only when one of them is not a plain edit (CRW-1461)
+		if !attributed {
+			pn.PlannedRegions = nil
 		}
 		// the commands of the issue's done condition, read from the body the handoff carries (CRW-1382): the design-stage explorer runs them
 		if strings.TrimSpace(is.Description) != "" {
