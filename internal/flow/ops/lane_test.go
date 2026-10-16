@@ -514,9 +514,13 @@ func TestAChildSizedNodeHasStarted(t *testing.T) {
 		t.Fatalf("release of the child-sized node: %+v, want released false, kind child, size_fit_child", rel)
 	}
 	r := rows(w.j.Events())
-	started, unstarted := lanes(r, []string{"A", "B", "C"})
-	if !reflect.DeepEqual(started, []string{"B"}) || !reflect.DeepEqual(unstarted, []string{"A", "C"}) {
-		t.Errorf("signal path: started %v, unstarted %v, want B started and A, C unstarted", started, unstarted)
+	m, _, err := milestoneOf(r, "M")
+	if err != nil {
+		t.Fatal(err)
+	}
+	started, unstarted, blocked := lanes(r, m.Nodes)
+	if !reflect.DeepEqual(started, []string{"B"}) || !reflect.DeepEqual(unstarted, []string{"A", "C"}) || len(blocked) != 0 {
+		t.Errorf("signal path: started %v, unstarted %v, blocked %v, want B started, A, C unstarted and none blocked", started, unstarted, blocked)
 	}
 	if _, kind, ok := startRowOf(r, "B"); !ok || kind != "child" {
 		t.Errorf("startRowOf(B) = %q, %v, want child, true", kind, ok)
