@@ -279,6 +279,154 @@ func TestRunProjectNeverClaimsRunEpoch(t *testing.T) {
 	})
 }
 
+// CRW-1437 (S-2): a node the architect sized `bundle_split` starts no executor; the project lane escalates it as size_split with ask
+// bundle_split_request, the escalation notice names the request, and the child asks the parent for the bundle split of the node's issue
+// with `crw flow report-up --kind project_decision_request`. The child's procedure (crw-run), the reporting page and the spawn policy say
+// so, and the request the notice names is the one report/hook.go writes.
+
+const reportHookFile = "internal/flow/report/hook.go"
+
+// bundleSplitRunProblems judges the section of crw-run on a flow run for the bundle split request of a node sized `bundle_split`.
+func bundleSplitRunProblems(section string) []string {
+	flat := normalized(section)
+	var problems []string
+	for _, p := range wordingMissing(flat, []string{
+		"`bundle_split`",
+		"`size_split` with ask `bundle_split_request`",
+		`(?i)starts? no executor`,
+		`(?i)waits? for no (answer|decision)`,
+		`(?i)evidence file[^.]*the issue[^.]*the node[^.]*\x60size_reason\x60`,
+		"`crw flow report-up --kind project_decision_request --run RUN --evidence FILE`",
+		`(?i)the parent \(repository session\) makes the bundle split of the node's issue`,
+	}) {
+		problems = append(problems, "the section lacks "+p)
+	}
+	if m := regexp.MustCompile("(?i)report-up --kind (project_blocked|jun_decision_request)[^.]*bundle split|bundle split[^.]*report-up --kind (project_blocked|jun_decision_request)").FindString(flat); m != "" {
+		problems = append(problems, "the section asks for a bundle split by a report kind other than project_decision_request ("+m+")")
+	}
+	return problems
+}
+
+// bundleSplitReportingProblems judges docs/flow/reporting.md for the escalation that asks bundle_split_request.
+func bundleSplitReportingProblems(text string) []string {
+	var problems []string
+	head := text
+	if i := strings.Index(text, "\n## "); i >= 0 {
+		head = text[:i]
+	}
+	table := normalized(head) // the table of what goes up stands before the first section
+	for _, p := range wordingMissing(table, []string{
+		"`size_split`[^|]*`bundle_split_request`",
+		`(?i)\| a project-level blocker or decision request[^|]*bundle split`,
+	}) {
+		problems = append(problems, "the table lacks "+p)
+	}
+	notices := normalized(sectionOf(text, "Escalations and the completion digest"))
+	for _, p := range wordingMissing(notices, []string{
+		"`The run waits for your decision \\(<ask>\\).`",
+		"`bundle_split_request`[^.]*in place of",
+		"`crw flow report-up --kind project_decision_request --run RUN --evidence FILE`",
+		`(?i)the parent's to make`,
+	}) {
+		problems = append(problems, "the escalation section lacks "+p)
+	}
+	return problems
+}
+
+// bundleSplitSpawnProblems judges the spawn policy: SP-EXEC-1 spawns no executor for a node sized `bundle_split`, and SP-TIER-2 sends the
+// node to a bundle split, not to a `split`, which since CRW-1435 is a node of sub-tasks.
+func bundleSplitSpawnProblems(text string) []string {
+	row := func(id string) string {
+		for _, line := range lines(text) {
+			if strings.HasPrefix(strings.TrimSpace(line), "| `"+id+"` |") {
+				return line
+			}
+		}
+		return ""
+	}
+	var problems []string
+	exec := row("SP-EXEC-1")
+	for _, p := range wordingMissing(exec, []string{
+		"`bundle_split`[^|]*no executor",
+		"`size_split` with ask `bundle_split_request`",
+	}) {
+		problems = append(problems, "the SP-EXEC-1 row lacks "+p)
+	}
+	tier := row("SP-TIER-2")
+	if !regexp.MustCompile("(?i)a bundle split through `crw-add-issue`").MatchString(tier) {
+		problems = append(problems, "the SP-TIER-2 row does not send the node to a bundle split through `crw-add-issue`: "+tier)
+	}
+	return problems
+}
+
+func TestRunSkillNamesTheBundleSplitRequest(t *testing.T) {
+	section := sectionOf(readRepoText(t, runSkillFile), "Run a milestone with a flow run")
+	if p := bundleSplitRunProblems(section); len(p) > 0 {
+		t.Errorf("%s:\n  %s", runSkillFile, strings.Join(p, "\n  "))
+	}
+	if p := bundleSplitReportingProblems(readRepoText(t, "docs/flow/reporting.md")); len(p) > 0 {
+		t.Errorf("docs/flow/reporting.md:\n  %s", strings.Join(p, "\n  "))
+	}
+	if p := bundleSplitSpawnProblems(readRepoText(t, spawnPolicyRef)); len(p) > 0 {
+		t.Errorf("%s:\n  %s", spawnPolicyRef, strings.Join(p, "\n  "))
+	}
+	// The pages name the request the run really writes: the lane's ask and the notice's report-up command.
+	hook := readRepoText(t, reportHookFile)
+	for _, want := range []string{`"bundle_split_request"`, "crw flow report-up --kind project_decision_request"} {
+		if !strings.Contains(hook, want) {
+			t.Errorf("%s no longer writes %s; revisit crw-run, reporting.md and the spawn policy", reportHookFile, want)
+		}
+	}
+	if lane := readRepoText(t, "internal/flow/workflows/project-lane.js"); !strings.Contains(lane, "ask: 'bundle_split_request'") {
+		t.Error("project-lane.js no longer escalates a bundle_split node with ask bundle_split_request; revisit crw-run, reporting.md and the spawn policy")
+	}
+
+	t.Run("fixture: a section without the request is reported", func(t *testing.T) {
+		good := "## Run a milestone with a flow run\n\n" +
+			"A node the architect sized `bundle_split` starts no executor: the project lane escalates it as `size_split` with ask `bundle_split_request` " +
+			"and waits for no answer to it. The parent (repository session) makes the bundle split of the node's issue. This thread writes an evidence file that " +
+			"names the issue, the node and the plan's `size_reason`, and runs `crw flow report-up --kind project_decision_request --run RUN --evidence FILE`.\n"
+		if p := bundleSplitRunProblems(sectionOf(good, "Run a milestone with a flow run")); len(p) > 0 {
+			t.Fatalf("the good text is reported: %v", p)
+		}
+		for label, mutate := range map[string]func(string) string{
+			"no ask":      func(s string) string { return strings.Replace(s, " with ask `bundle_split_request`", "", 1) },
+			"an executor": func(s string) string { return strings.Replace(s, "starts no executor", "starts an executor", 1) },
+			"waits":       func(s string) string { return strings.Replace(s, "waits for no answer", "waits for the answer", 1) },
+			"no evidence": func(s string) string {
+				return strings.Replace(s, "the issue, the node and the plan's `size_reason`", "the node", 1)
+			},
+			"blocked kind": func(s string) string { return strings.Replace(s, "project_decision_request", "project_blocked", 1) },
+			"jun kind": func(s string) string {
+				return strings.Replace(s, "project_decision_request", "jun_decision_request", 1)
+			},
+			"not the parent's": func(s string) string {
+				return strings.Replace(s, "The parent (repository session) makes the bundle split of the node's issue. ", "", 1)
+			},
+		} {
+			if p := bundleSplitRunProblems(sectionOf(mutate(good), "Run a milestone with a flow run")); len(p) == 0 {
+				t.Errorf("%s: the changed text is accepted", label)
+			}
+		}
+	})
+
+	t.Run("fixture: a spawn policy that sends the node to a split is reported", func(t *testing.T) {
+		good := "| `SP-EXEC-1` | an executor | every issue node | A node sized `bundle_split` gets no executor: the lane escalates it as `size_split` with ask `bundle_split_request` |\n" +
+			"| `SP-TIER-2` | the tier step is exhausted | again | no spawn; the node escalates (`tiers_exhausted`) to the child: a bundle split through `crw-add-issue` and a plan revision, or a decision for Jun |\n"
+		if p := bundleSplitSpawnProblems(good); len(p) > 0 {
+			t.Fatalf("the good text is reported: %v", p)
+		}
+		for label, mutate := range map[string]func(string) string{
+			"old split": func(s string) string { return strings.Replace(s, "a bundle split through", "a split through", 1) },
+			"executor":  func(s string) string { return strings.Replace(s, "gets no executor", "gets an executor", 1) },
+		} {
+			if p := bundleSplitSpawnProblems(mutate(good)); len(p) == 0 {
+				t.Errorf("%s: the changed text is accepted", label)
+			}
+		}
+	})
+}
+
 const (
 	issueBoundaries   = "plugins/crw/skills/crw-plan/references/issue-boundaries.md"
 	compileSourceFile = "internal/flow/compile/compile.go"
