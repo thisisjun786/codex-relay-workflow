@@ -21,16 +21,18 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc/tmploctest"
 	"golang.org/x/sys/unix"
 )
 
 func Test30ControlSocketRealSurface(t *testing.T) {
-	state := t.TempDir()
+	state := tmploctest.SocketDir(t, "t30-") // a socket directory: the test dials control.sock itself (CRW-1568)
 	if err := os.Chmod(state, 0700); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
+	tmploctest.CheckSocket(t, state, controlPath(state))
 	server, err := ListenControl(ctx, state)
 	if err != nil {
 		t.Fatal(err)
@@ -140,11 +142,7 @@ func Test30ControlDisconnectBeforeARequestIsNoFailure(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	home, err := os.MkdirTemp("", "t30-probe-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(home) })
+	home := tmploctest.SocketDir(t, "t30-probe-") // a socket directory: the probes dial control.sock themselves (CRW-1568)
 	t.Run("listener", func(t *testing.T) {
 		state := filepath.Join(home, "listener")
 		if err := os.Mkdir(state, 0700); err != nil {
@@ -152,6 +150,7 @@ func Test30ControlDisconnectBeforeARequestIsNoFailure(t *testing.T) {
 		}
 		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 		defer cancel()
+		tmploctest.CheckSocket(t, home, controlPath(state))
 		server, err := ListenControl(ctx, state)
 		if err != nil {
 			t.Fatal(err)
@@ -177,6 +176,7 @@ func Test30ControlDisconnectBeforeARequestIsNoFailure(t *testing.T) {
 	t.Run("daemon", func(t *testing.T) {
 		daemon := startControlDaemon(t, home)
 		path := daemon.path
+		tmploctest.CheckSocket(t, home, path)
 		probe(t, path, nil)
 		err := daemon.Wait()
 		var result map[string]any
@@ -198,13 +198,9 @@ func Test30ControlDisconnectBeforeARequestIsNoFailure(t *testing.T) {
 // afterwards, and none of it reaches Close, so a daemon segment whose work succeeded exits 0.
 // (The reading of each frame is hook's TestControlAnswersEveryRequestItCannotServeWithTheHostRecord.)
 func Test30ControlPeerFailuresAreAnsweredWithTheHostRecord(t *testing.T) {
-	home, err := os.MkdirTemp("", "t30-peer-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(home) })
+	home := tmploctest.SocketDir(t, "t30-peer-") // a socket directory: the peers dial control.sock themselves (CRW-1568)
 	root := filepath.Join(home, "markers")
-	if err = os.Mkdir(root, 0700); err != nil {
+	if err := os.Mkdir(root, 0700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("CODEX_SESSION_RELAY_MARKER_ROOT", root)
@@ -348,6 +344,7 @@ func Test30ControlPeerFailuresAreAnsweredWithTheHostRecord(t *testing.T) {
 		}
 		ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 		defer cancel()
+		tmploctest.CheckSocket(t, home, controlPath(state))
 		server, err := ListenControl(ctx, state)
 		if err != nil {
 			t.Fatal(err)
@@ -379,6 +376,7 @@ func Test30ControlPeerFailuresAreAnsweredWithTheHostRecord(t *testing.T) {
 		defer func() { acceptControl = accept }()
 		ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 		defer cancel()
+		tmploctest.CheckSocket(t, home, controlPath(state))
 		server, err := ListenControl(ctx, state)
 		if err != nil {
 			t.Fatal(err)
@@ -394,6 +392,7 @@ func Test30ControlPeerFailuresAreAnsweredWithTheHostRecord(t *testing.T) {
 	t.Run("daemon", func(t *testing.T) {
 		daemon := startControlDaemon(t, home)
 		path := daemon.path
+		tmploctest.CheckSocket(t, home, path)
 		hostRecord(t, "params not an object", ask(t, path, frames["params not an object"]))
 		hangUp(t, path, frame(params(later, "")))
 		err := daemon.Wait()

@@ -15,6 +15,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc/tmploctest"
 )
 
 func Test33ControlDefaultStorePython(t *testing.T) {
@@ -36,6 +37,7 @@ func Test33ControlDefaultStorePython(t *testing.T) {
 			// The owner evaluates only under its own marker root (ownerPaths), configured as
 			// the relay is: the root the fixture's settings and request name.
 			t.Setenv("CODEX_SESSION_RELAY_MARKER_ROOT", filepath.Join(home, "markers"))
+			tmploctest.CheckSocket(t, socketRootOf(t, filepath.Join(fixture.State, "control.sock")), filepath.Join(fixture.State, "control.sock"))
 			listener, err := net.Listen("unix", filepath.Join(fixture.State, "control.sock"))
 			if err != nil {
 				t.Fatal(err)
