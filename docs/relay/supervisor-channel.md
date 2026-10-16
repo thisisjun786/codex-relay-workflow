@@ -381,7 +381,10 @@ sent, the message is held as `superseded_by_report`, and the send refuses as
 restated in place - same message id, same journal entry, `supervisor_message_restated` naming
 both events and submissions - in the claim before its bytes are rendered, or at the transport
 start with the voided attempt recorded as sending nothing, after which the same call claims it
-again, at most twice, and sends what is owed now.
+again, at most twice, and sends what is owed now. A packet staged in older words differs from
+the one composed now in the same way, so it is restated the same way. The stored packet holds
+only the rendered output, so the entry cannot tell those two causes apart, and its `reason` names
+both: what the obligation says, or the words the message is written in, moved.
 
 The writers that can change an obligation after staging are the ones it reads: `report.record`
 (a first, corrected or kind-changing work report; the Go runtime has no work-report writer, decision
@@ -674,7 +677,8 @@ ledger's eligibility (`faults.notification_eligibility`, the rule its reservatio
 allows - a pause or no-contact committed after the reservation; one whose fault
 is about another relationship now is not claimed (and a parked one stays parked) until its next
 staging re-addresses it; and a reserved one is recomposed from what the ledger says now and
-restated if its fault moved. A notice whose attempt sent nothing is parked under the same
+restated if its fault, or the words the notice is written in, moved; the restatement's `reason`
+names both causes, because the stored packet cannot tell them apart. A notice whose attempt sent nothing is parked under the same
 hold (`park_notice`), so it is never the oldest message holding its recipient's later reports back,
 and the next reservation's staging releases it. Every other rule here holds unchanged: lifecycle
 withholding, the busy backoff and caps, the recipient's send budget, one head per recipient in

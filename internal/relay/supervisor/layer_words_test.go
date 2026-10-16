@@ -1,6 +1,7 @@
 package supervisor
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/layername"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // CRW-1476 (bundle n2-layer-words): the text the 부모 channel writes for a person names the layer
@@ -126,6 +128,49 @@ func TestSupervisorTextNamesTheLayers(t *testing.T) {
 	})
 }
 
+// The reasons a supervisor_message_restated row gives (CRW-1546 item 4). No site can tell a
+// restatement the wording alone caused from one the content caused, because the stored packet holds
+// only rendered output, so each reason is true for both causes and names the wording as one of them.
+const (
+	// reportRestatedReason is refreshProposal's reason.
+	reportRestatedReason = "what the obligation says, or the words the message is written in, moved after staging and nothing had been sent, so the message now carries what is owed now in the current words"
+	// noticeRestatedReasonTail ends refreshNotice's reason, which begins with the notification it names.
+	noticeRestatedReasonTail = " says about its fault, or the words it is written in, moved after it was staged"
+	// noticeStagedRestatedReason is the reason staging a notice again gives.
+	noticeStagedRestatedReason = "what the notification says about its fault, or the words it is written in, moved and nothing had been sent"
+)
+
+// restatedReasons returns the reason of every supervisor_message_restated journal row, oldest first.
+func restatedReasons(t *testing.T, s *store.Store) []string {
+	t.Helper()
+	rows, err := s.DB.QueryContext(context.Background(), "SELECT detail FROM journal WHERE kind='supervisor_message_restated' ORDER BY seq")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var reasons []string
+	for rows.Next() {
+		var detail string
+		if err := rows.Scan(&detail); err != nil {
+			t.Fatal(err)
+		}
+		var d struct {
+			Reason *string `json:"reason"`
+		}
+		if err := json.Unmarshal([]byte(detail), &d); err != nil {
+			t.Fatalf("a restatement detail is not JSON: %v: %s", err, detail)
+		}
+		if d.Reason == nil {
+			t.Fatalf("a restatement detail has no reason: %s", detail)
+		}
+		reasons = append(reasons, *d.Reason)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return reasons
+}
+
 // TestOldWordingUnsentRowRestatesOnce (plan D8): a report staged under the old wording and never sent
 // carries the old sentence in its stored packet. The next claim restates it once, with one
 // supervisor_message_restated row, so the message that goes carries the new wording; after that the
@@ -177,6 +222,10 @@ func TestOldWordingUnsentRowRestatesOnce(t *testing.T) {
 	}
 	if n := restatedRows(t, f.s); n != 1 {
 		t.Fatalf("restatement rows after the first claim: %d, want 1", n)
+	}
+	// Only the wording moved here, so the reason must name the wording as a possible cause.
+	if reasons := restatedReasons(t, f.s); len(reasons) != 1 || reasons[0] != reportRestatedReason {
+		t.Fatalf("the restatement reason does not name the wording as a possible cause: %q, want %q", reasons, reportRestatedReason)
 	}
 	if refresh() {
 		t.Fatal("a report already in the new wording was restated again")
