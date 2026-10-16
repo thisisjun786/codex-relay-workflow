@@ -126,12 +126,12 @@ func TestNextHandsOutTheStepsOfTheBus(t *testing.T) {
 	cfg := filepath.Join(t.TempDir(), "codex")
 	_ = os.MkdirAll(cfg, 0o700)
 	_ = os.WriteFile(filepath.Join(cfg, "config.toml"), []byte("[agents]\nmax_threads = 1\n"), 0o600)
-	td.Getenv = func(k string) (string, bool) {
+	td.Getenv = td.w.withTemp(func(k string) (string, bool) {
 		if k == "CODEX_HOME" {
 			return cfg, true
 		}
 		return "", false
-	}
+	})
 	_, out, _ = td.do("next", run, "--json", "--state", w.state)
 	if full := decodeNext(t, out); full.Slots.Limit != 1 || !strings.Contains(full.Hint, "agent thread limit reached") {
 		t.Fatalf("full slots: %+v", full)
@@ -284,12 +284,12 @@ func TestStartDefaultsToASessionRunAndBindsItsOwner(t *testing.T) {
 	cfg := filepath.Join(t.TempDir(), "codex")
 	_ = os.MkdirAll(cfg, 0o700)
 	_ = os.WriteFile(filepath.Join(cfg, "config.toml"), []byte("[agents]\nmax_threads = 4\n"), 0o600)
-	td.Getenv = func(k string) (string, bool) {
+	td.Getenv = td.w.withTemp(func(k string) (string, bool) {
 		if k == "CODEX_HOME" {
 			return cfg, true
 		}
 		return "", false
-	}
+	})
 	code, out, errOut := td.do("start", script, "--thread", sessOwner, "--state", w.state, "--json")
 	if code != 0 || len(td.spawned) != 1 {
 		t.Fatalf("start: %d %s %s", code, out, errOut)
@@ -366,7 +366,7 @@ func TestSessionFactsWarnAndNeverBlockTheStart(t *testing.T) {
 	cfg := filepath.Join(t.TempDir(), "codex")
 	_ = os.MkdirAll(cfg, 0o700)
 	_ = os.WriteFile(filepath.Join(cfg, "config.toml"), []byte("[agents]\nmax_threads = 1\n\n[features]\nmulti_agent_v2 = true\n"), 0o600)
-	td.Getenv = func(k string) (string, bool) {
+	td.Getenv = td.w.withTemp(func(k string) (string, bool) {
 		switch k {
 		case "CODEX_HOME":
 			return cfg, true
@@ -374,7 +374,7 @@ func TestSessionFactsWarnAndNeverBlockTheStart(t *testing.T) {
 			return t.TempDir(), true
 		}
 		return "", false
-	}
+	})
 	h := newVerifierHost(t, "module example.com/p\n\ngo 1.27\n")
 	td.Verifier = func(ctx context.Context, repo string) Fact { return VerifierPrerequisites(ctx, h.env, repo) }
 	code, out, errOut := td.do("start", helloScript(t), "--thread", "thread-owner", "--state", w.state, "--socket", filepath.Join(t.TempDir(), "no.sock"), "--json")

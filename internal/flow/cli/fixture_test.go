@@ -16,17 +16,18 @@ import (
 
 var ctx = context.Background()
 
-// world is a relay state directory with a store in it.
+// world is a relay state directory with a store in it, and the temporary location its starts record (TMPDIR).
 type world struct {
 	t     *testing.T
 	state string
+	tmp   string
 	db    string
 	st    *store.Store
 }
 
 func newWorld(t *testing.T) *world {
 	t.Helper()
-	w := &world{t: t, state: t.TempDir()}
+	w := &world{t: t, state: t.TempDir(), tmp: t.TempDir()}
 	w.db = filepath.Join(w.state, "relay.sqlite3")
 	w.open()
 	t.Cleanup(w.close)
@@ -138,7 +139,7 @@ func (w *world) deps() *testDeps {
 	now := time.Date(2026, 10, 12, 9, 0, 0, 0, time.UTC)
 	td.Deps = &Deps{
 		Now:    func() time.Time { return now },
-		Getenv: func(k string) (string, bool) { return "", false },
+		Getenv: w.withTemp(func(k string) (string, bool) { return "", false }),
 		Reader: func(ctx context.Context, state, socket string) (*Reader, error) {
 			return OpenReader(ctx, w.state, socket)
 		},
@@ -156,6 +157,17 @@ func (w *world) deps() *testDeps {
 		Signal: func(pid int, sig syscall.Signal) error { return nil },
 	}
 	return td
+}
+
+// withTemp is getenv with TMPDIR answered by the world's temporary location (CRW-1570): a start records it, and so a test's run never
+// depends on where or how long the TMPDIR of the test process is.
+func (w *world) withTemp(getenv func(string) (string, bool)) func(string) (string, bool) {
+	return func(k string) (string, bool) {
+		if k == "TMPDIR" {
+			return w.tmp, true
+		}
+		return getenv(k)
+	}
 }
 
 // do runs a command line and returns its exit status and output.

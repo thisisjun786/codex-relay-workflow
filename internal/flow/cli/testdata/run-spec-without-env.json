@@ -1,0 +1,10 @@
+{
+  "schema": "crw-flow-run/1",
+  "run_id": "run-0123456789e0",
+  "workflow": "land-head",
+  "args": {"plan":"plan-1","milestone":"M1","issue":"A-1","head":"outside-a1","authors":["thread-author"]},
+  "thread": "thread-owner",
+  "token_budget": 5000,
+  "backend": "app-server",
+  "created_at": "2026-10-15T00:00:00Z"
+}

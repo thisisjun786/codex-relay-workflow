@@ -1295,8 +1295,13 @@ A session run is started, stepped and resumed from its owner thread with the com
 run's directory `<state>/flow/<run>/` and none writes the journal, which only the run process writes.
 
 - `crw flow start WORKFLOW [--backend session|app-server]` starts a session run by default; `--backend app-server` opens a thread
-  per call, for the tests and shadow runs. The spec records the `backend`. A session run's pool is `min(pool, agents.max_threads - 1)`
-  (the owner keeps a slot for a helper of its own; `agents.max_threads` is read from `<CODEX_HOME>/config.toml`, default 6), the
+  per call, for the tests and shadow runs. The spec records the `backend`, and the run's temporary location: `env.TMPDIR` in
+  `run.json` (`crw-flow-run/1`; an optional member, absent from a spec written before it, which reads as before) is what the one temp
+  function (`internal/tmploc`, `DirFrom`) answers for the starting environment, as written, also when that is its default. It is asked
+  once, at the start, and no other variable of the caller's environment is recorded (no `PATH`, `GOFLAGS` or `GOTOOLCHAIN`); a TMPDIR
+  that is not absolute, or a directory that is missing, not a directory or not writable, stops the start (exit 1, with tmploc's
+  reason) before the spec is written and before any process starts or owner is bound. A session run's pool is
+  `min(pool, agents.max_threads - 1)` (the owner keeps a slot for a helper of its own; `agents.max_threads` is read from `<CODEX_HOME>/config.toml`, default 6), the
   preview lists the spawn format of each of the seven roles (`spawn_agent(agent_type, message, model, reasoning_effort,
   fork_context=false)`) and the six session facts below, and the answer names the command the steps are taken with
   (`next`). Before the process starts the owner thread is bound (below).
