@@ -74,29 +74,65 @@ type ReleasedPlan struct {
 	DesignDigest string      `json:"design_digest"`
 	Plan         DesignIssue `json:"plan"`
 	Decisions    []Decision  `json:"decisions"`
-	// Asked is, for a node sized for a bundle split, whether its request went up (CRW-1437): the escalation_notice row of the
-	// bundle_split_request escalation its lane wrote is recorded. A send that failed writes no such row, and a failed upward hook does
-	// not stop the run, so the escalation alone does not say the request reached the level above. Absent for any other kind.
+	// Asked is, for a node sized for a bundle split, whether the 부모 was asked (CRW-1437): the notice of the bundle_split_request
+	// escalation its lane wrote was delivered (bundleSplitRequest). A send that failed writes no notice row, a failed upward hook does
+	// not stop the run, and a notice the channel staged is not delivered yet, so neither the escalation nor a notice row alone says the
+	// request reached the 부모. Absent for any other kind.
 	Asked bool `json:"asked,omitempty"`
+	// Request is, for a node sized for a bundle split, what became of the notice of its request (bundleSplitRequest): delivered
+	// (Asked), or queued when no delivery of it is recorded (a staged notice, which a held_uncertain send of a flow escalation is
+	// answered as too, or a notice row with no result member, which an earlier binary wrote). Absent with no notice row, and for any
+	// other kind.
+	Request string `json:"request,omitempty"`
 }
 
 // EvEscalationNotice is the flow row that records that an escalation of the run was told to the level above (report.KindEscalationNotice,
-// written by the run's upward hook once the channel accepted or queued the notice): its escalation_id names the escalation.
+// written by the run's upward hook once the channel accepted or queued the notice): its escalation_id names the escalation, its result
+// what the channel did with the notice (accepted, the one delivered result, or queued).
 const EvEscalationNotice = "escalation_notice"
+
+// EvMessageDelivery is the flow row the daemon's settle of a staged flow message appends to the run (supervisor.FlowMessageDeliveryKind,
+// CRW-1380): its message_id names the message, its result what the transport came to (accepted: delivered; unknown; refused).
+const EvMessageDelivery = "message_delivery"
+
+// NoticeDelivered is the result of an escalation_notice row, or of a message_delivery row, whose notice was delivered (report.ResultAccepted).
+const NoticeDelivered = "accepted"
 
 // askBundleSplit is the ask of the escalation a node sized for a bundle split goes up with (project-lane.js, CRW-1437).
 const askBundleSplit = "bundle_split_request"
 
-// bundleSplitAsked tells whether the bundle split request of node went up: the last escalation of the node that asks
-// bundle_split_request has its escalation_notice row.
-func bundleSplitAsked(r rows, node string) bool {
+// The requests a released plan of a bundle split names (ReleasedPlan.Request).
+const (
+	requestDelivered = "delivered"
+	requestQueued    = "queued"
+)
+
+// bundleSplitRequest tells what became of the bundle split request of node: the last escalation of the node that asks
+// bundle_split_request and the escalation_notice row of it. It is delivered when that row's result is accepted (the channel delivered
+// the notice), or when a message_delivery row the journal holds says the message the row names (request_id) was accepted (the daemon
+// delivered a notice the channel staged). Any other row is queued: a staged notice with no delivery, a delivery that reads unknown or
+// refused, a delivery the daemon records after the run read its journal (the run's next open reads it), or a notice row with no result
+// member. With no notice row it is "" (not told).
+func bundleSplitRequest(r rows, node string) string {
 	esc, ok := r.flow(engine.EvEscalation).last(func(ev engine.Event) bool { return dataStr(ev, "node") == node && dataStr(ev, "ask") == askBundleSplit })
 	if !ok {
-		return false
+		return ""
 	}
 	id := dataStr(esc, "escalation_id")
-	_, told := r.flow(EvEscalationNotice).last(func(ev engine.Event) bool { return id != "" && dataStr(ev, "escalation_id") == id })
-	return told
+	notice, told := r.flow(EvEscalationNotice).last(func(ev engine.Event) bool { return id != "" && dataStr(ev, "escalation_id") == id })
+	if !told {
+		return ""
+	}
+	if dataStr(notice, "result") == NoticeDelivered {
+		return requestDelivered
+	}
+	message := dataStr(notice, "request_id")
+	if _, ok := r.flow(EvMessageDelivery).last(func(ev engine.Event) bool {
+		return message != "" && dataStr(ev, "message_id") == message && dataStr(ev, "result") == NoticeDelivered
+	}); ok {
+		return requestDelivered
+	}
+	return requestQueued
 }
 
 func (o *releasedPlansOp) Run(_ context.Context, req engine.OpRequest) (engine.OpResult, error) {

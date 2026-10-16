@@ -498,10 +498,11 @@ func TestReleasedPlansListTheNodesSizedForASplitOrAChild(t *testing.T) {
 	}
 }
 
-// CRW-1437: a node sized for a bundle split is listed with whether its request went up: its lane escalated it as size_split with ask
-// bundle_split_request, and the request reached the 부모 only when the escalation_notice row of that escalation is recorded (a send that
-// failed writes none, and a hook failure does not stop the run). Before the notice the plan says asked false (the key is absent);
-// with it, asked true. A notice of another escalation of the run does not count.
+// CRW-1437: a node sized for a bundle split is listed with whether its request reached the 부모: its lane escalated it as size_split
+// with ask bundle_split_request, and the 부모 was asked only when the escalation_notice row of that escalation records a delivered
+// result (result accepted). A notice the channel staged and has not delivered (result queued, which a held_uncertain send of a flow
+// escalation reads as too) says the request is queued (request queued, no asked key), and so does an older notice row with no
+// result member. With no notice row the plan names neither. A notice of another escalation of the run does not count.
 func TestReleasedPlansSayWhetherABundleSplitRequestWentUp(t *testing.T) {
 	w := newWorld(t)
 	w.relay.plan = planOfNodes(map[string]string{"A": "sa", "B": "sb"}, "A", "B")
@@ -510,44 +511,69 @@ func TestReleasedPlansSayWhetherABundleSplitRequestWentUp(t *testing.T) {
 	w.ledgered(true, d)
 	w.release("A")
 	w.must("release", "plan-1", "B", "M")
-	asked := func() (any, bool) {
+	plans := func() []map[string]any {
 		var got []map[string]any
 		_ = json.Unmarshal(w.must("releasedPlans", "M"), &got)
-		for _, p := range got {
+		return got
+	}
+	planOfB := func() map[string]any {
+		for _, p := range plans() {
 			if p["node"] == "B" {
 				if p["kind"] != "bundle_split" {
 					t.Fatalf("the released plan of B %v, want kind bundle_split", p)
 				}
-				v, ok := p["asked"]
-				return v, ok
+				return p
 			}
 		}
-		t.Fatalf("no released plan of B in %v", got)
-		return nil, false
+		t.Fatalf("no released plan of B")
+		return nil
+	}
+	want := func(when string, asked any, request any) {
+		t.Helper()
+		p := planOfB()
+		if p["asked"] != asked || p["request"] != request {
+			t.Errorf("%s: the released plan of B has asked %v and request %v, want asked %v and request %v", when, p["asked"], p["request"], asked, request)
+		}
 	}
 	other := w.must("escalate", "A", EscalateInfo{Reason: "blocked_scope"})
 	esc := w.must("escalate", "B", EscalateInfo{Reason: "size_split", Ask: "bundle_split_request", Detail: "regions_gt3"})
 	var otherOut, escOut EscalateOutcome
 	_ = json.Unmarshal(other, &otherOut)
 	_ = json.Unmarshal(esc, &escOut)
-	notice := func(id string) {
-		w.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindFlow, Event: EvEscalationNotice, Data: map[string]any{"escalation_id": id, "result": "queued", "request_id": "rq", "thread": "th"}})
+	notice := func(id string, data map[string]any) {
+		data["escalation_id"] = id
+		w.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindFlow, Event: EvEscalationNotice, Data: data})
 	}
-	notice(otherOut.ID)
-	if v, ok := asked(); ok {
-		t.Errorf("asked %v before the notice of B's escalation, want no asked key", v)
+	notice(otherOut.ID, map[string]any{"result": "accepted", "request_id": "rq0", "thread": "th"})
+	want("before any notice of B's escalation", nil, nil)
+	notice(escOut.ID, map[string]any{"request_id": "rq1", "thread": "th"})
+	want("after a notice row of B's escalation with no result member", nil, "queued")
+	notice(escOut.ID, map[string]any{"result": "queued", "request_id": "rq2", "thread": "th"})
+	want("after a queued notice of B's escalation", nil, "queued")
+	// the daemon's settle of the staged message appends a message_delivery row (CRW-1380): unknown (held_uncertain) is no delivery,
+	// and an accepted delivery of another message does not count; accepted for the notice's message is its delivery
+	delivered := func(message, result string) {
+		w.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindFlow, Event: EvMessageDelivery,
+			Data: map[string]any{"message_id": message, "kind": "flow_escalation", "result": result, "request_id": "tr"}})
 	}
-	notice(escOut.ID)
-	if v, ok := asked(); !ok || v != true {
-		t.Errorf("asked %v, %v after the notice of B's escalation, want true", v, ok)
-	}
-	if v, ok := func() (any, bool) {
-		var got []map[string]any
-		_ = json.Unmarshal(w.must("releasedPlans", "M"), &got)
-		v, ok := got[0]["asked"]
-		return v, ok
-	}(); ok {
-		t.Errorf("the released plan of A has asked %v; only a bundle split names it", v)
+	delivered("rq2", "unknown")
+	want("after the delivery of B's notice reads unknown", nil, "queued")
+	delivered("rq0", "accepted")
+	want("after another message was delivered", nil, "queued")
+	delivered("rq2", "accepted")
+	want("after the daemon delivered B's queued notice", true, "delivered")
+	notice(escOut.ID, map[string]any{"result": "accepted", "request_id": "rq3", "thread": "th"})
+	want("after a notice of B's escalation the channel delivered", true, "delivered")
+	for _, p := range plans() {
+		if p["node"] != "A" {
+			continue
+		}
+		if v, ok := p["asked"]; ok {
+			t.Errorf("the released plan of A has asked %v; only a bundle split names it", v)
+		}
+		if v, ok := p["request"]; ok {
+			t.Errorf("the released plan of A has request %v; only a bundle split names it", v)
+		}
 	}
 }
 

@@ -4,7 +4,18 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/supervisor"
 )
+
+// The rows crw.releasedPlans reads to tell whether a bundle split request was delivered (CRW-1437) are the rows the run's upward hook
+// and the daemon's settle write: the escalation_notice row, with its accepted result, and the message_delivery row of a staged notice.
+func TestTheDeliveryRowsReleasedPlansReadAreTheOnesWritten(t *testing.T) {
+	if ops.EvMessageDelivery != supervisor.FlowMessageDeliveryKind || ops.EvEscalationNotice != KindEscalationNotice || ops.NoticeDelivered != ResultAccepted || ResultAccepted != supervisor.FlowDeliveryAccepted {
+		t.Errorf("crw.releasedPlans reads %q and %q rows with result %q; the settle writes %q with %q and the hook writes %q with %q",
+			ops.EvMessageDelivery, ops.EvEscalationNotice, ops.NoticeDelivered, supervisor.FlowMessageDeliveryKind, supervisor.FlowDeliveryAccepted, KindEscalationNotice, ResultAccepted)
+	}
+}
 
 // A row a command writes into a run that is alive takes its number from the foreign range, so the run's own journal goes on writing
 // without meeting it, and a reader finds both in the order they were written.

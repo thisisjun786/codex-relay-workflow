@@ -199,13 +199,16 @@ func TestCriticReplanPacketListsReleasedPlans(t *testing.T) {
 	}
 	// a node sized for a split with no sub-tasks (a legacy row), a child or a bundle split started too: it is listed with how it
 	// started; a split with sub-tasks is released to an executor and listed as released (CRW-1459)
-	// a bundle split's request went up only when the escalation_notice row of its escalation is recorded (crw.releasedPlans asked, CRW-1437):
-	// without it the packet says the request is not delivered yet, never that the 부모 was asked
+	// a bundle split's 부모 was asked only when the escalation_notice row of its escalation records a delivered result (crw.releasedPlans
+	// asked, CRW-1437); a notice the channel queued and has not delivered (request queued) says the request is queued, not yet delivered,
+	// and with no notice row the packet says the request is not delivered yet: never that the 부모 was asked
 	for _, row := range []struct{ name, kind, asked, want string }{
 		{"split", "split", "", "- n2 (CRW-2), sized for a split under r0 with no sub-tasks (a legacy split row: no executor started; its lane escalated it as size_split)\n  plan: {"},
 		{"child", "child", "", "- n2 (CRW-2), sized for a child under r0 (no executor started; its lane escalated it as size_split)\n  plan: {"},
 		{"bundle_split-asked", "bundle_split", "asked: true, ", "- n2 (CRW-2), sized for a bundle split under r0 (no executor started; the 부모 was asked: bundle_split_request)\n  plan: {"},
 		{"bundle_split-unasked", "bundle_split", "asked: false, ", "- n2 (CRW-2), sized for a bundle split under r0 (no executor started; the request to the 부모 is not delivered yet: bundle_split_request)\n  plan: {"},
+		{"bundle_split-queued", "bundle_split", "request: 'queued', ", "- n2 (CRW-2), sized for a bundle split under r0 (no executor started; the request to the 부모 is queued, not yet delivered: bundle_split_request)\n  plan: {"},
+		{"bundle_split-delivered", "bundle_split", "asked: true, request: 'delivered', ", "- n2 (CRW-2), sized for a bundle split under r0 (no executor started; the 부모 was asked: bundle_split_request)\n  plan: {"},
 		{"bundle_split", "bundle_split", "", "- n2 (CRW-2), sized for a bundle split under r0 (no executor started; the request to the 부모 is not delivered yet: bundle_split_request)\n  plan: {"},
 		{"released", "released", "", "- n2 (CRW-2), released under r0\n  plan: {"},
 	} {
@@ -214,7 +217,7 @@ func TestCriticReplanPacketListsReleasedPlans(t *testing.T) {
 		if !strings.Contains(sized, row.want) {
 			t.Errorf("a released entry %s:\n%s", row.name, sized)
 		}
-		if row.asked != "asked: true, " && strings.Contains(sized, "was asked") {
+		if !strings.HasPrefix(row.asked, "asked: true, ") && strings.Contains(sized, "was asked") {
 			t.Errorf("a released entry %s says the 부모 was asked:\n%s", row.name, sized)
 		}
 	}
