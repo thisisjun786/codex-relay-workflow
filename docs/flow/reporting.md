@@ -140,7 +140,10 @@ committed batch:
    under the same logical id. A run that died between any two of these steps finds its place in the rows when it is resumed, so an owed
    entry is not left without a notice.
 
-The logical id makes the notice idempotent in `crw manage`. A direct send replays the settled record of the delivery ledger. The
+The logical id makes the notice idempotent in `crw manage`. A direct send replays the settled record of the delivery ledger. A retry id of
+a summary notice that was saved before its send and never sent (`get_operation` answers that the bridge never recorded it) is sent under that same
+id when the delivery resumes, also once the retry cap is spent: nothing is keyed to the id at the bridge, so no attempt is duplicated, and no
+retry is spent; any other logical id in that state settles refused. The
 `--queue` path of an id that starts with `summary-` writes the notice only when the parent queue holds none of it: not pending, not in a
 batch the pump pinned, not in `sent/`, not refused. The answer names the state (`state`: `pending`, `in_flight`, `sent`, `refused`) and
 the run records it as the settlement. The pump leaves a summary notice that `sent/` already holds out of its batches, and leaves a

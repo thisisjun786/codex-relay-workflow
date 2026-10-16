@@ -273,3 +273,63 @@ func TestSummaryRollbackBeforeSettleIsRefusedLocally(t *testing.T) {
 		t.Errorf("settled %v escalations %v, want refused once and the summary_notice_refused the note warns of", settled, esc)
 	}
 }
+
+// The astra repro (CRW-1548): a summary retry id minted at the cap and saved before its send, and the process stopped. The outbox holds
+// summary-<id> at summary-<id>-r2, undetermined, keyed to the row's text, and the bridge never recorded that id. The reconcile sends the
+// notice once under summary-<id>-r2 and settles it accepted; it is never settled refused for a cap no send spent, and raises no
+// summary_notice_refused.
+func TestSummaryRetrySavedBeforeItsSendIsSentOnResume(t *testing.T) {
+	const text = "[crw flow] summary_owed: the plan summary is owed, in the words the intent row holds"
+	coreTempHome(t)
+	env, stderr := summaryResendEnv(t)
+	id := summaryResendIntent(t, env, text)
+	cfg := summaryResendSeed(t, env, id, text)
+	capID := deliverRetryRequestID("summary-"+id, deliverRetryLimit)
+	record, _, err := deliverLoad(cfg, "summary-"+id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record.RequestID = capID
+	if err := deliverSave(cfg, record); err != nil {
+		t.Fatal(err)
+	}
+	bridge, log := deliverFakeBridge(t, []map[string]any{summaryResendUnknown, summaryResendIdle, summaryResendAccepted})
+	cfg.Bridge.Binary = bridge
+	if _, err := report.ReconcileSummary(context.Background(), env); err != nil {
+		t.Fatal(err)
+	}
+	if sends := summaryResendSends(t, log); len(sends) != 1 || sends[0] != [2]string{capID, text} {
+		t.Errorf("sends %v, want the row's text once under %s (%s)", sends, capID, stderr.String())
+	}
+	settled, esc := summaryResendRows(t, env)
+	if len(settled) != 1 || settled[0] != report.SettledAccepted {
+		t.Errorf("the notice settled %v, want accepted once", settled)
+	}
+	for _, r := range esc {
+		t.Errorf("the resume raised an escalation: %s %s", r.Str("reason"), r.Str("detail"))
+	}
+}
+
+// Guard (CRW-1548): send-parent reuses an unrecorded at-cap id only for a summary notice. Any other logical id at its cap, which the
+// bridge never recorded, settles refused and nothing is sent.
+func TestSendParentOtherIDAtCapStaysRefused(t *testing.T) {
+	coreTempHome(t)
+	bridge, log := deliverFakeBridge(t, []map[string]any{summaryResendUnknown, summaryResendIdle, summaryResendAccepted})
+	cfg := deliverSendConfig(t, bridge)
+	sendParentWithConfig(t, cfg)
+	const text = "a notice"
+	if err := deliverSave(cfg, deliverRecord{LogicalID: "note-1", RequestID: deliverRetryRequestID("note-1", deliverRetryLimit), Tool: deliverToolSend,
+		TargetThread: "thread-1", MessageSHA256: deliverMessageSHA256(text), State: deliverStateUnknown}); err != nil {
+		t.Fatal(err)
+	}
+	code, stdout := sendParentRunCommand(t, "--thread", "thread-1", "--logical-id", "note-1", "--message-file", sendParentMessageFile(t, text))
+	if code != sendParentExitRefused {
+		t.Fatalf("exit %d, want %d (%s)", code, sendParentExitRefused, stdout)
+	}
+	if reply := sendParentReply(t, stdout); reply["class"] != deliverClassRefused {
+		t.Errorf("the report was %v, want the refused class", reply)
+	}
+	if tools := deliverSendToolsOf(t, log); len(tools) != 1 || tools[0] != deliverToolOperation {
+		t.Errorf("the bridge saw %v, want only get_operation", tools)
+	}
+}
