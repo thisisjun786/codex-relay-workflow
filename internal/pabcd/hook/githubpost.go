@@ -15,6 +15,10 @@ package hook
 // The words of a command are the ones the shared command reader (internal/pabcd/shellir) gives after the shell's own quote and
 // backslash removal, so a quoted option, a glued redirect or a quoted program name is judged as the word the shell runs. A text
 // the reader cannot read is refused; no text is judged by splitting it on whitespace.
+//
+// A body file is judged by what it is and what it holds, never by where it lies (CRW-1578): it must be a regular file, named
+// without a final symbolic link, of at most 1 MiB, that the guard can read, and its text must pass the secret scan. A body file
+// that fails one of those checks is refused with the cause unreadable-body-file and the kind of the failure.
 
 import (
 	"encoding/json"
@@ -91,10 +95,13 @@ func GitHubPostCancelledAnswer() string {
 	return githubPostDeny(githubPostRuleUnread, githubPostWhereCommand)
 }
 
+// githubPostBodyRecovery is the one way forward for a body: a file the guard reads, by any of the forms it reads.
+const githubPostBodyRecovery = "check the text in a regular readable file of at most 1 MiB, then use --body-file, -F body=@file or --input"
+
 // githubPostDeny is the deny envelope: the rule, the place, and one way forward.
 func githubPostDeny(rule, place string) string {
 	reason := "GitHub post blocked (" + rule + ") at " + memoryGateLabel(place) +
-		": check the text in a regular file under TMPDIR, /tmp or /var/tmp, then use --body-file, -F body=@file or --input"
+		": " + githubPostBodyRecovery
 	return editAnswer("deny", reason, reason)
 }
 
@@ -117,14 +124,12 @@ func githubPostDenyPayload(site githubPostSite, p map[string]any) string {
 		// read, as the memory guard does, rather than repeating a policy refusal (CRW-1178). The part it cannot read may still
 		// post, so it says that it cannot tell, never that the command names no post (CRW-1283, Sion decision 1).
 		reason = commandUnreadableReason(githubPostRuleUnread, site.reason, leaf, "The reader cannot tell whether the command posts to GitHub.")
+	} else if site.post && site.cause != "" {
+		// The body read's own cause (CRW-1578, R2-3): what the file is, as the read found it, so the caller knows what to change.
+		reason = "GitHub post cannot be verified (unreadable-github-post) at " + memoryGateLabel(site.place) + ": the body file " +
+			"cannot be read (" + site.cause + "); " + githubPostBodyRecovery + ". " + recovery
 	} else if site.post {
 		reason = "GitHub post cannot be verified (unreadable-github-post) at " + memoryGateLabel(site.place) + ". " + recovery
-	}
-	if site.cause == "outside-temp-roots" {
-		reason = "GitHub body file is outside the allowed temp roots TMPDIR, /tmp or /var/tmp (unreadable-github-post). Move the checked text to a regular file under one of those roots."
-		if p["agent_id"] != nil || p["agent_type"] != nil {
-			reason = "GitHub body file is outside the allowed temp roots TMPDIR, /tmp or /var/tmp (unreadable-github-post). " + recovery
-		}
 	}
 	return editAnswer("deny", reason, reason)
 }
@@ -136,7 +141,7 @@ type githubPostSite struct {
 	rule, place string
 	line        int
 	post        bool   // established by the execution that refused, including carried files
-	cause       string // bounded body-read cause; never reconstructed from the payload cwd
+	cause       string // the body read's own cause ("unreadable-body-file: <kind>"), from the read that failed; never recomputed
 	reason      string // what the command reader could not read, when it refused the text (bounded, from the reader)
 	analysis    bool   // the refusal is the reader's refusal of the whole text, not a rule about one execution
 	mentions    bool   // the text the refusal was found in spells a gh command (see githubPostSpellsPost)
@@ -286,9 +291,9 @@ func githubPostPost(args []string, cwd githubPostDir) (githubPostSite, bool, boo
 		if strings.Contains(file, githubPostUnknownMark) {
 			return githubPostSite{rule: githubPostRuleUnread, place: githubPostWhereCommand, line: 0}, true, true
 		}
-		content, ok := cwd.read(file)
-		if !ok {
-			return cwd.unread(file), true, true
+		content, cause := cwd.read(file)
+		if cause != "" {
+			return cwd.unread(file, cause), true, true
 		}
 		if line, found := githubPostRawSecretLine(content); found {
 			return githubPostSite{rule: githubPostRuleSecret, place: file + ":" + strconv.Itoa(line), line: 0}, true, true
@@ -489,9 +494,9 @@ func githubPostAPI(args []string, cwd githubPostDir) (githubPostSite, bool, bool
 		if strings.Contains(file, githubPostUnknownMark) {
 			return githubPostSite{rule: githubPostRuleUnread, place: githubPostWhereCommand, line: 0}, true, true
 		}
-		content, ok := cwd.read(file)
-		if !ok {
-			return cwd.unread(file), true, true
+		content, cause := cwd.read(file)
+		if cause != "" {
+			return cwd.unread(file, cause), true, true
 		}
 		// --input is the request body and is JSON: a body that is not one JSON document is unreadable, and the scan reads its
 		// strings. A field file is posted as its raw text, so that text is scanned.
@@ -499,7 +504,8 @@ func githubPostAPI(args []string, cwd githubPostDir) (githubPostSite, bool, bool
 		if jsonBody {
 			text, ok := githubPostJSONText(content)
 			if !ok {
-				return cwd.unread(file), true, true
+				// The file was read; it is not one JSON document, so the request body cannot be judged. No body-read cause.
+				return cwd.unread(file, ""), true, true
 			}
 			line, found = githubPostSecretLine(text)
 		} else {
@@ -597,83 +603,91 @@ type githubPostDir struct {
 	reads *[]string
 }
 
-// read is githubPostReadFile, recording the file that was read.
-func (d githubPostDir) read(name string) (string, bool) {
-	text, resolved, ok := githubPostReadFileAt(name, d.path)
-	if ok && d.reads != nil {
-		*d.reads = append(*d.reads, resolved)
+// read is githubPostReadFileAt, recording the file that was read. cause is empty when the file was read, else the read's own
+// cause (see githubPostReadFileAt).
+func (d githubPostDir) read(name string) (text, cause string) {
+	text, opened, cause := githubPostReadFileAt(name, d.path)
+	if cause == "" && d.reads != nil {
+		*d.reads = append(*d.reads, opened)
 	}
-	return text, ok
+	return text, cause
 }
 
-// githubPostReadFile reads the text a post names: a literal path that lies under a temporary root, is a
-// regular file of at most 1 MiB, and whose bytes the guard can read.
+// unread is the refusal of a post whose body file could not be judged, carrying the cause the read gave (R2-3): the name is not
+// resolved or opened again to find it.
+func (d githubPostDir) unread(name, cause string) githubPostSite {
+	return githubPostSite{rule: githubPostRuleUnread, place: name, post: true, cause: cause}
+}
+
+// githubPostCauseUnreadable is the one cause of a body file the guard refuses; the kind after it says what the read found.
+const githubPostCauseUnreadable = "unreadable-body-file"
+
+// githubPostBodyCause is the cause of a body file refused for kind.
+func githubPostBodyCause(kind string) string { return githubPostCauseUnreadable + ": " + kind }
+
+// githubPostReadFile reads the text a post names: a regular file, named without a final symbolic link, of at most 1 MiB, whose
+// bytes the guard can read. Where it lies is not judged (CRW-1578).
 func githubPostReadFile(name, cwd string) (string, bool) {
-	text, _, ok := githubPostReadFileAt(name, cwd)
-	return text, ok
+	text, _, cause := githubPostReadFileAt(name, cwd)
+	return text, cause == ""
 }
 
-// githubPostReadFileAt is githubPostReadFile that also returns the path the file was opened by (links resolved).
-// githubPostBodyLocation owns both the containment decision and its diagnostic
-// cause. It resolves against the actual execution directory before reading.
+// githubPostBodyLocation is the path a body file name is opened by, or the cause it cannot be: "-" and a relative name with no
+// known directory have no file. Only the directory part is resolved, so a directory link (a /tmp to /private/tmp style root
+// among them) is followed, while the final element is opened as named and a final link is refused by the open (R1-2).
 func githubPostBodyLocation(name, cwd string) (string, string) {
 	if name == "-" {
-		return "", "unreadable-body-file"
+		return "", githubPostBodyCause("no file name")
 	}
 	raw := name
 	if !filepath.IsAbs(raw) {
 		if cwd == "" || cwd == githubPostNoDir {
-			return "", "unreadable-body-file"
+			return "", githubPostBodyCause("unknown directory")
 		}
 		raw = strings.TrimSuffix(cwd, "/") + "/" + raw
 	}
-	if !githubPostUnderRoots(filepath.Clean(raw)) {
-		return "", "outside-temp-roots"
+	dir, base := filepath.Split(raw)
+	if base == "" || base == "." || base == ".." {
+		return "", githubPostBodyCause("not a file name")
 	}
-	resolved, err := filepath.EvalSymlinks(raw)
+	resolved, err := filepath.EvalSymlinks(dir)
 	if err != nil {
-		return "", "unreadable-body-file"
+		return "", githubPostBodyCause("directory cannot be resolved")
 	}
-	if !githubPostUnderRoots(resolved) {
-		return "", "outside-temp-roots"
-	}
-	return resolved, ""
-}
-func (d githubPostDir) unread(name string) githubPostSite {
-	_, cause := githubPostBodyLocation(name, d.path)
-	return githubPostSite{rule: githubPostRuleUnread, place: name, post: true, cause: cause}
-}
-func githubPostReadFileAt(name, cwd string) (string, string, bool) {
-	resolved, cause := githubPostBodyLocation(name, cwd)
-	if cause != "" {
-		return "", "", false
-	}
-	file, ok := githubPostRegularFile(resolved)
-	if !ok {
-		return "", "", false
-	}
-	defer file.Close()
-	b, err := io.ReadAll(io.LimitReader(file, githubPostMaxFileBytes+1))
-	if err != nil || len(b) > githubPostMaxFileBytes {
-		return "", "", false
-	}
-	return string(b), resolved, true
+	return filepath.Join(resolved, base), ""
 }
 
-// githubPostUnderRoots is whether a cleaned path lies under a temporary root the guard trusts: the
-// environment's TMPDIR when it is absolute, /tmp, or /var/tmp.
-func githubPostUnderRoots(path string) bool {
-	roots := []string{"/tmp", "/var/tmp"}
-	if t := os.Getenv("TMPDIR"); filepath.IsAbs(t) {
-		roots = append(roots, t)
+// githubPostReadFileAt is githubPostReadFile that also returns the path the file was opened by (its directory resolved, its
+// final element as named) and, when the read fails, the cause from the step that failed: the name, the open (a final link, not
+// a regular file, not readable), or the read (too large, not readable, a size that does not match the content).
+func githubPostReadFileAt(name, cwd string) (text, opened, cause string) {
+	path, cause := githubPostBodyLocation(name, cwd)
+	if cause != "" {
+		return "", "", cause
 	}
-	for _, root := range roots {
-		root = filepath.Clean(root)
-		if path == root || strings.HasPrefix(path, root+string(filepath.Separator)) {
-			return true
-		}
+	file, kind := githubPostOpenRegular(path)
+	if kind != "" {
+		return "", "", githubPostBodyCause(kind)
 	}
-	return false
+	defer file.Close()
+	st, err := file.Stat()
+	if err != nil {
+		return "", "", githubPostBodyCause("not readable")
+	}
+	b, err := io.ReadAll(io.LimitReader(file, githubPostMaxFileBytes+1))
+	if err != nil {
+		return "", "", githubPostBodyCause("not readable")
+	}
+	if len(b) > githubPostMaxFileBytes {
+		return "", "", githubPostBodyCause("too large")
+	}
+	// A file whose bytes are not its recorded size is not a plain stored file: a /proc or /sys file reports a regular file whose
+	// text is made for the process that reads it (gh reading /proc/self/environ reads gh's environment, not the guard's), and a
+	// file that changes while it is read has no one text. The guard cannot judge what gh would post, so it refuses.
+	if int64(len(b)) != st.Size() {
+		return "", "", githubPostBodyCause("size does not match its content")
+	}
+	return string(b), path, ""
 }
 
 // githubPostBeforeOpen is a test seam: it runs between the name lookup and the open of githubPostRegularFile, so a test
@@ -684,18 +698,33 @@ var githubPostBeforeOpen func(path string)
 // without following a final link, and the opened descriptor is the one checked and read: a named pipe or a device swapped
 // in between a check and the open never blocks the guard, because the check is on the descriptor (failure class 3).
 func githubPostRegularFile(path string) (*os.File, bool) {
+	file, kind := githubPostOpenRegular(path)
+	return file, kind == ""
+}
+
+// githubPostOpenRegular is githubPostRegularFile with the kind of its failure, empty when the file is open: "final link" when
+// the open met a symbolic link as the final element, "not a regular file" for anything the descriptor shows is not one, and
+// "not readable" for every other failure of the open or the check.
+func githubPostOpenRegular(path string) (*os.File, string) {
 	if githubPostBeforeOpen != nil {
 		githubPostBeforeOpen(path)
 	}
 	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
+	if err == syscall.ELOOP {
+		return nil, "final link"
+	}
 	if err != nil {
-		return nil, false
+		return nil, "not readable"
 	}
 	file := os.NewFile(uintptr(fd), path)
 	st, err := file.Stat()
-	if err != nil || !st.Mode().IsRegular() {
+	if err != nil {
 		file.Close()
-		return nil, false
+		return nil, "not readable"
 	}
-	return file, true
+	if !st.Mode().IsRegular() {
+		file.Close()
+		return nil, "not a regular file"
+	}
+	return file, ""
 }

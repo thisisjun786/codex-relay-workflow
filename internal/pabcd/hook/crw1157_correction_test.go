@@ -8,35 +8,52 @@ import (
 	"testing"
 )
 
+// TestCRW1157CorrectionExecutionCause: a refusal carries the cause of the execution that refused. A named pipe as a body file is a
+// post the guard cannot verify, whether the command or a script it runs names it. A script's post of a body file is judged by the
+// file's content, not by where it lies (CRW-1578): a clean committed body is allowed, and a secret-shaped one is refused by the scan.
 func TestCRW1157CorrectionExecutionCause(t *testing.T) {
 	cwd, _, _ := gateScene(t)
-	t.Setenv("TMPDIR", cwd)
 	fifo := filepath.Join(cwd, "b.md")
 	if err := syscall.Mkfifo(fifo, 0600); err != nil {
 		t.Fatal(err)
 	}
-	outside := filepath.Join(filepath.Dir(cwd), "outside")
-	if err := os.MkdirAll(outside, 0700); err != nil {
+	scripts := filepath.Join(filepath.Dir(cwd), "scripts")
+	if err := os.MkdirAll(scripts, 0700); err != nil {
 		t.Fatal(err)
 	}
 	for _, cmd := range []string{"cd " + cwd + "; gh pr comment 1 --body-file ./b.md", "sh fifo-post.sh"} {
-		if err := os.WriteFile(filepath.Join(outside, "fifo-post.sh"), []byte("gh pr comment 1 --body-file "+fifo), 0600); err != nil {
+		if err := os.WriteFile(filepath.Join(scripts, "fifo-post.sh"), []byte("gh pr comment 1 --body-file "+fifo), 0600); err != nil {
 			t.Fatal(err)
 		}
-		t.Cleanup(func() { _ = os.Remove(filepath.Join(outside, "fifo-post.sh")) })
-		reason := githubPostAnswerReason(t, HandleGitHubPostGuard(gateBash(t, outside, cmd)))
+		t.Cleanup(func() { _ = os.Remove(filepath.Join(scripts, "fifo-post.sh")) })
+		reason := githubPostAnswerReason(t, HandleGitHubPostGuard(gateBash(t, scripts, cmd)))
 		if strings.Contains(reason, "outside") || strings.Contains(reason, "posting has not been established") || !strings.Contains(reason, "cannot be verified") {
 			t.Errorf("wrong execution cause: %s", reason)
 		}
 	}
-	// A script's explicit post and out-of-root body carry their actual refusal.
-	script := filepath.Join(cwd, "outside-post.sh")
-	if err := os.WriteFile(script, []byte("gh pr comment 1 --body-file "+filepath.Join(outside, "body.md")), 0600); err != nil {
+	// A script's explicit post of a clean body is allowed wherever the body lies; a secret-shaped body is the scan's refusal.
+	clean, err := filepath.Abs(filepath.Join("testdata", "body", "clean.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(cwd, "clean-post.sh")
+	if err := os.WriteFile(script, []byte("gh pr comment 1 --body-file "+clean), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if reason := githubPostAnswerReason(t, HandleGitHubPostGuard(gateBash(t, cwd, "sh "+script))); reason != "" {
+		t.Errorf("a script's post of a clean body was refused: %s", reason)
+	}
+	secret := filepath.Join(cwd, "secret.md")
+	if err := os.WriteFile(secret, []byte("GH_TOKEN="+strings.Repeat("a", 20)+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	script = filepath.Join(cwd, "secret-post.sh")
+	if err := os.WriteFile(script, []byte("gh pr comment 1 --body-file "+secret), 0600); err != nil {
 		t.Fatal(err)
 	}
 	reason := githubPostAnswerReason(t, HandleGitHubPostGuard(gateBash(t, cwd, "sh "+script)))
-	if !strings.Contains(reason, "outside") || !strings.Contains(reason, "TMPDIR") {
-		t.Errorf("lost carried post cause: %s", reason)
+	if !strings.Contains(reason, "("+githubPostRuleSecret+")") || strings.Contains(reason, strings.Repeat("a", 20)) {
+		t.Errorf("a script's post of a secret-shaped body is not the scan's refusal: %s", reason)
 	}
 }
 
