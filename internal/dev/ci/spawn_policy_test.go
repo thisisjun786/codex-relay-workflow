@@ -30,8 +30,10 @@ var (
 	spawnRuleRowKey = regexp.MustCompile("^`(" + spawnRuleIDForm + ")`$")
 
 	// retiredSpawnRules are rule ids rules.go keeps only so that old decision rows stay readable (CRW-1418: the `child` session path
-	// is retired, a node sized `child` goes up as a `size_split` escalation). The page has no row for them and does not name them.
-	retiredSpawnRules = map[string]bool{"SP-CHILD-1": true, "SP-CHILD-2": true}
+	// is retired, a node sized `child` goes up as a `size_split` escalation; CRW-1429: the node reviewer, the candidate batch review,
+	// reviewer-final and the explorer of a reviewer's evidence question are retired, engine.LegacyRetiredRules). The page has no row
+	// for them and does not name them.
+	retiredSpawnRules = map[string]bool{"SP-CHILD-1": true, "SP-CHILD-2": true, "SP-REV-1": true, "SP-REV-2": true, "SP-REVF-1": true, "SP-EXPL-3": true}
 )
 
 // engineRuleIDs is the value of every string constant of rules.go that is a rule id, read with go/parser.
@@ -170,6 +172,8 @@ func TestSpawnPolicyRulesMatchEngine(t *testing.T) {
 		}
 	})
 
+	// EvidenceExplorersPerNode is the cap of SP-EXPL-3, a retired rule the page does not name (retiredSpawnRules), so the page states
+	// no number of it.
 	t.Run("the numbers of the page are the constants of rules.go", func(t *testing.T) {
 		signals := normalized(sectionOf(text, "Signals"))
 		inline := normalized(sectionOf(text, "Inline work"))
@@ -179,7 +183,6 @@ func TestSpawnPolicyRulesMatchEngine(t *testing.T) {
 			{"ExplorerConcurrency", signals, `at most %d (explorers )?(at once|concurrent)`},
 			{"ExplorersPerMilestone", signals, `at most %d (explorers )?(a|per|for each) milestone`},
 			{"ResearchPerTier", signals, `at most %d research continuations`},
-			{"EvidenceExplorersPerNode", signals, `at most %d (explorers )?(a|per|for each) node`},
 			{"TierRounds", signals, `%d reviewed rounds`},
 			{"InlineFiles", inline, `(at most|<=) %d files`},
 		} {

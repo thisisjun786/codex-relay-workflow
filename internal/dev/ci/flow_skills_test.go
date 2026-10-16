@@ -61,7 +61,7 @@ func flowOwnershipProblems(section string) []string {
 	for _, p := range wordingMissing(flat, []string{
 		`(?i)the executor and an oversized (issue )?child start no PABCD state machine`,
 		`(?i)the standalone PABCD rules are unchanged`,
-		`(?i)the crosscheck does not replace the pre-build design audit`,
+		`(?i)the crosscheck does not replace the critic's design check`,
 		`(?i)crosscheck[^.]*another (model|engine) family than (every|each|the) author`,
 		`(?i)another model family than the architect`,
 		`(?i)before any executor starts`,
@@ -70,17 +70,17 @@ func flowOwnershipProblems(section string) []string {
 	}) {
 		problems = append(problems, "the section lacks "+p)
 	}
-	// The order of the C4 procedure is the order of its numbered steps: DESIGN, then the audit, then the candidate review of each issue,
-	// then the final gate with the crosscheck (CRW-1473: the milestone close runs the crosscheck in place of reviewer-final).
+	// The order of the C4 procedure is the order of its numbered steps (CRW-1455): DESIGN, then the critic's design check, then the unit
+	// check of each node before its commit, then the final gate with the crosscheck (CRW-1473), then the acceptance audit and the report.
 	var steps []string
 	for _, line := range lines(section) {
 		if numberedStep.MatchString(line) {
 			steps = append(steps, normalized(line))
 		}
 	}
-	wantSteps := [][]string{{"architect DESIGN"}, {"pre-build design audit"}, {"candidate review"}, {"final gate", "crosscheck"}}
+	wantSteps := [][]string{{"architect DESIGN"}, {"critic's design check", "pre-build"}, {"unit check", "before the run commits"}, {"final gate", "crosscheck"}, {"acceptance audit"}, {"report"}}
 	if len(steps) != len(wantSteps) {
-		problems = append(problems, "the high-risk procedure has "+strconv.Itoa(len(steps))+" numbered steps, want 4")
+		problems = append(problems, "the high-risk procedure has "+strconv.Itoa(len(steps))+" numbered steps, want "+strconv.Itoa(len(wantSteps)))
 	} else {
 		for i, words := range wantSteps {
 			for _, word := range words {
@@ -100,7 +100,7 @@ func TestFlowControlOwnershipTableWording(t *testing.T) {
 	}
 	// The skill that classifies the work carries the same order for a C4 issue, so the two readers agree.
 	dev := normalized(readRepoText(t, "plugins/crw/skills/crw-dev/SKILL.md"))
-	for _, want := range []string{"independent pre-build design audit by the critic, of a different model family than the architect, before any executor starts", "the crosscheck does not replace the pre-build design audit"} {
+	for _, want := range []string{"the critic's design check, independent and pre-build: by the critic, of a different model family than the architect, before any executor starts", "the crosscheck does not replace the critic's design check"} {
 		if !strings.Contains(dev, want) {
 			t.Errorf("crw-dev/SKILL.md lacks %q", want)
 		}
@@ -113,8 +113,8 @@ func TestFlowControlOwnershipTableWording(t *testing.T) {
 	if !strings.Contains(normalized(section), "1. One background explorer for each node of the milestone, at the design head, then the architect DESIGN of the milestone over their findings.") {
 		t.Errorf("%s: the C4 procedure does not start with the background explorers", flowRef)
 	}
-	// The design audit is the critic's call (CRW-1434): no installed guidance gives it to a reviewer.
-	reviewerAudits := regexp.MustCompile(`(?i)design audit,? by a reviewer|design audit by a reviewer|a reviewer of another model family audits it|reviewer of another model family for the design audit`)
+	// The critic's design check is the critic's call (CRW-1434): no installed guidance gives it to a reviewer.
+	reviewerAudits := regexp.MustCompile(`(?i)design (audit|check),? by a reviewer|a reviewer of another model family (audits|checks) it|reviewer of another model family for the (design audit|critic's design check)`)
 	for _, path := range []string{flowRef, "plugins/crw/skills/crw-dev/SKILL.md", "plugins/crw/skills/crw-run/SKILL.md", "plugins/crw/skills/crw-canon/references/spawn-policy.md"} {
 		if m := reviewerAudits.FindString(normalized(readRepoText(t, path))); m != "" {
 			t.Errorf("%s gives the design audit to a reviewer: %q", path, m)
@@ -124,8 +124,9 @@ func TestFlowControlOwnershipTableWording(t *testing.T) {
 	t.Run("fixture: each missing sentence is reported", func(t *testing.T) {
 		good := "## Who owns control in a flow-managed run\n\n| Control | Owner |\n|---|---|\n| Phases | the run |\n| Audit | the run |\n| Evidence | the run |\n\n" +
 			"The executor and an oversized child start no PABCD state machine. The standalone PABCD rules are unchanged.\n\n" +
-			"1. The architect DESIGN.\n2. The pre-build design audit, by the critic, of another model family than the architect, before any executor starts; needs_changes returns to the architect and a replan is audited again.\n" +
-			"3. The candidate review of each issue.\n4. After integration the final gate, then the crosscheck over the integrated range by a review engine of another model family than every author. The crosscheck does not replace the pre-build design audit.\n"
+			"1. The architect DESIGN.\n2. The critic's design check, pre-build, by the critic, of another model family than the architect, before any executor starts; needs_changes returns to the architect and a replan is audited again.\n" +
+			"3. The unit check of each node before the run commits it.\n4. After integration the final gate, then the crosscheck over the integrated range by a review engine of another model family than every author.\n" +
+			"5. The acceptance audit.\n6. The report.\n\nThe crosscheck does not replace the critic's design check.\n"
 		if p := flowOwnershipProblems(sectionOf(good, "Who owns control in a flow-managed run")); len(p) > 0 {
 			t.Fatalf("the good text is reported: %v", p)
 		}
@@ -147,7 +148,11 @@ func TestFlowControlOwnershipTableWording(t *testing.T) {
 				return strings.Replace(s, "before any executor starts", "after the executors", 1)
 			},
 			"order swapped": func(s string) string {
-				return strings.Replace(s, "1. The architect DESIGN.\n2. The pre-build design audit", "1. The pre-build design audit.\n2. The architect DESIGN", 1)
+				return strings.Replace(s, "1. The architect DESIGN.\n2. The critic's design check", "1. The critic's design check.\n2. The architect DESIGN", 1)
+			},
+			"no acceptance audit": func(s string) string { return strings.Replace(s, "5. The acceptance audit.\n6.", "5.", 1) },
+			"unit check after the commit": func(s string) string {
+				return strings.Replace(s, "unit check of each node before the run commits it", "unit check of each node after the commit", 1)
 			},
 		} {
 			if p := flowOwnershipProblems(sectionOf(mutate(good), "Who owns control in a flow-managed run")); len(p) == 0 {
