@@ -9,12 +9,8 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
-
-// A unix socket path of 104 bytes or more cannot be bound or dialled on darwin (108 on Linux), so
-// the shared bound is 103 bytes. The fake keeps its socket in a short directory however long
-// TMPDIR is.
-const socketPathBound = 103
 
 // longTMPDIR makes a directory of at least n bytes below the test's own temporary directory.
 func longTMPDIR(t *testing.T, n int) string {
@@ -33,24 +29,44 @@ func TestStart_bindsAndServes_whenTMPDIRIsLong(t *testing.T) {
 	tmp := longTMPDIR(t, 120)
 	t.Setenv("TMPDIR", tmp)
 	server := fakehost.Start(t)
-	if len(server.SocketPath) > socketPathBound {
-		t.Fatalf("socket path is %d bytes, bound %d: %s", len(server.SocketPath), socketPathBound, server.SocketPath)
+	if len(server.SocketPath) > tmploc.SocketBound {
+		t.Fatalf("socket path is %d bytes, bound %d: %s", len(server.SocketPath), tmploc.SocketBound, server.SocketPath)
 	}
 	dial(t, server)
 }
 
-func TestStart_keepsTheSocketUnderTMPDIR_whenItFits(t *testing.T) {
+// TestSocketPath_isNeverUnderTMPDIR replaces the removed "TMPDIR first, /tmp when long" rule
+// (CRW-1568): the socket directory is made below tmploc.SocketRoot whatever TMPDIR is, also when a
+// socket under a short TMPDIR would fit. The short TMPDIR is made below /tmp, not t.TempDir(), so
+// it stays short whatever TMPDIR the run itself has.
+func TestSocketPath_isNeverUnderTMPDIR(t *testing.T) {
 	tmp, err := os.MkdirTemp("/tmp", "fh-")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(tmp) })
 	t.Setenv("TMPDIR", tmp)
-	server := fakehost.Start(t)
-	if !strings.HasPrefix(server.SocketPath, tmp+string(filepath.Separator)) {
-		t.Fatalf("socket %s is not under the short TMPDIR %s", server.SocketPath, tmp)
+	for name, path := range map[string]func(t *testing.T) string{
+		"SocketPath": func(t *testing.T) string { return fakehost.SocketPath(t, "absent.sock") },
+		"Start": func(t *testing.T) string {
+			server := fakehost.Start(t)
+			dial(t, server)
+			return server.SocketPath
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := path(t)
+			if strings.HasPrefix(got, tmp+string(filepath.Separator)) {
+				t.Fatalf("socket %s lies under TMPDIR %s", got, tmp)
+			}
+			if parent := filepath.Dir(filepath.Dir(got)); parent != tmploc.SocketRoot {
+				t.Fatalf("socket %s is not in a directory directly below tmploc.SocketRoot %s (its directory lies in %s)", got, tmploc.SocketRoot, parent)
+			}
+			if len(got) > tmploc.SocketBound {
+				t.Fatalf("socket path is %d bytes, bound %d: %s", len(got), tmploc.SocketBound, got)
+			}
+		})
 	}
-	dial(t, server)
 }
 
 func TestSocketPath_isShortAndRemovedWhenTheTestEnds(t *testing.T) {
@@ -58,8 +74,8 @@ func TestSocketPath_isShortAndRemovedWhenTheTestEnds(t *testing.T) {
 	var path string
 	t.Run("inner", func(t *testing.T) {
 		path = fakehost.SocketPath(t, "absent.sock")
-		if len(path) > socketPathBound {
-			t.Fatalf("socket path is %d bytes, bound %d: %s", len(path), socketPathBound, path)
+		if len(path) > tmploc.SocketBound {
+			t.Fatalf("socket path is %d bytes, bound %d: %s", len(path), tmploc.SocketBound, path)
 		}
 		if filepath.Base(path) != "absent.sock" {
 			t.Fatalf("socket path %s does not end in the name asked for", path)

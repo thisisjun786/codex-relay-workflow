@@ -213,8 +213,8 @@ hello
 --cmd
 gh pr comment 1 --body-file {TMP}/clean.md
 
-=== CRW-875-31 | B
---why Control: a link to a file inside the temporary root is allowed.
+=== CRW-875-31 | P
+--why A body name that is itself a link is refused, wherever its target lies (CRW-1578 replaced this control's allow).
 --file {TMP}/real.md
 hello
 --link {TMP}/inner.md {TMP}/real.md

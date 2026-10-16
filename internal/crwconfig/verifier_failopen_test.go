@@ -56,7 +56,7 @@ func TestAMalformedVerifierSectionStopsNoOtherReader(t *testing.T) {
 		t.Errorf("the verifier's command: %+v %v", cmd, err)
 	}
 	env := []string{"HOME=" + home, "CRW_CONFIG=" + config, "PATH=" + vars["PATH"]}
-	p := ProbeVerifierToolsWith(context.Background(), env, "", ProbeOptions{TemporaryDirs: []string{t.TempDir()}})
+	p := ProbeVerifierTools(context.Background(), env, "")
 	if problems := strings.Join(p.Problems, "; "); p.Mode != "path" || !strings.Contains(problems, "ignored") || !strings.Contains(problems, "verifier.go_root") {
 		t.Errorf("the probe: %+v", p)
 	}

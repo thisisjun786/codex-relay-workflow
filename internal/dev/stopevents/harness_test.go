@@ -22,6 +22,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc/tmploctest"
 )
 
 // The records these tests judge are written by the real `crw hook` (testsupport.CRW),
@@ -91,12 +92,9 @@ type host struct {
 
 func newHost(t *testing.T, decision string) *host {
 	t.Helper()
-	// Short, because control.sock has to fit a sockaddr_un.
-	root, err := os.MkdirTemp("", "se")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	// A socket directory (below tmploc.SocketRoot, never below TMPDIR), because control.sock has to
+	// fit a sockaddr_un whatever TMPDIR is (CRW-1568).
+	root := tmploctest.SocketDir(t, "se")
 	h := &host{t: t, root: root, codex: root + "/codex", journal: root + "/journal", state: root + "/state", transcript: root + "/rollout.jsonl", first: make(chan *os.Process, 1)}
 	h.settings = h.codex + "/" + hook.ConfigName
 	h.ledger = filepath.Join(append([]string{h.codex}, hook.HostLedgerParts...)...)
@@ -110,6 +108,7 @@ func newHost(t *testing.T, decision string) *host {
 	if decision == hook.Block {
 		verdict = `{"decision":"block","state":"declared","hook_output":{"decision":"block","reason":"verify the child","continue":true}}`
 	}
+	tmploctest.CheckSocket(t, root, h.state+"/control.sock")
 	listener, err := net.Listen("unix", h.state+"/control.sock")
 	if err != nil {
 		t.Fatal(err)

@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/sandboxroot"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // World is a fake host: the directories the rule reads.
@@ -121,15 +122,29 @@ const FakeAccountHome = "/crw-test-account-home"
 
 // Install points the rule at a sandbox base for a whole test binary, from TestMain: base is the
 // sandbox_root, the account home is FakeAccountHome and the Codex home and configuration are made in a
-// directory of their own. The
+// directory of their own. The configuration names the base and nothing else (no project roots). The
 // returned cleanup removes it. A test that needs particular roots uses Fake instead, which replaces
 // this until the test ends.
 //
 // That directory lies where the process that started the test binary removes it however the binary ends
 // (fakesParent): a helper process of a test binary (a crash child, a hook helper) installs the rule too and
-// may end without running its cleanup.
-func Install(base string, projects ...string) (cleanup func() error, err error) {
-	return install(fakesParent(), base, projects)
+// may end without running its cleanup. A relative or unusable TMPDIR is an error and nothing is made.
+func Install(base string) (cleanup func() error, err error) {
+	parent, exportParent, err := fakesParent()
+	if err != nil {
+		return nil, err
+	}
+	return install(parent, exportParent, base)
+}
+
+// InstallTemp is Install with the temporary directory (tmploc.Dir) as the sandbox base, for a test
+// binary whose tests make their directories with t.TempDir().
+func InstallTemp() (cleanup func() error, err error) {
+	dir, err := tmploc.Dir()
+	if err != nil {
+		return nil, err
+	}
+	return Install(dir)
 }
 
 // isolationRootEnv is testsupport.IsolationRootEnv, the isolation root of a tree of test processes. It is not
@@ -143,27 +158,35 @@ const isolationRootEnv = "CRW_TEST_ISOLATION_ROOT"
 const parentEnv = "CRW_SANDBOXROOT_TEST_DIR"
 
 // fakesParent is the directory Install makes its fakes in: the isolation root of the test process tree, else
-// the fakes of the test binary that started this process, else TMPDIR ("").
-func fakesParent() string {
+// the fakes of the test binary that started this process (both named by the tree, so exportParent is false),
+// else the temporary directory (tmploc.Dir), which Install chose and exports to its helpers. It is never "":
+// a relative TMPDIR is tmploc's error.
+func fakesParent() (parent string, exportParent bool, err error) {
 	for _, name := range []string{isolationRootEnv, parentEnv} {
 		dir := os.Getenv(name)
 		if !filepath.IsAbs(dir) {
 			continue
 		}
 		if info, err := os.Stat(dir); err == nil && info.IsDir() {
-			return dir
+			return dir, false, nil
 		}
 	}
-	return ""
+	dir, err := tmploc.Dir()
+	if err != nil {
+		return "", false, err
+	}
+	return dir, true, nil
 }
 
-// install is Install with the directory its fakes are made in ("" is TMPDIR).
-func install(parent, base string, projects []string) (cleanup func() error, err error) {
+// install is Install with the directory its fakes are made in, which is absolute (tmploc.MkdirTempIn
+// refuses "" and a relative one). exportParent says that the process chose it, so helper processes are
+// told (parentEnv).
+func install(parent string, exportParent bool, base string) (cleanup func() error, err error) {
 	realBase, err := filepath.EvalSymlinks(base)
 	if err != nil {
 		return nil, err
 	}
-	fakes, err := os.MkdirTemp(parent, "crw-sandboxroot-test-")
+	fakes, err := tmploc.MkdirTempIn(parent, "crw-sandboxroot-test-")
 	if err != nil {
 		return nil, err
 	}
@@ -181,17 +204,7 @@ func install(parent, base string, projects []string) (cleanup func() error, err 
 		return nil, err
 	}
 	config := filepath.Join(fakes, "crw-config.json")
-	doc := map[string]any{"paths": map[string]string{"sandbox_root": realBase}}
-	var roots []string
-	for _, project := range projects {
-		if real, err := filepath.EvalSymlinks(project); err == nil {
-			roots = append(roots, real)
-		}
-	}
-	if len(roots) > 0 {
-		doc["sandbox"] = map[string]any{"project_roots": roots}
-	}
-	data, _ := json.Marshal(doc)
+	data, _ := json.Marshal(map[string]any{"paths": map[string]string{"sandbox_root": realBase}})
 	if err := os.WriteFile(config, data, 0o644); err != nil {
 		return nil, err
 	}
@@ -200,10 +213,10 @@ func install(parent, base string, projects []string) (cleanup func() error, err 
 	// A process the tests start reads the rule from its own environment, so the test process exports the
 	// fake crw configuration to it (the rule's account home there is the passwd home), and the fake Codex home
 	// when the test binary has none of its own.
-	// When the fakes lie in TMPDIR, it exports their directory too (parentEnv): a helper process of the test
-	// binary nests its own there.
+	// When Install chose the fakes' directory (TMPDIR), it exports it too (parentEnv): a helper process of the
+	// test binary nests its own there.
 	exported := map[string]string{"CODEX_HOME": codex, "CRW_CONFIG": config}
-	if parent == "" {
+	if exportParent {
 		exported[parentEnv] = fakes
 	}
 	previous := map[string]*string{}
@@ -237,15 +250,15 @@ func install(parent, base string, projects []string) (cleanup func() error, err 
 
 // Setup is Install in the shape of a testsupport.Setup: the isolation root is the sandbox base, and the fakes
 // lie in it, so the root's removal covers them.
-func Setup(root string) (func() error, error) { return install(root, root, FallbackTempParents) }
-
-// FallbackTempParents are the system temporary locations testsupport falls back to when TMPDIR is
-// inside a repository; they are project roots of the rule a test binary installs.
-var FallbackTempParents = []string{"/var/tmp", "/dev/shm"}
+func Setup(root string) (func() error, error) { return install(root, false, root) }
 
 // SetupTemp is Install in the shape of a testsupport.Setup for a package whose tests make their
-// directories with t.TempDir(): the sandbox base is the temporary directory, and the fakes lie in the
-// isolation root.
+// directories with t.TempDir(): the sandbox base is the temporary directory (tmploc.Dir), and the fakes lie in
+// the isolation root.
 func SetupTemp(root string) (func() error, error) {
-	return install(root, os.TempDir(), FallbackTempParents)
+	dir, err := tmploc.Dir()
+	if err != nil {
+		return nil, err
+	}
+	return install(root, false, dir)
 }

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strings"
@@ -280,10 +281,14 @@ func TestIntegrationVerifyDoesNotPassTheCallerEnvironment(t *testing.T) {
 			t.Errorf("crw-dev's %s %s is still there after the verification: %v", key, v, err)
 		}
 	}
-	// ci local makes each step's TMPDIR below this one and needs room for a test's Unix socket under the host's path limit
-	// (TestIntegrationVerifyTmpDirLeavesRoomForCiLocal): the caller's TMPDIR here is too long for that, so it is a short one below /tmp
-	if length, limit := ciLocalStepRoom(call.TmpPhysical); call.TmpPhysical == "" || length >= limit {
-		t.Errorf("crw-dev's TMPDIR %q leaves ci local no room: %d bytes, limit %d", call.TmpPhysical, length, limit)
+	// the fresh TMPDIR lies directly below the caller's, resolved, and is named crw-<8 hex>
+	// (TestIntegrationTempDir_isBelowTheRunsTempDirWhateverItsLength): no length moves it elsewhere
+	callerTmp, err := filepath.EvalSymlinks(set["TMPDIR"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Dir(call.TmpPhysical) != callerTmp || !integrationTmpName.MatchString(filepath.Base(call.TmpPhysical)) {
+		t.Errorf("crw-dev's TMPDIR %q is not <%s>/crw-<8 hex>", call.TmpPhysical, callerTmp)
 	}
 	// ci local's own settings as the caller's ci local would find them: the work root below the caller's state directory, the
 	// host's heavy-check gate, and the caller's crw configuration (named, since XDG_CONFIG_HOME stays out)
@@ -306,129 +311,6 @@ func TestIntegrationVerifyDoesNotPassTheCallerEnvironment(t *testing.T) {
 		if v, _ := envValue(env, key); v != want {
 			t.Errorf("crw-dev's %s is %q, want %q", key, v, want)
 		}
-	}
-}
-
-// ciLocalStepRoom is the room ci local needs below the TMPDIR it is given (dev/ci/local.go localStepTempDir, candidate a): the step
-// TMPDIR /ci<8 hex> it makes there, and the 67 bytes the longest test socket adds below that, under the host's socket path limit.
-func ciLocalStepRoom(tmp string) (length, limit int) {
-	limit = 108
-	if runtime.GOOS == "darwin" {
-		limit = 104
-	}
-	return len(tmp) + len("/ci") + 8 + 67, limit
-}
-
-// TestIntegrationVerifyTmpDirLeavesRoomForCiLocal (CRW-1557): ci local makes each step's TMPDIR below the one the integration
-// verification gives it and refuses one that leaves no room for a test's Unix socket under the host's path limit; its other candidate,
-// the work root below XDG_STATE_HOME, is refused too when that is long, and the run ends temp_dir_unusable. So the verification's own
-// TMPDIR is chosen by that full nested length: below the caller's TMPDIR when the nesting fits (the caller keeps its disk), else a short
-// directory below /tmp, which the verification's note names; it is made 0700 and removed after the verification. A caller TMPDIR as
-// long as /scratch/crw/integrate/tmp (made below /tmp, so no host path is made), one that fits, a short link to a long directory
-// (measured at its physical path), the relay's (no TMPDIR: /tmp) and a long one each give crw-dev a TMPDIR ci local takes, with a long
-// XDG_STATE_HOME.
-func TestIntegrationVerifyTmpDirLeavesRoomForCiLocal(t *testing.T) {
-	repo, head := labCommitRepo(t)
-	log := filepath.Join(t.TempDir(), "crw-dev.jsonl")
-	tools := crwconfig.VerifierTools{CrwDev: labCrwDevScript(t, log, repo), Config: "/lab/config.json"}
-	longState := filepath.Join(t.TempDir(), strings.Repeat("s", 40), "state")
-	long := filepath.Join(t.TempDir(), strings.Repeat("t", 40), "tmp")
-	// sized is a new directory below /tmp whose path is n bytes long
-	sized := func(t *testing.T, n int) string {
-		t.Helper()
-		var parent string
-		for try := 0; parent == ""; try++ {
-			p := fmt.Sprintf("/tmp/c%04x", (os.Getpid()+try)&0xffff)
-			if err := os.Mkdir(p, 0o700); err == nil {
-				parent = p
-			} else if !errors.Is(err, os.ErrExist) || try > 64 {
-				t.Fatalf("no directory can be made below /tmp: %v", err)
-			}
-		}
-		t.Cleanup(func() { _ = os.RemoveAll(parent) })
-		dir := parent + "/" + strings.Repeat("d", n-len(parent)-1)
-		if err := os.Mkdir(dir, 0o700); err != nil {
-			t.Fatal(err)
-		}
-		return dir
-	}
-	for _, c := range []struct {
-		name   string
-		tmpdir func(t *testing.T) string
-	}{
-		{"a caller TMPDIR as long as /scratch/crw/integrate/tmp", func(t *testing.T) string { return sized(t, len("/scratch/crw/integrate/tmp")) }},
-		{"a caller TMPDIR whose nesting fits", func(t *testing.T) string { return sized(t, 15) }},
-		// ci local measures the physical path, so a short link to a long directory is as long as the directory
-		{"a short caller TMPDIR that links to a long directory", func(t *testing.T) string {
-			if err := os.MkdirAll(long, 0o700); err != nil {
-				t.Fatal(err)
-			}
-			link := filepath.Join(filepath.Dir(sized(t, 12)), "l")
-			if err := os.Symlink(long, link); err != nil {
-				t.Fatal(err)
-			}
-			if length, limit := ciLocalStepRoom(link + "/crw-01234567"); length >= limit {
-				t.Fatalf("the link %s is too long to show the case", link)
-			}
-			return link
-		}},
-		{"the relay's: no TMPDIR", func(t *testing.T) string { return "" }},
-		{"a long caller TMPDIR", func(t *testing.T) string {
-			if err := os.MkdirAll(long, 0o700); err != nil {
-				t.Fatal(err)
-			}
-			return long
-		}},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			caller := c.tmpdir(t)
-			t.Setenv("TMPDIR", caller)
-			t.Setenv("XDG_STATE_HOME", longState)
-			if err := os.Remove(log); err != nil && !errors.Is(err, os.ErrNotExist) {
-				t.Fatal(err)
-			}
-			record := filepath.Join(filepath.Dir(log), "record.json")
-			batch := []string{"CRW_VERIFY_HEAD=" + head, "CRW_VERIFY_BASE=" + head, "CRW_VERIFY_RECORD=" + record}
-			var notes bytes.Buffer
-			if err := CILocalIntegration(tools, &notes)(context.Background(), repo, batch); err != nil {
-				t.Fatalf("the verification: %v", err)
-			}
-			raw, err := os.ReadFile(log)
-			if err != nil {
-				t.Fatalf("the integration verifier never ran crw-dev: %v", err)
-			}
-			var call fakeCrwDevCall
-			if err := json.Unmarshal(bytes.TrimSpace(raw), &call); err != nil {
-				t.Fatal(err)
-			}
-			tmp, _ := envValue(call.Env, "TMPDIR")
-			if call.TmpPhysical == "" || call.TmpMode != "-rwx------" {
-				t.Fatalf("crw-dev's TMPDIR %q (physically %q) has mode %q, want a directory of mode 0700", tmp, call.TmpPhysical, call.TmpMode)
-			}
-			// ci local measures the physical path (filepath.EvalSymlinks)
-			if length, limit := ciLocalStepRoom(call.TmpPhysical); length >= limit {
-				t.Errorf("crw-dev's TMPDIR %s (caller's %q) gives ci local a step socket path of %d bytes, not under the limit %d: temp_dir_unusable with the work root below %s",
-					call.TmpPhysical, caller, length, limit, longState)
-			}
-			if _, err := os.Stat(tmp); !errors.Is(err, os.ErrNotExist) {
-				t.Errorf("crw-dev's TMPDIR %s is still there after the verification: %v", tmp, err)
-			}
-			if v, _ := envValue(call.Env, "XDG_STATE_HOME"); v != longState {
-				t.Errorf("crw-dev's XDG_STATE_HOME is %q, want the caller's %s", v, longState)
-			}
-			// a caller TMPDIR whose nesting fits keeps the verification on the caller's disk; one passed over is named in the note
-			resolved, err := filepath.EvalSymlinks(os.TempDir())
-			if err != nil {
-				t.Fatal(err)
-			}
-			below := filepath.Dir(call.TmpPhysical) == resolved
-			if length, limit := ciLocalStepRoom(resolved + "/" + filepath.Base(call.TmpPhysical)); !below && length < limit {
-				t.Errorf("crw-dev's TMPDIR %s is not below the caller's %s, whose nesting fits", call.TmpPhysical, resolved)
-			}
-			if note := strings.Contains(notes.String(), "its TMPDIR is "+tmp+", not below the caller's: "+resolved); note == below {
-				t.Errorf("below the caller's %s: %v; notes %q", resolved, below, notes.String())
-			}
-		})
 	}
 }
 
@@ -596,4 +478,136 @@ func TestIntegrationEnvKeepsTheModuleCache(t *testing.T) {
 			t.Errorf("go %v offline found the modules without the kept GOMODCACHE: %s", load, out)
 		}
 	})
+}
+
+// integrationTmpName is the name integrationTempDir gives the verification's own TMPDIR.
+var integrationTmpName = regexp.MustCompile(`^crw-[0-9a-f]{8}$`)
+
+// runIntegrationVerify runs CILocalIntegration with the fake crw-dev of labCrwDevScript over a fresh one-commit repository. Its files
+// are made first; then setTmp sets the caller's TMPDIR, and the verification runs under it. It answers the verification's error, its
+// notes, and the call crw-dev saw (ran false when crw-dev never ran).
+func runIntegrationVerify(t *testing.T, setTmp func()) (call fakeCrwDevCall, ran bool, notes string, err error) {
+	t.Helper()
+	repo, head := labCommitRepo(t)
+	log := filepath.Join(t.TempDir(), "crw-dev.jsonl")
+	tools := crwconfig.VerifierTools{CrwDev: labCrwDevScript(t, log, repo), Config: "/lab/config.json"}
+	record := filepath.Join(filepath.Dir(log), "record.json")
+	batch := []string{"CRW_VERIFY_HEAD=" + head, "CRW_VERIFY_BASE=" + head, "CRW_VERIFY_RECORD=" + record}
+	setTmp()
+	var buf bytes.Buffer
+	err = CILocalIntegration(tools, &buf)(context.Background(), repo, batch)
+	raw, readErr := os.ReadFile(log)
+	if errors.Is(readErr, os.ErrNotExist) {
+		return fakeCrwDevCall{}, false, buf.String(), err
+	}
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if jsonErr := json.Unmarshal(bytes.TrimSpace(raw), &call); jsonErr != nil {
+		t.Fatal(jsonErr)
+	}
+	return call, true, buf.String(), err
+}
+
+// TestIntegrationTempDir_isBelowTheRunsTempDirWhateverItsLength (CRW-1569): the integration verification's own TMPDIR is
+// <the run's TMPDIR, resolved>/crw-<8 hex>, mode 0700, removed after the verification. No length is counted and nothing moves it to
+// another place: a 120-byte TMPDIR (longer when the test's own TMPDIR already is), a short one, a short link to a long directory (the
+// physical parent) and an unset TMPDIR (tmploc.DefaultDir, /tmp) each give a directory directly below that one, and no note names a
+// TMPDIR passed over. Sockets do not live below TMPDIR (tmploc.SocketDir), so ci local needs no room there.
+func TestIntegrationTempDir_isBelowTheRunsTempDirWhateverItsLength(t *testing.T) {
+	base := t.TempDir()
+	long := base + "/" + strings.Repeat("t", max(1, 120-len(base)-1))
+	if err := os.MkdirAll(long, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("the long TMPDIR is %d bytes", len(long))
+	short := filepath.Join(base, "s")
+	if err := os.Mkdir(short, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(base, "l")
+	if err := os.Symlink(long, link); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name, tmpdir string
+		unset        bool
+		parent       string
+	}{
+		{name: "a TMPDIR of 120 bytes or more", tmpdir: long, parent: long},
+		{name: "a short TMPDIR", tmpdir: short, parent: short},
+		{name: "a short link to a long directory", tmpdir: link, parent: long},
+		{name: "no TMPDIR: the default", unset: true, parent: "/tmp"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			call, ran, notes, err := runIntegrationVerify(t, func() {
+				t.Setenv("TMPDIR", c.tmpdir)
+				if c.unset {
+					if err := os.Unsetenv("TMPDIR"); err != nil {
+						t.Fatal(err)
+					}
+				}
+			})
+			if err != nil || !ran {
+				t.Fatalf("the verification: %v (crw-dev ran: %v); notes %q", err, ran, notes)
+			}
+			want, err := filepath.EvalSymlinks(c.parent)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tmp, _ := envValue(call.Env, "TMPDIR")
+			if filepath.Dir(call.TmpPhysical) != want || !integrationTmpName.MatchString(filepath.Base(call.TmpPhysical)) {
+				t.Errorf("crw-dev's TMPDIR %q (physically %q) is not <%s>/crw-<8 hex>", tmp, call.TmpPhysical, want)
+			}
+			if call.TmpMode != "-rwx------" {
+				t.Errorf("crw-dev's TMPDIR %q has mode %q, want 0700", call.TmpPhysical, call.TmpMode)
+			}
+			if _, err := os.Stat(tmp); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("crw-dev's TMPDIR %s is still there after the verification: %v", tmp, err)
+			}
+			if strings.Contains(notes, "TMPDIR") {
+				t.Errorf("a note names a TMPDIR passed over: %q", notes)
+			}
+		})
+	}
+}
+
+// TestIntegrationTempDir_refusesWithTheReason_neverTmp (CRW-1569): a TMPDIR the verification cannot use stops it with a host error that
+// names the TMPDIR and why, before crw-dev runs. Nothing is made anywhere else: no /tmp directory, no crw-dev run.
+func TestIntegrationTempDir_refusesWithTheReason_neverTmp(t *testing.T) {
+	base := t.TempDir()
+	file := filepath.Join(base, "file")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct{ name, tmpdir, why string }{
+		{"a TMPDIR that does not resolve", filepath.Join(base, "missing"), "does not exist"},
+		{"a TMPDIR that is a file", file, "is not a directory"},
+		{"a relative TMPDIR", "rel/tmp", "tmpdir_not_absolute"},
+	}
+	if os.Geteuid() != 0 {
+		ro := filepath.Join(base, "ro")
+		if err := os.Mkdir(ro, 0o500); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(ro, 0o700) })
+		cases = append(cases, struct{ name, tmpdir, why string }{"an unwritable TMPDIR", ro, "is not writable"})
+	} else {
+		t.Log("running as root: the unwritable row cannot be built (root writes everywhere)")
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			call, ran, notes, err := runIntegrationVerify(t, func() { t.Setenv("TMPDIR", c.tmpdir) })
+			var host *dagsched.IntegrationVerifierHostError
+			if !errors.As(err, &host) {
+				t.Fatalf("the verification under TMPDIR=%q: %v, want a host error (crw-dev ran: %v, its TMPDIR %q; notes %q)", c.tmpdir, err, ran, call.TmpPhysical, notes)
+			}
+			if !strings.Contains(host.Detail, c.tmpdir) || !strings.Contains(host.Detail, c.why) {
+				t.Errorf("the host error %q does not name the TMPDIR %q and %q", host.Detail, c.tmpdir, c.why)
+			}
+			if ran {
+				t.Errorf("crw-dev ran with TMPDIR %q after the caller's %q was refused", call.TmpPhysical, c.tmpdir)
+			}
+		})
+	}
 }

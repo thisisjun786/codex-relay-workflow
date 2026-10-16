@@ -16,6 +16,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // testdata/hook/oracle.json holds what the CXC v0.2.40 spawn hook printed, recorded under Node 24 by
@@ -401,16 +402,31 @@ func TestSpawnHookSkillsDir(t *testing.T) {
 	}
 }
 
-func TestSpawnHookTmpDir(t *testing.T) {
+// CRW-1579 (U-A5-3): the spawn hook reads its temporary root from tmploc, the one place: TMPDIR only (TMP and TEMP are not read),
+// an unset or empty TMPDIR is tmploc.DefaultDir with source default (G-D1 = A), a relative one is tmploc's error. One trailing
+// slash is trimmed unless it is the whole path.
+func TestSpawnHookTmpDir_readsOnlyTheOnePlace(t *testing.T) {
 	for _, tc := range []struct {
-		vars map[string]string
-		want string
+		vars         map[string]string
+		want, source string
+		err          string
 	}{
-		{map[string]string{"TMPDIR": "/a/b/", "TMP": "/t"}, "/a/b"}, {map[string]string{"TMP": "/t", "TEMP": "/e"}, "/t"}, {map[string]string{"TMPDIR": "", "TEMP": "/e//"}, "/e/"},
-		{map[string]string{"TMPDIR": "/"}, "/"}, {nil, "/tmp"},
+		{vars: map[string]string{"TMP": "/x", "TEMP": "/y"}, want: tmploc.DefaultDir, source: tmploc.SourceDefault},
+		{vars: map[string]string{"TMPDIR": "", "TEMP": "/e//"}, want: tmploc.DefaultDir, source: tmploc.SourceDefault},
+		{vars: map[string]string{"TMPDIR": "/a/b/", "TMP": "/t"}, want: "/a/b", source: tmploc.SourceEnv},
+		{vars: map[string]string{"TMPDIR": "/"}, want: "/", source: tmploc.SourceEnv},
+		{vars: nil, want: tmploc.DefaultDir, source: tmploc.SourceDefault},
+		{vars: map[string]string{"TMPDIR": "rel/dir", "TMP": "/t"}, source: tmploc.SourceEnv, err: `tmpdir_not_absolute: TMPDIR="rel/dir"; set TMPDIR to an absolute directory`},
 	} {
-		if got := spawnHookTmpDir(func(key string) (string, bool) { v, ok := tc.vars[key]; return v, ok }); got != tc.want {
-			t.Errorf("%v: %q, want %q", tc.vars, got, tc.want)
+		got, source, err := spawnHookTmpDir(func(key string) (string, bool) { v, ok := tc.vars[key]; return v, ok })
+		if tc.err != "" {
+			if err == nil || err.Error() != tc.err || got != "" {
+				t.Errorf("%v: (%q, %v), want the error %q", tc.vars, got, err, tc.err)
+			}
+			continue
+		}
+		if err != nil || got != tc.want || source != tc.source {
+			t.Errorf("%v: (%q, %q, %v), want (%q, %q)", tc.vars, got, source, err, tc.want, tc.source)
 		}
 	}
 }

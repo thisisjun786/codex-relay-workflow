@@ -11,6 +11,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/homeguard"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // CRW-964: the pinned tool versions and the ones this host actually has. The pins come from the
@@ -99,11 +100,13 @@ func localObserveToolIn(name, pathEnv string, goMod []byte, gate string) string 
 	}
 	// The probe runs in a directory of its own, without the caller's GOENV, so the version it reads is
 	// the one a step with this PATH runs.
-	// the probe makes its directory in TMPDIR, which is never the account's real home (CRW-1186)
-	if homeguard.Refuse(localTempDir()) != nil {
+	// the probe makes its directory in the temporary directory (tmploc: TMPDIR, or its default when unset),
+	// which is never the account's real home (CRW-1186)
+	temp, err := tmploc.Dir()
+	if err != nil || homeguard.Refuse(temp) != nil {
 		return ""
 	}
-	dir, err := os.MkdirTemp(localTempDir(), "probe")
+	dir, err := tmploc.MkdirTemp("probe")
 	if err != nil {
 		return ""
 	}

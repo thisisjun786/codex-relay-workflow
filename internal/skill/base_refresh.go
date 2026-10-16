@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // refreshTimeout bounds one whole check; it is a handful of git commands over local objects.
@@ -235,7 +237,7 @@ func openRefreshGit(ctx context.Context, checkout string) (*refreshGit, error) {
 	if format = strings.TrimSpace(format); format != "sha1" && format != "sha256" {
 		return nil, fmt.Errorf("git answered %q to --show-object-format, which is not an object format this check knows", firstLine(format))
 	}
-	dir, err := os.MkdirTemp("", "base-refresh-")
+	dir, err := tmploc.MkdirTemp("base-refresh-")
 	if err != nil {
 		return nil, err
 	}

@@ -55,6 +55,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // hookTrustRetrustNullName is the TypeError V8 throws for the "name" read of a JSON null plugin
@@ -257,7 +258,7 @@ func hookTrustRetrustVerifyNext(pluginRoot, pluginKey, next string, runner HookT
 	refuse := func(detail string) error {
 		return errors.New("pre-write verification failed: " + detail + "; config.toml unchanged")
 	}
-	temp, err := os.MkdirTemp("", "crw-retrust-verify-")
+	temp, err := tmploc.MkdirTemp("crw-retrust-verify-")
 	if err != nil {
 		return refuse(err.Error())
 	}

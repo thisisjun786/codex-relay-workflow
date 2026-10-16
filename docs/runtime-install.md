@@ -267,7 +267,7 @@ and no device name is written into the product, its skills or its packet templat
 | `scratch_root` | `<cache_root>/scratch` | scratch space; follows `cache_root` unless named | - |
 | `worktree_root` | `<data>/crw/worktrees` | worktrees | - |
 | `evidence_root` | `${XDG_STATE_HOME:-~/.local/state}/crw/evidence` | evidence | - |
-| `temp_root` | `${TMPDIR:-/tmp}/crw` | temporary files, test sockets | - |
+| `temp_root` | `${TMPDIR:-/tmp}/crw` | temporary files | - |
 | `data_root` | `<data>/crw/data` | bulk data | - |
 | `manage_state` | `<state>/crw/manage` | the management tool's own state | - |
 | `build_cache` | unset: Go's own (`GOCACHE`) | the Go build cache | `GOCACHE=<path>` |
@@ -402,9 +402,11 @@ where it came from (`config` or `path`) and its version, and `crwDev` (the mode,
 whether it runs: its go runs in `tree` mode, `crw-dev help` exits 0 otherwise). With no root
 configured the doctor looks for one and lists it in `goRootCandidates` with its version, newest
 first: the root of the `go` on `PATH` (`go env GOROOT`), `$HOME/.local/go/go`, `$HOME/.local/go`,
-`$HOME/sdk/go*`, `$HOME/go/go`, `/usr/local/go`, `/usr/lib/go` and `/opt/go`, leaving out a root below
-`/tmp` or `/var/tmp`, which a reboot removes; its warning names the `crw config verifier --go-root`
-command for the first. A missing or broken tool, and a section that names nothing, are `warnings`
+`$HOME/sdk/go*`, `$HOME/go/go`, `/usr/local/go`, `/usr/lib/go` and `/opt/go`. A root is judged by
+what it holds, never by where it is: it is offered when its `bin/go` is an executable regular file that
+answers `go version`, below `/tmp` too; its warning names the `crw config verifier --go-root`
+command for the first. Each probe runs in a home of its own below `TMPDIR` (`/tmp` when unset); a
+relative or unusable `TMPDIR` is reported among the `warnings` with its reason. A missing or broken tool, and a section that names nothing, are `warnings`
 there and never a fault. `crw flow start` shows the same reading as the preflight fact
 `verifier_prerequisites`: `pass`, or `warn` with the reason (it also warns when the go is older than
 the repository's `go.mod` asks, and when a `tree` verification's repository has no `cmd/crw-dev`),

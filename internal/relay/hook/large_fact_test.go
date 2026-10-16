@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc/tmploctest"
 )
 
 // The deadline-bearing native hook classifies a valid large marker (a 5 MiB intent) as Python's
@@ -25,6 +26,7 @@ func Test33LargeFactHookPython(t *testing.T) {
 	home := hookHome(t, 5)
 	built := binary(t) // built before the timeout starts, which is for the hook
 	layFixture(t, "large-fact", home)
+	tmploctest.CheckSocket(t, socketRootOf(t, filepath.Join(home, "state", "control.sock")), filepath.Join(home, "state", "control.sock"))
 	listener, err := net.Listen("unix", filepath.Join(home, "state", "control.sock"))
 	if err != nil {
 		t.Fatal(err)
