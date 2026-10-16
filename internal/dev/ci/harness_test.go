@@ -21,6 +21,9 @@ import (
 var crwDev string
 
 func TestMain(m *testing.M) {
+	if os.Getenv("CRW_TEST_REUSE_HELPER") == "1" {
+		os.Exit(crw1590Command())
+	}
 	// The parallel-jobs tests run this binary as a job's step; dispatch before the harness
 	// rewrites HOME and friends, so the helper measures the job's own environment (CRW-1584).
 	if os.Getenv("CRW_TEST_PARALLEL_HELPER") == "1" {

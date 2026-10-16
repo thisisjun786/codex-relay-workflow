@@ -44,28 +44,32 @@ const (
 
 // verificationRecord is the verification-record/1 document.
 type verificationRecord struct {
-	Schema       string            `json:"schema"`
-	Runner       string            `json:"runner"`
-	Repository   string            `json:"repository"`
-	BaseCommit   string            `json:"baseCommit"`
-	HeadCommit   string            `json:"headCommit"`
-	TreeHash     string            `json:"treeHash"`
-	CiDigest     string            `json:"ciDigest"`
-	Tools        map[string]string `json:"tools"`
-	Pins         map[string]string `json:"pins"`
-	GoFlags      string            `json:"goFlags"`
-	GoEnv        string            `json:"goEnv"`
-	Range        string            `json:"range"`
-	HeavyGate    string            `json:"heavyGate"`
-	PinMismatch  []string          `json:"pinMismatch"`
-	Dependencies map[string]string `json:"dependencies"`
-	OS           string            `json:"os"`
-	Arch         string            `json:"arch"`
-	Result       string            `json:"result"`
-	Jobs         []recordJob       `json:"jobs"`
-	Sealed       bool              `json:"sealed"`
-	PlanDigest   string            `json:"planDigest"`
-	IgnoredEnv   []string          `json:"ignoredEnv"`
+	Schema     string            `json:"schema"`
+	Runner     string            `json:"runner"`
+	Repository string            `json:"repository"`
+	BaseCommit string            `json:"baseCommit"`
+	HeadCommit string            `json:"headCommit"`
+	TreeHash   string            `json:"treeHash"`
+	CiDigest   string            `json:"ciDigest"`
+	Tools      map[string]string `json:"tools"`
+	Pins       map[string]string `json:"pins"`
+	GoFlags    string            `json:"goFlags"`
+	GoEnv      string            `json:"goEnv"`
+	// VerifierKind and VerifierRules name the implementation and rule set that answered the
+	// record (CRW-1590); empty means the legacy local verifier.
+	VerifierKind  string            `json:"verifierKind,omitempty"`
+	VerifierRules string            `json:"verifierRules,omitempty"`
+	Range         string            `json:"range"`
+	HeavyGate     string            `json:"heavyGate"`
+	PinMismatch   []string          `json:"pinMismatch"`
+	Dependencies  map[string]string `json:"dependencies"`
+	OS            string            `json:"os"`
+	Arch          string            `json:"arch"`
+	Result        string            `json:"result"`
+	Jobs          []recordJob       `json:"jobs"`
+	Sealed        bool              `json:"sealed"`
+	PlanDigest    string            `json:"planDigest"`
+	IgnoredEnv    []string          `json:"ignoredEnv"`
 	// TestPackagesRun is the count of go test packages the run's steps ran tests in (CRW-1328, local_testcount.go): additive, absent
 	// from a record whose steps printed no go test result and from every record written before it, which a reader takes as unknown,
 	// never as zero. Zero says no test ran; the result is the steps' as before.
@@ -80,7 +84,8 @@ type verificationRecord struct {
 // Multiple jobs use separate children of those roots; one-job plans use the roots directly. The values
 // are paths, not variable contents, and are written as they are. The member is additive: records written
 // before it do not have it, and a reader takes its absence as unknown. It is not a reuse key (localReuse):
-// a reused record keeps the runEnv of the run that verified it.
+// a completely reused tree-only plan keeps its original runEnv. A partial reuse
+// records the environment in which its fresh range checks ran.
 type recordRunEnv struct {
 	Cwd          string `json:"cwd"`
 	Root         string `json:"root"`
@@ -107,6 +112,8 @@ type recordStep struct {
 	Seconds  float64 `json:"seconds"`
 	Reason   string  `json:"reason"`
 	Decision string  `json:"decision"`
+	// ReusedFrom names the earlier record this step's answer came from (CRW-1590).
+	ReusedFrom *recordStepReuse `json:"reusedFrom,omitempty"`
 }
 
 // canonicalRecord is the record's canonical serialization: the document as JSON with its keys
@@ -245,12 +252,15 @@ func externalGoFlags(flags string) bool {
 	return strings.Contains(flags, "modfile") || strings.Contains(flags, "overlay")
 }
 
-// localReuse decides whether a record already answers for the current state. Every key must
+// localTreeReuse decides whether a record already answers for the current tree's state: every key
+// but the range pair. localReuse adds the base/range comparison back for the strict whole-record
+// answer; the partial-reuse path calls localTreeReuse so a record for another range can still
+// answer this tree's full steps (CRW-1590). Every key must
 // match; the head commit is deliberately not one of them (answer 4), because a rebase that keeps
 // the tree is the same verification, and a different commit with the same tree is too. A record
 // that did not pass, or that carries a pin mismatch, is never reused. runEnv is deliberately not compared
 // (CRW-1489): where a run ran is not what it verified, and the reused record keeps the runEnv it was made with.
-func localReuse(reused, current verificationRecord) (bool, string) {
+func localTreeReuse(reused, current verificationRecord) (bool, string) {
 	switch {
 	case reused.Schema != recordSchema:
 		return false, "the record is not " + recordSchema
@@ -268,15 +278,18 @@ func localReuse(reused, current verificationRecord) (bool, string) {
 		{"repository", reused.Repository, current.Repository},
 		{"tree", reused.TreeHash, current.TreeHash},
 		{"ci.yml digest", reused.CiDigest, current.CiDigest},
-		// The blob and secret steps judge base..head, so a different base is a different
-		// verification even when the tree is the same (the range a record covers).
-		{"base commit", reused.BaseCommit, current.BaseCommit},
-		{"commit range", reused.Range, current.Range},
 		{"os", reused.OS, current.OS},
 		{"arch", reused.Arch, current.Arch},
 	} {
 		if key.was != key.isNow {
 			return false, fmt.Sprintf("the %s changed (%s -> %s)", key.name, key.was, key.isNow)
+		}
+	}
+	{
+		rk, rr := localVerifierIdentity(reused)
+		ck, cr := localVerifierIdentity(current)
+		if rk != ck || rr != cr {
+			return false, fmt.Sprintf("the verifier changed (%s %s -> %s %s)", rk, rr, ck, cr)
 		}
 	}
 	for _, name := range sortedKeys(current.Tools) {
@@ -306,6 +319,28 @@ func localReuse(reused, current verificationRecord) (bool, string) {
 	} {
 		if key.was != key.isNow {
 			return false, fmt.Sprintf("%s changed (%q -> %q)", key.name, key.was, key.isNow)
+		}
+	}
+	return true, "every key matches"
+}
+
+// localReuse is the strict whole-record answer: every tree key plus the range pair, the behavior
+// the --reuse record was always judged by.
+func localReuse(reused, current verificationRecord) (bool, string) {
+	if ok, why := localTreeReuse(reused, current); !ok {
+		return false, why
+	}
+	for _, key := range []struct {
+		name       string
+		was, isNow string
+	}{
+		// The blob and secret steps judge base..head, so a different base is a different
+		// verification even when the tree is the same (the range a record covers).
+		{"base commit", reused.BaseCommit, current.BaseCommit},
+		{"commit range", reused.Range, current.Range},
+	} {
+		if key.was != key.isNow {
+			return false, fmt.Sprintf("the %s changed (%s -> %s)", key.name, key.was, key.isNow)
 		}
 	}
 	return true, "every key matches"

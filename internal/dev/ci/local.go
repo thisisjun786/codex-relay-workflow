@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -67,6 +68,14 @@ type localOptions struct {
 	Plan []localJob
 	// Env is extra environment for every step, after the isolated home and TZ (tests use it).
 	Env []string
+	// Cache enables the shared pass-record lookup and publication (CRW-1590); the command sets it,
+	// direct tests opt in.
+	Cache bool
+	// Fresh bypasses reuse for an intentional fresh run; a passing record still publishes.
+	Fresh bool
+	// reuse is the immutable validated source record independent workers read steps from; nil runs
+	// every step (CRW-1590).
+	reuse *localReuseSource
 	// Tools are the tool roots the configuration file names (paths.build_cache, paths.build_work).
 	// A root that is not configured passes nothing. paths.module_cache is not handed to a step: a
 	// module tree is trusted from a cache without the go.sum check, so a sealed run keeps its own.
@@ -113,17 +122,18 @@ func Local(args []string, stdout, stderr io.Writer) int {
 	commit := flags.String("commit", "HEAD", "the commit to verify")
 	base := flags.String("base", "", "the base commit the record names (default: merge-base with origin/dev)")
 	record := flags.String("record", localRecordDefault, "where to write the verification record")
-	reuse := flags.String("reuse", "", "answer this record instead of running, when every key matches")
+	reuse := flags.String("reuse", "", "prefer this passing record for matching tree-scoped steps")
 	heavyGate := flags.String("heavy-gate", "", "the heavy-check gate to run heavy steps through (default $"+localHeavyGateEnv+")")
 	runner := flags.String("runner", "local", "where this run happened; the record names it")
 	keep := flags.Bool("keep", false, "keep the clean worktree for debugging")
 	workRoot := flags.String("work-root", "", "the directory the clean worktree is made in (default: the XDG state directory)")
 	parallel := flags.Int("parallel", 4, "the Go test parallelism every step runs with (GOFLAGS=-p=N)")
 	jobs := flags.Int("jobs", 0, "concurrent CI job/legs (0: CPU count divided by Go parallelism)")
-	description := "Run every job and step of .github/workflows/ci.yml locally, in a clean worktree of the\n" +
-		"commit being verified, and write a verification-record/1. The record is answered without\n" +
-		"running again only when the tree, the ci.yml digest, the tool versions, the dependency\n" +
-		"digests and the OS and architecture all match."
+	fresh := flags.Bool("fresh", false, "run every step even when a matching record is cached")
+	description := "Verify .github/workflows/ci.yml locally and write a verification-record/1.\n" +
+		"A matching sealed PASS in the repository cache or --reuse supplies tree-scoped steps.\n" +
+		"The tree, commands, verifier rules, tools, dependencies and execution settings must match.\n" +
+		"Range checks, their setup and the aggregate run afresh. --fresh disables reuse."
 	if code := parseFlags(flags, description, args, stdout, stderr); code >= 0 {
 		return code
 	}
@@ -147,6 +157,8 @@ func Local(args []string, stdout, stderr io.Writer) int {
 		WorkRoot:  *workRoot,
 		Parallel:  *parallel,
 		Jobs:      *jobs,
+		Cache:     true,
+		Fresh:     *fresh,
 	}
 	if opts.Record == "" {
 		opts.Record = filepath.Join(root, localRecordDefault)
@@ -160,24 +172,32 @@ func Local(args []string, stdout, stderr io.Writer) int {
 	if *reuse != "" {
 		reusePath = localAbs(root, *reuse)
 	}
+	if *fresh && reusePath != "" {
+		return failf(stderr, "local: --fresh and --reuse cannot be used together")
+	}
+	return localRunAndReport(opts, reusePath, stdout, stderr)
+}
+
+// localRunAndReport runs the table (or answers from a validated record), writes the output
+// record, and reports the result and each failing step, the way the command always has.
+func localRunAndReport(opts localOptions, reusePath string, stdout, stderr io.Writer) int {
 	made, reused, err := localVerify(opts, reusePath, stdout)
 	if err != nil {
 		return failf(stderr, "local: %s", err)
 	}
-	if reused {
-		fmt.Fprintf(stdout, "local: reused %s (%s)\n", *reuse, made.Digest)
-		return 0
-	}
 	sealed, err := writeRecord(opts.Record, made)
 	if err != nil {
 		return failf(stderr, "local: %s", err)
+	}
+	if reused {
+		fmt.Fprintf(stdout, "local: reused tree steps at %s (%s)\n", sealed.HeadCommit, sealed.Digest)
 	}
 	if sealed.Result == localPass {
 		fmt.Fprintf(stdout, "local: pass at %s (%s)\n", sealed.HeadCommit, sealed.Digest)
 		return 0
 	}
 	fmt.Fprintf(stderr, "local: fail at %s (%s)\n", sealed.HeadCommit, sealed.Digest)
-	for _, job := range made.Jobs {
+	for _, job := range sealed.Jobs {
 		for _, step := range job.Steps {
 			if step.Result != localPassed && step.Result != localNotApplicableResult {
 				fmt.Fprintf(stderr, "  %s / %s: %s (%s)\n", job.Name, step.Name, step.Result, step.Reason)
@@ -187,15 +207,17 @@ func Local(args []string, stdout, stderr io.Writer) int {
 	return 1
 }
 
-// localVerify answers a reused record when every key matches, or runs the table and returns the
-// record it made.
+// localVerify reuses matching tree evidence and executes the remaining steps,
+// returning a record for the requested head and range.
 func localVerify(opts localOptions, reusePath string, stdout io.Writer) (verificationRecord, bool, error) {
+	if opts.Fresh && reusePath != "" {
+		return verificationRecord{}, false, fmt.Errorf("--fresh and --reuse cannot be used together")
+	}
 	if opts.Jobs < 0 {
 		return verificationRecord{}, false, fmt.Errorf("jobs must be zero (automatic) or positive")
 	}
-	// CRW-1186: what the run writes outside the clean worktree is the record (and its siblings) and the
-	// probes' directories in TMPDIR; neither lands in the account's real home, and nothing is made
-	// before both are known. A work root is judged again where it is made (localWorkRoot).
+	// CRW-1186: judge output destinations before making them. The shared PASS cache
+	// separately guards its Git metadata directory; the work root is judged where made.
 	if opts.Record != "" {
 		if err := localCheckRecordDestination(opts.Root, opts.Record); err != nil {
 			return verificationRecord{}, false, err
@@ -248,6 +270,9 @@ func localVerify(opts localOptions, reusePath string, stdout io.Writer) (verific
 	if err := localPlatformRefusal(plan, opts); err != nil {
 		return verificationRecord{}, false, err
 	}
+	// The reuse candidates: an explicit --reuse file first, then the repository's pass-record
+	// cache when the command asked for it (CRW-1590). A rejected candidate is named, never used.
+	var source *localReuseSource
 	if reusePath != "" {
 		// A record path that does not exist is a usage error, not a silent full run: the caller
 		// asked for that record.
@@ -255,7 +280,7 @@ func localVerify(opts localOptions, reusePath string, stdout io.Writer) (verific
 		if err != nil {
 			return verificationRecord{}, false, fmt.Errorf("--reuse: %w", err)
 		}
-		ok, why := localReuse(reused, current)
+		ok, why := localTreeReuse(reused, current)
 		if ok {
 			ok, why = localValidateReuse(reused, plan)
 		}
@@ -263,15 +288,21 @@ func localVerify(opts localOptions, reusePath string, stdout io.Writer) (verific
 			ok, why = localRecomputedReuse(opts, plan, current)
 		}
 		if ok {
-			// The record answers: write it to --record so the caller finds it where it asked.
-			if _, err := writeRecord(opts.Record, reused); err != nil {
-				return verificationRecord{}, false, err
-			}
-			fmt.Fprintf(stdout, "local: every key matches (%s); %s answers this tree\n", why, reusePath)
-			return reused, true, nil
+			source = &localReuseSource{path: reusePath, record: reused}
+		} else {
+			fmt.Fprintf(stdout, "local: %s does not answer this tree: %s\n", reusePath, why)
 		}
-		fmt.Fprintf(stdout, "local: %s does not answer this tree: %s\n", reusePath, why)
 	}
+	if source == nil && opts.Cache && !opts.Fresh {
+		source = localFindCached(opts, current, plan, stdout)
+	}
+	if source != nil && opts.Cache {
+		// A validated source is imported under this run's cache keys so later runs find it by path.
+		if cached := localCachePass(opts, source.record, plan, stdout); cached != "" {
+			source = &localReuseSource{path: cached, record: source.record}
+		}
+	}
+	opts.reuse = source
 	// The workflow-coverage refusal guards the real table: a step ci.yml grows cannot go
 	// unverified. An injected table (tests) owns its own coverage. The workflow is read from the
 	// verified commit, not the caller's working tree, so a dirty edit to ci.yml cannot change what
@@ -281,7 +312,50 @@ func localVerify(opts localOptions, reusePath string, stdout io.Writer) (verific
 			return verificationRecord{}, false, err
 		}
 	}
-	return localExecute(opts, plan, current, stdout)
+	if source != nil && localPlanAllReusable(plan) {
+		// Nothing needs running: the record is cloned and every step marked with its provenance.
+		record := source.record
+		jobs := make([]recordJob, len(record.Jobs))
+		for i := range record.Jobs {
+			jobs[i] = record.Jobs[i]
+			jobs[i].Steps = slices.Clone(jobs[i].Steps)
+		}
+		record.Jobs = jobs
+		record.Runner, record.HeadCommit, record.BaseCommit, record.Range = opts.Runner, current.HeadCommit, current.BaseCommit, current.Range
+		record.VerifierKind, record.VerifierRules = localVerifierKind, localVerifierRules
+		for i, expected := range localExpectedJobs(plan) {
+			for n, step := range expected.steps {
+				if step.kind != localNotApplicable {
+					record.Jobs[i].Steps[n] = localMarkReused(record.Jobs[i].Steps[n], source, expected.name, n)
+				}
+			}
+		}
+		sealed, err := writeRecord(opts.Record, record)
+		if err != nil {
+			return verificationRecord{}, false, err
+		}
+		if opts.Cache {
+			localCachePass(opts, sealed, plan, stdout)
+		}
+		fmt.Fprintf(stdout, "local: the tree and rules match; %s answers this tree\n", source.path)
+		return sealed, true, nil
+	}
+	record, _, err := localExecute(opts, plan, current, stdout)
+	if err != nil {
+		return record, false, err
+	}
+	if localHasReusedSteps(record) {
+		// A partial answer is still the run's own record: write it where the caller asked.
+		if sealed, err := writeRecord(opts.Record, record); err != nil {
+			return verificationRecord{}, false, err
+		} else {
+			record = sealed
+		}
+	}
+	if opts.Cache && record.Result == localPass {
+		localCachePass(opts, record, plan, stdout)
+	}
+	return record, localHasReusedSteps(record), nil
 }
 
 // localCurrentKeys is the state a record is judged against: the tree, the ci.yml digest, the tool
@@ -338,7 +412,7 @@ func localCurrentKeys(opts localOptions) (verificationRecord, error) {
 	if err != nil {
 		return verificationRecord{}, err
 	}
-	return verificationRecord{
+	current := verificationRecord{
 		Schema:       recordSchema,
 		Runner:       opts.Runner,
 		Range:        fmt.Sprintf("sha256:%x", rangeSum),
@@ -354,7 +428,15 @@ func localCurrentKeys(opts localOptions) (verificationRecord, error) {
 		Dependencies: dependencies,
 		OS:           hostOS,
 		Arch:         hostArch,
-	}, nil
+	}
+	// The verifier identity (CRW-1590) and the plan digest are part of the state a record answers.
+	current.VerifierKind, current.VerifierRules = localVerifierKind, localVerifierRules
+	plan := opts.Plan
+	if plan == nil {
+		plan = localPlan()
+	}
+	current.PlanDigest = planDigest(plan)
+	return current, nil
 }
 
 // localEngineFlags is the GOFLAGS every step runs with: the engine's own parallelism. The caller's

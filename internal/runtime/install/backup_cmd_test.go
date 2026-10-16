@@ -8,15 +8,19 @@ package install_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/golden"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install"
@@ -361,4 +365,381 @@ func TestTheBackupRefusesALogProbeErrorThatIsNotAbsence(t *testing.T) {
 			t.Fatalf("a linked store with no log must still be copied: exit %d\n%s", code, golden.Canon(result))
 		}
 	})
+}
+
+// TestBackupStateOmitsFlowWorktrees (CRW-1585): the state backup is of the store and its records, not
+// of a run's regenerable working copies — the worktree roots under a run (land-wt, node-wt, wt and the
+// calls' worktrees) are recorded in the manifest as workdir entries, and their bytes are not copied.
+func TestBackupStateOmitsFlowWorktrees(t *testing.T) {
+	h := backupStateHost(t)
+	restore := install.ReplaceServiceReading(func(context.Context, install.Options) install.Object {
+		return install.ServiceCell(scope.Stopped, true, "the service answered and reports itself not running")
+	})
+	defer restore()
+	// the run's own disposable roots, each a real preserved checkout of the size a repository copy would be
+	roots := []string{"land-wt", "node-wt", "wt", "calls/c1/wt"}
+	const blob = 8 << 20
+	repo := backupRepo(t, blob)
+	for _, root := range roots {
+		dir := filepath.Join(h.relayState, "flow", "run-scope", filepath.FromSlash(root))
+		backupGit(t, repo, "worktree", "add", "--detach", dir, "HEAD")
+		preserveBackupFixture(t, h.relayState, "run-scope", root, repo)
+	}
+	// and the run's own records, which the backup does keep
+	writeBackupSpec(t, h.relayState, "run-scope", repo)
+	write(t, filepath.Join(h.relayState, "flow", "run-scope", "journal.jsonl"), "{}\n")
+	// a real operations database, so its bytes are a real copy
+	db, err := sql.Open("sqlite", filepath.Join(h.relayState, "operations.sqlite3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("CREATE TABLE backup_probe (value TEXT NOT NULL)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("INSERT INTO backup_probe VALUES ('operations record')"); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var sourceBytes int64
+	if err := filepath.WalkDir(h.relayState, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if info.Mode().IsRegular() && d.Name() != "relay.sqlite3-shm" {
+			sourceBytes += info.Size()
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// the excluded bytes are whatever the four preserved checkouts hold: payload, .gitignore and the .git pointer
+	var omittedBytes int64
+	for _, root := range roots {
+		if err := filepath.WalkDir(filepath.Join(h.relayState, "flow", "run-scope", filepath.FromSlash(root)), func(path string, d os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			info, err := d.Info()
+			if err != nil {
+				return err
+			}
+			if info.Mode().IsRegular() {
+				omittedBytes += info.Size()
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dest := filepath.Join(h.home, "scoped-backup")
+	result, code := install.BackupState(context.Background(), h.options(), dest)
+	if code != install.OK {
+		t.Fatalf("backup: exit %d\n%s", code, golden.Canon(result))
+	}
+	// the store and the records are whole; no worktree root exists in the copy
+	for _, want := range []string{"relay.sqlite3", "ledger.log", "operations.sqlite3",
+		"flow/run-scope/run.json", "flow/run-scope/journal.jsonl"} {
+		if got, err := os.ReadFile(filepath.Join(dest, want)); err != nil {
+			t.Errorf("backup is missing %s: %v", want, err)
+		} else if src, _ := os.ReadFile(filepath.Join(h.relayState, want)); !bytes.Equal(got, src) {
+			t.Errorf("backup %s bytes differ", want)
+		}
+	}
+	for _, root := range roots {
+		if _, err := os.Lstat(filepath.Join(dest, "flow", "run-scope", filepath.FromSlash(root))); !os.IsNotExist(err) {
+			t.Errorf("the workdir %s was copied", root)
+		}
+	}
+	var manifest struct {
+		Bytes   int64 `json:"bytes"`
+		Entries []struct {
+			Path, Kind, LinkTarget string
+		} `json:"entries"`
+	}
+	if err := json.Unmarshal(mustRead(t, dest+install.ManifestSuffix), &manifest); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("fixture_source_regular_bytes=%d excluded_worktree_bytes=%d backup_regular_bytes=%d", sourceBytes, omittedBytes, manifest.Bytes)
+	if manifest.Bytes != sourceBytes-omittedBytes {
+		t.Errorf("backup bytes %d; source %d, excluded %d", manifest.Bytes, sourceBytes, omittedBytes)
+	}
+	found := map[string]bool{}
+	for _, e := range manifest.Entries {
+		if e.Kind == "workdir" {
+			found[e.Path] = true
+		}
+	}
+	for _, root := range roots {
+		if !found["flow/run-scope/"+root] {
+			t.Errorf("the workdir %s is not in the manifest: %+v", root, manifest.Entries)
+		}
+	}
+}
+
+// TestBackupStateRecordsWorktreeLinks (CRW-1585): a run's worktree link — a dangling one, one that
+// names a directory outside the state or the worktree root itself — is recorded as a link, never
+// followed and never a refusal.
+func TestBackupStateRecordsWorktreeLinks(t *testing.T) {
+	for name, link := range map[string]func(t *testing.T, h *host) (linkPath, target string){
+		"broken link": func(t *testing.T, h *host) (string, string) {
+			p := filepath.Join(h.relayState, "flow", "run-links", "node-wt", "node")
+			if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			return p, filepath.Join(t.TempDir(), "gone")
+		},
+		"a link outside the state": func(t *testing.T, h *host) (string, string) {
+			out := t.TempDir()
+			write(t, filepath.Join(out, "sentinel"), "outside\n")
+			p := filepath.Join(h.relayState, "flow", "run-links", "node-wt", "node")
+			if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			return p, out
+		},
+		"a nested alias": func(t *testing.T, h *host) (string, string) {
+			out := t.TempDir()
+			write(t, filepath.Join(out, "sentinel"), "outside\n")
+			p := filepath.Join(h.relayState, "flow", "run-links", "node-wt", "nested", "node")
+			if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			return p, out
+		},
+		"the worktree root itself is a link": func(t *testing.T, h *host) (string, string) {
+			out := t.TempDir()
+			write(t, filepath.Join(out, "sentinel"), "outside\n")
+			p := filepath.Join(h.relayState, "flow", "run-links", "node-wt")
+			if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			return p, out
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := backupStateHost(t)
+			restore := install.ReplaceServiceReading(func(context.Context, install.Options) install.Object {
+				return install.ServiceCell(scope.Stopped, true, "the service answered and reports itself not running")
+			})
+			defer restore()
+			linkPath, target := link(t, h)
+			if err := os.Symlink(target, linkPath); err != nil {
+				t.Fatal(err)
+			}
+			rel, _ := filepath.Rel(h.relayState, linkPath)
+			dest := filepath.Join(h.home, "links-backup")
+			result, code := install.BackupState(context.Background(), h.options(), dest)
+			if code != install.OK {
+				t.Fatalf("a link must not refuse the backup: exit %d\n%s", code, golden.Canon(result))
+			}
+			var manifest struct {
+				Entries []struct {
+					Path, Kind, LinkTarget string
+				} `json:"entries"`
+			}
+			if err := json.Unmarshal(mustRead(t, dest+install.ManifestSuffix), &manifest); err != nil {
+				t.Fatal(err)
+			}
+			var entry *struct {
+				Path, Kind, LinkTarget string
+			}
+			for i, e := range manifest.Entries {
+				if e.Path == filepath.ToSlash(rel) {
+					entry = &manifest.Entries[i]
+				}
+			}
+			if entry == nil || entry.Kind != "symlink" || entry.LinkTarget != target {
+				t.Errorf("the link %s is not recorded as a symlink: %+v", rel, manifest.Entries)
+			}
+			// the link's bytes are not in the backup under its name: the path is absent entirely
+			if _, err := os.Lstat(filepath.Join(dest, rel)); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("the backup holds something at %s: %v", rel, err)
+			}
+			// the source alias is unchanged and still names its target
+			if got, err := os.Readlink(linkPath); err != nil || got != target {
+				t.Errorf("the source link changed: %v %q", err, got)
+			}
+			// and for a real target its bytes are exactly what they were
+			if name != "broken link" {
+				got, err := os.ReadFile(filepath.Join(target, "sentinel"))
+				if err != nil || string(got) != "outside\n" {
+					t.Errorf("the target changed: %v %q", err, got)
+				}
+			}
+		})
+	}
+}
+
+// stopped fakes the stopped-service reading the whole backup command needs.
+func stopped(t *testing.T) {
+	t.Helper()
+	restore := install.ReplaceServiceReading(func(context.Context, install.Options) install.Object {
+		return install.ServiceCell(scope.Stopped, true, "the service answered and reports itself not running")
+	})
+	t.Cleanup(restore)
+}
+
+func backupGit(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", "-C", dir}, args...)...)
+	cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=backup", "GIT_AUTHOR_EMAIL=backup@example.invalid", "GIT_COMMITTER_NAME=backup", "GIT_COMMITTER_EMAIL=backup@example.invalid")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func backupRepo(t *testing.T, payload int) string {
+	t.Helper()
+	repo := t.TempDir()
+	backupGit(t, repo, "init", "-q")
+	write(t, filepath.Join(repo, "payload"), strings.Repeat("x", payload))
+	write(t, filepath.Join(repo, ".gitignore"), ".crw/\n")
+	backupGit(t, repo, "add", ".")
+	backupGit(t, repo, "commit", "-qm", "backup fixture")
+	return repo
+}
+
+// preserveBackupFixture writes the cleanup proof a completed run's cleanup would have left: the
+// preserved checkout ref plus its cleanup.jsonl record.
+func preserveBackupFixture(t *testing.T, state, run, rel, repo string) {
+	t.Helper()
+	head := backupGit(t, repo, "rev-parse", "HEAD")
+	tree := backupGit(t, repo, "rev-parse", "HEAD^{tree}")
+	key := sha256.Sum256([]byte(rel + "\x00" + head + "\x00" + tree))
+	ref := fmt.Sprintf("refs/crw/flow/%s/cleanup/%x", run, key)
+	commit := backupGit(t, repo, "commit-tree", tree, "-p", head, "-m", "preserved fixture")
+	backupGit(t, repo, "update-ref", ref, commit)
+	raw, err := json.Marshal(map[string]string{"path": rel, "head": head, "snapshot": tree, "ref": ref, "commit": commit})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.OpenFile(filepath.Join(state, "flow", run, "cleanup.jsonl"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write(append(raw, '\n')); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// writeBackupSpec writes the run's own spec, as a finished run leaves it.
+func writeBackupSpec(t *testing.T, state, run, repo string) {
+	t.Helper()
+	raw, err := json.Marshal(map[string]string{
+		"schema": "crw-flow-run/1", "run_id": run, "repo": repo,
+		"workflow": "hello", "thread": "fixture-owner",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(state, "flow", run, "run.json"), string(raw))
+}
+
+// TestBackupStateKeepsUnpreservedWorktrees: a worktree with no recovery proof — paused or held work —
+// is copied in full, including its ignored evidence, not omitted and not skipped.
+func TestBackupStateKeepsUnpreservedWorktrees(t *testing.T) {
+	for _, status := range []string{"paused", "held"} {
+		t.Run(status, func(t *testing.T) {
+			h := backupStateHost(t)
+			stopped(t)
+			repo := backupRepo(t, 128)
+			run := "run-" + status
+			rel := filepath.Join("flow", run, "wt", "n1")
+			wt := filepath.Join(h.relayState, rel)
+			backupGit(t, repo, "worktree", "add", "--detach", wt, "HEAD")
+			writeBackupSpec(t, h.relayState, run, repo)
+			write(t, filepath.Join(h.relayState, "flow", run, "result.json"), `{"status":"`+status+`"}`)
+			write(t, filepath.Join(wt, "payload"), "uncommitted executor change\n")
+			write(t, filepath.Join(wt, "pending.txt"), "P_held must survive\n")
+			write(t, filepath.Join(wt, ".crw", "evidence", "shot.png"), "ignored evidence\n")
+			pending, err := ops.Snapshot(context.Background(), ops.ExecGit("git"), wt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			dest := filepath.Join(h.home, "unfinished-backup")
+			result, code := install.BackupState(context.Background(), h.options(), dest)
+			if code != install.OK {
+				t.Fatalf("backup: %d\n%s", code, golden.Canon(result))
+			}
+			for _, file := range []string{"payload", "pending.txt", ".crw/evidence/shot.png"} {
+				if got := mustRead(t, filepath.Join(dest, rel, file)); !bytes.Equal(got, mustRead(t, filepath.Join(wt, file))) {
+					t.Fatalf("backup lost %s: %q", file, got)
+				}
+			}
+			if err := os.RemoveAll(wt); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.CopyFS(wt, os.DirFS(filepath.Join(dest, rel))); err != nil {
+				t.Fatal(err)
+			}
+			got, err := ops.Snapshot(context.Background(), ops.ExecGit("git"), wt)
+			if err != nil || got != pending {
+				t.Fatalf("restored pending tree: %s, want %s (%v)", got, pending, err)
+			}
+		})
+	}
+}
+
+// TestBackupStateKeepsChangedPreservedWorktree: a preserved checkout whose working files moved past
+// the recorded snapshot — including ignored captures — is copied with its new bytes; a stale proof
+// never substitutes for them.
+func TestBackupStateKeepsChangedPreservedWorktree(t *testing.T) {
+	for _, kind := range []string{"tracked", "ignored", "assume-unchanged", "skip-worktree", "bad-record", "overlap", "missing-spec", "wrong-repo"} {
+		t.Run(kind, func(t *testing.T) {
+			h := backupStateHost(t)
+			stopped(t)
+			repo := backupRepo(t, 128)
+			rel := filepath.Join("flow", "run-changed", "wt", "n1")
+			wt := filepath.Join(h.relayState, rel)
+			backupGit(t, repo, "worktree", "add", "--detach", wt, "HEAD")
+			preserveBackupFixture(t, h.relayState, "run-changed", "wt/n1", repo)
+			writeBackupSpec(t, h.relayState, "run-changed", repo)
+			file := "payload"
+			switch kind {
+			case "tracked", "ignored", "assume-unchanged", "skip-worktree":
+				if kind == "ignored" {
+					file = ".crw/evidence/new.png"
+				}
+				write(t, filepath.Join(wt, file), "new work after the preserved snapshot\n")
+				if kind == "assume-unchanged" || kind == "skip-worktree" {
+					backupGit(t, wt, "update-index", "--"+kind, "--", file)
+					if got := backupGit(t, wt, "status", "--porcelain"); got != "" {
+						t.Fatalf("index fixture did not hide the change: %q", got)
+					}
+				}
+			case "bad-record":
+				record := filepath.Join(h.relayState, "flow", "run-changed", "cleanup.jsonl")
+				raw := mustRead(t, record)
+				write(t, record, string(raw)+"{\"path\":\"../escape\"}\n")
+			case "overlap":
+				preserveBackupFixture(t, h.relayState, "run-changed", "wt", repo)
+			case "missing-spec":
+				if err := os.Remove(filepath.Join(h.relayState, "flow", "run-changed", "run.json")); err != nil {
+					t.Fatal(err)
+				}
+			case "wrong-repo":
+				writeBackupSpec(t, h.relayState, "run-changed", backupRepo(t, 0))
+			}
+			want := mustRead(t, filepath.Join(wt, file))
+			dest := filepath.Join(h.home, "changed-backup")
+			result, code := install.BackupState(context.Background(), h.options(), dest)
+			if code != install.OK {
+				t.Fatalf("backup: %d\n%s", code, golden.Canon(result))
+			}
+			if got := mustRead(t, filepath.Join(dest, rel, file)); !bytes.Equal(got, want) {
+				t.Fatalf("unusable proof lost working data: %q", got)
+			}
+		})
+	}
 }

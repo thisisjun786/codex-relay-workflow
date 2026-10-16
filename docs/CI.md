@@ -196,10 +196,25 @@ no pinMismatch. Any other record is not reused: the engine runs the table again 
 
 ### Reuse
 
-`--reuse <record>` answers an existing record instead of running only when the **tree**, the
-**ci.yml digest**, the **tool versions**, the **dependency digests**, the **OS and
-architecture** and the **base commit** and the **commit range** all match,
-and the record passed with no pin mismatch. The head commit is not a key on its own. The commit range (the commits between base and head) is one: a rebase or an amend that changes that list reruns the checks, and a record is reused only when the list and the tree both match. Changing any one key re-runs.
+The verifier finds sealed PASS records in
+`<git-common-dir>/crw-ci/<tree>/<rules-key>/<record-digest>.json`, shared across linked worktrees.
+`--reuse <record>` supplies a preferred candidate; `--fresh` disables reuse and still publishes a
+new pass. The tree, command/plan digest, ci.yml, tools and pins, dependency digests, platform,
+GOFLAGS, GOENV, heavy gate and verifier identity must match. Every candidate still faces the
+record digest, plan structure and recomputed pin checks above. Failed records are never cached
+or reused. An unavailable cache falls back to execution without choosing another storage location.
+
+`verifierKind` identifies the implementation and `verifierRules` its contract version; legacy
+records mean `local` and `ci-local/1`. `runner` remains a caller label. Other verifier kinds need
+explicit compatibility support before their records can answer a local run.
+
+Only **full** (tree-scoped) steps are reused. Every **range** step runs on the current base/head,
+even when the range is unchanged. Earlier setup steps run too, to recreate files those checks
+need: for example, the verifier binary used by `ci validate`. The aggregate gate runs after all
+jobs and can fail despite reused tree checks. Each reused step has zero `seconds` and a
+`reusedFrom` containing the source record path, digest, head, verifier kind, job and step index.
+The new record names the current head/base/range and records the fresh execution environment;
+only a plan requiring no fresh execution keeps the original run environment and package count.
 
 ### The heavy-check gate and TMPDIR
 
