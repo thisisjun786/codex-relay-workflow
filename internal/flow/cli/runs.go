@@ -56,7 +56,7 @@ type RunInfo struct {
 	Processes int `json:"processes"`
 	Calls     int `json:"calls"`
 	// Unsettled counts the calls a resume goes on with, Holds the calls in recovery_hold, Waiting the questions no decision has
-	// answered yet.
+	// answered yet (a request to send up through report-up, Question.ReportUp, is none).
 	Unsettled int   `json:"unsettled"`
 	Holds     int   `json:"recovery_holds"`
 	Waiting   int   `json:"waiting"`
@@ -134,6 +134,10 @@ type Question struct {
 	// Questions are the digests of the questions a design ask joins (its evidence, CRW-1366): an answer can give each its part
 	// (CRW-1381). Absent for an ask that names none.
 	Questions []string `json:"questions,omitempty"`
+	// ReportUp is true for an ask that is a request to send up through `crw flow report-up`, not a decision the run waits for: the
+	// bundle split request of a node sized for a bundle split (bundle_split_request, CRW-1437), whose lane ends without an answer. It
+	// is read from the ask; the rows stay as they are. Such a question is not counted as waiting.
+	ReportUp bool `json:"report_up,omitempty"`
 }
 
 // ReviewLink is one review verdict of a node: the reviewer's call and what it judged.
@@ -260,8 +264,13 @@ func lastTerminal(rows []engine.Event) (status, reason string) {
 	return status, reason
 }
 
+// reportUpAsks are the asks that are a request to send up through `crw flow report-up`, not a decision the run waits for: the lane that
+// raised one ended without waiting for an answer (CRW-1437).
+var reportUpAsks = map[string]bool{"bundle_split_request": true}
+
 // Questions reads the questions a run asked: its escalation rows that carry an ask, the revision each has among those of its
-// node and ask, and the decision_applied row that answered it. The latest question of a node and ask is the current one.
+// node and ask, and the decision_applied row that answered it. The latest question of a node and ask is the current one. A question
+// whose ask is a request to send up (reportUpAsks) is marked ReportUp.
 func Questions(events []engine.Event) []Question {
 	attempts := map[string]int{}
 	for _, e := range events {
@@ -292,7 +301,8 @@ func Questions(events []engine.Event) []Question {
 		}
 		key := str(e.Data, "node") + "\x00" + ask
 		count[key]++
-		q := Question{ID: str(e.Data, "escalation_id"), Revision: count[key], Node: str(e.Data, "node"), Reason: str(e.Data, "reason"), Ask: ask, Call: str(e.Data, "call_id"), Seq: e.Seq}
+		q := Question{ID: str(e.Data, "escalation_id"), Revision: count[key], Node: str(e.Data, "node"), Reason: str(e.Data, "reason"), Ask: ask, Call: str(e.Data, "call_id"), Seq: e.Seq,
+			ReportUp: reportUpAsks[ask]}
 		q.Attempt = attempts[q.Call]
 		q.Applied = applied[q.ID]
 		if evidence, ok := e.Data["evidence"].(map[string]any); ok {
@@ -405,8 +415,10 @@ func Summarize(rec RunRecord, events []engine.Event, live bool, pid int) RunInfo
 		info.HeldReasons = append(info.HeldReasons, reason)
 	}
 	sort.Strings(info.HeldReasons)
+	// a request to send up (a bundle split request) is no decision the run waits for: it neither makes a finished run held nor a live
+	// one waiting_decision
 	for _, q := range Questions(events) {
-		if q.Current && q.Applied == "" {
+		if q.Current && q.Applied == "" && !q.ReportUp {
 			info.Waiting++
 		}
 	}
