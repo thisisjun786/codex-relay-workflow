@@ -22,7 +22,7 @@ func TestMain(m *testing.M) {
 	// CRW-1265: the tests run threads in temporary directories, so the sandbox base of the rule they
 	// read is the temporary directory, with a fake account home; a test of the rule uses
 	// sandboxroottest.Fake.
-	removeRule, err := sandboxroottest.Install(os.TempDir(), sandboxroottest.FallbackTempParents...)
+	removeRule, err := sandboxroottest.InstallTemp()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "bridge tests: the sandbox-root rule:", err)
 	} else if err := os.Setenv("CRW_HOME", home); err != nil {

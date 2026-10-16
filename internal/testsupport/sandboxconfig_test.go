@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
@@ -54,48 +55,26 @@ func TestIsolate_names_the_temporary_directory_as_the_sandbox_root(t *testing.T)
 		}
 	}
 
-	// And: the rule is not weakened outside it: the directory above the temporary directory is refused,
-	// unless it is a system temporary location the configuration lists as a project root
+	// And: the rule is not weakened outside it: the directory above the temporary directory is refused
 	outside := filepath.Dir(real)
-	for _, parent := range cleanTempParents(fallbackTempParents) {
-		if outside == parent || filepath.Dir(outside) == parent {
-			t.Logf("the directory above TMPDIR (%s) is a listed project root; its refusal is not observable here", outside)
-			return
-		}
-	}
 	var refusal *sandboxroot.Refusal
 	if err := sandboxroot.Check(outside, "workspace-write"); !errors.As(err, &refusal) {
 		t.Fatalf("Check(%s) = %v, want a refusal", outside, err)
 	}
 }
 
-// The document lists the system temporary locations as project roots only when they exist, by their real
-// paths, and never the sandbox root itself.
-func TestSandboxConfigDocument_lists_existing_fallback_parents(t *testing.T) {
+// CRW-1579 (R1-3, D7): the document names the temporary directory's real path as sandbox_root and nothing else: no project
+// roots (there are no fallback parents) and no socket root (sockets are not judged by the sandbox rule).
+func TestSandboxConfigDocument_isTheTempRootOnly(t *testing.T) {
 	tmp := t.TempDir()
 	doc, err := SandboxConfigDocument(tmp)
 	if err != nil {
 		t.Fatal(err)
 	}
 	real, _ := filepath.EvalSymlinks(tmp)
-	if got := doc["paths"].(map[string]any)["sandbox_root"]; got != real {
-		t.Fatalf("sandbox_root = %v, want %s", got, real)
-	}
-	var want []string
-	for _, parent := range fallbackTempParents {
-		if resolved, err := filepath.EvalSymlinks(parent); err == nil && resolved != real {
-			want = append(want, resolved)
-		}
-	}
-	sandbox, _ := doc["sandbox"].(map[string]any)
-	got, _ := sandbox["project_roots"].([]string)
-	if len(got) != len(want) {
-		t.Fatalf("project_roots = %v, want %v", got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("project_roots = %v, want %v", got, want)
-		}
+	want := map[string]any{"paths": map[string]any{"sandbox_root": real}}
+	if !reflect.DeepEqual(doc, want) {
+		t.Fatalf("document = %v, want exactly %v", doc, want)
 	}
 	if _, err := SandboxConfigDocument(filepath.Join(tmp, "absent")); err == nil {
 		t.Fatal("a temporary directory that does not exist gave a document")

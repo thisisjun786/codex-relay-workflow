@@ -107,7 +107,6 @@ var tmpGlobs = []tmpGlob{
 
 // The units that move the pending sites (plan-r2 of bundle 1566-tmp-arch).
 const (
-	tmpU6 = "U-A5-6 testsupport and sandboxroottest: no fallbacks, no empty parent"
 	tmpU7 = "U-A5-7 contracttest temp sites"
 	tmpU8 = "U-A5-8 product implicit MkdirTemp(\"\") sites"
 	tmpU9 = "U-A5-9 the last sites"
@@ -133,16 +132,7 @@ var tmpPending = []tmpEntry{
 	{"internal/runtime/doctor/hooktrust_retrust.go", `temp, err := os.MkdirTemp("", "crw-retrust-verify-")`, tmpU8},
 	{"internal/runtime/exercise/exercise.go", `scratch, err := os.MkdirTemp("", "crw-bridge-exercise-")`, tmpU8},
 	{"internal/runtime/install/archive.go", `scratch, err := os.MkdirTemp("", "crw-install-release-")`, tmpU8},
-	{"internal/sandboxroot/sandboxroottest/sandboxroottest.go", `var FallbackTempParents = []string{"/var/tmp", "/dev/shm"}`, tmpU6},
-	{"internal/sandboxroot/sandboxroottest/sandboxroottest.go", `return install(root, os.TempDir(), FallbackTempParents)`, tmpU6},
 	{"internal/skill/base_refresh.go", `dir, err := os.MkdirTemp("", "base-refresh-")`, tmpU8},
-	{"internal/testsupport/crw.go", `dir, err := os.MkdirTemp("", "crw-test-binary-")`, tmpU6},
-	{"internal/testsupport/outside_repositories.go", `var fallbackTempParents = []string{"/var/tmp", "/dev/shm"}`, tmpU6},
-	{"internal/testsupport/outside_repositories.go", `candidates := append([]string{os.TempDir()}, fallbackTempParents...)`, tmpU6},
-	{"internal/testsupport/outside_repositories.go", `t.Skipf("no temporary location outside every Git repository where a directory can be made: %s and %v are each missing, unwritable or have a .git (or a bare repository's HEAD and objects) among their physical ancestors, which the worktree destination guard refuses", os.TempDir(), fallbackTempParents)`, tmpU6},
-	{"internal/testsupport/ownership.go", `dir, err := os.MkdirTemp("", "crw-testsupport-snapshot-")`, tmpU6},
-	{"internal/testsupport/testsupport.go", `root, err = os.MkdirTemp("", rootPrefix)`, tmpU6},
-	{"internal/testsupport/testsupport.go", `if err := WriteSandboxConfig(config, os.TempDir()); err != nil {`, tmpU6},
 	{"plugins/crw/skills/crw-dev-visualizer/scripts/diagram-to-html.sh", `OUTDIR="/tmp/codex-diagrams"`, tmpU9},
 }
 
@@ -200,8 +190,6 @@ var tmpNeverEmptyParents = []tmpEntry{
 // its file.
 var tmpPendingParents = []tmpEntry{
 	{"internal/contracttest/cxc_hookfire.go", `dir, mkErr := os.MkdirTemp(in.Scratch, "fire-")`, tmpU7},
-	{"internal/sandboxroot/sandboxroottest/sandboxroottest.go", `fakes, err := os.MkdirTemp(parent, "crw-sandboxroot-test-")`, tmpU6},
-	{"internal/testsupport/outside_repositories.go", `dir, err := os.MkdirTemp(parent, pattern)`, tmpU6},
 }
 
 // tmpGrep runs git grep over the tracked files and answers the hits.
