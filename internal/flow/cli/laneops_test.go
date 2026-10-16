@@ -78,13 +78,13 @@ func TestEngineCrwFunctionsAreTheEnginesOwn(t *testing.T) {
 }
 
 // TestBuildLaneIgnoresChildHostArg (CRW-1417): an old run whose arguments still name child host settings ("child_host") builds its
-// lane, even when the named file is gone, and the lane starts no managed child: the relay holds no host settings, the scheduler no
-// managed starter and no selectors.
+// lane, even when the named file is gone, and the lane starts no managed child: the scheduler has no managed starter and no selectors
+// (the relay holds no host settings at all since CRW-1464).
 func TestBuildLaneIgnoresChildHostArg(t *testing.T) {
 	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
 	ref := HandoffRef{Path: filepath.Join(t.TempDir(), "gone", "child-host.json"), SHA256: strings.Repeat("ab", 32)}
 	built := l.buildLaneWith("run-child00031", l.handoffBytes(nil), map[string]any{"child_host": ref}, LaneOptions{})
-	if built.Child != nil || built.Sched.Start != nil || built.Sched.Selectors != (dagsched.Selectors{}) {
-		t.Errorf("a run naming child_host built a lane with host settings: child %+v, start set %t, selectors %+v", built.Child, built.Sched.Start != nil, built.Sched.Selectors)
+	if built.Sched.Start != nil || built.Sched.Selectors != (dagsched.Selectors{}) {
+		t.Errorf("a run naming child_host built a lane with a managed start: start set %t, selectors %+v", built.Sched.Start != nil, built.Sched.Selectors)
 	}
 }

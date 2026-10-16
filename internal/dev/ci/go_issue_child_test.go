@@ -44,9 +44,6 @@ const goIssueChildMarker = "//" + " old-word fixture:"
 
 // goIssueChildExceptions are the lines that keep the words and cannot carry the marker, each with its reason.
 var goIssueChildExceptions = []goIssueChildException{
-	{"internal/flow/cli/schedrelay.go",
-		`request.Instructions = fmt.Sprintf("You are the issue child of node %s (issue %s) of DAG plan %s, released by flow run %s under design revision %s (%s; sized for a child: %s). "+`, // old-word fixture: the line the entry matches
-		"stored record: these instructions become the prompt of the managed-start request that dagsched.assemble freezes into the release intent (the request, its sha256 and its bytes are stored in the dag release row), so a release that is continued after an upgrade must rebuild the same bytes; the text is the retired path's and stays as it was written"},
 	{"internal/flow/scenario/legacy_child_test.go",
 		"newChildBranch = `    // the issue-child path is retired (CRW-1415): a node sized for a child goes up as a size split, and no child is started", // old-word fixture: the line the entry matches
 		"old-text guard: the line is the comment of the built-in project-lane.js (internal/flow/workflows), which keeps the old wording because the script text is hashed into the script digest of a run; the test splices it as the new branch of the lane, so it must equal the script byte for byte, and the line sits in a raw string that cannot carry a marker"},

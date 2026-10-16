@@ -562,25 +562,17 @@ func (o *releaseOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpRes
 		return engine.OpResult{}, &Refusal{"accepted_node_changed", fmt.Sprintf("node %s was accepted under revision %s, which a resume superseded, and its slice of the plan is not the one revision %s was made against: record a plan revision with update_node (the acceptance becomes stale) and run again, or correct an oversized child with dag-correct", node, dataStr(old, "revision"), out.Revision)}
 	}
 	data["revision"], data["design_digest"] = out.Revision, out.DesignDigest
-	// A split with sub-tasks has no case: it takes the executor path below and its row is an ordinary executor release (CRW-1459).
+	// A split with sub-tasks takes the executor path below and its row is an ordinary executor release (CRW-1459). The sized nodes that
+	// no executor takes share one unreleased row (CRW-1464): kind is the size, and no slice is recorded, since nothing is released and no
+	// relay compares one. A bundle split is the parent's to make (CRW-1437), and the lane escalates it with bundle_split_request; a split a
+	// DESIGN recorded before S-1 (CRW-1435) gave no sub-tasks, and a node such a DESIGN sized for a child, are escalated by the lane as
+	// size_split. The child row keeps its reason size_fit_child, the one the rows of old journals carry; no `child` session is started.
 	switch {
 	case entry.SizeFit == "child":
-		// the child start carries the node's slice of the plan compared here, which the relay's managed release compares again (CRW-1382),
-		// as the release of an executor carries it below
-		m, err := readNow()
-		if err != nil {
-			return engine.OpResult{}, err
-		}
-		data["slice_digest"] = liveSlices(m)[node]
 		out.Kind, out.Reason = "child", "size_fit_child"
 		return finish()
-	case entry.SizeFit == "split" && len(entry.SubTasks) == 0:
-		// a split of a DESIGN recorded before S-1 (CRW-1435) names no sub-tasks: no executor is released, the lane escalates it
-		out.Kind, out.Reason = "split", "size_split"
-		return finish()
-	case entry.SizeFit == "bundle_split":
-		// a bundle split is the parent's to make (CRW-1437): no executor slot is taken, the lane escalates it with bundle_split_request
-		out.Kind, out.Reason = "bundle_split", "size_split"
+	case entry.SizeFit == "bundle_split", entry.SizeFit == "split" && len(entry.SubTasks) == 0:
+		out.Kind, out.Reason = entry.SizeFit, "size_split"
 		return finish()
 	}
 	// the criteria are those of the plan the run read; the slice is the node's slice of the plan as it is when the node is released,
@@ -723,9 +715,10 @@ func standingHold(r rows, call string) (engine.Event, bool) {
 // later one of the lane); one that was accepted is refused by Run.
 func (o *releaseOp) Proven(ctx context.Context, ev []engine.Event, row engine.Event) (bool, string, error) {
 	if !dataBool(row, "released") {
-		// a node the architect sized for a child, a split with no sub-tasks or a bundle split was not released to an executor on
-		// purpose: the row is the decision of the ledger revision it names, which does not change, and the child's start has a row of
-		// its own (crw.releaseChild). Asking again would start the child again, or release the node to an executor now.
+		// a node the architect sized for a bundle split, or that a DESIGN recorded before S-1 sized for a child or for a split with no
+		// sub-tasks, was not released to an executor on purpose: the row is the decision of the ledger revision it names, which does not
+		// change. A child row stays proven for the rows an old or in-flight journal holds (CRW-1464). Asking again would release the
+		// node to an executor now.
 		if k := dataStr(row, "kind"); k == "child" || k == "split" || k == "bundle_split" {
 			return true, "", nil
 		}
