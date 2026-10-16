@@ -2,11 +2,11 @@ package doctor_test
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/doctor"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/golden"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
@@ -64,8 +64,8 @@ func TestDoctorReportsTheVerifierTools(t *testing.T) {
 
 // CRW-1319 (evaluation a48fe518 d3): with no Go root configured the doctor looks for one (the root of the go on PATH and the usual
 // install locations, such as $HOME/.local/go/go), lists what it found with each version, and its warning names the command that
-// records the first one. The test's home is below TMPDIR, which may be below /tmp, so the probe's temporary-directory rule points at
-// a directory of the test's own, and a root that resolves below it is not offered.
+// records the first one. A root is judged by content, not place (CRW-1579): a working root whose link resolves into another
+// directory is offered too.
 func TestDoctorNamesAGoRootCandidate(t *testing.T) {
 	h := newHost(t)
 	empty := filepath.Join(h.home, "empty-path")
@@ -74,25 +74,62 @@ func TestDoctorNamesAGoRootCandidate(t *testing.T) {
 	root := filepath.Join(h.home, ".local", "go", "go")
 	write(t, filepath.Join(root, "bin", "go"), "#!/bin/sh\necho 'go version go1.27.1 linux/amd64'\n", 0o755)
 	write(t, filepath.Join(h.home, ".config", "crw", "config.json"), `{}`, 0o600)
-	cleared, err := filepath.EvalSymlinks(t.TempDir())
+	elsewhere, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	gone := filepath.Join(cleared, "go-sdk")
-	write(t, filepath.Join(gone, "bin", "go"), "#!/bin/sh\necho 'go version go1.28.0 linux/amd64'\n", 0o755)
-	link(t, gone, filepath.Join(h.home, "sdk", "go1.28.0"))
+	linked := filepath.Join(elsewhere, "go-sdk")
+	write(t, filepath.Join(linked, "bin", "go"), "#!/bin/sh\necho 'go version go1.28.0 linux/amd64'\n", 0o755)
+	link(t, linked, filepath.Join(h.home, "sdk", "go1.28.0"))
 
-	options := h.options()
-	options.VerifierProbe = crwconfig.ProbeOptions{TemporaryDirs: []string{cleared}}
-	tools := golden.Obj(record.Get(doctor.Diagnose(context.Background(), options), "verifierTools"))
+	tools := golden.Obj(record.Get(doctor.Diagnose(context.Background(), h.options()), "verifierTools"))
 	candidates := golden.Canon(record.Get(tools, "goRootCandidates"))
 	if !strings.Contains(candidates, root) || !strings.Contains(candidates, "go1.27.1") {
 		t.Fatalf("the Go root below the home is not a candidate:\n%s", golden.Canon(tools))
 	}
-	if strings.Contains(candidates, "go1.28.0") {
-		t.Errorf("a root that resolves below the temporary directory is a candidate:\n%s", candidates)
+	if !strings.Contains(candidates, filepath.Join(h.home, "sdk", "go1.28.0")) || !strings.Contains(candidates, "go1.28.0") {
+		t.Errorf("a working root whose link resolves into another directory is not a candidate:\n%s", candidates)
 	}
 	if !strings.Contains(golden.Canon(record.Get(tools, "warnings")), "crw config verifier --go-root ") {
 		t.Errorf("the warnings do not name the command that records a candidate:\n%s", golden.Canon(tools))
+	}
+}
+
+// CRW-1579 (U-A5-2): the probe's home comes from the one place (tmploc). With a relative TMPDIR the home is refused with
+// tmploc's reason, and the verifierTools entry reports it in its warnings. Before, the home was made relative to the working
+// directory when ./rel existed, and the go ran there with a relative HOME; now nothing is made below the working directory.
+func TestVerifierToolsReport_probeHomeError(t *testing.T) {
+	h := newHost(t)
+	root := filepath.Join(h.home, "go")
+	write(t, filepath.Join(root, "bin", "go"), "#!/bin/sh\necho 'go version go1.27.1 linux/amd64'\n", 0o755)
+	write(t, filepath.Join(h.home, ".config", "crw", "config.json"), `{"verifier":{"go_root":"`+root+`"}}`, 0o600)
+	cwd := t.TempDir()
+	mkdir(t, filepath.Join(cwd, "rel"))
+	t.Chdir(cwd)
+	t.Setenv("TMPDIR", "rel")
+
+	tools := doctor.VerifierToolsReport(context.Background(), h.env)
+	warnings := golden.Canon(record.Get(tools, "warnings"))
+	if !strings.Contains(warnings, "tmpdir_not_absolute") || !strings.Contains(warnings, `TMPDIR=\"rel\"`) {
+		t.Errorf("the probe's home error is not in the warnings:\n%s", golden.Canon(tools))
+	}
+	if record.Get(tools, "goVersion") != nil {
+		t.Errorf("a go probed without a home has a version:\n%s", golden.Canon(tools))
+	}
+	if entries, err := os.ReadDir(filepath.Join(cwd, "rel")); err != nil || len(entries) != 0 {
+		t.Errorf("the probe made something below the working directory: %v %v", entries, err)
+	}
+
+	// no root configured and no go on PATH, a root at a usual location: only the search for candidates probes it, and its
+	// warning gives the same reason instead of "none was found"
+	empty := filepath.Join(h.home, "empty-path")
+	mkdir(t, empty)
+	write(t, filepath.Join(h.home, ".local", "go", "go", "bin", "go"), "#!/bin/sh\necho 'go version go1.27.1 linux/amd64'\n", 0o755)
+	write(t, filepath.Join(h.home, ".config", "crw", "config.json"), `{}`, 0o600)
+	tools = doctor.VerifierToolsReport(context.Background(), h.env.With("PATH", empty))
+	warnings = golden.Canon(record.Get(tools, "warnings"))
+	if !strings.Contains(warnings, "could not be probed") || !strings.Contains(warnings, "tmpdir_not_absolute") ||
+		strings.Contains(warnings, "no Go toolchain root was found") {
+		t.Errorf("the search's home error is not in the warnings:\n%s", golden.Canon(tools))
 	}
 }
