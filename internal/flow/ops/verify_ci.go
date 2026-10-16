@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
+	"github.com/thisisjun786/codex-relay-workflow/internal/execgroup"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 )
 
@@ -21,7 +22,9 @@ import (
 // its exit code, its combined output and the error of starting it (an exit code other than 0 is not an error).
 type RunCommand func(ctx context.Context, dir string, env []string, name string, args ...string) (code int, output []byte, err error)
 
-// ExecCommand is the RunCommand that starts the process.
+// ExecCommand is the RunCommand that starts the process. The process leads its own group (execgroup.Bind, CRW-1573): a cancel
+// kills everything it started, so a cancelled `crw-dev ci local` returns within execgroup.KillGrace instead of waiting for the
+// test binaries that hold its output.
 func ExecCommand(ctx context.Context, dir string, env []string, name string, args ...string) (int, []byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
@@ -31,10 +34,15 @@ func ExecCommand(ctx context.Context, dir string, env []string, name string, arg
 	}
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
+	execgroup.Bind(cmd, execgroup.KillGrace)
 	err := cmd.Run()
 	var exit *exec.ExitError
 	if errors.As(err, &exit) {
 		return exit.ExitCode(), out.Bytes(), nil
+	}
+	if errors.Is(err, exec.ErrWaitDelay) && cmd.ProcessState != nil {
+		// the command exited 0 and a child it left holds the output past the grace: the exit is the answer, not a start error
+		return cmd.ProcessState.ExitCode(), out.Bytes(), nil
 	}
 	return 0, out.Bytes(), err
 }
