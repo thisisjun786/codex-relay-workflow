@@ -42,14 +42,20 @@ func printJSON(env Environment, v any) error {
 // reportUpCmd is `crw flow report-up`: the orchestrator lifts a project-level blocker or decision request to the initiative lead, and a
 // decision only Jun can make to the store seat (the manager's pump tells Jun). The evidence file is the body of the report. It prints
 // the result as JSON and exits 0 when the report is on record (delivered, queued or standing), 1 when the delivery was refused.
+//
+// A project_decision_request that lifts a question the run asked names it with --question (CRW-1574): the run must wait on it (the
+// current question of its node and ask, no decision answered it, no request to send up); else the command refuses it with exit 1 and
+// writes nothing. The report row then carries the question, its revision and its node, so the parent's decision record whose source is
+// the report binds that question.
 func reportUpCmd(ctx context.Context, args []string, env Environment) int {
-	var kind, run, evidence, subject, milestone, state, socket string
+	var kind, run, evidence, subject, milestone, question, state, socket string
 	positional, code, ok := flags("report-up", args, env, func(fs *flag.FlagSet) {
 		fs.StringVar(&kind, "kind", "", "project_blocked, project_decision_request, jun_decision_request (milestone_report is the run's)")
 		fs.StringVar(&run, "run", "", "the run the report is about")
 		fs.StringVar(&evidence, "evidence", "", "the file that holds the body of the report")
 		fs.StringVar(&subject, "subject", "", "one line that says what the report is about")
 		fs.StringVar(&milestone, "milestone", "", "the milestone (a milestone_report)")
+		fs.StringVar(&question, "question", "", "the escalation id of the run's question a project_decision_request lifts")
 		fs.StringVar(&state, "state", "", "the relay state directory")
 		fs.StringVar(&socket, "socket", "", "the App Server control socket")
 	})
@@ -58,6 +64,9 @@ func reportUpCmd(ctx context.Context, args []string, env Environment) int {
 	}
 	if len(positional) != 0 || kind == "" || run == "" || evidence == "" {
 		return usageErr(env, "report-up", "--kind, --run and --evidence are required")
+	}
+	if question != "" && kind != report.KindProjectDecisionRequest {
+		return usageErr(env, "report-up", "--question names the run's question a %s lifts, not a %s", report.KindProjectDecisionRequest, kind)
 	}
 	body, err := os.ReadFile(evidence)
 	if err != nil {
@@ -75,8 +84,20 @@ func reportUpCmd(ctx context.Context, args []string, env Environment) int {
 		fmt.Fprintf(env.Stderr, "crw flow report-up: refused (%s): %s\n", RefusedLegacyRun, why)
 		return ExitRefused
 	}
+	req := report.UpRequest{Kind: kind, Run: run, Milestone: milestone, Subject: subject, Body: body}
+	if question != "" {
+		q, why, err := waitingQuestion(ctx, st, run, question)
+		if err != nil {
+			return failure(env, "report-up", err)
+		}
+		if why != "" {
+			fmt.Fprintf(env.Stderr, "crw flow report-up: refused: %s\n", why)
+			return ExitRefused
+		}
+		req.Question, req.Revision, req.Node = q.ID, q.Revision, q.Node
+	}
 	w := &report.Writer{Store: st, Rows: report.ForeignAppender{Store: st, Run: run}, Resolver: env.resolver(st), Sender: env.sender(st, statePath, socket), ArtifactDir: filepath.Join(statePath, "flow", run, "reports")}
-	res, err := w.Up(ctx, report.UpRequest{Kind: kind, Run: run, Milestone: milestone, Subject: subject, Body: body})
+	res, err := w.Up(ctx, req)
 	if err != nil {
 		return failure(env, "report-up", err)
 	}
@@ -87,6 +108,29 @@ func reportUpCmd(ctx context.Context, args []string, env Environment) int {
 		return ExitRefused
 	}
 	return ExitOK
+}
+
+// waitingQuestion is the question id of run when the run waits on it (Question.Waits), else why it does not ("" with the question).
+func waitingQuestion(ctx context.Context, st *store.Store, run, id string) (Question, string, error) {
+	events, _, err := loadLeanJournal(ctx, st, run)
+	if err != nil {
+		return Question{}, "", fmt.Errorf("the journal of run %s cannot be read: %w", run, err)
+	}
+	for _, q := range Questions(events) {
+		if q.ID != id {
+			continue
+		}
+		switch {
+		case q.ReportUp:
+			return q, fmt.Sprintf("question %s of run %s is a request to send up (%s), not a question the run waits on", id, run, q.Ask), nil
+		case !q.Current:
+			return q, fmt.Sprintf("question %s of run %s (revision %d) was replaced by a later ask of node %q (%s)", id, run, q.Revision, q.Node, q.Ask), nil
+		case q.Applied != "":
+			return q, fmt.Sprintf("question %s of run %s is answered (%s)", id, run, q.Applied), nil
+		}
+		return q, "", nil
+	}
+	return Question{}, fmt.Sprintf("run %s has no question %s", run, id), nil
 }
 
 // reportsCmd is `crw flow reports`: the reports of the store, those of an initiative or of a project, the unread ones.

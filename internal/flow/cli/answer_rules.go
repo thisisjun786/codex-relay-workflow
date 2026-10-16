@@ -10,6 +10,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/report"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/decisions"
 )
 
@@ -24,11 +25,22 @@ import (
 //
 // CRW-718 gives the record run, node, attempt and question revision members of their own; BindingOf is the one place that reads
 // them.
+//
+// A record may instead name, as its source, the child's project_decision_request report that lifted the question (CRW-1574):
+//
+//	source    kind "report", ref "<report id>"  (a report row of the run, of kind project_decision_request)
+//	blocking  none, or one plan_node entry "<run>/<node>" of the question's node
+//
+// The report row names its question when report-up was given --question (members question, revision, node); a report without them
+// binds the question the claim names only when it is the one question the run waits on. The attempt and the plan basis are the
+// journal's and the run's (reportBinding); every later check of Judge is the same as for a flow_question record.
 
 // The kinds of question a record can bind.
 const (
 	SourceQuestion    = "flow_question"
 	SourceJunDecision = "flow_jun_decision"
+	// SourceReport is a record whose source is the child's project_decision_request report (CRW-1574): the report binds the question.
+	SourceReport = "report"
 )
 
 // Binding is the question a record answers, as the record names it.
@@ -94,6 +106,65 @@ func BindingOf(rec decisions.Record) (Binding, error) {
 		return b, fmt.Errorf("the record's source ref %q has a revision or attempt that is not a number", ref)
 	}
 	b.Question, b.PlanBasis = q, basis
+	return b, nil
+}
+
+// reportBinding reads the question a record whose source is a report binds (CRW-1574): the report is a project_decision_request row of
+// the run among events; the question is the one the row names (report-up --question), else the claim's when it is the one question the
+// run waits on (or the one this record answered already: a replay). The node, the attempt and the plan basis are the journal's and the
+// run's; a plan_node blocking entry is not needed, and one the record has must be the question's.
+func reportBinding(rec decisions.Record, events []engine.Event, run RunRecord, claim Claim) (Binding, error) {
+	b := Binding{Source: SourceReport, Run: run.RunID, PlanBasis: PlanBasis(run.PlanID, run.PlanRevision)}
+	id := rec.Source.Ref
+	var row map[string]any
+	for _, e := range events {
+		if e.Kind == engine.KindFlow && e.Event == report.KindReport && str(e.Data, "report_id") == id && str(e.Data, "run") == run.RunID {
+			row = e.Data
+			break
+		}
+	}
+	if id == "" || row == nil {
+		return b, fmt.Errorf("the record's report %s is not a report of run %s", cell(id), run.RunID)
+	}
+	if kind := str(row, "report_kind"); kind != report.KindProjectDecisionRequest {
+		return b, fmt.Errorf("the record's report %s is a %s, not a %s", id, kind, report.KindProjectDecisionRequest)
+	}
+	questions := Questions(events)
+	var q *Question
+	if named := str(row, "question"); named != "" {
+		b.Question, b.Revision, b.Node = named, num(row, "revision"), str(row, "node")
+		for i := range questions {
+			if questions[i].ID == named {
+				q = &questions[i]
+			}
+		}
+		if q != nil {
+			b.Node, b.Attempt = q.Node, q.Attempt
+		}
+	} else {
+		var waiting []*Question
+		for i := range questions {
+			switch {
+			case questions[i].ID == claim.Question && questions[i].Applied == rec.DecisionID:
+				// this record answered the question already: the same answer again is a replay, not a new binding
+				q = &questions[i]
+			case questions[i].Waits():
+				waiting = append(waiting, &questions[i])
+			}
+		}
+		if q == nil {
+			if len(waiting) != 1 {
+				return b, fmt.Errorf("the record's report %s names no question and run %s waits on %d questions: report-up --question names it", id, run.RunID, len(waiting))
+			}
+			q = waiting[0]
+		}
+		b.Question, b.Revision, b.Node, b.Attempt = q.ID, q.Revision, q.Node, q.Attempt
+	}
+	for _, x := range rec.Blocking {
+		if x.Kind == decisions.BlockingPlanNode && x.Ref != b.Run+"/"+b.Node {
+			return b, fmt.Errorf("the record's plan node %q is not the node of question %s (%s/%s)", x.Ref, b.Question, b.Run, b.Node)
+		}
+	}
 	return b, nil
 }
 
@@ -185,7 +256,13 @@ func Judge(rec decisions.Record, events []engine.Event, run RunRecord, claim Cla
 	if claim.Decision != rec.DecisionID {
 		return none, refuse(RefusedBadBinding, "the claim names decision %q, the record is %q", claim.Decision, rec.DecisionID)
 	}
-	b, err := BindingOf(rec)
+	var b Binding
+	var err error
+	if rec.Source.Kind == SourceReport {
+		b, err = reportBinding(rec, events, run, claim)
+	} else {
+		b, err = BindingOf(rec)
+	}
 	if err != nil {
 		return none, refuse(RefusedBadBinding, "%v", err)
 	}
@@ -358,8 +435,9 @@ func actionOf(rec decisions.Record) string {
 	return "text"
 }
 
-// authorityOK judges who may answer. An escalation of a run is answered by the orchestrator that holds the run (the parent class,
-// with the run owner as its ref), by the manager (delegated-management) or by Jun (user); a decision only Jun takes is answered
+// authorityOK judges who may answer. An escalation of a run (a flow_question record, or one whose source is the child's
+// project_decision_request report: CRW-1574) is answered by the orchestrator that holds the run (the parent class, with the run owner
+// as its ref), by the manager (delegated-management) or by Jun (user); a decision only Jun takes is answered
 // at the user class, recorded by the manager, and arrives by one of the ways the user's answer arrives, never as the parent's
 // report read back.
 func authorityOK(rec decisions.Record, b Binding, run RunRecord) *Refusal {

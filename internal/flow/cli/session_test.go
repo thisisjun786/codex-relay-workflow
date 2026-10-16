@@ -90,7 +90,7 @@ func TestNextHandsOutTheStepsOfTheBus(t *testing.T) {
 	sp := byAction[engine.StepSpawn]
 	if sp.Tool.Name != "spawn_agent" || sp.Tool.Arguments["agent_type"] != "reviewer" || sp.Tool.Arguments["model"] != "gpt-fake-sol" || sp.Tool.Arguments["reasoning_effort"] != "xhigh" ||
 		sp.Tool.Arguments["fork_context"] != false || sp.Tool.Arguments["message"] != spawnStep.Message || sp.Packet != spawnStep.Packet || sp.Workspace != spawnStep.Workspace ||
-		sp.Then != "crw flow dispatched "+run+" c_000000000001 --agent <the id spawn_agent returned> --k 1 --attempt 2" {
+		bare(sp.Then) != "crw flow dispatched "+run+" c_000000000001 --agent <the id spawn_agent returned> --k 1 --attempt 2" {
 		t.Fatalf("spawn step %+v", sp)
 	}
 	// the live tool arguments: send_input and close_agent take target
@@ -150,7 +150,7 @@ func TestNextResumesARunWithNoProcess(t *testing.T) {
 	}
 	ans := decodeNext(t, out)
 	if len(td.spawned) != 1 || !td.spawned[0].Resume || td.spawned[0].Spec.RunID != spec.RunID || ans.Resumed != 4242 ||
-		!strings.Contains(ans.Hint, "crw flow resume "+r.id+" --detach") {
+		!strings.Contains(bare(ans.Hint), "crw flow resume "+r.id+" --detach") {
 		t.Fatalf("no resume: %+v %+v", ans, td.spawned)
 	}
 	// a paused run is not resumed
@@ -298,7 +298,7 @@ func TestStartDefaultsToASessionRunAndBindsItsOwner(t *testing.T) {
 	_ = json.Unmarshal([]byte(answerOf(out)), &ans)
 	spec := td.spawned[0].Spec
 	if spec.Backend != BackendSession || ans.Plan.Backend != BackendSession || spec.Pool != 3 || ans.Plan.Pool != 3 || !ans.Bound || ans.BindWarning != "" ||
-		ans.Next != "crw flow next "+spec.RunID+" --wait 600 --json" || len(ans.Plan.Spawns) != len(bound.OrchestratorRoles) || !strings.Contains(ans.Plan.Loop, "close_agent(target=") {
+		bare(ans.Next) != "crw flow next "+spec.RunID+" --wait 600 --json" || len(ans.Plan.Spawns) != len(bound.OrchestratorRoles) || !strings.Contains(ans.Plan.Loop, "close_agent(target=") {
 		t.Fatalf("the start: %+v (spec %+v)", ans, spec)
 	}
 	names := map[string]bool{}

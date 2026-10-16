@@ -9,6 +9,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/backend/agent"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/bound"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/crwcmd"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/sessionhost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -91,10 +92,13 @@ func StageWake(st *store.Store) func(ctx context.Context, w engine.SessionWake) 
 		if w.Renotify > 0 {
 			summary = fmt.Sprintf("run %s still has %s waiting (no subagent dispatched for %s)", w.Run, steps, w.Waiting.Round(1e9))
 		}
+		// the owner runs the commands as written: they start with the crw that runs (CRW-1572); the message id hashes neither
+		crw := crwcmd.Word()
+		next := crw + " flow next " + w.Run + " --json"
 		text := summary + ": " + strings.Join(w.Ops, ", ") + ".\n" +
-			"Take them: crw flow next " + w.Run + " --json, then spawn_agent each spawn step with the arguments it names and run crw flow dispatched for it."
+			"Take them: " + next + ", then spawn_agent each spawn step with the arguments it names and run " + crw + " flow dispatched for it."
 		answer, err := (&supervisor.Channel{Store: st}).StageDirect(ctx, supervisor.DirectMessage{Kind: supervisor.KindSessionStepWaiting, Relationship: "run:" + w.Run,
-			Subject: supervisor.FlowSubject(w.Run, w.ID), Summary: summary, Text: text, Evidence: []string{"crw flow next " + w.Run + " --json"}}, nil)
+			Subject: supervisor.FlowSubject(w.Run, w.ID), Summary: summary, Text: text, Evidence: []string{next}}, nil)
 		if err != nil {
 			return err
 		}

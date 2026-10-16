@@ -56,7 +56,9 @@ function notesSection(notes) {
 // architectPacket is the architect's first turn of a milestone. background is the answers of the background explorers that ran before
 // it, one for each node (crw.explore of kind background, CRW-1466): given, the packet carries them as BACKGROUND FINDINGS, each by its
 // id, question, answer and the explorer's findings only - never by its route, reason, scope, notation or origin, so the packet's bytes
-// do not move with the routing metadata a binary records; not given (or empty), the packet is the one it was before CRW-1466.
+// do not move with the routing metadata a binary records; not given (or empty), the packet is the one it was before CRW-1466. An
+// answer whose explorer was asked twice and did not answer (missing, CRW-1571) is not a finding: a MISSING EXPLORATIONS section after
+// them names it, and with none missing the packet is the one it was before.
 // head is the design head the run sampled before the phase explore (crw.designHead): the background explorers read it and the
 // architect's directory is a checkout of it, and BACKGROUND FINDINGS names it; without one the packet is as it was.
 export function architectPacket(ms, background, head) {
@@ -67,16 +69,30 @@ export function architectPacket(ms, background, head) {
     'Answer with DESIGN: the decisions, one plan for each issue node below (its size_fit, the sub_tasks of a split node, edit regions, approach, tests first and done condition), the open questions you cannot answer from what you read, and the risks.',
     section('NODES', nodes),
   ]
-  if (background && background.length) {
+  const answered = (background || []).filter((a) => !a.missing)
+  const missing = (background || []).filter((a) => a.missing)
+  if (answered.length) {
     parts.push(section('BACKGROUND FINDINGS (' + (head ? 'read at ' + head + ', the commit your directory is a checkout of; ' : '') + 'an explorer read the repository for each node before you; build on them, and ask as an open question only what they and your own reading leave open)',
-      background.map((a) => {
+      answered.map((a) => {
         const lines = [(a.id ? a.id + ': ' : '') + a.question]
         if (a.answer) lines.push('  answer: ' + a.answer)
         if (a.findings) lines.push('  findings: ' + canon(a.findings))
         return '- ' + lines.join('\n')
       })))
   }
+  // a background question whose explorer was null_model twice (crw.explore's missing, CRW-1571): named, never listed as a finding
+  if (missing.length) {
+    parts.push(section('MISSING EXPLORATIONS (the explorer of each was asked twice and did not answer; read what the node rests on yourself, and ask as an open question what you cannot settle)',
+      missing.map((a) => '- ' + missingLine(a))))
+  }
   return parts.join('\n\n')
+}
+
+// missingLine names a question whose explorer was asked twice and did not answer (crw.explore's missing, CRW-1571): its id and
+// question, both calls, and the status and reason of the last.
+function missingLine(a) {
+  const m = a.missing
+  return (a.id ? a.id + ': ' : '') + a.question + ' (calls ' + m.calls.join(', ') + ': ' + m.status + (m.reason ? ' ' + m.reason : '') + ')'
 }
 
 // The executor contract and the authority boundary the design audit holds a DESIGN to (CRW-1321): the architect overlay
@@ -97,7 +113,9 @@ const AUTHORITY = [
 ]
 
 // answerLines renders the answers of the open questions for the design audit: each question with its route and what it got
-// (CRW-1347), so no question reaches the audit as an empty answer without its route.
+// (CRW-1347), so no question reaches the audit as an empty answer without its route. A question whose explorer was asked twice and
+// did not answer (crw.explore's missing, CRW-1571; a repeat of it in the round carries it too) says so in its route line, so the
+// critic never reads it as answered; with none missing the lines are the ones they were before.
 function answerLines(answers) {
   return list((answers || []).map((a) => {
     const lines = [(a.id ? a.id + ': ' : '') + a.question, '  route: ' + routeLine(a)]
@@ -108,6 +126,7 @@ function answerLines(answers) {
 }
 
 function routeLine(a) {
+  if (a.missing) return 'an explorer was asked twice and did not answer (' + missedCalls(a.missing) + ')'
   switch (a.route) {
     case 'spawn':
       return 'an explorer answered it (call ' + (a.call || 'none') + ')'
@@ -118,6 +137,11 @@ function routeLine(a) {
     default:
       return a.route + (a.reason ? ' (' + a.reason + ')' : '') + ': no answer'
   }
+}
+
+// missedCalls names both calls of a missing exploration and the status and reason of the last (CRW-1571).
+function missedCalls(m) {
+  return 'calls ' + m.calls.join(', ') + ': ' + m.status + (m.reason ? ' ' + m.reason : '')
 }
 
 function reuseLine(reason) {
@@ -242,10 +266,13 @@ export function answeredQuestions(answers) {
 // The design-answers turn of the architect's thread (CRW-1466): the answers its open questions got in this audit round go back to it
 // before the critic audits the DESIGN, and it answers with the DESIGN again. Each answered question is rendered by its id, question,
 // answer and the explorer's findings only - never by its route, reason, scope, notation or origin, so the packet's bytes do not move
-// with the routing metadata a binary records. context is a re-plan's {head, base_tip, landed, unstarted}: the turn is then at the head
-// the re-plan judges (headBlock); the first DESIGN has none.
+// with the routing metadata a binary records. A question whose explorer was asked twice and did not answer (crw.explore's missing,
+// CRW-1571) is no answer: a NOT ANSWERED section after the ANSWERS names it, and with none missing the packet is the one it was
+// before. context is a re-plan's {head, base_tip, landed, unstarted}: the turn is then at the head the re-plan judges (headBlock); the
+// first DESIGN has none.
 export function designAnswersPacket(answers, context) {
   const at = context ? headBlock(context) : null
+  const missing = (answers || []).filter((a) => a.missing)
   return [
     'ROLE: architect. The open questions of your DESIGN got the answers below. Answer with the DESIGN again, with what they say folded into its decisions and plans, before the critic audits it; keep the ids of the decisions and the issues, and give dispositions null (no audit finding is before you). An open question an answer settles leaves open_questions; a question you raise anew in this answer reaches the critic with no answer, which is a P1 finding, and is routed in the next audit round.',
     section('ANSWERS', answeredQuestions(answers).map((a) => {
@@ -254,6 +281,7 @@ export function designAnswersPacket(answers, context) {
       if (a.findings) lines.push('  findings: ' + canon(a.findings))
       return '- ' + lines.join('\n')
     })),
+    missing.length ? section('NOT ANSWERED (the explorer of each was asked twice and did not answer; the question stays open)', missing.map((a) => '- ' + missingLine(a))) : '',
     at ? 'Your directory P is a read-only checkout of the pinned head: work only under the absolute path P.\n' + at.head : '',
     at ? at.landed : '',
   ].filter(Boolean).join('\n\n')
