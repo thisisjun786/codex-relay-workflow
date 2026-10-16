@@ -4,6 +4,11 @@ package ci
 
 import (
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -13,9 +18,8 @@ import (
 // CRW-1579 (D8): every place the program decides a temporary location goes through internal/tmploc,
 // the one place. The check greps every tracked file for the direct deciders: os.TempDir(), a literal
 // /tmp, /var/tmp or /dev/shm, MkdirTemp or CreateTemp with an empty parent (which is TMPDIR, decided
-// inside os), and the direct reads of TMPDIR. Every hit must be an exception with its reason or a
-// pending site (still to move, with the unit that moves it), and every exception and pending entry
-// must still match a hit, so a stale entry fails too.
+// inside os), and the direct reads of TMPDIR. Every hit must be an exception with its reason, and every
+// exception entry must still match a hit, so a stale entry fails too.
 //
 // The pattern is written with bracket expressions so that its own text is no hit. This file's
 // tables quote the lines they allow; it is test code (exception E2).
@@ -35,7 +39,7 @@ type tmpHit struct {
 func (h tmpHit) String() string { return fmt.Sprintf("%s:%d: %s", h.file, h.line, h.text) }
 
 // tmpEntry allows one line: the file and the line's exact text (trimmed), with the reason it is
-// allowed or the unit that moves it.
+// allowed.
 type tmpEntry struct {
 	file, text, why string
 }
@@ -79,9 +83,11 @@ var tmpRecordedScratch = tmpEntry{
 	"E5 the recorded case-root parent of the path_length_dependent fixtures (33 bytes): the recorded oracle condition, not a location this program chooses",
 }
 
-// E6: port history prose that quotes code or Python literals. These are records of what was, not
-// locations; a new docs file with a hit fails.
+// E6: port history prose and port records that quote code or Python literals. These are records of
+// what was, not locations; a new file with a hit fails. The visualizer record quotes the original
+// diagram-to-html.sh output directory line that its recorded edit replaces.
 var tmpPortProse = []string{
+	"port/cxc/records/crw-dev-visualizer.json",
 	"docs/port-cxc/known-defects.md",
 	"docs/port-cxc/known-defects/CRW-1393.md",
 	"docs/port/refactor-backlog.d/11-real-use-run-4/_section.md",
@@ -100,21 +106,9 @@ var tmpGlobs = []tmpGlob{
 		return strings.HasSuffix(file, "_test.go") || strings.HasPrefix(file, "web/test/")
 	}},
 	{"E3", "recorded data and the oracle's own programs (testdata, contract/fixtures): not locations this program chooses", tmpRecordedData},
-	{"E6", "port history prose that quotes code or Python literals", func(file string) bool {
+	{"E6", "port history prose and port records that quote code or Python literals", func(file string) bool {
 		return slices.Contains(tmpPortProse, file)
 	}},
-}
-
-// The units that move the pending sites (plan-r2 of bundle 1566-tmp-arch).
-const (
-	tmpU8 = "U-A5-8 product implicit MkdirTemp(\"\") sites"
-	tmpU9 = "U-A5-9 the last sites"
-)
-
-// tmpPending are the sites still to move, each with the unit that moves it. Each A5 unit deletes its
-// own entries; U-A5-9 deletes the mechanism and adds TestNoPendingTempDecisions.
-var tmpPending = []tmpEntry{
-	{"plugins/crw/skills/crw-dev-visualizer/scripts/diagram-to-html.sh", `OUTDIR="/tmp/codex-diagrams"`, tmpU9},
 }
 
 // Reasons of the variable-parent table.
@@ -164,11 +158,6 @@ var tmpNeverEmptyParents = []tmpEntry{
 	{"internal/tools/install.go", `dir, err := os.MkdirTemp(toolsRoot, stagingPrefix+pin.Name+"-")`, "toolsRoot is tools_root, " + tmpParentResolved},
 	{"internal/tools/tools.go", `return os.MkdirTemp(dir, pattern)`, "the download seam's one caller passes temp_root, " + tmpParentResolved + "; /tmp/crw when TMPDIR is unset (G-D1 = A)"},
 }
-
-// tmpPendingParents are the calls whose parent may be "" or relative at run time, so "" would mean
-// TMPDIR decided inside os. Each moves to tmploc.MkdirTempIn or tmploc.MkdirTemp in the unit that owns
-// its file.
-var tmpPendingParents = []tmpEntry{}
 
 // tmpGrep runs git grep over the tracked files and answers the hits.
 func tmpGrep(t *testing.T, pattern string, paths ...string) []tmpHit {
@@ -224,7 +213,7 @@ func tmpParentHits(t *testing.T) []tmpHit {
 	return judged
 }
 
-// tmpCovered says which exception or pending entry allows a hit ("" for none).
+// tmpCovered says which exception allows a hit ("" for none).
 func tmpCovered(h tmpHit) string {
 	for _, g := range tmpGlobs {
 		if g.covers(h.file) {
@@ -242,17 +231,11 @@ func tmpCovered(h tmpHit) string {
 	if tmpRecordedScratch.matches(h) {
 		return "E5"
 	}
-	for _, e := range tmpPending {
-		if e.matches(h) {
-			return "pending " + e.why
-		}
-	}
 	return ""
 }
 
 // CRW-1579 (D8): every temporary-location decision in a tracked file is tmploc's, an exception with
-// its reason, or a pending site its unit moves. Anything else is a second place deciding a
-// temporary location.
+// its reason. Anything else is a second place deciding a temporary location.
 func TestTempLocationsComeFromTmploc(t *testing.T) {
 	var loose []string
 	for _, h := range tmpDecisionHits(t) {
@@ -261,18 +244,17 @@ func TestTempLocationsComeFromTmploc(t *testing.T) {
 		}
 	}
 	if len(loose) > 0 {
-		t.Errorf("%d line(s) decide a temporary location outside internal/tmploc and are no exception or pending site; "+
+		t.Errorf("%d line(s) decide a temporary location outside internal/tmploc and are no exception; "+
 			"use tmploc (Dir, MkdirTemp, CreateTemp, MkdirTempIn) or t.TempDir() / tmploctest:\n%s", len(loose), strings.Join(loose, "\n"))
 	}
 }
 
 // CRW-1579 (D8, R1-7): a non-test os.MkdirTemp / os.CreateTemp whose parent is a variable needs a
-// reason that the variable is never "" or relative (tmpNeverEmptyParents), or is a pending site; ""
-// would be TMPDIR decided inside os, and a relative parent the working directory.
+// reason that the variable is never "" or relative (tmpNeverEmptyParents); "" would be TMPDIR decided inside os, and a relative parent the working directory.
 func TestTempParentsAreNeverEmpty(t *testing.T) {
 	var loose []string
 	for _, h := range tmpParentHits(t) {
-		if !slices.ContainsFunc(tmpNeverEmptyParents, h.matchedBy) && !slices.ContainsFunc(tmpPendingParents, h.matchedBy) {
+		if !slices.ContainsFunc(tmpNeverEmptyParents, h.matchedBy) {
 			loose = append(loose, h.String())
 		}
 	}
@@ -284,7 +266,7 @@ func TestTempParentsAreNeverEmpty(t *testing.T) {
 
 func (h tmpHit) matchedBy(e tmpEntry) bool { return e.matches(h) }
 
-// CRW-1579 (D8): every exception and pending entry still matches a hit, so an entry whose site moved
+// CRW-1579 (D8): every exception entry still matches a hit, so an entry whose site moved
 // or changed is removed rather than left to allow a later line. An entry listed twice fails too.
 func TestTempDecisionExceptionsAreLive(t *testing.T) {
 	hits := tmpDecisionHits(t)
@@ -307,9 +289,7 @@ func TestTempDecisionExceptionsAreLive(t *testing.T) {
 		{"E1", tmpTmplocLines, hits},
 		{"E4", []tmpEntry{tmpRecordedPayload}, hits},
 		{"E5", []tmpEntry{tmpRecordedScratch}, hits},
-		{"the pending list", tmpPending, hits},
 		{"tmpNeverEmptyParents", tmpNeverEmptyParents, parentHits},
-		{"tmpPendingParents", tmpPendingParents, parentHits},
 	} {
 		seen := map[[2]string]bool{}
 		for _, e := range table.entries {
@@ -323,9 +303,75 @@ func TestTempDecisionExceptionsAreLive(t *testing.T) {
 			}
 		}
 	}
-	for _, e := range tmpNeverEmptyParents {
-		if slices.ContainsFunc(tmpPendingParents, func(p tmpEntry) bool { return p.file == e.file && p.text == e.text }) {
-			t.Errorf("%s: %q is both never empty and pending", e.file, e.text)
+}
+
+// CRW-1579 (D8, R2-2): the shell sites decide the temporary location in one shell form of D1, and
+// no other spelling of TMPDIR is read in a shell script of the plugin or of scripts/. An unset or
+// empty TMPDIR is /tmp; a relative one stops with tmpdir_not_absolute and exit status 2 before any
+// directory is made. The behaviour is pinned by tmp_shell_sites_test.go.
+const tmpShellPattern = `[$][{]?TMPDIR`
+
+// tmpShellAssign is the one line that reads TMPDIR in a shell site; tmpShellForm is the whole form
+// every shell site holds verbatim (the later uses read TMPBASE, which is no hit).
+const tmpShellAssign = `TMPBASE="${TMPDIR:-/tmp}"`
+
+const tmpShellForm = tmpShellAssign + `
+case "$TMPBASE" in
+  /*) ;;
+  *) printf 'tmpdir_not_absolute: TMPDIR=%s; set TMPDIR to an absolute directory\n' "$TMPBASE" >&2; exit 2 ;;
+esac
+`
+
+// tmpShellSites are the shell scripts that decide a temporary location.
+var tmpShellSites = []string{
+	"plugins/crw/skills/crw-dev-scaffolding/scripts/scaffold-audit.sh",
+	"plugins/crw/skills/crw-dev-visualizer/scripts/diagram-to-html.sh",
+}
+
+func TestShellTempSitesUseTheSharedForm(t *testing.T) {
+	perFile := map[string]int{}
+	for _, h := range tmpGrep(t, tmpShellPattern, "plugins/*.sh", "scripts/*.sh") {
+		if !slices.Contains(tmpShellSites, h.file) || h.text != tmpShellAssign {
+			t.Errorf("%s reads TMPDIR outside the shared shell form (%s): %s", h.file, tmpShellAssign, h)
+			continue
+		}
+		perFile[h.file]++
+	}
+	for _, file := range tmpShellSites {
+		if perFile[file] != 1 {
+			t.Errorf("%s holds %d reads of TMPDIR in the shared form, want 1", file, perFile[file])
+		}
+		text, err := os.ReadFile(filepath.Join(repoRoot(), file))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(text), tmpShellForm) {
+			t.Errorf("%s lacks the shared shell form verbatim:\n%s", file, tmpShellForm)
+		}
+	}
+}
+
+// CRW-1579 (D8): the lane ends with no pending site. The pending lists were the mechanism that let a
+// site wait for its unit; they are gone, and this test fails if a table of that kind comes back in
+// this file, so a site is either moved, an exception with its reason, or a failing check.
+func TestNoPendingTempDecisions(t *testing.T) {
+	file, err := parser.ParseFile(token.NewFileSet(), "tmp_decisions_test.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, decl := range file.Decls {
+		gen, ok := decl.(*ast.GenDecl)
+		if !ok {
+			continue
+		}
+		for _, spec := range gen.Specs {
+			if v, ok := spec.(*ast.ValueSpec); ok {
+				for _, name := range v.Names {
+					if strings.HasPrefix(name.Name, "tmpPending") || strings.HasPrefix(name.Name, "tmpU") {
+						t.Errorf("%s is a pending-site table: move the site or give it an exception with its reason", name.Name)
+					}
+				}
+			}
 		}
 	}
 }

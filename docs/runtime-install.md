@@ -267,7 +267,7 @@ and no device name is written into the product, its skills or its packet templat
 | `scratch_root` | `<cache_root>/scratch` | scratch space; follows `cache_root` unless named | - |
 | `worktree_root` | `<data>/crw/worktrees` | worktrees | - |
 | `evidence_root` | `${XDG_STATE_HOME:-~/.local/state}/crw/evidence` | evidence | - |
-| `temp_root` | `${TMPDIR:-/tmp}/crw` | temporary files, test sockets | - |
+| `temp_root` | `${TMPDIR:-/tmp}/crw` | temporary files | - |
 | `data_root` | `<data>/crw/data` | bulk data | - |
 | `manage_state` | `<state>/crw/manage` | the management tool's own state | - |
 | `build_cache` | unset: Go's own (`GOCACHE`) | the Go build cache | `GOCACHE=<path>` |

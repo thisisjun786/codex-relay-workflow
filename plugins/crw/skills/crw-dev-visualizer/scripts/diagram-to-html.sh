@@ -8,16 +8,23 @@
 #
 # Examples:
 #   echo '<svg>...</svg>' | diagram-to-html.sh svg -
-#   diagram-to-html.sh mermaid diagram.mmd /tmp/codex-diagrams/out.html
+#   diagram-to-html.sh mermaid diagram.mmd /path/to/out.html
 #   diagram-to-html.sh chartjs chart.js
 #
-# When output-file is omitted, writes to /tmp/codex-diagrams/<type>-<timestamp>-<pid>-<random>.html
+# When output-file is omitted, writes to <tmp>/codex-diagrams/<type>-<timestamp>-<pid>-<random>.html,
+# where <tmp> is TMPDIR (an absolute directory) and /tmp when TMPDIR is unset or empty. A relative
+# TMPDIR stops the script with tmpdir_not_absolute and exit status 2 before any directory is made.
 
 set -euo pipefail
 
 TYPE="${1:?Usage: diagram-to-html.sh <type> <input-file|-> [output-file]}"
 INPUT="${2:?Usage: diagram-to-html.sh <type> <input-file|-> [output-file]}"
-OUTDIR="/tmp/codex-diagrams"
+TMPBASE="${TMPDIR:-/tmp}"
+case "$TMPBASE" in
+  /*) ;;
+  *) printf 'tmpdir_not_absolute: TMPDIR=%s; set TMPDIR to an absolute directory\n' "$TMPBASE" >&2; exit 2 ;;
+esac
+OUTDIR="$TMPBASE/codex-diagrams"
 mkdir -p "$OUTDIR"
 
 TIMESTAMP=$(date +%s)
