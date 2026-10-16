@@ -219,6 +219,9 @@ func TestPauseAndCancelSignalTheRunProcess(t *testing.T) {
 	})
 	t.Run("cancel", func(t *testing.T) {
 		pw := newProcessWorld(t, twoCalls)
+		// the process of a run that ends cancelled gives up the run's executions itself (CRW-1573), once
+		rec := &settleRecorder{}
+		pw.td.Settle = rec.settle
 		spec := pw.spec("run-cancel", nil)
 		sigs := make(chan os.Signal, 2)
 		pw.handle = func(r engine.FakeRequest) engine.FakeReply {
@@ -233,6 +236,11 @@ func TestPauseAndCancelSignalTheRunProcess(t *testing.T) {
 		}
 		if info := pw.info("run-cancel"); info.State != StateCancelled || info.ErrorKind != engine.ErrKindCancelled {
 			t.Errorf("the cancelled run: %+v", info)
+		}
+		rec.mu.Lock()
+		defer rec.mu.Unlock()
+		if len(rec.runs) != 1 || rec.runs[0] != "run-cancel" {
+			t.Errorf("the cancelled process settled %v, want run-cancel once", rec.runs)
 		}
 	})
 	t.Run("deadline", func(t *testing.T) {
