@@ -349,3 +349,66 @@ func TestRunFinishedDoesNotSendARecordedCompletionAgain(t *testing.T) {
 		t.Errorf("sent %d, rows %d", len(sent), len(w.rows(KindCompletionNotice)))
 	}
 }
+
+// A node sized bundle_split escalates size_split with the ask bundle_split_request (CRW-1437): a bundle split is the parent's to make, so
+// the notice names that request (a bundle split of the node's issue, read from the run's plan) and how the child raises it (`crw flow
+// report-up --kind project_decision_request`), in place of the generic line that the run waits for a decision. Another ask keeps that
+// line; a node the plan does not hold is named by its id, and the notice still goes out.
+func TestBundleSplitNoticeNamesTheParentRequest(t *testing.T) {
+	w := newWorld(t)
+	h := w.hook()
+	ask := func(id, node, detail, ask string) {
+		w.t.Helper()
+		w.journal.Append(engine.Event{RunID: testRun, Kind: engine.KindFlow, Event: engine.EvEscalation, Data: map[string]any{
+			"escalation_id": id, "reason": "size_split", "class": "", "node": node, "detail": detail, "ask": ask,
+			"evidence": map[string]any{"size_reason": detail}}})
+		if err := w.journal.Flush(); err != nil {
+			w.t.Fatal(err)
+		}
+	}
+	ask("esc_b", "A", "two packages, about 1500 lines", "bundle_split_request")
+	if err := h.BatchCommitted(ctx, testRun); err != nil {
+		t.Fatal(err)
+	}
+	sent := w.sender.parentSent()
+	if len(sent) != 1 || sent[0].LogicalID != "esc-esc_b" {
+		t.Fatalf("sent %+v", sent)
+	}
+	text := sent[0].Text
+	for _, want := range []string{
+		"run escalation run=" + testRun + " node=A reason=size_split",
+		"two packages, about 1500 lines",
+		"bundle split of issue CRW-A (node A)",
+		"the parent",
+		"`crw flow report-up --kind project_decision_request --run " + testRun + " --evidence FILE`",
+		"(bundle_split_request)",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the bundle split notice lacks %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "The run waits for your decision") {
+		t.Errorf("the bundle split notice keeps the generic decision line:\n%s", text)
+	}
+	if rows := w.rows(KindEscalationNotice); len(rows) != 1 || rows[0].Str("escalation_id") != "esc_b" {
+		t.Fatalf("notice rows %+v", rows)
+	}
+
+	// another ask keeps the generic line and names no bundle split
+	ask("esc_l", "B", "the land review asks for changes", "land")
+	// a node the plan does not hold: named by its id, the notice still goes out
+	ask("esc_z", "Z", "", "bundle_split_request")
+	if err := h.BatchCommitted(ctx, testRun); err != nil {
+		t.Fatal(err)
+	}
+	sent = w.sender.parentSent()
+	if len(sent) != 3 {
+		t.Fatalf("sent %+v", sent)
+	}
+	if !strings.Contains(sent[1].Text, "The run waits for your decision (land).") || strings.Contains(sent[1].Text, "bundle split") {
+		t.Errorf("the land notice:\n%s", sent[1].Text)
+	}
+	if !strings.Contains(sent[2].Text, "bundle split of the issue of node Z") || !strings.Contains(sent[2].Text, "--kind project_decision_request") || strings.Contains(sent[2].Text, "The run waits for your decision") {
+		t.Errorf("the notice of a node the plan does not hold:\n%s", sent[2].Text)
+	}
+}
