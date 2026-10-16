@@ -234,7 +234,10 @@ func TestMalformedTrackingNeverStopsAnotherReader(t *testing.T) {
 // check stays crw config check's.
 func TestTrackingSetupCommandRepairsMissingConfiguration(t *testing.T) {
 	saved := runTrackingProbe
-	runTrackingProbe = func(string) (TrackingAccess, error) { t.Fatal("the setter must not probe"); return TrackingAccess{}, nil }
+	runTrackingProbe = func(string) (TrackingAccess, error) {
+		t.Fatal("the setter must not probe")
+		return TrackingAccess{}, nil
+	}
 	t.Cleanup(func() { runTrackingProbe = saved })
 	home, env := rootsHome(t)
 	path := configWriteAt(t, home+"/c/config.json", `{"manage":{"repository":"o/code"},"paths":{"build_cache":"`+home+`/b"},"custom":{"keep":"me"}}`)
@@ -289,7 +292,7 @@ func TestTrackingSetupCommandRepairsMissingConfiguration(t *testing.T) {
 		args []string
 		read func() (*File, error)
 	}{
-		"the default file":        {[]string{"tracking", "--repo", "o/n"}, func() (*File, error) { return Load(env, "") }},
+		"the default file":         {[]string{"tracking", "--repo", "o/n"}, func() (*File, error) { return Load(env, "") }},
 		"a path that quotes oddly": {[]string{"tracking", "--repo", "o/n", "--config", weird}, func() (*File, error) { return Load(env, weird) }},
 		"a symbolic link":          {[]string{"tracking", "--repo", "o/n", "--config", link}, func() (*File, error) { return Load(env, real) }},
 	} {
@@ -315,12 +318,12 @@ func TestTrackingSetupCommandRepairsMissingConfiguration(t *testing.T) {
 
 	// a bad request writes nothing
 	for name, args := range map[string][]string{
-		"no repo":       {"tracking", "--config", path},
-		"empty repo":    {"tracking", "--repo", "", "--config", path},
+		"no repo":        {"tracking", "--config", path},
+		"empty repo":     {"tracking", "--repo", "", "--config", path},
 		"not OWNER/NAME": {"tracking", "--repo", "not a repo", "--config", path},
-		"no slash":      {"tracking", "--repo", "work", "--config", path},
-		"extra arg":     {"tracking", "--repo", "o/n", "--config", path, "x"},
-		"unknown flag":  {"tracking", "--wat", "--config", path},
+		"no slash":       {"tracking", "--repo", "work", "--config", path},
+		"extra arg":      {"tracking", "--repo", "o/n", "--config", path, "x"},
+		"unknown flag":   {"tracking", "--wat", "--config", path},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if code, _, _ := configRun(t, envC, args...); code == 0 {
