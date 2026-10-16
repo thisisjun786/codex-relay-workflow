@@ -874,3 +874,217 @@ func TestRebuildPacketCarriesTheLastFindingsAndCI(t *testing.T) {
 		}
 	})
 }
+
+// ---- the sub-tasks of a split node (CRW-1459) ----
+
+// splitLab is a lab of one node A sized for a split whose sub-tasks are ids, in that order, each with its own file a/<id>.txt.
+func splitLab(t *testing.T, ids ...string) *Lab {
+	t.Helper()
+	l := NewLab(t, NodeSpec{ID: "A", Issue: "CRW-A", Title: "issue A", Regions: []string{"a/"}, SizeFit: "split", SizeReason: "regions_gt3"})
+	d := l.designFor()
+	for _, id := range ids {
+		d.Issues[0].SubTasks = append(d.Issues[0].SubTasks, ops.SubTask{ID: id, Summary: "write " + id, EditRegions: []string{"a/" + id + ".txt"}, DoneCondition: "a/" + id + ".txt is written"})
+	}
+	l.Design = &d
+	return l
+}
+
+// writes answers an executor turn of node A with a receipt of outcome after it wrote a/<id>.txt.
+func writes(id, outcome string) func(*Call) fakehostPlan {
+	return func(c *Call) fakehostPlan {
+		c.EditPath("a/"+id+".txt", id+"\n")
+		return Say(ReceiptWith(outcome, map[string]any{"summary": "wrote " + id, "gap": map[bool]any{true: "the " + id + " part is missing"}[outcome == "failed"]}))
+	}
+}
+
+// rowsOfNode are the completed rows of op whose node is node.
+func rowsOfNode(l *Lab, op, node string) []engine.Event {
+	var out []engine.Event
+	for _, r := range l.Rows(op) {
+		if str(r.Data, "node") == node {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// noJudgementBefore asserts that no crw.verify, crw.review, crw.accept or crw.integrate row of node A comes before seq.
+func noJudgementBefore(t *testing.T, l *Lab, seq int, what string) {
+	t.Helper()
+	for _, op := range []string{ops.OpVerify, "crw.review", ops.OpAccept, ops.OpIntegrate} {
+		for _, r := range rowsOfNode(l, op, "A") {
+			if r.Seq < seq {
+				t.Errorf("a %s row (seq %d) before %s (seq %d)", op, r.Seq, what, seq)
+			}
+		}
+	}
+}
+
+// TestSplitNodeRunsSubTasksInOrderOnOneExecutorThread (CRW-1459, S-3): a node sized for a split with sub-tasks runs them in their
+// order on one executor thread: the build does the first, and each next one is a turn of the same thread (subtask:A:executor:s2,
+// :s3). Each sub-task before the last ends in a checkpoint crw.commit of the node; the node is verified and landed once, after the
+// receipt of the last sub-task, and its last commit holds every sub-task's file.
+func TestSplitNodeRunsSubTasksInOrderOnOneExecutorThread(t *testing.T) {
+	l := splitLab(t, "one", "two", "three")
+	var mu sync.Mutex
+	threads := map[string]string{}
+	record := func(id string) func(*Call) fakehostPlan {
+		w := writes(id, "ready_for_review")
+		return func(c *Call) fakehostPlan {
+			mu.Lock()
+			threads[c.Label] = c.ThreadID
+			mu.Unlock()
+			return w(c)
+		}
+	}
+	l.Sequence("^build:A:executor$", record("one"))
+	l.Sequence("^subtask:A:executor:s2$", record("two"))
+	l.Sequence("^subtask:A:executor:s3$", record("three"))
+	if got := mustRun(t, l); got.State != "closed" {
+		t.Fatalf("state %q; calls %v", got.State, l.Labels())
+	}
+	want := []string{"architect", "design-audit:r1", "build:A:executor", "subtask:A:executor:s2", "subtask:A:executor:s3", "reflection:M1"}
+	if labels := l.Labels(); !slices.Equal(labels, want) {
+		t.Fatalf("calls %v, want %v", labels, want)
+	}
+	build, s2, s3 := callNamed(t, l, "build:A:executor"), callNamed(t, l, "subtask:A:executor:s2"), callNamed(t, l, "subtask:A:executor:s3")
+	if s2.Resume != build.ID || s3.Resume != s2.ID {
+		t.Errorf("the sub-task calls resume %q and %q, want %q and %q", s2.Resume, s3.Resume, build.ID, s2.ID)
+	}
+	if th := threads["build:A:executor"]; th == "" || threads["subtask:A:executor:s2"] != th || threads["subtask:A:executor:s3"] != th {
+		t.Errorf("threads %v, want one thread", threads)
+	}
+	commits := rowsOfNode(l, ops.OpCommit, "A")
+	if len(commits) != 3 {
+		t.Fatalf("%d crw.commit rows of A, want 3 (two checkpoints and the node's)", len(commits))
+	}
+	if !(commits[0].Seq < s2.Seq && s2.Seq < commits[1].Seq && commits[1].Seq < s3.Seq && s3.Seq < commits[2].Seq) {
+		t.Errorf("commits at %d, %d, %d; sub-task calls at %d, %d", commits[0].Seq, commits[1].Seq, commits[2].Seq, s2.Seq, s3.Seq)
+	}
+	if str(commits[1].Data, "parent") != str(commits[0].Data, "commit") || str(commits[2].Data, "parent") != str(commits[1].Data, "commit") {
+		t.Errorf("the commits of A do not chain: %v", commits)
+	}
+	noJudgementBefore(t, l, s3.Seq, "the last sub-task's call")
+	for _, op := range []string{ops.OpVerify, ops.OpAccept, ops.OpIntegrate} {
+		if n := len(rowsOfNode(l, op, "A")); n != 1 {
+			t.Errorf("%d %s rows of A, want 1", n, op)
+		}
+	}
+	last := str(commits[2].Data, "commit")
+	for _, id := range []string{"one", "two", "three"} {
+		if out := l.Git("show", last+":a/"+id+".txt"); strings.TrimSpace(out) != id {
+			t.Errorf("the last commit of A has a/%s.txt %q", id, out)
+		}
+	}
+	first := textOfCall(l, build.ID)
+	for _, w := range []string{"SUB-TASKS (", "- 1. one (to do): write one", "- 3. three (to do): write three", "Do sub-task 1 (one) now, and only it"} {
+		if !strings.Contains(first, w) {
+			t.Errorf("the build packet lacks %q:\n%s", w, first)
+		}
+	}
+	second := textOfCall(l, s2.ID)
+	for _, w := range []string{"sub-task 2 of 3 (two): write two", "a/two.txt", "a/two.txt is written"} {
+		if !strings.Contains(second, w) {
+			t.Errorf("the s2 packet lacks %q:\n%s", w, second)
+		}
+	}
+	noTierStep(t, l)
+}
+
+// TestSplitSubTaskSelfFailedGoesOnWithoutAJudgement (CRW-1459, S-3, R1-01): a sub-task before the last that ends self_failed is no
+// judgement of the node: its tree gets the checkpoint commit and the same thread goes on to the next sub-task, whose packet names it
+// as reported failed, with its summary and gap; no verification, review or land of the node comes before that call, and the node lands
+// after the last sub-task. The failed receipt is no tier evidence.
+func TestSplitSubTaskSelfFailedGoesOnWithoutAJudgement(t *testing.T) {
+	l := splitLab(t, "one", "two")
+	l.Sequence("^build:A:executor$", writes("one", "failed"))
+	l.Sequence("^subtask:A:executor:s2$", writes("two", "ready_for_review"))
+	if got := mustRun(t, l); got.State != "closed" {
+		t.Fatalf("state %q; calls %v", got.State, l.Labels())
+	}
+	want := []string{"architect", "design-audit:r1", "build:A:executor", "subtask:A:executor:s2", "reflection:M1"}
+	if labels := l.Labels(); !slices.Equal(labels, want) {
+		t.Fatalf("calls %v, want %v", labels, want)
+	}
+	build, s2 := callNamed(t, l, "build:A:executor"), callNamed(t, l, "subtask:A:executor:s2")
+	if s2.Resume != build.ID {
+		t.Errorf("the s2 call resumes %q, want the build %q", s2.Resume, build.ID)
+	}
+	commits := rowsOfNode(l, ops.OpCommit, "A")
+	if len(commits) != 2 || !(build.Seq < commits[0].Seq && commits[0].Seq < s2.Seq) || str(commits[0].Data, "call") != build.ID {
+		t.Fatalf("commits of A %v, want the checkpoint of the build's call before the s2 call (seq %d)", commits, s2.Seq)
+	}
+	noJudgementBefore(t, l, s2.Seq, "the s2 call")
+	text := textOfCall(l, s2.ID)
+	for _, w := range []string{"reported failed", "wrote one", "the one part is missing", "it is part of this node and is judged with it"} {
+		if !strings.Contains(text, w) {
+			t.Errorf("the s2 packet lacks %q:\n%s", w, text)
+		}
+	}
+	if n := len(rowsOfNode(l, ops.OpIntegrate, "A")); n != 1 {
+		t.Errorf("%d crw.integrate rows of A, want 1", n)
+	}
+	last := str(commits[1].Data, "commit")
+	for _, id := range []string{"one", "two"} {
+		if out := l.Git("show", last+":a/"+id+".txt"); strings.TrimSpace(out) != id {
+			t.Errorf("the last commit of A has a/%s.txt %q", id, out)
+		}
+	}
+	noTierStep(t, l)
+}
+
+// TestSplitNodeKeepsEarlierSubTasksAcrossARebuildAndATierStep (CRW-1459, S-5, R1-02): the checkpoint commits carry the earlier
+// sub-tasks into a fresh thread. The first sub-task writes a/one.txt and is checkpointed; the second ends null_model, its rebuild ends
+// null_model again (SP-TIER-1 c) and the tier steps. The rebuild and the executor-t1 build each start at sub-task 2 (their packets say
+// so) in a worktree at the checkpoint, which holds a/one.txt; the node's last commit holds both files, and the step row's checkpoint
+// head is the first sub-task's commit.
+func TestSplitNodeKeepsEarlierSubTasksAcrossARebuildAndATierStep(t *testing.T) {
+	l := splitLab(t, "one", "two")
+	l.Sequence("^build:A:executor$", writes("one", "ready_for_review"))
+	l.Sequence("^subtask:A:executor:s2$", func(*Call) fakehostPlan { return Garbage() })
+	l.Sequence("^rebuild:A:executor:", func(*Call) fakehostPlan { return Garbage() })
+	var atStart struct{ head, file string }
+	l.Sequence("^build:A:executor-t1$", func(c *Call) fakehostPlan {
+		atStart.head = l.GitIn(c.Cwd, "rev-parse", "HEAD")
+		b, _ := os.ReadFile(filepath.Join(c.Cwd, "a", "one.txt"))
+		atStart.file = string(b)
+		return writes("two", "ready_for_review")(c)
+	})
+	if got := mustRun(t, l); got.State != "closed" {
+		t.Fatalf("state %q; calls %v", got.State, l.Labels())
+	}
+	want := []string{"architect", "design-audit:r1", "build:A:executor", "subtask:A:executor:s2", "rebuild:A:executor:r2", "build:A:executor-t1", "reflection:M1"}
+	if labels := l.Labels(); !slices.Equal(labels, want) {
+		t.Fatalf("calls %v, want %v", labels, want)
+	}
+	commits := rowsOfNode(l, ops.OpCommit, "A")
+	if len(commits) != 2 {
+		t.Fatalf("%d crw.commit rows of A, want the checkpoint and the node's", len(commits))
+	}
+	c1 := str(commits[0].Data, "commit")
+	if atStart.head != c1 || strings.TrimSpace(atStart.file) != "one" {
+		t.Errorf("the executor-t1 build started at %s with a/one.txt %q, want the checkpoint %s holding it", atStart.head, atStart.file, c1)
+	}
+	steps := l.StepRows()
+	if len(steps) != 1 || steps[0].Head != c1 {
+		t.Errorf("step rows %+v, want one with checkpoint head %s", steps, c1)
+	}
+	for _, label := range []string{"rebuild:A:executor:r2", "build:A:executor-t1"} {
+		text := textOfCall(l, callNamed(t, l, label).ID)
+		for _, w := range []string{"- 1. one (done): write one", "- 2. two (to do): write two", "Do sub-task 2 (two) now, and only it"} {
+			if !strings.Contains(text, w) {
+				t.Errorf("the packet of %s lacks %q:\n%s", label, w, text)
+			}
+		}
+	}
+	last := str(commits[1].Data, "commit")
+	if str(commits[1].Data, "parent") != c1 {
+		t.Errorf("the node's commit is on %s, want the checkpoint %s", commits[1].Data["parent"], c1)
+	}
+	for _, id := range []string{"one", "two"} {
+		if out := l.Git("show", last+":a/"+id+".txt"); strings.TrimSpace(out) != id {
+			t.Errorf("the last commit of A has a/%s.txt %q", id, out)
+		}
+	}
+	noJudgementBefore(t, l, callNamed(t, l, "build:A:executor-t1").Seq, "the executor-t1 build")
+}
