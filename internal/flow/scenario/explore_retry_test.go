@@ -31,21 +31,28 @@ func noVerified(answer string) map[string]any {
 	return map[string]any{"answer": answer, "evidence": []string{"README.md"}, "inferred": []string{}, "unknown": []string{}}
 }
 
-// bgScript scripts the background explorers of a node: plan answers each turn of each thread whose first turn asked the background of
-// the node, given the thread's ordinal among those threads (0 the first call, 1 its retry) and the turn; nil is the role's default.
-// threads are the thread ids of the node's explorers, in the order their first turns came.
+// bgScript scripts the explorers of one question: plan answers each turn of each thread whose first turn asked the question, given
+// the thread's ordinal among those threads (0 the first call, 1 its retry) and the turn; nil is the role's default. threads are the
+// thread ids of the question's explorers, in the order their first turns came.
 type bgScript struct {
 	mu      sync.Mutex
 	of      map[string]int
 	threads []string
 }
 
+// scriptBackground scripts the background explorers of a node.
 func scriptBackground(l *Lab, node string, plan func(attempt int, c *Call) *fakehostPlan) *bgScript {
+	return scriptExplorer(l, "^"+BackgroundLabel, "Background of node "+node+" (", plan)
+}
+
+// scriptExplorer scripts the explorers whose label matches the expression and whose first turn holds text (an open question's,
+// research or evidence question's packet names it after QUESTION:).
+func scriptExplorer(l *Lab, label, text string, plan func(attempt int, c *Call) *fakehostPlan) *bgScript {
 	s := &bgScript{of: map[string]int{}}
-	l.On("^"+BackgroundLabel, func(c *Call) *fakehostPlan {
+	l.On(label, func(c *Call) *fakehostPlan {
 		s.mu.Lock()
 		attempt, ok := s.of[c.ThreadID]
-		if !ok && c.N == 1 && strings.Contains(c.Text, "Background of node "+node+" (") {
+		if !ok && c.N == 1 && strings.Contains(c.Text, text) {
 			attempt = len(s.threads)
 			s.of[c.ThreadID] = attempt
 			s.threads = append(s.threads, c.ThreadID)
@@ -512,3 +519,213 @@ const b0ArchitectPacket = `export function architectPacket(ms, background, head)
 }
 
 `
+
+// The open questions, research and evidence questions under the rule of CRW-1571: an explorer whose answer is null_model is asked
+// once more on a fresh thread; a question whose explorer fails twice is named as not answered (design-answers' NOT ANSWERED, the
+// critic's route line) and the call goes on; the call fails as before only when every explorer it spawned failed.
+
+const (
+	lostQuestion  = "where is the retry policy kept?"
+	foundQuestion = "is the flag documented?"
+)
+
+// explorerCalls are the calls labelled explore:<owner>: whose first turn asked the question, in the order they were made.
+func explorerCalls(l *Lab, owner, question string) []CallInfo {
+	var out []CallInfo
+	for _, c := range l.AllCalls() {
+		if strings.HasPrefix(c.Label, "explore:"+owner+":") && strings.Contains(textOfCall(l, c.ID), "QUESTION: "+question) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// firstAndRetry checks that calls are one call and its retry (the first one's label with :retry) and returns their ids.
+func firstAndRetry(t *testing.T, calls []CallInfo) (string, string) {
+	t.Helper()
+	if len(calls) != 2 || calls[1].Label != calls[0].Label+":retry" {
+		t.Fatalf("explorer calls %v, want one and its retry", labelsOf(calls))
+	}
+	return calls[0].ID, calls[1].ID
+}
+
+func answerOf(text string) func(int, *Call) *fakehostPlan {
+	return func(int, *Call) *fakehostPlan {
+		p := Say(map[string]any{"answer": text, "evidence": []string{"README.md"}, "verified": []string{"README.md"}, "inferred": []string{}, "unknown": []string{}})
+		return &p
+	}
+}
+
+func openQuestionsLab(t *testing.T, qs ...ops.OpenQuestion) *Lab {
+	l := NewLab(t, twoNodes()...)
+	d := l.designFor()
+	d.OpenQuestions = qs
+	l.Design = &d
+	return l
+}
+
+var (
+	lostOpen   = ops.OpenQuestion{ID: "lost", Question: lostQuestion, Scope: "code", FilesNeeded: []string{"a/retry.go"}}
+	foundOpen  = ops.OpenQuestion{ID: "found", Question: foundQuestion, Scope: "docs", FilesNeeded: []string{"README.md"}}
+	policyOpen = ops.OpenQuestion{ID: "policy", Question: "does the project ship the flag in 1.0?", Scope: "authority:policy: the release scope", FilesNeeded: []string{}}
+)
+
+// TestOpenQuestionExplorerThatFailsTwiceIsNotAnswered: of two open questions, one's explorer is null_model on both threads and the
+// other's answers. The milestone does not halt: design-answers runs with the answered one under ANSWERS and the other under NOT
+// ANSWERED with both calls, the critic's packet says its explorer was asked twice and did not answer, and the open questions' cap
+// counts two spawns (the retry is no spawn decision).
+func TestOpenQuestionExplorerThatFailsTwiceIsNotAnswered(t *testing.T) {
+	l := openQuestionsLab(t, lostOpen, foundOpen)
+	scriptExplorer(l, "^explore:M1:", "QUESTION: "+lostQuestion, func(_ int, c *Call) *fakehostPlan { return nullModelTurns(c) })
+	scriptExplorer(l, "^explore:M1:", "QUESTION: "+foundQuestion, answerOf("yes, README.md says so"))
+	if got := mustRun(t, l); got.State != "closed" {
+		t.Fatalf("state %q; escalations %v", got.State, escalationReasons(l))
+	}
+	if slices.Contains(escalationReasons(l), "explorer_null_model") {
+		t.Errorf("escalations %v name explorer_null_model", escalationReasons(l))
+	}
+	first, retry := firstAndRetry(t, explorerCalls(l, "M1", lostQuestion))
+	if found := explorerCalls(l, "M1", foundQuestion); len(found) != 1 {
+		t.Errorf("the answered question's explorer calls %v, want one", labelsOf(found))
+	}
+	calls := "(calls " + first + ", " + retry + ": null_model schema_invalid_after_repair)"
+	answers := textOfCall(l, callNamed(t, l, "design-answers:r1").ID)
+	listed, notAnswered, ok := strings.Cut(answers, "NOT ANSWERED (the explorer of each was asked twice and did not answer; the question stays open):\n")
+	if !ok {
+		t.Fatalf("design-answers names no question as not answered:\n%s", answers)
+	}
+	if want := "- lost: " + lostQuestion + " " + calls; !strings.HasPrefix(notAnswered, want) {
+		t.Errorf("NOT ANSWERED does not start with %q:\n%s", want, notAnswered)
+	}
+	if !strings.Contains(listed, "- found: "+foundQuestion+"\n  answer: yes, README.md says so") || strings.Contains(listed, "- lost: ") {
+		t.Errorf("ANSWERS should list the answered question alone:\n%s", listed)
+	}
+	audit := textOfCall(l, callNamed(t, l, "design-audit:r1").ID)
+	for _, want := range []string{
+		"lost: " + lostQuestion + "\n  route: an explorer was asked twice and did not answer " + calls,
+		"found: " + foundQuestion + "\n  route: an explorer answered it (call ",
+	} {
+		if !strings.Contains(audit, want) {
+			t.Errorf("the critic's packet lacks %q:\n%s", want, audit)
+		}
+	}
+	if spawned := spawnRowsOf(l, ops.RuleExpl1, "spawn"); len(spawned) != 2 {
+		t.Errorf("open question spawn decisions %+v, want two", spawned)
+	}
+}
+
+// TestOpenQuestionsAllFailedHaltAsBefore: every explorer the open questions spawned is null_model on both threads: the milestone
+// halts as before CRW-1571 (escalated, source explorer), naming the last retry, with no design-answers and no critic call. A question
+// the round asks of the orchestrator is no exploration: it does not keep the milestone going (D1.4: the call fails when every
+// explorer it spawned is missing), and it is still asked.
+func TestOpenQuestionsAllFailedHaltAsBefore(t *testing.T) {
+	l := openQuestionsLab(t, lostOpen, foundOpen, policyOpen)
+	scriptExplorer(l, "^explore:M1:", "QUESTION: "+lostQuestion, func(_ int, c *Call) *fakehostPlan { return nullModelTurns(c) })
+	scriptExplorer(l, "^explore:M1:", "QUESTION: "+foundQuestion, func(_ int, c *Call) *fakehostPlan { return nullModelTurns(c) })
+	res := l.Run()
+	if res.Status != engine.RunCompleted {
+		t.Fatalf("run %s: %s: %s", res.Status, res.ErrorKind, res.Error)
+	}
+	got := Value[haltResult](t, res)
+	if got.State != "escalated" || got.Source != "explorer" || got.Reason != "schema_invalid_after_repair" {
+		t.Errorf("value %s, want escalated by the explorer", res.Value)
+	}
+	firstAndRetry(t, explorerCalls(l, "M1", lostQuestion))
+	_, retry := firstAndRetry(t, explorerCalls(l, "M1", foundQuestion))
+	if got.Call != retry {
+		t.Errorf("the halt names call %s, want the last retry %s", got.Call, retry)
+	}
+	if reasons := escalationReasons(l); !slices.Contains(reasons, "explorer_null_model") || !slices.Contains(reasons, "design_question") {
+		t.Errorf("escalations %v, want the design question and explorer_null_model", reasons)
+	}
+	for _, c := range l.AllCalls() {
+		if strings.HasPrefix(c.Label, "design-answers:") || strings.HasPrefix(c.Label, "design-audit:") {
+			t.Errorf("a %s call after every open-question explorer failed: %v", c.Label, labelsOf(l.AllCalls()))
+		}
+	}
+}
+
+const researchQuestion = "which package owns the retry policy?"
+
+func researchLab(t *testing.T) *Lab {
+	l := NewLab(t, oneNode()...)
+	l.Sequence("^build:A:executor$", func(c *Call) fakehostPlan {
+		return Say(ReceiptWith("needs_research", map[string]any{"research_question": researchQuestion}))
+	})
+	return l
+}
+
+// TestResearchExplorerRetriesThenHoldsTheNode: a research question whose explorer is null_model is asked again on a fresh thread and
+// the same executor thread goes on with the retry's answer; when the retry is null_model too, the node is held by the explorer as it
+// was before CRW-1571 (the question's explorer was the call's only one), naming the retry.
+func TestResearchExplorerRetriesThenHoldsTheNode(t *testing.T) {
+	t.Run("retry answers", func(t *testing.T) {
+		l := researchLab(t)
+		scriptExplorer(l, "^explore:A:", "QUESTION: "+researchQuestion, func(attempt int, c *Call) *fakehostPlan {
+			if attempt == 0 {
+				return nullModelTurns(c)
+			}
+			return answerOf("the retry policy lives in a/retry.go")(attempt, c)
+		})
+		if got := mustRun(t, l); got.State != "closed" {
+			t.Fatalf("state %q: %+v", got.State, got)
+		}
+		firstAndRetry(t, explorerCalls(l, "A", researchQuestion))
+		build, research := callNamed(t, l, "build:A:executor"), callNamed(t, l, "research:A:executor:r1")
+		if research.Resume != build.ID {
+			t.Errorf("the research turn continues %q, want the executor's call %s", research.Resume, build.ID)
+		}
+		if text := textOfCall(l, research.ID); !strings.Contains(text, "the retry policy lives in a/retry.go") {
+			t.Errorf("the executor was not given the retry's answer:\n%s", text)
+		}
+		if rows := l.Rows("crw.hold"); len(rows) != 0 {
+			t.Errorf("hold rows %+v", rows)
+		}
+	})
+	t.Run("retry fails", func(t *testing.T) {
+		l := researchLab(t)
+		scriptExplorer(l, "^explore:A:", "QUESTION: "+researchQuestion, func(_ int, c *Call) *fakehostPlan { return nullModelTurns(c) })
+		got := mustRunIncomplete(t, l)
+		if state, reason := laneOf(t, got, "A"); state != "held" || reason != "schema_invalid_after_repair" {
+			t.Errorf("lane A: %s %s, want held schema_invalid_after_repair", state, reason)
+		}
+		_, retry := firstAndRetry(t, explorerCalls(l, "A", researchQuestion))
+		if rows := l.Rows("crw.hold"); len(rows) != 1 || str(rows[0].Data, "node") != "A" || str(rows[0].Data, "source") != "explorer" || str(rows[0].Data, "call") != retry {
+			t.Errorf("hold rows %+v, want node A held by the explorer's retry %s", rows, retry)
+		}
+		if slices.Contains(l.Labels(), "research:A:executor:r1") {
+			t.Errorf("the executor went on with no answer: %v", l.Labels())
+		}
+	})
+}
+
+// TestEvidenceExplorerRetries: on the old reviewer path, an evidence question's explorer that is null_model is asked once more on a
+// fresh thread (one :retry label), and the fix packet carries the retry's answer.
+func TestEvidenceExplorerRetries(t *testing.T) {
+	const question = "does the retry loop stop at the deadline?"
+	l := NewLab(t, oneNode()...)
+	reviewerLane(t, l)
+	reviews(l, "A", Verdict(false, EvidenceDefect("e1", question, "retry.go")), Verdict(true))
+	scriptExplorer(l, "^explore:A:", "QUESTION: "+question, func(attempt int, c *Call) *fakehostPlan {
+		if attempt == 0 {
+			return nullModelTurns(c)
+		}
+		return answerOf("the loop stops at the deadline in retry.go:44")(attempt, c)
+	})
+	if got := mustRun(t, l); got.State != "closed" {
+		t.Fatalf("state %q", got.State)
+	}
+	firstAndRetry(t, explorerCalls(l, "A", question))
+	retried := 0
+	for _, label := range l.Labels() {
+		if strings.HasSuffix(label, ":retry") {
+			retried++
+		}
+	}
+	if retried != 1 {
+		t.Errorf("calls %v, want one :retry", l.Labels())
+	}
+	if text := textOfCall(l, callNamed(t, l, "fix:A:executor:r1").ID); !strings.Contains(text, "the loop stops at the deadline in retry.go:44") {
+		t.Errorf("the fix packet does not carry the retry's answer:\n%s", text)
+	}
+}

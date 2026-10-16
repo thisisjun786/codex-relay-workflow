@@ -312,8 +312,15 @@ explorer (`crw.explore('background', ...)`, CRW-1466): the question names the no
 node's declared regions (none declared: not named), and `crw.exploreRoute` spawns it (`spawned_background`) or reuses an answer of the same
 digest the run has, never inline, never to the owner thread and outside the open questions' cap of the milestone; the explorer calls are
 labelled `explore-bg:<milestone>:<digest12>` (an `explore:` reader never takes one for its own), their route rows carry `inputs.kind`
-`background`, a background explorer that did not complete halts the milestone (`crw.milestoneHalt`, source `explorer`), and a re-plan has
-no such phase; then, in the phase `design`, the architect answers `DESIGN` once for the milestone (SP-ARCH-1) over a packet that carries the
+`background`, and a re-plan has no such phase. In every kind of `crw.explore` (background, open questions, research, evidence;
+CRW-1571) an explorer whose answer is `null_model` is asked once more on a fresh thread, with the same packet, schema, node and head,
+labelled with `:retry` in a join of its own after its wave (no second route row, no spawn decision, no cost to the open questions' cap;
+its tokens count into the design loop's); a question whose explorer is `null_model` twice is missing: its answer stays empty with no call
+in the `crw.exploreRecord` row, as before, and the answer `crw.explore` returns names both calls (`missing`, a member the record is never
+given), so the call goes on without it; the call has failed only when every explorer it spawned is missing (its failure is the last
+retry), and any other status that did not complete (held, unknown, superseded, refused, a thrown call) is not asked again and is the
+failure, as before. A background call that failed halts the milestone (`crw.milestoneHalt`, source `explorer`), and a
+missing background exploration is named in the architect's packet under `MISSING EXPLORATIONS`, never among the findings; then, in the phase `design`, the architect answers `DESIGN` once for the milestone (SP-ARCH-1) over a packet that carries the
 background answers as `BACKGROUND FINDINGS`, each by its id, question, answer and the explorer's findings and never by its route (the packet is the
 one it was before CRW-1466 when none is given); the open questions of the DESIGN go to
 explorers (SP-EXPL-1), and the ones whose scope carries an out-of-authority notation, or beyond the explorer cap, to the owner thread
@@ -340,6 +347,10 @@ reused), the answers go back to the architect on its own thread before the criti
 packet renders each answered question by its id, question, answer and findings, never by its route, and the architect answers with the DESIGN again,
 dispositions null; that DESIGN is the one the critic audits and the one a design-fix and the ledger resume, and a question the architect raises in it
 reaches the critic with no answer, which is a P1 finding, and is routed in the next round (a round whose questions got no answer has no such turn);
+an open question whose explorer is missing is no answer: design-answers names it under `NOT ANSWERED` after the answers, the critic's
+answers give it the route line `an explorer was asked twice and did not answer` with both calls, and the round halts the milestone
+(source `explorer`) only when its call failed as above (every explorer it spawned missing, or one that did not complete otherwise), a
+question asked of the owner thread being no exploration;
 the critic (`agentType: 'critic'`, a role of its own, of another model family than the architect;
 the `AUDIT` spawn decision names it) audits the DESIGN (`DESIGN_AUDIT`, recorded by `crw.designAudit`, which judges the independence by the model
 families of the two calls' pairs, never by the role), and `needs_changes` returns the DESIGN to the architect on its own thread: the design-fix packet
@@ -410,7 +421,7 @@ with the relay's reason, and the release goes on as for an undeclared node.
 | --- | --- |
 | `ready` | unit check, commit, verify, land (the unit check below judges the call's uncommitted work before the commit) |
 | `self_failed` (the executor reports `failed` or `budget_exhausted`) | as `ready`: the run runs the unit check of the worktree anyway, then commits and verifies it; the report is no evidence |
-| `research` | `crw.explore` answers the question (SP-EXPL-2: an answer of the run is reused, at most two research continuations on a tier), and the same executor thread goes on with the answer; never a tier step |
+| `research` | `crw.explore` answers the question (SP-EXPL-2: an answer of the run is reused, at most two research continuations on a tier), and the same executor thread goes on with the answer; never a tier step. A `null_model` explorer is asked once more on a fresh thread (CRW-1571); when that one is `null_model` too, or the explorer did not complete otherwise, `crw.hold` holds the node (source `explorer`) |
 | `scope` | `crw.escalate` with `blocked_scope`: the relay closes the node's execution and takes its slot back (R07) |
 | `null_model` | the first one: a fresh thread of the same tier in a new attempt worktree at the node's last commit; the second in a row is tier evidence |
 | `host_held` | `crw.hold`: the node is held and the call goes on in place when `crw flow resume` runs after the cause is gone; never a new thread, never tier evidence |
@@ -473,7 +484,8 @@ An answer that breaks those rules is `null_model` (`verdict_invalid`). The other
 on a fresh thread, and only the second result is the result. `crw.reviewHalt` takes every state that is not a verdict: `held` and
 `unknown` hold the node, `refused` and a second `null_model` escalate, `superseded` stops; none of them is an executor fix or tier
 evidence. A `needs_changes` verdict with a defect of kind `evidence_missing` sends the question to an explorer (SP-EXPL-3, at most
-two a node) before the next round, read at the committed head the reviewer judged (the call carries `head`), and its `FINDINGS` go into the next fix packet and the next reviewer packet; a verdict without such
+two a node) before the next round, read at the committed head the reviewer judged (the call carries `head`; a `null_model` explorer is
+asked once more on a fresh thread, CRW-1571), and its `FINDINGS` go into the next fix packet and the next reviewer packet; a verdict without such
 a defect records the skip.
 
 **Tier evidence (SP-TIER-1).** `crw:lib/evidence` keeps the evidence of one node and tier from the results the lane feeds it: (a)
