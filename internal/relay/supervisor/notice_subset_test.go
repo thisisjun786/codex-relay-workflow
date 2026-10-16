@@ -285,6 +285,16 @@ func TestNoticeSubset_StageByProject(t *testing.T) {
 	notice["anchor"] = ""
 	answer, err := w.channel.StageNotice(w.ctx, notice)
 	steps.record("no anchor", answer, err)
+	// CRW-1546 item 4: a restatement at staging names the wording as a possible cause.
+	reasons := restatedReasons(t, w.s)
+	if len(reasons) == 0 {
+		t.Fatal("staging after the fault changed journalled no restatement")
+	}
+	for _, reason := range reasons {
+		if reason != noticeStagedRestatedReason {
+			t.Errorf("a staging restatement reason does not name the wording as a possible cause: %q, want %q", reason, noticeStagedRestatedReason)
+		}
+	}
 }
 
 // scriptedLinkage answers like the store's linkage walk, and lets a test change the answer of one call.
@@ -409,6 +419,7 @@ func TestNoticeSubset_Refresh(t *testing.T) {
 			w.exec(t, "UPDATE supervisor_messages SET relationship_id='rel-old' WHERE message_id=?", message)
 		}},
 	}
+	restatements := 0
 	for _, c := range cases {
 		w := newNoticeWorld(t)
 		w.seed(t, nsSeed{signature: nsRelationSig, scope: nsProjectScope, state: "reserved", lease: nsNow + 300})
@@ -432,7 +443,17 @@ func TestNoticeSubset_Refresh(t *testing.T) {
 			t.Fatal(err)
 		}
 		restated, err := w.c.refreshNotice(w.ctx, row, live, nsAt, c.attempt)
+		// CRW-1546 item 4: a restatement names the wording as a possible cause.
+		for _, reason := range restatedReasons(t, w.s) {
+			restatements++
+			if !strings.HasPrefix(reason, "what notification ") || !strings.HasSuffix(reason, noticeRestatedReasonTail) {
+				t.Errorf("%s: the restatement reason does not name the wording as a possible cause: %q, want it to end %q", c.name, reason, noticeRestatedReasonTail)
+			}
+		}
 		golden.CheckJSON(t, c.name, map[string]any{"restated": restated, "error": nsError(err), "state": nsSnapshot(t, w.ctx, w.s)}, golden.Substitute(w.root, "<root>"))
+	}
+	if restatements == 0 {
+		t.Fatal("no case journalled a restatement")
 	}
 }
 
