@@ -32,6 +32,11 @@ var (
 	ErrInvalidLabel = errors.New("tracking: invalid label")
 	// ErrNotIssue is the error of reading a pull request as an issue.
 	ErrNotIssue = errors.New("tracking: not an issue")
+	// ErrInvalidIssue is the error of an issue the adapter will not open: a blank title or a
+	// negative milestone number (CRW-1549).
+	ErrInvalidIssue = errors.New("tracking: invalid issue")
+	// ErrInvalidMilestone is the error of a milestone the adapter will not open: a blank title.
+	ErrInvalidMilestone = errors.New("tracking: invalid milestone")
 )
 
 // APIError is an HTTP answer GitHub gave that is not a success. Message is GitHub's own text with

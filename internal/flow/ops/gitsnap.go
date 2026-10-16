@@ -16,6 +16,9 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/publication"
+	"github.com/thisisjun786/codex-relay-workflow/internal/publishpolicy"
 )
 
 // GitFunc runs one git command as `git -C dir args...` with env added to the process environment and returns its standard
@@ -212,6 +215,20 @@ type CommitResult struct {
 func Commit(ctx context.Context, git GitFunc, worktree string, req CommitRequest) (CommitResult, error) {
 	if req.Tree == "" || req.Parent == "" || req.Message == "" {
 		return CommitResult{}, errors.New("ops: a commit needs a tree, a parent and a message")
+	}
+	// the commit message is public text (CRW-1549): it is scrubbed before the tree is written —
+	// before any mutation — and a secret shape stops the commit.
+	remote, _ := git(ctx, worktree, nil, "remote", "get-url", "origin")
+	repo := publication.Repository(remote)
+	p, err := publication.Policy(repo, os.Getenv)
+	if err != nil {
+		return CommitResult{}, err
+	}
+	c := publishpolicy.HostContext()
+	c.Paths = append(c.Paths, worktree)
+	req.Message, err = publication.Prepare(repo, "commit", "message", req.Message, c, p, os.Stderr)
+	if err != nil {
+		return CommitResult{}, err
 	}
 	if kind, err := git(ctx, worktree, nil, "cat-file", "-t", req.Tree); err != nil || kind != "tree" {
 		return CommitResult{}, fmt.Errorf("ops: %s is not a tree of the repository", req.Tree)

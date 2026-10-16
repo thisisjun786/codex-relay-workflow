@@ -533,3 +533,41 @@ func TestAutoCompactLimitReachesThreadStart(t *testing.T) {
 		t.Errorf("%d thread/start requests", n)
 	}
 }
+
+// TestCommitScrubsPublicMessageAndStopsSecrets (CRW-1549): the commit message is public text — a
+// private path or the host's name is replaced before git writes it, and a token shape stops the
+// commit before anything is staged, leaving HEAD and the index untouched.
+func TestCommitScrubsPublicMessageAndStopsSecrets(t *testing.T) {
+	e := newEnv(t)
+	res := e.run(`const r = await agent.call('build', { agentType: 'executor', node: 'n1', label: 'build' }); return r.status`)
+	if got := value[string](t, res); got != "completed" {
+		t.Fatalf("%s", got)
+	}
+	wt := filepath.Join(e.state, "flow", e.runID, "wt", "n1", "a1-l0")
+	ctx := context.Background()
+	// a message holding a private path is masked in the commit git writes
+	writeFile(t, filepath.Join(wt, "feature.txt"), "work\n")
+	priv := e.repo
+	if _, err := e.alloc.Commit(ctx, wt, "CRW: work in "+priv, false); err != nil {
+		t.Fatal(err)
+	}
+	msg := git(t, wt, "log", "-1", "--format=%B")
+	if strings.Contains(msg, priv) || !strings.Contains(msg, "[path]") {
+		t.Errorf("the committed message holds the private path: %q", msg)
+	}
+	// a token stops the commit before the index: nothing staged, nothing committed
+	writeFile(t, filepath.Join(wt, "secret.txt"), "x\n")
+	token := "ghp_" + strings.Repeat("A", 24)
+	before := git(t, wt, "rev-parse", "HEAD")
+	if _, err := e.alloc.Commit(ctx, wt, "key "+token, false); err == nil {
+		t.Fatal("a commit with a token shape succeeded")
+	} else if strings.Contains(err.Error(), token) {
+		t.Errorf("the error echoes the token: %v", err)
+	}
+	if git(t, wt, "rev-parse", "HEAD") != before {
+		t.Error("HEAD moved on a blocked commit")
+	}
+	if staged := git(t, wt, "diff", "--cached", "--name-only"); staged != "" {
+		t.Errorf("a blocked commit staged %q", staged)
+	}
+}

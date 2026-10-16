@@ -3,11 +3,14 @@ package command
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -313,6 +316,7 @@ func TestGhForgeCallsOnlyTheCommentEndpoints(t *testing.T) {
 		"printf '%s\\n' \"$*\" >> \"$d/argv\"\n" +
 		"pwd >> \"$d/cwd\"\n" +
 		"case \"$*\" in\n" +
+		"\"repo view --json nameWithOwner --jq .nameWithOwner\") printf 'o/r\\n';;\n" +
 		"*\"--method GET\"*) printf '[{\"id\":1,\"body\":\"hello\",\"html_url\":\"u1\"},{\"id\":2,\"body\":\"<!-- crw-independent-review v1 {} -->\\\\nold\",\"html_url\":\"u2\"}]\\n[{\"id\":3,\"body\":\"later\",\"html_url\":\"u3\"}]\\n';;\n" +
 		"*) cat > \"$d/stdin\"; printf '{\"id\":9,\"body\":\"b\",\"html_url\":\"https://forge.invalid/c9\"}\\n';;\n" +
 		"esac\n"
@@ -332,9 +336,10 @@ func TestGhForgeCallsOnlyTheCommentEndpoints(t *testing.T) {
 	if c, err := g.Update(ctx, 2, "body two"); err != nil || c.URL != "https://forge.invalid/c9" || read("stdin") != "body two" {
 		t.Fatalf("update: %v %v %q", c, err, read("stdin"))
 	}
-	want := "api --method GET --paginate repos/{owner}/{repo}/issues/7/comments?per_page=100\n" +
-		"api --method POST repos/{owner}/{repo}/issues/7/comments -F body=@-\n" +
-		"api --method PATCH repos/{owner}/{repo}/issues/comments/2 -F body=@-\n"
+	lookup := "repo view --json nameWithOwner --jq .nameWithOwner\n"
+	want := lookup + "api --method GET --paginate repos/o/r/issues/7/comments?per_page=100\n" +
+		lookup + "api --method POST repos/o/r/issues/7/comments -F body=@-\n" +
+		lookup + "api --method PATCH repos/o/r/issues/comments/2 -F body=@-\n"
 	if got := read("argv"); got != want {
 		t.Fatalf("arguments:\n%s\nwant\n%s", got, want)
 	}
@@ -350,10 +355,13 @@ func TestGhForgeCallsOnlyTheCommentEndpoints(t *testing.T) {
 	f.forge = nil
 	code, sum, errOut := f.post(f.repo.change(f.base, 2), "--gh", gh)
 	argv := strings.Split(strings.TrimSpace(read("argv")), "\n")
-	if code != 0 || sum.Comment == nil || sum.Comment.Action != "updated" || len(argv) != 2 || !strings.HasSuffix(argv[1], "issues/comments/2 -F body=@-") || !strings.HasPrefix(read("stdin"), "<!-- crw-independent-review v1 {") {
+	if code != 0 || sum.Comment == nil || sum.Comment.Action != "updated" || len(argv) != 3 || argv[0] != "repo view --json nameWithOwner --jq .nameWithOwner" || !strings.HasSuffix(argv[2], "issues/comments/2 -F body=@-") || !strings.HasPrefix(read("stdin"), "<!-- crw-independent-review v1 {") {
 		t.Fatalf("through the command: %d %+v %s %q", code, sum, errOut, argv)
 	}
 	for _, line := range argv {
+		if !strings.HasPrefix(line, "api ") {
+			continue
+		}
 		if !strings.Contains(line, "/issues/") || strings.Contains(line, "/pulls/") || strings.Contains(line, "/reviews") {
 			t.Errorf("a call outside the issue comments: %s", line)
 		}
@@ -369,5 +377,142 @@ func TestInterruptWhilePostingExits130(t *testing.T) {
 	var out, errOut bytes.Buffer
 	if code := run(ctx, f.args(f.repo.change(f.base, 2), "--post-summary", "--pr", "7"), &out, &errOut, e); code != 130 || !strings.Contains(errOut.String(), "interrupted") || len(sf.comments) != 0 {
 		t.Fatalf("interrupted while posting: %d %q", code, errOut.String())
+	}
+}
+
+// TestPostSummaryScrubsPublicText (CRW-1549): the comment body a private detail got into is
+// scrubbed before the forge sees it — a private path in a finding becomes [path], the raw text is
+// never posted, and a repeat post of the sanitized body stays unchanged.
+func TestPostSummaryScrubsPublicText(t *testing.T) {
+	f := newFixture(t)
+	sf := &scriptedForge{}
+	f.forge = sf
+	head := f.repo.change(f.base, 2)
+	_, sum, errOut := f.run(head)
+	if sum.Artifact == "" {
+		t.Fatal(errOut)
+	}
+	data, err := os.ReadFile(sum.Artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := review.ParseArtifact(data, head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.Findings = []review.Finding{{File: "a.go", Line: 3, Title: "see /home/tester/notes.md for the log", Explanation: "example", Severity: "P2", Grade: review.Grade("P2"), Perspective: "test", Reviewers: []int{0}, Support: 1, Verdict: review.Verdict("unverified")}}
+	data, err = json.Marshal(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(data)
+	sha := hex.EncodeToString(digest[:])
+	if err := os.WriteFile(sum.Artifact, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sum.Artifact+".sha256", []byte(sha+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	recs := f.ledger()
+	var ledger strings.Builder
+	for _, r := range recs {
+		if r.SHA256 == sum.SHA256 {
+			r.SHA256 = sha
+		}
+		b, _ := json.Marshal(r)
+		ledger.Write(b)
+		ledger.WriteByte('\n')
+	}
+	if err := os.WriteFile(filepath.Join(f.state, "ledger.jsonl"), []byte(ledger.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, sum, errOut := f.post(head)
+	if code != 0 || sum.Comment == nil || sum.Comment.Action != "created" || len(sf.comments) != 1 {
+		t.Fatalf("post: %d %+v %s", code, sum, errOut)
+	}
+	body := sf.comments[0].Body
+	if strings.Contains(body, "/home/tester") {
+		t.Errorf("the posted comment holds the private path:\n%s", body)
+	}
+	if !strings.Contains(body, "[path]") {
+		t.Errorf("the posted comment lacks the [path] marker:\n%s", body)
+	}
+	// a repeat post of the sanitized body is unchanged: the stored first line is what a later post compares against
+	code, sum, _ = f.post(head)
+	if code != 0 || sum.Comment == nil || sum.Comment.Action != "unchanged" || sf.creates+sf.updates != 1 {
+		t.Errorf("second post: %d %+v (creates %d updates %d)", code, sum, sf.creates, sf.updates)
+	}
+}
+
+func TestGhForgeUsesActualPublicationRepository(t *testing.T) {
+	f := newFixture(t)
+	git := exec.Command("git", "-C", f.repo.dir, "remote", "add", "origin", "https://github.com/private/work.git")
+	if out, err := git.CombinedOutput(); err != nil {
+		t.Fatalf("add private origin: %v\n%s", err, out)
+	}
+	dir := t.TempDir()
+	config := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(config, []byte(`{"publication":{"repositories":{"private/work":{"disabled":true},"public/work":{"hostnames":["build-box"]}}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CRW_CONFIG", config)
+	t.Setenv("GH_REPO", "")
+	gh := filepath.Join(dir, "gh")
+	script := `#!/bin/sh
+d="$(dirname "$0")"
+case "$*" in
+  "repo view --json nameWithOwner --jq .nameWithOwner")
+    if test -f "$d/fail-lookup"; then exit 1; fi
+    printf 'public/work\n'
+    ;;
+  api*)
+    printf '%s\n' "$*" >> "$d/api"
+    cat > "$d/stdin"
+    printf '{"id":7,"body":"safe","html_url":"https://github.com/public/work/issues/1#issuecomment-7"}\n'
+    ;;
+  *) exit 2;;
+esac
+`
+	if err := testsupport.WriteProgram(gh, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	g := ghForge{binary: gh, dir: f.repo.dir}
+	body := "from /home/tester/secret-path on build-box"
+	for _, update := range []bool{false, true} {
+		var err error
+		if update {
+			_, err = g.Update(context.Background(), 7, body)
+		} else {
+			_, err = g.Create(context.Background(), 1, body)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		sent, err := os.ReadFile(filepath.Join(dir, "stdin"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(sent) != "from [path] on [hostname]" {
+			t.Fatalf("used private origin's policy for public target: %q", sent)
+		}
+	}
+	calls, err := os.ReadFile(filepath.Join(dir, "api"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "api --method POST repos/public/work/issues/1/comments -F body=@-\n" +
+		"api --method PATCH repos/public/work/issues/comments/7 -F body=@-\n"
+	if string(calls) != want {
+		t.Fatalf("destination was not pinned to the policy's repository:\n%s", calls)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "fail-lookup"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.Create(context.Background(), 1, body); err == nil {
+		t.Fatal("failed repository lookup fell back to the private origin")
+	}
+	after, err := os.ReadFile(filepath.Join(dir, "api"))
+	if err != nil || !bytes.Equal(after, calls) {
+		t.Fatalf("a failed lookup still called the API: %v\n%s", err, after)
 	}
 }

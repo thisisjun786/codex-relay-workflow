@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/integrator"
-	"github.com/thisisjun786/codex-relay-workflow/internal/tracking"
+	"github.com/thisisjun786/codex-relay-workflow/internal/publication"
 )
 
 // crw manage integrate: the plain-head integration queue (internal/integrator). One pass takes
@@ -120,7 +120,7 @@ var integrateRunner = integrator.NewRunner
 // integratePullRequests makes the tracking adapter the queue reads its pull requests through (the configured pull_request_repo);
 // a test replaces it with one over a fake GitHub.
 var integratePullRequests = func(repo string) (integrator.PullRequestSource, error) {
-	return tracking.NewGitHub(repo, tracking.DefaultTokenSource())
+	return publication.NewGitHub(repo)
 }
 
 // integrateRun is crw manage integrate. The status of a pass is the integration run's own: 0

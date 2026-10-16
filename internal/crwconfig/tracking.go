@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/publishpolicy"
 	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 )
 
@@ -418,11 +419,11 @@ func runGHHost(args ...string) ([]byte, error) {
 	return stdout.Bytes(), nil
 }
 
-var tokenSpelling = regexp.MustCompile(`gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}`)
-
-// scrub is text with anything that spells a GitHub token removed and cut to one reasonable length.
+// scrub is text with anything that spells a secret replaced by the shared publication scrub
+// (CRW-1549: tokens and the local details of this host too) and cut to one reasonable length.
 func scrub(text string) string {
-	text = strings.Join(strings.Fields(tokenSpelling.ReplaceAllString(text, "[token]")), " ")
+	r := publishpolicy.Scrub(text, publishpolicy.HostContext(), publishpolicy.Policy{})
+	text = strings.Join(strings.Fields(r.Text), " ")
 	if len(text) > 300 {
 		text = text[:300] + "..."
 	}

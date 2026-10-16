@@ -16,23 +16,23 @@
   "intentionally-changed": [
     {
       "id": "cli-help__top-level__dash_h",
-      "reason": "the operator CLI is crw: its top-level help is the usage line of the modes it lists, not the long cxc command list",
+      "reason": "the operator CLI is crw: its top-level help is the usage line of the modes it lists, not the long cxc command list; CRW-1549 adds the public-text publish command to the mode table",
       "set": {
-        "steps/0/stdout": "usage: crw [-h] [--version] {relay,bridge,hook,skill,doctor,install,review,manage,gui,config,tools,recall,pabcd,role,provider,map,flow,help,version} ...\n"
+        "steps/0/stdout": "usage: crw [-h] [--version] {relay,bridge,hook,skill,doctor,install,review,manage,gui,config,publish,tools,recall,pabcd,role,provider,map,flow,help,version} ...\n"
       }
     },
     {
       "id": "cli-help__top-level__dashdash_help",
-      "reason": "the operator CLI is crw: its top-level help is the usage line of the modes it lists, not the long cxc command list",
+      "reason": "the operator CLI is crw: its top-level help is the usage line of the modes it lists, not the long cxc command list; CRW-1549 adds the public-text publish command to the mode table",
       "set": {
-        "steps/0/stdout": "usage: crw [-h] [--version] {relay,bridge,hook,skill,doctor,install,review,manage,gui,config,tools,recall,pabcd,role,provider,map,flow,help,version} ...\n"
+        "steps/0/stdout": "usage: crw [-h] [--version] {relay,bridge,hook,skill,doctor,install,review,manage,gui,config,publish,tools,recall,pabcd,role,provider,map,flow,help,version} ...\n"
       }
     },
     {
       "id": "cli-help__top-level__word_help",
-      "reason": "the operator CLI is crw: its top-level help is the usage line of the modes it lists, not the long cxc command list",
+      "reason": "the operator CLI is crw: its top-level help is the usage line of the modes it lists, not the long cxc command list; CRW-1549 adds the public-text publish command to the mode table",
       "set": {
-        "steps/0/stdout": "usage: crw [-h] [--version] {relay,bridge,hook,skill,doctor,install,review,manage,gui,config,tools,recall,pabcd,role,provider,map,flow,help,version} ...\n"
+        "steps/0/stdout": "usage: crw [-h] [--version] {relay,bridge,hook,skill,doctor,install,review,manage,gui,config,publish,tools,recall,pabcd,role,provider,map,flow,help,version} ...\n"
       }
     },
     {
@@ -51,42 +51,42 @@
     },
     {
       "id": "cli-help__top-level__dash_v",
-      "reason": "-v is a dropped alias of version (cli name table); crw answers an unlisted word with its usage and exit status 2 (decision 8: no aliases)",
+      "reason": "-v is a dropped alias of version (cli name table); crw answers an unlisted word with its usage and exit status 2 (decision 8: no aliases); CRW-1549 adds the public-text publish command to the mode table",
       "set": {
         "exit": "2",
         "steps/0/exit": "2",
         "steps/0/form": "empty",
         "steps/0/stdout": "",
-        "steps/0/stderr": "usage: crw [-h] [--version] {relay,bridge,hook,skill,doctor,install,review,manage,gui,config,tools,recall,pabcd,role,provider,map,flow,help,version} ...\ncrw: error: argument command: invalid choice: \"-v\" (choose from 'relay', 'bridge', 'hook', 'skill', 'doctor', 'install', 'review', 'manage', 'gui', 'config', 'tools', 'recall', 'pabcd', 'role', 'provider', 'map', 'flow', 'help', 'version')\n"
+        "steps/0/stderr": "usage: crw [-h] [--version] {relay,bridge,hook,skill,doctor,install,review,manage,gui,config,publish,tools,recall,pabcd,role,provider,map,flow,help,version} ...\ncrw: error: argument command: invalid choice: \"-v\" (choose from 'relay', 'bridge', 'hook', 'skill', 'doctor', 'install', 'review', 'manage', 'gui', 'config', 'publish', 'tools', 'recall', 'pabcd', 'role', 'provider', 'map', 'flow', 'help', 'version')\n"
       }
     },
     {
       "id": "cli-help__top-level__no_arguments",
-      "reason": "crw without a command is a usage error, not the help page (exit 2, usage and the missing-command error on stderr)",
+      "reason": "crw without a command is a usage error, not the help page (exit 2, usage and the missing-command error on stderr); CRW-1549 adds the public-text publish command to the mode table",
       "set": {
         "exit": "2",
         "steps/0/exit": "2",
         "steps/0/form": "empty",
         "steps/0/stdout": "",
-        "steps/0/stderr": "usage: crw [-h] [--version] {relay,bridge,hook,skill,doctor,install,review,manage,gui,config,tools,recall,pabcd,role,provider,map,flow,help,version} ...\ncrw: error: the following arguments are required: command\n"
+        "steps/0/stderr": "usage: crw [-h] [--version] {relay,bridge,hook,skill,doctor,install,review,manage,gui,config,publish,tools,recall,pabcd,role,provider,map,flow,help,version} ...\ncrw: error: the following arguments are required: command\n"
       }
     },
     {
       "id": "cli-help__top-level__unknown_verb",
-      "reason": "the oracle reports an unknown command with exit 1; crw answers an unlisted word with its usage and exit status 2 (decision 8: no aliases)",
+      "reason": "the oracle reports an unknown command with exit 1; crw answers an unlisted word with its usage and exit status 2 (decision 8: no aliases); CRW-1549 adds the public-text publish command to the mode table",
       "set": {
         "exit": "2",
         "steps/0/exit": "2",
         "steps/0/form": "empty",
         "steps/0/stdout": "",
-        "steps/0/stderr": "usage: crw [-h] [--version] {relay,bridge,hook,skill,doctor,install,review,manage,gui,config,tools,recall,pabcd,role,provider,map,flow,help,version} ...\ncrw: error: argument command: invalid choice: \"frobnicate\" (choose from 'relay', 'bridge', 'hook', 'skill', 'doctor', 'install', 'review', 'manage', 'gui', 'config', 'tools', 'recall', 'pabcd', 'role', 'provider', 'map', 'flow', 'help', 'version')\n"
+        "steps/0/stderr": "usage: crw [-h] [--version] {relay,bridge,hook,skill,doctor,install,review,manage,gui,config,publish,tools,recall,pabcd,role,provider,map,flow,help,version} ...\ncrw: error: argument command: invalid choice: \"frobnicate\" (choose from 'relay', 'bridge', 'hook', 'skill', 'doctor', 'install', 'review', 'manage', 'gui', 'config', 'publish', 'tools', 'recall', 'pabcd', 'role', 'provider', 'map', 'flow', 'help', 'version')\n"
       }
     },
     {
       "id": "cli-help__payload-dispatcher__dashdash_help",
-      "reason": "crw has one dispatcher, so the payload dispatcher's help is the same usage line",
+      "reason": "crw has one dispatcher, so the payload dispatcher's help is the same usage line; CRW-1549 adds the public-text publish command to the mode table",
       "set": {
-        "steps/0/stdout": "usage: crw [-h] [--version] {relay,bridge,hook,skill,doctor,install,review,manage,gui,config,tools,recall,pabcd,role,provider,map,flow,help,version} ...\n"
+        "steps/0/stdout": "usage: crw [-h] [--version] {relay,bridge,hook,skill,doctor,install,review,manage,gui,config,publish,tools,recall,pabcd,role,provider,map,flow,help,version} ...\n"
       }
     },
     {
@@ -98,13 +98,13 @@
     },
     {
       "id": "cli-help__payload-dispatcher__unknown_verb",
-      "reason": "the payload dispatcher's own unknown-command text does not exist in crw; crw answers an unlisted word with its usage and exit status 2 (decision 8: no aliases)",
+      "reason": "the payload dispatcher's own unknown-command text does not exist in crw; crw answers an unlisted word with its usage and exit status 2 (decision 8: no aliases); CRW-1549 adds the public-text publish command to the mode table",
       "set": {
         "exit": "2",
         "steps/0/exit": "2",
         "steps/0/form": "empty",
         "steps/0/stdout": "",
-        "steps/0/stderr": "usage: crw [-h] [--version] {relay,bridge,hook,skill,doctor,install,review,manage,gui,config,tools,recall,pabcd,role,provider,map,flow,help,version} ...\ncrw: error: argument command: invalid choice: \"frobnicate\" (choose from 'relay', 'bridge', 'hook', 'skill', 'doctor', 'install', 'review', 'manage', 'gui', 'config', 'tools', 'recall', 'pabcd', 'role', 'provider', 'map', 'flow', 'help', 'version')\n"
+        "steps/0/stderr": "usage: crw [-h] [--version] {relay,bridge,hook,skill,doctor,install,review,manage,gui,config,publish,tools,recall,pabcd,role,provider,map,flow,help,version} ...\ncrw: error: argument command: invalid choice: \"frobnicate\" (choose from 'relay', 'bridge', 'hook', 'skill', 'doctor', 'install', 'review', 'manage', 'gui', 'config', 'publish', 'tools', 'recall', 'pabcd', 'role', 'provider', 'map', 'flow', 'help', 'version')\n"
       }
     },
     {

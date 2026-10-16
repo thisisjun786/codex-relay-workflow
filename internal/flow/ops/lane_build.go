@@ -766,9 +766,13 @@ func (o *commitOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResu
 	}
 	out := CommitOutcome{Tree: tree, Changed: []string{}, OutOfScope: []string{}}
 	strayHead := ""
-	// An op that ran and did not write its row runs again under the same request id: the commit it made is the one this call
-	// makes (its message names the request), and nothing is committed twice.
-	if msg, err := g(ctx, wt, nil, "log", "-1", "--format=%B"); err == nil && strings.Contains(msg, req.RequestID) {
+	// An op that ran and did not write its row runs again under the same request id: the commit it
+	// made is the one this call makes. The message names the request by a stable hash marker (the
+	// raw id is masked before the message is written); a message written before the scrub carries
+	// the raw request id on its own line and still matches.
+	requestHash := sha256.Sum256([]byte(req.RequestID))
+	marker := fmt.Sprintf("CRW-Request: %x", requestHash[:])
+	if msg, err := g(ctx, wt, nil, "log", "-1", "--format=%B"); err == nil && commitRequestMatches(msg, req.RequestID, marker) {
 		out.Commit = head
 		if parent, err := g(ctx, wt, nil, "rev-parse", "--verify", head+"^"); err == nil {
 			out.Parent = parent
@@ -780,7 +784,8 @@ func (o *commitOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResu
 		if moved, ok := term.Data["executor_head_moved"].(map[string]any); ok && str(moved, "start") != "" && str(moved, "start") != head {
 			parent, expect = str(moved, "start"), head
 		}
-		made, err := Commit(ctx, g, wt, CommitRequest{Tree: tree, Parent: parent, Expect: expect, Message: fmt.Sprintf("crw %s %s\n\n%s", node, short(ex.CallID), req.RequestID)})
+		made, err := Commit(ctx, g, wt, CommitRequest{Tree: tree, Parent: parent, Expect: expect,
+			Message: fmt.Sprintf("crw %s %s\n\n%s\n%s", node, ex.CallID, req.RequestID, marker)})
 		if err != nil {
 			return engine.OpResult{}, err
 		}
@@ -1009,4 +1014,16 @@ func expectedCriteria(r rows, node string) []string {
 		return nil
 	}
 	return CriterionIDs(len(n.Criteria))
+}
+
+// commitRequestMatches is whether a commit message names this request: the stable marker line a
+// new message carries, or the raw request id line a message written before the scrub carried.
+func commitRequestMatches(message, requestID, marker string) bool {
+	for _, line := range strings.Split(message, "\n") {
+		line = strings.TrimSuffix(line, "\r")
+		if line == marker || line == requestID {
+			return true
+		}
+	}
+	return false
 }
