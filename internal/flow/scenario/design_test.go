@@ -76,7 +76,7 @@ func TestDesignAuditNeedsChangesReturnsToArchitect(t *testing.T) {
 	if got.State != "closed" {
 		t.Fatalf("state %q", got.State)
 	}
-	want := []string{"architect", "design-audit:r1", "design-fix:r1", "design-audit:r2", "build:A:executor", "review:A:r1", "reviewer-final:M1", "reflection:M1"}
+	want := []string{"architect", "design-audit:r1", "design-fix:r1", "design-audit:r2", "build:A:executor", "reflection:M1"}
 	if labels := l.Labels(); !slices.Equal(labels, want) {
 		t.Fatalf("calls %v, want %v", labels, want)
 	}
@@ -393,11 +393,13 @@ func TestOpenQuestionRoutesThroughDesignAudit(t *testing.T) {
 		t.Errorf("an explorer was asked another question:\n%s", c.Text)
 		return nil
 	})
-	l.On("^reviewer-final:M1$", func(*Call) *fakehostPlan { p := Say(VerdictFinal(false)); return &p })
+	// the close re-plans through the architect's reflection: MISALIGNED alone makes the close due (reflection_misaligned)
+	l.On("^reflection:M1$", func(*Call) *fakehostPlan { p := Say(Reflection(false)); return &p })
 	got := runReplan(t, l)
 	if got.State != "replanned" {
 		t.Fatalf("%+v; calls %v", got, l.Labels())
 	}
+	closeReplanReasons(t, l)
 	// four explorers: before the first audit the small question and the one with an unknown notation, at the design head, and the
 	// same two again in the re-plan, at the head it pins (an answer about the first DESIGN's checkout is no answer about it); none for the authority
 	// question, which goes to the orchestrator again
@@ -634,10 +636,12 @@ func TestReplanAsksTheSameAuthorityQuestionOnce(t *testing.T) {
 	d := l.designFor()
 	d.OpenQuestions = []ops.OpenQuestion{policyQuestion}
 	l.Design = &d
-	l.On("^reviewer-final:M1$", func(*Call) *fakehostPlan { p := Say(VerdictFinal(false)); return &p })
+	// the close re-plans through the architect's reflection: MISALIGNED alone makes the close due (reflection_misaligned)
+	l.On("^reflection:M1$", func(*Call) *fakehostPlan { p := Say(Reflection(false)); return &p })
 	if got := runReplan(t, l); got.State != "replanned" {
 		t.Fatalf("%+v; calls %v", got, l.Labels())
 	}
+	closeReplanReasons(t, l)
 	asks := designQuestions(l)
 	if len(asks) != 1 {
 		t.Fatalf("%d design_question escalations, want one for the run", len(asks))
@@ -792,11 +796,16 @@ func TestAuthorityNotationsMatchTheRouter(t *testing.T) {
 	}
 }
 
-// A verdict with a defect of kind evidence_missing sends its evidence_question to an explorer before the node's next round; the
-// answer goes into the fix packet and into the next reviewer packet, and no model interprets the finding again.
-func TestEvidenceMissingSpawnsExplorerThenReviewerPacket(t *testing.T) {
+// A unit check has no evidence question (CRW-1465): its findings go back to the executor's thread as they are, and no explorer is
+// asked about them (no SP-EXPL-3 decision). A question the executor cannot answer from the finding is its own: its fix turn answers
+// needs_research, an explorer answers it (SP-EXPL-2), and the answer goes on the same thread; the next check is of that turn's work.
+func TestUnitCheckFindingIsFixedOnTheThreadAndItsResearchGoesToAnExplorer(t *testing.T) {
 	l := NewLab(t, oneNode()...)
-	reviews(l, "A", Verdict(false, EvidenceDefect("e1", "does the retry loop stop at the deadline?", "retry.go", "deadline.go")), Verdict(true))
+	l.UnitChecks("A", NeedsChanges(Finding("P2", "the retry loop may not stop at the deadline")))
+	l.On("^fix:A:executor:r1$", func(*Call) *fakehostPlan {
+		p := Say(ReceiptWith("needs_research", map[string]any{"research_question": "does the retry loop stop at the deadline?"}))
+		return &p
+	})
 	l.On("^explore:A:", func(*Call) *fakehostPlan {
 		p := Say(map[string]any{"answer": "the loop stops at the deadline in retry.go:44", "evidence": []string{"retry.go:44"}, "verified": []string{"retry.go"}, "inferred": []string{}, "unknown": []string{}})
 		return &p
@@ -806,28 +815,27 @@ func TestEvidenceMissingSpawnsExplorerThenReviewerPacket(t *testing.T) {
 		t.Fatalf("state %q", got.State)
 	}
 	labels := l.Labels()
-	if len(labels) < 7 || !strings.HasPrefix(labels[4], "explore:A:") || labels[5] != "fix:A:executor:r1" || !strings.HasPrefix(labels[6], "review:A:") {
-		t.Fatalf("calls %v: want the explorer between the review and the fix, then the next review", labels)
+	if len(labels) < 6 || labels[3] != "fix:A:executor:r1" || !strings.HasPrefix(labels[4], "explore:A:") || labels[5] != "research:A:executor:r2" {
+		t.Fatalf("calls %v: want the fix, the explorer of its question, then the research turn on the same thread", labels)
 	}
-	answer := "the loop stops at the deadline in retry.go:44"
-	fix, next := callNamed(t, l, "fix:A:executor:r1"), callNamed(t, l, labels[6])
-	if text := textOfCall(l, fix.ID); !strings.Contains(text, answer) {
-		t.Errorf("the fix packet does not carry the explorer's answer:\n%s", text)
+	fix, research := callNamed(t, l, "fix:A:executor:r1"), callNamed(t, l, "research:A:executor:r2")
+	if text := textOfCall(l, fix.ID); !strings.Contains(text, "the retry loop may not stop at the deadline") || strings.Contains(text, "FINDINGS OF THE EXPLORER") {
+		t.Errorf("the fix packet does not carry the finding as it is:\n%s", text)
 	}
-	if text := textOfCall(l, next.ID); !strings.Contains(text, answer) {
-		t.Errorf("the next reviewer packet does not carry the explorer's answer:\n%s", text)
+	if research.Resume != fix.ID {
+		t.Errorf("the research turn continues %q, want the fix %s", research.Resume, fix.ID)
 	}
-	if text := textOfCall(l, callNamed(t, l, labels[4]).ID); !strings.Contains(text, "does the retry loop stop at the deadline?") || !strings.Contains(text, "retry.go") {
-		t.Errorf("the explorer was not given the evidence question and its files:\n%s", text)
+	if text := textOfCall(l, research.ID); !strings.Contains(text, "the loop stops at the deadline in retry.go:44") {
+		t.Errorf("the research turn does not carry the explorer's answer:\n%s", text)
 	}
-	found := false
+	checks := l.Rows(ops.OpUnitCheck)
+	if len(checks) != 2 || str(checks[1].Data, "call") != research.ID {
+		t.Errorf("unit-check rows %+v, want the build's and the research turn's", checks)
+	}
 	for _, r := range l.SpawnRows() {
-		if r.Rule == ops.RuleExpl3 && r.Decision == "spawn" && r.Node == "A" {
-			found = true
+		if r.Rule == ops.RuleExpl3 {
+			t.Errorf("an SP-EXPL-3 decision %+v: a unit check has no evidence question", r)
 		}
-	}
-	if !found {
-		t.Errorf("no SP-EXPL-3 spawn decision: %+v", l.SpawnRows())
 	}
 	noTierStep(t, l)
 }
@@ -1084,5 +1092,25 @@ func TestResumeAfterOpenQuestionRoutingChange(t *testing.T) {
 	}
 	if res.Status == engine.RunCompleted || !refused || !strings.Contains(res.Error, "crw.designLedger") {
 		t.Errorf("the resume: %s %q (ledger refused %v), want the ledger's refusal", res.Status, res.Error, refused)
+	}
+}
+
+// closeReplanReasons checks that the close's crw.replanSignals row is due for the reflection's MISALIGNED alone.
+func closeReplanReasons(t *testing.T, l *Lab) {
+	t.Helper()
+	var reasons []string
+	found := false
+	for _, r := range l.Rows("crw.replanSignals") {
+		if str(r.Data, "phase") == "close" {
+			found = true
+			reasons = nil
+			list, _ := r.Data["reasons"].([]any)
+			for _, x := range list {
+				reasons = append(reasons, fmt.Sprint(x))
+			}
+		}
+	}
+	if !found || !slices.Equal(reasons, []string{"reflection_misaligned"}) {
+		t.Errorf("the close's crw.replanSignals reasons %v (row found %v), want [reflection_misaligned]", reasons, found)
 	}
 }

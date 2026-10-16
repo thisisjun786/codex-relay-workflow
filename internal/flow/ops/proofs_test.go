@@ -548,6 +548,70 @@ func TestRetiredAttemptWorktreeNotProven(t *testing.T) {
 	}
 }
 
+// TestRetiredAttemptCallsAreProvenByTheirCommitOrTheirAbandonment (CRW-1465, x1436 item 5): the node lane leaves the uncommitted work
+// of an attempt when it steps the tier or rebuilds (a commit holds only checked work): the build b1 and the fix f1 of attempt 1 are
+// unit-checked and never committed, and the executor-t1's fresh attempt starts at the node's last commit. Its worktree is the only one
+// read; b1 and f1, whose work no recorded commit carries, were abandoned by that fresh attempt and are proven as recorded facts, so a
+// resume replays them. A call of the retired attempt that a recorded commit covers is proven by that commit while the current HEAD
+// descends from it, and is not when the current attempt did not grow from it; a call after that commit that no commit covers was
+// abandoned.
+func TestRetiredAttemptCallsAreProvenByTheirCommitOrTheirAbandonment(t *testing.T) {
+	t.Run("uncommitted work the step left", func(t *testing.T) {
+		f := newFx(t)
+		old := f.wt
+		f.events = nil
+		f.prepare("b1", engine.PlaceFresh, old, f.start)
+		f.edit("a.txt", "the build\n")
+		f.complete("b1")
+		f.prepare("f1", engine.PlaceContinued, old, "")
+		f.edit("a.txt", "the build, fixed\n")
+		f.complete("f1")
+		f.wt = addWorktree(t, f.repo, "attempt2", f.start)
+		f.prepare("t1", engine.PlaceFresh, f.wt, f.start)
+		f.edit("src/c.txt", "the executor-t1's build\n")
+		f.complete("t1")
+		np := f.prove()
+		expectProven(t, np, map[string]bool{"b1": true, "f1": true, "t1": true})
+		if len(np.Calls) != 1 || len(np.Earlier) != 2 || !np.Earlier[0].Abandoned || np.Earlier[0].Committed {
+			t.Errorf("calls %+v earlier %+v", np.Calls, np.Earlier)
+		}
+		if f.gitLog.touched(old) {
+			t.Error("git was run in the retired attempt's worktree")
+		}
+	})
+	committed := func(t *testing.T, grows bool) *NodeProof {
+		f := newFx(t)
+		old := f.wt
+		f.events = nil
+		f.prepare("b1", engine.PlaceFresh, old, f.start)
+		f.edit("a.txt", "the build\n")
+		f.complete("b1")
+		c := f.commit("commit-b1")
+		f.prepare("x1", engine.PlaceContinued, old, "")
+		f.edit("a.txt", "an edit after the commit\n")
+		f.complete("x1")
+		start := f.start
+		if grows {
+			start = c.Commit
+		}
+		f.wt = addWorktree(t, f.repo, "attempt2", start)
+		f.prepare("t1", engine.PlaceFresh, f.wt, start)
+		f.edit("src/c.txt", "the next attempt's build\n")
+		f.complete("t1")
+		return f.prove()
+	}
+	t.Run("a commit the next attempt grew from", func(t *testing.T) {
+		np := committed(t, true)
+		expectProven(t, np, map[string]bool{"b1": true, "x1": true, "t1": true})
+		if len(np.Earlier) != 2 || !np.Earlier[0].Committed || !np.Earlier[1].Abandoned {
+			t.Errorf("earlier %+v", np.Earlier)
+		}
+	})
+	t.Run("a commit the next attempt did not grow from", func(t *testing.T) {
+		expectProven(t, committed(t, false), map[string]bool{"b1": false, "x1": true, "t1": true})
+	})
+}
+
 // The working files are the state an earlier call left: that call stands and the later one, whose edits are gone, does not.
 func TestEarlierCallStateLeavesLaterCallsUnproven(t *testing.T) {
 	f := newFx(t)
@@ -661,6 +725,44 @@ func TestRestoredWorktreeProvesThePrefix(t *testing.T) {
 		t.Fatal(err)
 	}
 	expectProven(t, np, map[string]bool{"t1": false, "t2": false})
+}
+
+// TestRetiredCallOfARestoredAttemptThatNoCommitCarriesIsNotProven (CRW-1556, x1436 DI test gap 2): a resume restores the prefix up to
+// the build t1 (its pending tree P1 on the start commit) and a call adopts the restored worktree. The fix t2 ran after t1 in the first
+// worktree; its work is not in the restored one, no recorded commit carries it, and no fresh attempt in another worktree was prepared
+// after it (the restore is no fresh placement). So t2 is a call of a retired attempt that is neither committed nor abandoned: it is not
+// proven, and the proof says why. t1 is proven by the restored worktree, and git never runs in the first one.
+func TestRetiredCallOfARestoredAttemptThatNoCommitCarriesIsNotProven(t *testing.T) {
+	f := newFx(t)
+	old := f.wt
+	f.edit("a.txt", "built\n")
+	p1 := f.complete("t1")
+	f.prepare("t2", engine.PlaceContinued, f.wt, "")
+	f.edit("src/c.txt", "fixed\n")
+	if p2 := f.complete("t2"); p2 == p1 {
+		t.Fatal("the two pending trees must differ")
+	}
+	restored := filepath.Join(t.TempDir(), "wt", "n1", "a2-l1")
+	if _, err := Restore(ctx, ExecGit("git"), f.repo, restored, f.start, p1); err != nil {
+		t.Fatal(err)
+	}
+	f.add(engine.Event{Kind: engine.KindCall, CallID: "t3", Op: "agent", Event: engine.EvPrepared, Data: map[string]any{
+		"node": f.node, "family": "executor", "role": "executor",
+		"allocation": map[string]any{"kind": engine.PlaceRestore, "path": restored, "start_commit": f.start, "pending": p1, "attempt": 2, "lineage": 1}}})
+	np := f.prove()
+	if np.Worktree != restored {
+		t.Fatalf("the proof reads %s, want the restored worktree", np.Worktree)
+	}
+	expectProven(t, np, map[string]bool{"t1": true, "t2": false})
+	if len(np.Earlier) != 1 {
+		t.Fatalf("earlier %+v, want the one call t2", np.Earlier)
+	}
+	if e := np.Earlier[0]; e.CallID != "t2" || e.Abandoned || e.Committed || e.Proven || e.Why == "" {
+		t.Errorf("earlier %+v: t2 is neither committed nor abandoned, so it is not proven and the proof says why", e)
+	}
+	if f.gitLog.touched(old) {
+		t.Error("git was run in the retired attempt's worktree")
+	}
 }
 
 // A continuation that forked into a restored worktree runs there, though its row also records the cwd of the thread it forked:

@@ -142,7 +142,7 @@ func (c *command) next(args []string) int {
 			resumed = true
 			var legacy *legacyRunError
 			if pid, err := c.detachResume(cm, sel.Path, spec); errors.As(err, &legacy) {
-				// a legacy issue-child run is not resumed by any later look (CRW-1415): the refusal is next's answer, not a wait
+				// a legacy `child` session run is not resumed by any later look (CRW-1415): the refusal is next's answer, not a wait
 				return c.fail("%v", err)
 			} else if err != nil {
 				ans.Warnings = append(ans.Warnings, fmt.Sprintf("no process holds run %s and its resume did not start: %v", run, err))
@@ -272,12 +272,24 @@ func (c *command) runEvents(cm *common, run string) []engine.Event {
 	return events
 }
 
-// nextState is the state next reports.
+// draining is whether the run's process lives and the ask that will end the run paused is an answer's drain (CRW-1492): the run stops
+// at its next boundary and the turns in flight run to their end, so the steps the run published before the drain are still the owner's
+// to take. info.Live is a run process's hold only (a writer's hold, such as the answer's own, is not one); info.Paused is `by: reason`
+// of the last ask that ends the run paused (Summarize), so an operator's pause after the drain names the end.
+func draining(info RunInfo) bool {
+	return info.Live && pausedForAnswer(info)
+}
+
+// pausedForAnswer is whether the last ask that ends the run paused is an answer's drain.
+func pausedForAnswer(info RunInfo) bool { return strings.HasPrefix(info.Paused, "answer: ") }
+
+// nextState is the state next reports. A paused run is paused, except while an answer drains it and its process lives: next answers
+// from its waits and steps as for any live run, until the process ends (an operator's pause interrupts the turns: paused at once).
 func nextState(info RunInfo, live bool, steps []engine.Step) string {
 	switch {
 	case info.State != StateDead && info.State != StateRunning && info.State != StatePaused:
 		return NextEnded // completed, held, cancelled, failed: the process ended with a finished row
-	case info.Paused != "":
+	case info.Paused != "" && !draining(info):
 		return NextPaused
 	case info.Waiting > 0:
 		return NextWaitingDecision
@@ -291,7 +303,7 @@ func nextState(info RunInfo, live bool, steps []engine.Step) string {
 }
 
 // detachResume starts the run's process as `crw flow resume RUN --detach` does and waits until it holds the run. Like that command and
-// `crw flow answer` it asks resumeRefused first (CRW-1390, CRW-1415): a run whose spec's budget is spent, or a legacy issue-child run (a
+// `crw flow answer` it asks resumeRefused first (CRW-1390, CRW-1415): a run whose spec's budget is spent, or a legacy `child` session run (a
 // *legacyRunError, which next answers as its error), is refused with the same words, before a process is started that would take the run
 // lock and end at once.
 func (c *command) detachResume(cm *common, state string, spec Spec) (int, error) {
@@ -372,9 +384,11 @@ type heldProcess struct {
 
 // heldProcess reads the process that holds the run: the newest started row is that process's when the process lock its token names is
 // held. A newest row whose process lock was let go is an earlier process's, and so is a row that names no process while a process lock
-// of the run is held: the holder has not recorded its row yet (or a command such as crw flow answer holds the run between two
-// processes), and next reads again. A row that names no process while no process lock is held is that of a process of a crw before
-// the process lock, which bound the owner's line before it recorded its row.
+// of the run is held, and next reads again (starting): the holder has not recorded its row yet, or the run lock is held for a moment by
+// a command that writes a row and runs no process (an audit, a cancel, or an answer from the end of the process it drained until its
+// row is stored; the answer lets the lock go before it starts the resume, which takes the lock after it). A row that names no process
+// while no process lock is held is that of a process of a crw before the process lock, which bound the owner's line before it
+// recorded its row.
 func (c *command) heldProcess(cm *common, state string, spec Spec, store *engine.Policy) heldProcess {
 	run := spec.RunID
 	events := c.runEvents(cm, run)
@@ -503,6 +517,11 @@ func nextHint(ans NextAnswer, info RunInfo, closes []string) string {
 	case NextEnded:
 		parts = append(parts, fmt.Sprintf("run %s is over (%s, status %s): crw flow show %s", ans.Run, info.State, cell(info.Status), ans.Run))
 	case NextPaused:
+		if pausedForAnswer(info) {
+			// the run stopped for an answer (its drain): the answer applies and resumes it once no process holds the run
+			parts = append(parts, fmt.Sprintf("run %s ended paused for an answer: run the same crw flow answer again (it applies and resumes the run); crw flow resume %s goes on without it", ans.Run, ans.Run))
+			break
+		}
 		parts = append(parts, fmt.Sprintf("run %s is paused (%s): crw flow resume %s goes on", ans.Run, info.Paused, ans.Run))
 	case NextWaitingDecision:
 		parts = append(parts, fmt.Sprintf("run %s waits for a decision: crw flow show %s lists its questions", ans.Run, ans.Run))
@@ -596,7 +615,7 @@ func (c *command) dispatched(args []string) int {
 	if _, err := ReadSpec(sel.Path, run); err != nil {
 		return c.fail("%v", err)
 	}
-	// a legacy issue-child run is read only (CRW-1415): no report is put in its inbox, which its resume would journal
+	// a legacy `child` session run is read only (CRW-1415): no report is put in its inbox, which its resume would journal
 	if code, refused := c.legacyRefused(cm, sel.Path, run); refused {
 		return code
 	}

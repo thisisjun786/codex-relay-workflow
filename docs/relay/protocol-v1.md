@@ -1,6 +1,6 @@
 # Protocol v1
 
-Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels).
+The sessions in this document are named by [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels): the parent is the repository session, the child is the project session, and a `child` session (a code id, not a layer) is no layer.
 
 Derived from the frozen cross-session communication contract, bundle revision
 `c37d332e2daba95c9ef47adf00a82bc9c6a539ab62538f0ad857561e470d2989`. This document is portable: it
@@ -9,8 +9,7 @@ carries no task identifiers, host paths or private history. The five JSON schema
 
 **Status: planned.** The protocol below is frozen and real. Its implementation is not yet written.
 
-The three-level execution linkage - an initiative-scoped supervisor over a project parent over an issue
-child, and peer links between parents - is NOT part of this contract and has no schema here. It
+The three-level execution linkage - a parent bound to an initiative scope over a child over a `child` session, and peer links between children - is NOT part of this contract and has no schema here. It
 is a relay-owned record set, described in [linkage.md](linkage.md).
 
 ## 1. Identity
@@ -29,7 +28,7 @@ deliverable path must lie under, and `allowedRecipients`, the task ids it may de
 delivery naming a recipient outside that list, or a manifest path outside those roots, is refused
 before any transport call.
 
-`executionGeneration` is an ordinal per relationship, incremented when the parent issues a new
+`executionGeneration` is an ordinal per relationship, incremented when the child issues a new
 assignment or a revision request. Every generation is retained with its own anchor. An anchor is
 `bound` only to the exact dispatch turn id from the dispatch receipt. `anchor_pending` never
 auto-binds: an unrelated turn that happens to appear next does not become the registered execution.
@@ -65,11 +64,11 @@ Five outcomes are distinguished, and only the first asserts a product:
 
 | Outcome | Who may assert it |
 |---|---|
-| `ready_for_review` | the child only |
-| `failed` | the child, or a daemon observing a failed turn |
-| `interrupted` | the child, or a daemon observing an interrupted turn |
-| `blocked_needs_input` | the child only; no terminal turn status identifies it |
-| ordinary turn end | neither; a completed turn with no child receipt is not a completion event |
+| `ready_for_review` | the `child` session only |
+| `failed` | the `child` session, or a daemon observing a failed turn |
+| `interrupted` | the `child` session, or a daemon observing an interrupted turn |
+| `blocked_needs_input` | the `child` session only; no terminal turn status identifies it |
+| ordinary turn end | neither; a completed turn with no `child` session receipt is not a completion event |
 
 `eventId` derivation is split, because one identity cannot serve both purposes:
 
@@ -82,12 +81,12 @@ and two interrupted turns in one generation are two facts. Canonical rendering: 
 pipe, integers unpadded, a null attempt as the literal `null`.
 
 A `ready_for_review` receipt may carry an optional `independentReview` item (`definitions.IndependentReview`
-in the schema): what the child states about its independent code review, a reference opinion that never
+in the schema): what the `child` session states about its independent code review, a reference opinion that never
 gates a merge. An execution-only receipt does not carry it, and a receipt without it is as valid as before.
 
 An execution-only receipt carries `manifest: null` and the `NO_DELIVERABLE` sentinel of 64 zeros,
 for any producer. The JSON schema only enforces that for daemon observations; the runtime enforces
-it for the child too, because the contract prose is the stronger rule.
+it for the `child` session too, because the contract prose is the stronger rule.
 
 ### Canonical manifest serialization
 
@@ -143,10 +142,10 @@ id would return the transport's cached failure forever.
 
 ### Dual channel
 
-The durable inbox is the guarantee. A push reaches a parent whose own approval policy is `never` or
-`on-request` (CRW-225): the turn the relay starts leaves every approval with the parent's own
+The durable inbox is the guarantee. A push reaches a child whose own approval policy is `never` or
+`on-request` (CRW-225): the turn the relay starts leaves every approval with the child's own
 approver, because the host sends each request to every client subscribed to the thread and the
-bridge answers none. A parent on any other policy cannot be pushed to, so a push-only design
+bridge answers none. A child on any other policy cannot be pushed to, so a push-only design
 would still leave it undeliverable. The recipient's approval policy is recorded verbatim, so an
 audit can tell an inbox-only fallback from a push never attempted.
 
@@ -171,11 +170,11 @@ and gains a reconciliation record. An accepted transport status is never fabrica
 
 ## 5. Acknowledgement
 
-Only the parent, from inside a real parent turn, closes `dispatched` to `acknowledged`.
+Only the child, from inside a real child turn, closes `dispatched` to `acknowledged`.
 
     ackProof = sha256(eventId|ackTurnId)
 
-The parent supplies it, computed over its OWN turn id, which does not appear in the message it
+The child supplies it, computed over its OWN turn id, which does not appear in the message it
 received. That is the difference between a recipient that acknowledged and a recipient that echoed.
 The relay verifies the proof rather than computing it for the caller, verifies the turn exists in
 the recipient's real turn list, and verifies it started after the delivery. An acknowledgement whose
@@ -188,16 +187,16 @@ revision-mismatched, or whose relationship is no longer active cannot be accepte
 
 A verdict is `verified`, `needs_changes`, `unverified` or `aborted`, with per-criterion detail, and
 requires an acknowledged event. `needs_changes` opens a new generation and routes the revision
-request back to the SAME child. The child does not stay active waiting for review; the request
+request back to the SAME `child` session. The `child` session does not stay active waiting for review; the request
 reaches it when it can receive one.
 
 **Recorded boundary.** Contract v1 defines its delivery and acknowledgement record types for the
-child-to-parent direction only: the delivery record's recipient is specified as the registered
-parent, and the acknowledgement is parent-authored. The parent-to-child revision request therefore
+`child`-session-to-child direction only: the delivery record's recipient is specified as the registered
+child (the project session), and the acknowledgement is authored by that child. The child-to-`child`-session revision request therefore
 reuses the same delivery mechanism but is stored as a relay-internal record, explicitly outside
-those schemas. No child-authored acknowledgement is invented. Receipt is evidenced the way the
+those schemas. No `child`-session-authored acknowledgement is invented. Receipt is evidenced the way the
 contract already provides for: the dispatch receipt's turn id binds the new generation's anchor,
-and the child's real answer is its next completion receipt under that generation. A future contract
+and the `child` session's real answer is its next completion receipt under that generation. A future contract
 revision may define this type; this implementation does not silently become that decision.
 
 ## 7. Recorded deviations
@@ -237,5 +236,5 @@ exactly like a message that had none.
 The CXC report vocabulary this maps onto is documented separately in
 [the CXC contract map](cxc-contract-map.md). Its one load-bearing rule: a `DONE` report, an
 opened pull request, a review `PASS` and a green required check are all evidence for a
-verdict and none of them is one. Only the parent, from inside its own turn, against
+verdict and none of them is one. Only the child, from inside its own turn, against
 registered criteria, writes `verified`.

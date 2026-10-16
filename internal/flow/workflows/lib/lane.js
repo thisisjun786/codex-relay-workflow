@@ -29,31 +29,6 @@ function chunks(list, n) {
   return out
 }
 
-// regionsOverlap says whether two nodes may edit the same place: an undeclared region overlaps every other, a directory (ending
-// in /) overlaps what is under it, and two equal paths overlap.
-export function regionsOverlap(a, b) {
-  if (!a || !b || a.length === 0 || b.length === 0) return true
-  for (const x of a) {
-    for (const y of b) {
-      if (x === y) return true
-      if (x.endsWith('/') && y.startsWith(x)) return true
-      if (y.endsWith('/') && x.startsWith(y)) return true
-    }
-  }
-  return false
-}
-
-// admissionRegions are the regions the lane admits a node by: the plan's declared regions together with the edit regions of the
-// approved DESIGN. The executor of a node is scoped to the DESIGN's edit_regions and the scheduler's own gate reads the plan's, so
-// two nodes run at once only when neither pair overlaps. A node with no regions on either side is undeclared, and an undeclared node
-// overlaps every other.
-export function admissionRegions(planRegions, editRegions) {
-  if (!planRegions || planRegions.length === 0 || !editRegions || editRegions.length === 0) return []
-  const out = planRegions.slice()
-  for (const r of editRegions) if (!out.includes(r)) out.push(r)
-  return out
-}
-
 // The signal path of crw.dag (engine.resume.signals). A lane reports the RECEIPT of each of its executor calls (sig.receipt): that is
 // a trigger, with the digest of the call's result and its place in the journal (crw.callFacts). The plan revision a lane reads before its
 // release (crw.planRead, sig.plan) is a trigger too when it is another than the plan the audited DESIGN stands on (the plan the current
@@ -76,7 +51,7 @@ export function admissionRegions(planRegions, editRegions) {
 // is decided, whether that signal runs live or is replayed: while a recorded signal waits for its triggers no lane is held otherwise.
 function signalState(planId, opts, nodes) {
   const S = { queue: [], arrived: {}, taken: {}, takenAt: {}, planWait: {}, planSignal: {}, finished: {}, live: {}, remaining: nodes.length, lanesDone: nodes.length === 0, halted: false, active: false, replaying: false,
-    processed: 0, liveFrom: 0, over: false, waiters: [], recordedPending: !!crw.recordedSignal(opts.milestone, 1), allowed: {}, repump() {}, applyRegions() {} }
+    processed: 0, liveFrom: 0, over: false, waiters: [], recordedPending: !!crw.recordedSignal(opts.milestone, 1), allowed: {}, repump() {}, async applyRegions() {} }
   S.notify = () => {
     const ws = S.waiters
     S.waiters = []
@@ -223,7 +198,8 @@ async function signalPath(S, ms, onSignal) {
       const ran = await parallel([() => onSignal(bound)], { keys: ['signal:' + ms + ':' + k], label: 'signal' })
       const out = signalOutcome(ran[0])
       const done = await crw.signalDone(ms, k, { result: out.result, revision: out.revision, reasons: out.reasons })
-      if (out.regions) S.applyRegions(out.regions)
+      // the regions of the revision are judged against the others (crw.regionsOverlap) while the signal still holds every admission
+      if (out.regions) await S.applyRegions(out.regions)
       prev = done.digest
       S.processed = k
       if (!replay && S.liveFrom === 0) S.liveFrom = k
@@ -246,6 +222,13 @@ async function signalPath(S, ms, onSignal) {
 // opts.nodes), a node starting as soon as the nodes it waits for have landed, no more than opts.cap nodes at once, and never two
 // nodes whose edit regions overlap. There is no barrier: a node starts when it can, not when a wave ends. Each node runs on a
 // path of its own (its id), starts with crw.release - the scheduler's admission and the slot - and ends with the lane's result.
+// Two nodes overlap as crw.regionsOverlap judges their admission regions (the relay's own rule, with the plan's change and hold, and
+// Scope's reading of a region; CRW-1461): before the first node is admitted, every pair of nodes neither of which waits for the other
+// is judged once, in the order of opts.nodes, and a signal whose revision gives a node other regions judges the new list against the
+// lists every other node has had before it admits anything. The answers are kept by the content of the two lists, so the scheduler
+// reads them without an operation of its own, and a pair it has no answer for overlaps. Every judgment is an operation on the path of
+// dag's caller or of the signal path, made in an order and with arguments that only the plan, the DESIGN and the signals' results
+// decide, never the order the lanes ran in.
 // A node whose predecessor did not land is not started: its result is blocked. The result is the list of the lanes' results in
 // the order of opts.nodes. The lane function is called with the node, its release and an object whose receipt(result) reports the
 // RECEIPT of an executor call to the signal path (opts.onSignal; a dag without one has none). A node reads the plan (crw.planRead) before
@@ -276,6 +259,43 @@ export async function dag(planId, lane, opts) {
     visiting[id] = 'done'
   }
   for (const n of nodes) visit(n.id, [])
+  // the nodes a node waits for, through any chain: two nodes of which one waits for the other never run at once and are not judged
+  const before = {}
+  const waitsFor = (id) => {
+    if (before[id]) return before[id]
+    const out = {}
+    for (const d of byId[id].after || []) {
+      if (!byId[d]) continue
+      out[d] = true
+      Object.assign(out, waitsFor(d))
+    }
+    before[id] = out
+    return out
+  }
+  const related = (a, b) => !!(waitsFor(a)[b] || waitsFor(b)[a])
+  // the overlap of two region lists, by their content (crw.regionsOverlap); versions are the lists each node has had, in order
+  const table = {}
+  const versions = {}
+  const rk = (list) => JSON.stringify(list || [])
+  const pairKey = (a, b) => {
+    const x = rk(a)
+    const y = rk(b)
+    return x < y ? x + '\u0000' + y : y + '\u0000' + x
+  }
+  const overlaps = (a, b) => {
+    const v = table[pairKey(a, b)]
+    return v === undefined ? true : v === true
+  }
+  const judge = async (a, b) => {
+    const key = pairKey(a, b)
+    if (!(key in table)) table[key] = await crw.regionsOverlap(a || [], b || [])
+  }
+  for (const n of nodes) versions[n.id] = [n.regions]
+  for (let i = 0; i < nodes.length; i++) {
+    for (let j = i + 1; j < nodes.length; j++) {
+      if (!related(nodes[i].id, nodes[j].id)) await judge(nodes[i].regions, nodes[j].regions)
+    }
+  }
   if (S && S.recordedPending) {
     // until the signals the earlier process recorded are decided, only the nodes they concern start: the lanes that were released
     // (and the lanes they wait for) and the lanes whose triggers the signals are made of. The others are released after, under the
@@ -297,7 +317,7 @@ export async function dag(planId, lane, opts) {
   // held them yet are the ones of the revision that stands when it does: a signal that made another revision may have changed them
   // after the scheduler admitted the node, so the node is checked against the nodes that hold theirs once more.
   const claimed = {}
-  const clashes = (n) => nodes.some((o) => o !== n && claimed[o.id] && state[o.id] === 'running' && regionsOverlap(o.regions, n.regions))
+  const clashes = (n) => nodes.some((o) => o !== n && claimed[o.id] && state[o.id] === 'running' && overlaps(o.regions, n.regions))
   async function claim(n, ask) {
     while (true) {
       if (!(await admit(S, n.id, ask)) || S.halted) return false
@@ -337,7 +357,7 @@ export async function dag(planId, lane, opts) {
         if (S && S.holds()) continue
         const running = active()
         if (running.length >= cap) continue
-        if (running.some((r) => regionsOverlap(r.regions, n.regions))) continue
+        if (running.some((r) => overlaps(r.regions, n.regions))) continue
         state[n.id] = 'running'
         gates[n.id].open(true)
       }
@@ -391,7 +411,23 @@ export async function dag(planId, lane, opts) {
   })
   if (S) {
     S.repump = pump
-    S.applyRegions = (regions) => {
+    // a revision's regions: every list a node has not had yet is judged, in the order of the nodes, against each list every other node
+    // it may run beside has had, whatever the node's state (so the judgments are what the signal's result decides); then the nodes that
+    // hold no regions yet take theirs
+    S.applyRegions = async (regions) => {
+      const fresh = []
+      for (const n of nodes) {
+        const list = regions[n.id]
+        if (!list || versions[n.id].some((v) => rk(v) === rk(list))) continue
+        versions[n.id].push(list)
+        fresh.push({ n, list })
+      }
+      for (const f of fresh) {
+        for (const o of nodes) {
+          if (o === f.n || related(f.n.id, o.id)) continue
+          for (const v of versions[o.id]) await judge(f.list, v)
+        }
+      }
       for (const n of nodes) if ((state[n.id] === 'pending' || (state[n.id] === 'running' && !claimed[n.id])) && regions[n.id]) n.regions = regions[n.id]
       pump()
     }
@@ -562,17 +598,29 @@ async function reviewHalt(node, rv) {
 
 // milestoneHalt takes a call of the design phase, of the close or of a re-plan that did not complete, or a gate that failed. held and
 // unknown hold the milestone (a resume goes on when the cause is gone, and runs the same call again as a new turn), superseded
-// stops, and everything else - refused, null_model, a gate that failed or cannot be settled, a QA that is INCONCLUSIVE - escalates.
-// A call that did not complete is never read as an approval, a design, a gate, a review or an alignment.
-async function milestoneHalt(ms, source, status, reason, callId) {
+// stops, and everything else - refused, null_model, a gate that failed or cannot be settled, a QA that is INCONCLUSIVE, a crosscheck
+// that did not verify the range - escalates.
+// A call that did not complete is never read as an approval, a design, a gate, a review or an alignment. extra is what the stop of
+// a close carries ({ask, evidence, fix, detail}; every member optional): the escalation asks extra.ask with extra.evidence, its detail
+// adds extra.detail, and the result carries the ask, the fix packet and the crosscheck's V (extra.evidence.crosscheck) as the op
+// recorded it, so the run's value hands V on unchanged.
+async function milestoneHalt(ms, source, status, reason, callId, extra) {
   const node = 'milestone:' + ms.id
+  const x = extra || {}
+  const cc = x.evidence && x.evidence.crosscheck ? { crosscheck: x.evidence.crosscheck } : {}
   if (status === 'held' || status === 'unknown') {
     await crw.hold(node, { reason: status === 'unknown' ? 'dispatch_unknown' : (reason || 'host_infra_unknown'), call: callId, source })
-    return { state: 'held', source, reason, call: callId }
+    return Object.assign({ state: 'held', source, reason, call: callId }, cc)
   }
   if (status === 'superseded') return { state: 'superseded', source, call: callId }
-  const esc = await crw.escalate(null, { reason: source + '_' + status, call: callId, detail: reason || '' })
-  return { state: 'escalated', source, reason: reason || status, call: callId, escalation: esc.id }
+  const info = { reason: source + '_' + status, call: callId, detail: (reason || '') + (x.detail ? ': ' + x.detail : '') }
+  if (x.ask) info.ask = x.ask
+  if (x.evidence) info.evidence = x.evidence
+  const esc = await crw.escalate(null, info)
+  const out = { state: 'escalated', source, reason: reason || status, call: callId, escalation: esc.id }
+  if (x.ask) out.ask = x.ask
+  if (x.fix) out.fix = x.fix
+  return Object.assign(out, cc)
 }
 
 function refusal(e) {
@@ -583,11 +631,14 @@ function refusal(e) {
 // land is the land of a verified head: crw.accept assembles the premerge record from the verdict and asks the relay's agent
 // acceptance (dag-accept), then crw.integrate lands the accepted head (dag-integrate). A refusal of either - a finding that needs a
 // disposition and is blocking by default, a reviewer the relay does not accept - is the result `land_refused` with its closed
-// reason, not an exception; any other failure is thrown.
+// reason, not an exception; any other failure is thrown. o.carried are the findings the node lane carried past its last unit-check
+// round trip (CRW-1465), each {id, check}: crw.accept reads each from the record of the check that carried it into the premerge
+// record's defects, which the check the acceptance rests on may not name (it judged only a later fix); with none the call is the one
+// it always was.
 async function land(node, o) {
   let acc
   try {
-    acc = await crw.accept(node, o.head)
+    acc = await (o.carried && o.carried.length ? crw.accept(node, o.head, { carried: o.carried }) : crw.accept(node, o.head))
   } catch (e) {
     const reason = refusal(e)
     if (!reason) throw e
@@ -621,7 +672,6 @@ export function install(host) {
   const mint = host.tierStep
   host.tierStep = (node, ev) => tierStep(mint, node, ev)
   host.dag = dag
-  host.admissionRegions = admissionRegions
   host.explore = explore
   host.exploreEvidence = exploreEvidence
   host.review = (node, plan, head, ci, opts) => review(record, node, plan, head, ci, opts || {})

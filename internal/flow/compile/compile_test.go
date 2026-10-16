@@ -543,14 +543,16 @@ func TestGroupCapRefused(t *testing.T) {
 	compileOne(t, project(issues...), nil)
 }
 
-// TestCompileShowsSizeUnreviewed: an issue that answers over_line with neither a bundle reason nor a split is shown
-// as size_unreviewed; it is not refused, and the size fields are carried as they were given.
+// TestCompileShowsSizeUnreviewed: an issue that answers over_line with neither a bundle reason nor a split (`split` or
+// `bundle_split`) is shown as size_unreviewed; it is not refused, and the size fields are carried as they were given. `child` is
+// out of the closed set (a run starts no `child` session) and is refused like any made-up value.
 func TestCompileShowsSizeUnreviewed(t *testing.T) {
 	in := project(
 		iss("U", sizes("executor", "fits_executor", "over_line", "")),
 		iss("B", sizes("executor", "fits_executor", "over_line", "one concept")),
 		iss("S", sizes("split", "fits_executor", "over_line", "")),
-		iss("ACC", sizes("child", "regions_gt3", "over_line_accepted", "kept whole")),
+		iss("BS", sizes("bundle_split", "own_goal", "over_line", "")),
+		iss("ACC", sizes("split", "regions_gt3", "over_line_accepted", "kept whole")),
 		iss("OK", sizes("executor", "fits_executor", "ok", "")),
 		iss("NONE"),
 	)
@@ -565,10 +567,10 @@ func TestCompileShowsSizeUnreviewed(t *testing.T) {
 	for _, i := range p.Preview.Issues {
 		by[i.Key] = i
 	}
-	if !by["U"].SizeUnreviewed || by["B"].SizeUnreviewed || by["S"].SizeUnreviewed || by["ACC"].SizeUnreviewed || by["OK"].SizeUnreviewed || by["NONE"].SizeUnreviewed {
+	if !by["U"].SizeUnreviewed || by["B"].SizeUnreviewed || by["S"].SizeUnreviewed || by["BS"].SizeUnreviewed || by["ACC"].SizeUnreviewed || by["OK"].SizeUnreviewed || by["NONE"].SizeUnreviewed {
 		t.Errorf("flags: %+v", by)
 	}
-	if a := by["ACC"]; a.SizeFit != "child" || a.SizeReason != "regions_gt3" || a.IssueSize != "over_line_accepted" || a.BundleReason != "kept whole" {
+	if a := by["ACC"]; a.SizeFit != "split" || a.SizeReason != "regions_gt3" || a.IssueSize != "over_line_accepted" || a.BundleReason != "kept whole" {
 		t.Errorf("the size fields were not carried: %+v", a)
 	}
 	// an issue with no size fields is an executor that fits
@@ -585,6 +587,11 @@ func TestCompileShowsSizeUnreviewed(t *testing.T) {
 		if !r.Has("size_value") || !strings.Contains(r.Error(), name) {
 			t.Errorf("%s: %v", name, r)
 		}
+	}
+	// `child` left the closed set: a plan input that still sizes an issue `child` is refused, and the refusal names the set
+	if r := mustRefuse(t, project(iss("X", sizes("child", "regions_gt3", "", ""))), nil); !r.Has("size_value") ||
+		!strings.Contains(r.Error(), `size_fit "child" is not one of executor, split, bundle_split`) {
+		t.Errorf("size_fit child: %v", r)
 	}
 }
 

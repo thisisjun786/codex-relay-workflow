@@ -362,7 +362,7 @@ var _ ops.MergeRequester = Reporter{}
 // ReportUp implements ops.Reporter. The report's id is derived from the run, the milestone and the tip the close judged, so a replay of the
 // operation finds its row; it is returned for the operation's own row.
 func (r Reporter) ReportUp(ctx context.Context, rep ops.Report) (string, error) {
-	body := milestoneBody(rep)
+	body := MilestoneBody(rep)
 	id := "rep_" + shortHash(r.Run, rep.Milestone, rep.Range.Tip)
 	res, err := r.W.Up(ctx, UpRequest{ID: id, Kind: KindMilestoneReport, Run: r.Run, Milestone: rep.Milestone, Plan: rep.Plan, Body: body})
 	if err != nil {
@@ -396,10 +396,18 @@ func shortHash(parts ...string) string {
 	return hex.EncodeToString(sum[:])[:24]
 }
 
-func milestoneBody(rep ops.Report) []byte {
+// MilestoneBody is the body of the report of a closed milestone: the range, the final gate, the crosscheck and the reflection the close
+// rests on, the review of reviewer-final (none for a close by the crosscheck) and the audit, each on one line ("none" for a piece the
+// close did not make).
+func MilestoneBody(rep ops.Report) []byte {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Milestone %s of plan %s is closed.\n\nIntegrated range: %s..%s\n", rep.Milestone, rep.Plan, rep.Range.Base, rep.Range.Tip)
-	fmt.Fprintf(&b, "\nFinal gate: %s\nFinal review: %s\nAudit: %s\n", compact(rep.Close.Gate), compact(rep.Close.Final), compact(rep.Close.Audit))
+	reflection := rep.Close.Reflection
+	if strings.TrimSpace(reflection) == "" {
+		reflection = "none"
+	}
+	fmt.Fprintf(&b, "\nFinal gate: %s\nCrosscheck: %s\nReflection: %s\nFinal review: %s\nAudit: %s\n", compact(rep.Close.Gate), compact(rep.Close.Crosscheck), reflection,
+		compact(rep.Close.Final), compact(rep.Close.Audit))
 	return []byte(b.String())
 }
 

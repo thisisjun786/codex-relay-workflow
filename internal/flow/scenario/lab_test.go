@@ -2,11 +2,14 @@ package scenario
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -21,6 +24,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/journal"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/reviewadapter"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/script"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/workflows"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -42,6 +46,9 @@ type Lab struct {
 	Threads *fakehost.Threads
 	Relay   *FakeRelay
 	Verify  *FakeVerifier
+	// FailedTests are, by node, the failed tests a failing verification of the node names (the failed_tests of its crw.verify
+	// result, CRW-1469); none is a failing verification whose record names no test, as FakeVerifier answers alone.
+	FailedTests map[string][]ops.FailedStep
 
 	StorePath string
 	Store     *store.Store
@@ -78,6 +85,20 @@ type Lab struct {
 	// packet or overlay text would run (CRW-1321).
 	Lib    fs.FS
 	Prompt func(role string, qa bool) (string, error)
+	// Source, when set, is the text of the project lane the lab runs in place of the embedded one (reviewerLane: the project lane
+	// with the old reviewer path's node lane).
+	Source []byte
+	// Checker is the lab's unit checker, the tool behind crw.unitCheck (CRW-1465): a scenario scripts it with UnitChecks.
+	Checker *LabChecker
+	// LandRoot is the run's directory of the lab (Deps.LandRoot), absolute and under Root: the close's crosscheck writes its receipts
+	// file and makes its checkouts under it. NewLab sets it once, so every rebuild of the lane and every Resume keeps it.
+	LandRoot string
+	// Crosschecker is the lab's crosschecker, the engine of crw.crosscheck (CRW-1473): a scenario scripts it with Crosschecks.
+	Crosschecker *LabCrosschecker
+	crosscheck   *ops.Crosscheck
+	// legacyDesign, set by UseLegacyDesign, makes the architect answer the DESIGN of designFor as a binary before S-1 wrote it (no
+	// issue carries sub_tasks; CRW-1435).
+	legacyDesign bool
 }
 
 // hookJournal wraps the run's journal: a process that dies writes no more rows, and a test can look at every row as it is written.
@@ -148,8 +169,9 @@ func writeFile(t *testing.T, path, content string) {
 func NewLab(t *testing.T, nodes ...NodeSpec) *Lab {
 	t.Helper()
 	isolate(t)
-	l := &Lab{t: t, RunID: "run-f08", Policy: engine.FakePolicy(), owner: "proc-1", Nodes: nodes}
+	l := &Lab{t: t, RunID: "run-f08", Policy: engine.FakePolicy(), owner: "proc-1", Nodes: nodes, Checker: newLabChecker(), Crosschecker: newLabCrosschecker()}
 	l.Root = t.TempDir()
+	l.LandRoot = filepath.Join(l.Root, "land")
 	l.Repo = filepath.Join(l.Root, "repo")
 	l.State = filepath.Join(l.Root, "state")
 	for _, n := range nodes {
@@ -223,10 +245,25 @@ func (l *Lab) spawn(owner string) {
 // newLane makes the lane's operations over the lab's journal, relay and verifier (and the reporter, when the lab has one), with the
 // host of the close.
 func (l *Lab) newLane() {
-	deps := ops.Deps{RunID: l.RunID, Repo: l.Repo, Journal: l.journal, Relay: l.Relay, Verifier: l.Verify, Decisions: l.decisions, Actor: "parent", Reporter: l.Reporter,
-		Now: func() time.Time { return time.Date(2026, 10, 12, 9, 0, 0, 0, time.UTC) }}
+	if l.crosscheck == nil {
+		l.crosscheck = l.Crosschecker.seam(l.LandRoot)
+	}
+	deps := ops.Deps{RunID: l.RunID, Repo: l.Repo, Journal: l.journal, Relay: l.Relay, Verifier: labVerifier{l}, Decisions: l.decisions, Actor: "parent", Reporter: l.Reporter,
+		Now: func() time.Time { return time.Date(2026, 10, 12, 9, 0, 0, 0, time.UTC) }, UnitCheck: l.Checker.seam(), LandRoot: l.LandRoot, Crosscheck: l.crosscheck}
 	deps.Threads = labThreads{BusReader: audit.BusReader{Bus: l.client.Bus()}, backend: l.backend}
 	l.lane = ops.NewLane(deps)
+}
+
+// labVerifier is the lab's verifier: FakeVerifier's answer, with the failed tests the scenario gives the node when it fails.
+type labVerifier struct{ l *Lab }
+
+// Verify implements ops.Verifier.
+func (v labVerifier) Verify(ctx context.Context, req ops.VerifyRequest) (ops.VerifyOutcome, error) {
+	out, err := v.l.Verify.Verify(ctx, req)
+	if err == nil && !out.Pass {
+		out.FailedTests = v.l.FailedTests[req.Node]
+	}
+	return out, err
 }
 
 // labThreads is the host of the close: the audit reads the reviewer threads through the client of the run process, and the backend
@@ -279,7 +316,15 @@ func (l *Lab) Rewrite(fn func(engine.Event) engine.Event) {
 
 // Config is the engine configuration of the lab's run.
 func (l *Lab) Config(resume bool) engine.Config {
-	cfg := engine.Config{Backend: l.backend, Policy: l.Policy, Journal: l.journal, RunID: l.RunID, TokenBudget: l.Budget, Ops: l.lane.Ops(), InputSnapshot: l.lane.InputSnapshot,
+	laneOps := l.lane.Ops()
+	// the lab's checker is told the round of the check it answers (its rules key on it, as they keyed on a review's label)
+	laneOps[ops.NameUnitCheck] = labCheckOp{laneOps[ops.NameUnitCheck]}
+	// the crosscheck's authors are the run's role pairs, as the cli gives them from the run's role table (FakePolicy: claude)
+	l.crosscheck.Authors = map[string]string{}
+	for _, role := range []string{"architect", "executor", "executor-t1"} {
+		l.crosscheck.Authors[role] = l.Policy.Roles[role].Pair.Model
+	}
+	cfg := engine.Config{Backend: l.backend, Policy: l.Policy, Journal: l.journal, RunID: l.RunID, TokenBudget: l.Budget, Ops: laneOps, InputSnapshot: l.lane.InputSnapshot,
 		Prover: ops.NewProver(), Upward: l.Upward, Now: func() time.Time { return time.Date(2026, 10, 12, 9, 0, 0, 0, time.UTC) }}
 	if resume {
 		cfg.Resume = &engine.ResumeOptions{Wait: func(context.Context, time.Duration) error { return nil }, Grace: time.Millisecond, Skew: time.Hour, OpenWait: 10 * time.Millisecond, Poll: time.Millisecond}
@@ -305,10 +350,13 @@ func (l *Lab) Resume() *engine.Result { l.t.Helper(); return l.exec(true, l.Args
 func (l *Lab) exec(resume bool, args json.RawMessage) *engine.Result {
 	l.t.Helper()
 	prog, err := workflows.Load("project-lane")
-	if l.Lib != nil {
-		text, serr := workflows.Source("project-lane")
-		if serr != nil {
-			l.t.Fatal(serr)
+	if l.Lib != nil || l.Source != nil {
+		text := l.Source
+		if text == nil {
+			var serr error
+			if text, serr = workflows.Source("project-lane"); serr != nil {
+				l.t.Fatal(serr)
+			}
 		}
 		prog, err = script.Load(script.Source{Name: "project-lane.js", Text: text, Dir: workflows.FS, Lib: l.Lib})
 	}
@@ -742,15 +790,6 @@ func Verdict(verified bool, defects ...map[string]any) map[string]any {
 	return map[string]any{"verdict": v, "criteria": []any{map[string]any{"id": "c1", "met": verified, "evidence": "read the head"}}, "defects": defects, "summary": "reviewed"}
 }
 
-// VerdictFinal is the answer of reviewer-final: verified with one criterion met and the alignment of the range with the DESIGN.
-func VerdictFinal(aligned bool) map[string]any {
-	alignment := map[string]any{"verdict": "ALIGNED", "drift": []any{}}
-	if !aligned {
-		alignment = map[string]any{"verdict": "MISALIGNED", "drift": []any{map[string]any{"decision_id": "D1", "observed": "the range departs from D1", "file": "README.md", "line": 1, "affected_nodes": []string{"A"}}}}
-	}
-	return map[string]any{"verdict": "verified", "criteria": []any{map[string]any{"id": "c1", "met": true, "evidence": "read the range"}}, "defects": []any{}, "alignment": alignment, "summary": "reviewed the range"}
-}
-
 // Reflection is the answer of the architect's reflection at the close: ALIGNED, or MISALIGNED with the decision D1 departed from.
 func Reflection(aligned bool) map[string]any {
 	if aligned {
@@ -773,26 +812,6 @@ func QAPassOf(pass, verdict string) map[string]any {
 // QAReceiptOf is the verdict of the QA call: its self-review or the synthesis of the passes.
 func QAReceiptOf(verdict string) map[string]any {
 	return map[string]any{"verdict": verdict, "findings": []any{}, "summary": "receipt " + verdict}
-}
-
-// Defect is a defect of a verdict. Its impact follows the severity, one word of the closed set (CRW-1438): a P0-P2
-// defect is core_function, a P3 defect minor_separable, so the fixture blocks exactly as its severity says.
-func Defect(ref, kind, severity, finding string) map[string]any {
-	impact := "core_function"
-	if severity == "P3" {
-		impact = "minor_separable"
-	}
-	return map[string]any{"ref": ref, "kind": kind, "severity": severity, "introduced": false, "impact": impact, "inPromise": false, "file": "node.txt", "line": 1, "finding": finding, "evidence_question": nil}
-}
-
-// EvidenceDefect is a defect of kind evidence_missing with its question.
-func EvidenceDefect(ref, question string, files ...string) map[string]any {
-	d := Defect(ref, "evidence_missing", "P2", "cannot tell from the head: "+question)
-	if files == nil {
-		files = []string{}
-	}
-	d["evidence_question"] = map[string]any{"question": question, "files_needed": files}
-	return d
 }
 
 func (l *Lab) designFor() ops.Design {
@@ -829,10 +848,10 @@ func (l *Lab) defaultPlan(c *Call) fakehost.TurnPlan {
 	switch {
 	case c.Role == "architect" && strings.HasPrefix(c.Label, "reflection:"):
 		return Say(Reflection(true))
+	case c.Role == "architect" && l.legacyDesign:
+		return Say(legacyDesignOf(l.t, l.designFor()))
 	case c.Role == "architect":
 		return Say(l.designFor())
-	case c.Role == "reviewer-final":
-		return Say(VerdictFinal(true))
 	case c.Role == "executor" && strings.HasPrefix(c.Label, "qa:"):
 		return Say(QACapture())
 	case c.Role == "executor" && strings.HasPrefix(c.Label, "qa-"):
@@ -857,6 +876,129 @@ func (l *Lab) defaultPlan(c *Call) fakehost.TurnPlan {
 	return fakehost.TurnPlan{Message: "ok"}
 }
 
+// designImport is the line of project-lane.js that imports the schemas, DESIGN among them. The legacy lane imports them less DESIGN
+// (legacyDesignImport) and declares DESIGN from legacyDesignSchemaJSON after the header (legacyDesignConst): a script's header holds
+// its imports and then its meta.
+const (
+	designImport       = "import { RECEIPT, DESIGN, DESIGN_AUDIT, REFLECTION } from 'crw:lib/schemas'\n"
+	legacyDesignImport = "import { RECEIPT, DESIGN_AUDIT, REFLECTION } from 'crw:lib/schemas'\n"
+	legacyDesignConst  = "const DESIGN = " + legacyDesignSchemaJSON + "\n"
+	metaLine           = "\nexport const meta = "
+)
+
+// legacyDesignSchemaJSON is the DESIGN of crw:lib/schemas before S-1 (CRW-1435): a node is sized for an executor, a child or a split,
+// and an issue has no sub_tasks member. TestLegacyDesignLaneSwapsOnlyTheDesignSchema pins it to the current DESIGN less S-1.
+const legacyDesignSchemaJSON = `{"type":"object","properties":{` +
+	`"decisions":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"evidence":{"type":"array","items":{"type":"string"}},"change":{"type":"string"},` +
+	`"alternatives":{"type":"array","items":{"type":"string"}},"assumptions":{"type":"array","items":{"type":"string"}}},"required":["id","evidence","change","alternatives","assumptions"],"additionalProperties":false}},` +
+	`"issues":{"type":"array","items":{"type":"object","properties":{"issue":{"type":"string"},"node":{"type":"string"},"size_fit":{"type":"string","enum":["executor","child","split"]},` +
+	`"size_reason":{"type":"string"},"issue_size_decision":{"type":"string","enum":["ok","over_line","over_line_accepted"]},"edit_regions":{"type":"array","items":{"type":"string"}},` +
+	`"approach":{"type":"string"},"tests_first":{"type":"array","items":{"type":"string"}},"done_condition":{"type":"string"},"decision_refs":{"type":"array","items":{"type":"string"}},` +
+	`"order_after":{"type":"array","items":{"type":"string"}},"group":{"type":["string","null"]}},` +
+	`"required":["issue","node","size_fit","size_reason","issue_size_decision","edit_regions","approach","tests_first","done_condition","decision_refs","order_after","group"],"additionalProperties":false}},` +
+	`"open_questions":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"question":{"type":"string"},"scope":{"type":"string"},"files_needed":{"type":"array","items":{"type":"string"}}},` +
+	`"required":["id","question","scope","files_needed"],"additionalProperties":false}},` +
+	`"risks":{"type":"array","items":{"type":"string"}},` +
+	`"dispositions":{"type":["array","null"],"items":{"type":"object","properties":{"finding":{"type":"string"},"disposition":{"type":"string","enum":["folded","rebutted"]},"reason":{"type":"string"}},` +
+	`"required":["finding","disposition","reason"],"additionalProperties":false}}},` +
+	`"required":["decisions","issues","open_questions","risks","dispositions"],"additionalProperties":false}`
+
+// legacyDesignLane is the text of the project lane an old run (before S-1, CRW-1435) ran: the current project-lane.js with its line-1
+// import of DESIGN replaced by the DESIGN of that time, declared after the header, so its architect answers a DESIGN that sizes a node
+// for a child, or for a split without sub-tasks, as an old architect did.
+func legacyDesignLane(t *testing.T) []byte {
+	t.Helper()
+	text, err := workflows.Source("project-lane")
+	if err != nil {
+		t.Fatal(err)
+	}
+	head, ok := strings.CutPrefix(string(text), designImport)
+	at := strings.Index(head, metaLine)
+	if !ok || at < 0 || strings.Contains(head[at+1:], metaLine) {
+		t.Fatalf("project-lane.js no longer starts with the import of DESIGN the legacy lane replaces, followed by one meta line")
+	}
+	end := at + 1 + strings.IndexByte(head[at+1:], '\n') + 1
+	return []byte(legacyDesignImport + head[:end] + legacyDesignConst + head[end:])
+}
+
+// legacyDesignOf is a DESIGN as an architect before S-1 answered it: d with the sub_tasks member of every issue dropped.
+func legacyDesignOf(t *testing.T, d ops.Design) json.RawMessage {
+	t.Helper()
+	b, err := json.Marshal(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+	issues, _ := m["issues"].([]any)
+	for _, is := range issues {
+		delete(is.(map[string]any), "sub_tasks")
+	}
+	out, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// UseLegacyDesign makes the lab an old run's world (before S-1, CRW-1435): the project lane it runs is legacyDesignLane, and its
+// architect answers the DESIGN of designFor with no sub_tasks member. A node sized for a child, or for a split with no sub-tasks,
+// reaches a lane only so: the current DESIGN refuses both.
+func (l *Lab) UseLegacyDesign() {
+	l.t.Helper()
+	l.Source = legacyDesignLane(l.t)
+	l.legacyDesign = true
+}
+
+// The legacy lane differs from the current project lane only in where DESIGN comes from, and its DESIGN is the current one less S-1
+// (CRW-1435): child back in the size_fit enum and no sub_tasks member. The lane loads.
+func TestLegacyDesignLaneSwapsOnlyTheDesignSchema(t *testing.T) {
+	text, err := workflows.Source("project-lane")
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := string(legacyDesignLane(t))
+	if strings.Count(legacy, legacyDesignConst) != 1 {
+		t.Fatalf("the legacy lane does not declare DESIGN once")
+	}
+	if got := designImport + strings.Replace(strings.TrimPrefix(legacy, legacyDesignImport), legacyDesignConst, "", 1); got != string(text) {
+		t.Errorf("the legacy lane differs from project-lane.js beyond the import of DESIGN")
+	}
+	if _, err := script.Load(script.Source{Name: "project-lane.js", Text: []byte(legacy), Dir: workflows.FS}); err != nil {
+		t.Fatalf("the legacy lane does not load: %v", err)
+	}
+	current, _ := ops.SchemaText(ops.SchemaDesign)
+	var want map[string]any
+	if err := json.Unmarshal([]byte(current), &want); err != nil {
+		t.Fatal(err)
+	}
+	issue := want["properties"].(map[string]any)["issues"].(map[string]any)["items"].(map[string]any)
+	props := issue["properties"].(map[string]any)
+	delete(props, "sub_tasks")
+	props["size_fit"].(map[string]any)["enum"] = []any{"executor", "child", "split"}
+	var required []any
+	for _, r := range issue["required"].([]any) {
+		if r != "sub_tasks" {
+			required = append(required, r)
+		}
+	}
+	issue["required"] = required
+	var got map[string]any
+	if err := json.Unmarshal([]byte(legacyDesignSchemaJSON), &got); err != nil {
+		t.Fatalf("the legacy DESIGN is not JSON: %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		gb, _ := json.MarshalIndent(got, "", " ")
+		wb, _ := json.MarshalIndent(want, "", " ")
+		t.Errorf("the legacy DESIGN is not the current DESIGN less S-1\nlegacy:\n%s\nwant:\n%s", gb, wb)
+	}
+	if errs := script.LintStrictSchema(got); len(errs) > 0 {
+		t.Errorf("the legacy DESIGN fails the strict structured-output lint: %v", errs)
+	}
+}
+
 // ---- helpers for scenarios ----
 
 // Git runs git in the lab's repository.
@@ -870,3 +1012,323 @@ func (l *Lab) Tip() string { return l.git(l.Repo, "rev-parse", IntegrationRef) }
 
 // Archived are the threads the host was asked to archive, in order.
 func (l *Lab) Archived() []string { return l.Threads.Archived() }
+
+// ---- the unit checker (CRW-1465) ----
+
+// The lab's unit checker stands in for the review tool the shipped lane runs before every commit of a node (crw.unitCheck): the lane
+// gives it the request the op built, and it answers a record without running a tool. Its default answer is a verified check with no
+// finding by Bugbot's pair (engine family grok, model grok-4.7-medium, effort medium), of another family than the lab's executors; a
+// scenario scripts the answers of a node's checks in order (UnitChecks), and a scripted answer's Do runs before it answers, where a
+// scenario hooked the reviewer of the node before. The node is read from the prompt (the op's prompt names it).
+
+// CheckModel is the model of the lab's unit checker.
+const CheckModel = "grok-4.7-medium"
+
+// UnitCheck is one answer of the lab's unit checker. An empty State is ok, with the verdict verified unless one is given; Err makes the
+// call fail with that Go error; Do runs before the answer, and the answer waits for Gate to close (as a held turn of the host waits
+// for its gate) or for the end of the check's context, which fails the check.
+type UnitCheck struct {
+	State    reviewadapter.State
+	Verdict  string
+	Findings []reviewadapter.Finding
+	Err      error
+	Do       func()
+	Gate     <-chan struct{}
+}
+
+// UnitCheckCall is one request the lab's unit checker was given.
+type UnitCheckCall struct {
+	Node    string
+	Request reviewadapter.Request
+}
+
+// LabChecker is the lab's ops.UnitChecker.
+type LabChecker struct {
+	mu    sync.Mutex
+	queue map[string][]UnitCheck
+	calls []UnitCheckCall
+	rules []func(CheckInfo) (UnitCheck, bool)
+}
+
+// CheckInfo is what a rule of the lab's checker is given: the node, the round of the node lane the check is of (its crw.unitCheck
+// opts.round, the round a review's label named before CRW-1465) and the ordinal of the check of the node (from 1, counted over the
+// lab's life, every process's checks included).
+type CheckInfo struct {
+	Node     string
+	Round, N int
+	// Prompt and Worktree are the request's: the prompt the op built and the worktree the check judges.
+	Prompt, Worktree string
+}
+
+type labRoundKey struct{}
+
+// labCheckOp is the lane's crw.unitCheck with the round of the call handed to the lab's checker through the context.
+type labCheckOp struct{ engine.Op }
+
+func (o labCheckOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResult, error) {
+	var args []json.RawMessage
+	var opts struct {
+		Round int `json:"round"`
+	}
+	if json.Unmarshal(req.Args, &args) == nil && len(args) > 2 {
+		_ = json.Unmarshal(args[2], &opts)
+	}
+	return o.Op.Run(context.WithValue(ctx, labRoundKey{}, opts.Round), req)
+}
+
+var labCheckNode = regexp.MustCompile(`unit check of node (\S+) `)
+
+func newLabChecker() *LabChecker { return &LabChecker{queue: map[string][]UnitCheck{}} }
+
+func (u *LabChecker) seam() *ops.UnitCheck {
+	return &ops.UnitCheck{Checker: u, Limit: time.Minute, Profile: func(mode string) (reviewadapter.Profile, error) {
+		return reviewadapter.JSONProfile("lab-check-"+mode, []string{"lab-unit-check"}, CheckModel, "medium"), nil
+	}}
+}
+
+// Calls are the requests the checker was given for a node (every node when it is empty), in order.
+func (u *LabChecker) Calls(node string) []UnitCheckCall {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	var out []UnitCheckCall
+	for _, c := range u.calls {
+		if node == "" || c.Node == node {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+func (u *LabChecker) Check(ctx context.Context, req reviewadapter.Request) (reviewadapter.Result, error) {
+	node := ""
+	if m := labCheckNode.FindStringSubmatch(req.Prompt); m != nil {
+		node = m[1]
+	}
+	u.mu.Lock()
+	u.calls = append(u.calls, UnitCheckCall{Node: node, Request: req})
+	n := 0
+	for _, c := range u.calls {
+		if c.Node == node {
+			n++
+		}
+	}
+	rules := slices.Clone(u.rules)
+	u.mu.Unlock()
+	round, _ := ctx.Value(labRoundKey{}).(int)
+	c, ruled := UnitCheck{}, false
+	for _, rl := range rules {
+		if c, ruled = rl(CheckInfo{Node: node, Round: round, N: n, Prompt: req.Prompt, Worktree: req.Worktree}); ruled {
+			break
+		}
+	}
+	if !ruled {
+		u.mu.Lock()
+		if q := u.queue[node]; len(q) > 0 {
+			c, u.queue[node] = q[0], q[1:]
+		}
+		u.mu.Unlock()
+	}
+	if c.Do != nil {
+		c.Do()
+	}
+	if c.Gate != nil {
+		select {
+		case <-c.Gate:
+		case <-ctx.Done():
+			return reviewadapter.Result{}, ctx.Err()
+		}
+	}
+	if c.Err != nil {
+		return reviewadapter.Result{}, c.Err
+	}
+	if c.State == "" {
+		c.State = reviewadapter.StateOK
+	}
+	verdict := ""
+	findings := []reviewadapter.Finding{}
+	if c.State == reviewadapter.StateOK {
+		verdict = c.Verdict
+		if verdict == "" {
+			verdict = reviewadapter.VerdictVerified
+		}
+		for _, f := range c.Findings {
+			if f.ID == "" {
+				f.ID = reviewadapter.FindingID(f.File, f.Text)
+			}
+			findings = append(findings, f)
+		}
+	}
+	fp, err := ops.Snapshot(ctx, ops.ExecGit("git"), req.Worktree)
+	if err != nil {
+		return reviewadapter.Result{}, fmt.Errorf("the lab's unit checker: fingerprint: %w", err)
+	}
+	sum := sha256.Sum256([]byte(req.Prompt))
+	return reviewadapter.Result{State: c.State, Verdict: verdict, Findings: findings, EngineFamily: "grok", Model: CheckModel, Effort: "medium", GuideRev: req.GuideRev,
+		PromptDigest: hex.EncodeToString(sum[:]), FingerprintBefore: fp, FingerprintAfter: fp, ElapsedMS: 1}, nil
+}
+
+// UnitChecks scripts the answers of the next unit checks of a node, in order; a check no script answers is verified with no finding.
+func (l *Lab) UnitChecks(node string, checks ...UnitCheck) {
+	l.Checker.mu.Lock()
+	defer l.Checker.mu.Unlock()
+	l.Checker.queue[node] = append(l.Checker.queue[node], checks...)
+}
+
+// OnUnitCheck scripts the checker with a rule asked before the scripted answers: an answer fn gives with true is the check's. Rules
+// are asked in the order they were added.
+func (l *Lab) OnUnitCheck(fn func(CheckInfo) (UnitCheck, bool)) {
+	l.Checker.mu.Lock()
+	defer l.Checker.mu.Unlock()
+	l.Checker.rules = append(l.Checker.rules, fn)
+}
+
+// Finding is a finding of a unit check on the node's file. Its impact follows the severity: a P0-P2 finding is
+// core_function and blocks, a P3 finding is minor_separable and does not.
+func Finding(severity, text string) reviewadapter.Finding {
+	impact := "core_function"
+	if severity == "P3" {
+		impact = "minor_separable"
+	}
+	return reviewadapter.Finding{Severity: severity, Impact: impact, File: "node.txt", Line: 1, Text: text}
+}
+
+// NeedsChanges is a unit check that rules needs_changes with the findings.
+func NeedsChanges(findings ...reviewadapter.Finding) UnitCheck {
+	return UnitCheck{Verdict: reviewadapter.VerdictNeedsChanges, Findings: findings}
+}
+
+// TestFixCallNamesTheFailedTestsOfTheVerification (CRW-1469, CRW-1488 item 16): the failed tests a failing verification names reach
+// the executor: the crw.verify row records them and the fix call of the node's thread names each failed step's tests, packages and
+// the last lines of its output.
+func TestFixCallNamesTheFailedTestsOfTheVerification(t *testing.T) {
+	l := NewLab(t, oneNode()...)
+	l.Verify.Fail = map[string][]int{"A": {1}}
+	l.FailedTests = map[string][]ops.FailedStep{"A": {{Job: "go-product", Step: "tests", Tests: []string{"TestGuard"}, Packages: []string{"example.com/m/a"},
+		Tail: "    guard_test.go:9: the guard is open\n--- FAIL: TestGuard (0.01s)"}}}
+	if got := mustRun(t, l); got.State != "closed" {
+		t.Fatalf("state %q; calls %v", got.State, l.Labels())
+	}
+	verifies := l.Rows("crw.verify")
+	if len(verifies) < 2 || verifies[0].Data["failed_tests"] == nil || verifies[1].Data["failed_tests"] != nil {
+		t.Fatalf("the verify rows %+v", verifies)
+	}
+	fix := textOfCall(l, callNamed(t, l, "fix:A:executor:r1").ID)
+	for _, want := range []string{"VERIFICATION FAILED (" + ops.CILocalCommand + "):\n- validate/tests: failed\n\nFAILED TESTS (",
+		"\n- go-product/tests: TestGuard (packages example.com/m/a)\n        guard_test.go:9: the guard is open\n    --- FAIL: TestGuard (0.01s)"} {
+		if !strings.Contains(fix, want) {
+			t.Errorf("the fix call lacks %q:\n%s", want, fix)
+		}
+	}
+}
+
+// ---- the crosscheck of the close (CRW-1473) ----
+
+// Crosscheck is one answer of the lab's crosschecker to one pass. An empty State is ok, with the verdict verified unless one is given;
+// Do runs before the answer.
+type Crosscheck struct {
+	State    reviewadapter.State
+	Verdict  string
+	Findings []reviewadapter.Finding
+	Do       func()
+}
+
+// CrosscheckCall is one pass the lab's crosschecker was asked: its key (<ms>/r<round>/e<evidence round>/<pass><attempt>), the request
+// and whether its checkout existed during the call.
+type CrosscheckCall struct {
+	Key     string
+	Request reviewadapter.Request
+	Existed bool
+}
+
+// LabCrosschecker is the lab's ops.UnitChecker of crw.crosscheck, with the fake checkout of its passes: a fresh directory
+// <LandRoot>/crosscheck-wt/<ms>-r<round>-e<evidence round>-<pass><attempt> per pass, removed after it.
+type LabCrosschecker struct {
+	mu        sync.Mutex
+	queue     map[string][]Crosscheck
+	calls     []CrosscheckCall
+	checkouts []string
+}
+
+func newLabCrosschecker() *LabCrosschecker { return &LabCrosschecker{queue: map[string][]Crosscheck{}} }
+
+var labCheckoutName = regexp.MustCompile(`^(.+)-r(\d+)-e(\d+)-([AB])(\d+)$`)
+
+// seam is the crosscheck of the lab's lane: this checker, the shipped profiles (astra, then grok) and the fake checkout under the lab's
+// run directory root. Its authors are set from the lab's policy when a run starts (Config).
+func (c *LabCrosschecker) seam(root string) *ops.Crosscheck {
+	checkout := func(_ context.Context, ms string, round, evidenceRound int, pass string, attempt int, _ string) (string, func() error, error) {
+		dir := filepath.Join(root, "crosscheck-wt", fmt.Sprintf("%s-r%d-e%d-%s%d", ms, round, evidenceRound, pass, attempt))
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return "", nil, err
+		}
+		c.mu.Lock()
+		c.checkouts = append(c.checkouts, dir)
+		c.mu.Unlock()
+		return dir, func() error { return os.RemoveAll(dir) }, nil
+	}
+	return &ops.Crosscheck{Checker: c, Limit: time.Minute, Checkout: checkout,
+		Profiles: func(runDir string) ([]reviewadapter.Profile, error) {
+			return []reviewadapter.Profile{reviewadapter.AstraProfile(filepath.Join(runDir, "crosscheck", "answer.strict.json")), reviewadapter.GrokProfile(reviewadapter.AnswerSchema)}, nil
+		}}
+}
+
+// Calls are the passes the crosschecker was asked, in order.
+func (c *LabCrosschecker) Calls() []CrosscheckCall {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Clone(c.calls)
+}
+
+// Checkouts are the directories the fake checkout made, in order.
+func (c *LabCrosschecker) Checkouts() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Clone(c.checkouts)
+}
+
+func (c *LabCrosschecker) Check(ctx context.Context, req reviewadapter.Request) (reviewadapter.Result, error) {
+	key := filepath.Base(req.Worktree)
+	if m := labCheckoutName.FindStringSubmatch(key); m != nil {
+		key = m[1] + "/r" + m[2] + "/e" + m[3] + "/" + m[4] + m[5]
+	}
+	_, statErr := os.Stat(req.Worktree)
+	c.mu.Lock()
+	c.calls = append(c.calls, CrosscheckCall{Key: key, Request: req, Existed: statErr == nil})
+	a := Crosscheck{}
+	if q := c.queue[key]; len(q) > 0 {
+		a, c.queue[key] = q[0], q[1:]
+	}
+	c.mu.Unlock()
+	if a.Do != nil {
+		a.Do()
+	}
+	if a.State == "" {
+		a.State = reviewadapter.StateOK
+	}
+	verdict := ""
+	findings := []reviewadapter.Finding{}
+	if a.State == reviewadapter.StateOK {
+		verdict = a.Verdict
+		if verdict == "" {
+			verdict = reviewadapter.VerdictVerified
+		}
+		for _, f := range a.Findings {
+			if f.ID == "" {
+				f.ID = reviewadapter.FindingID(f.File, f.Text)
+			}
+			findings = append(findings, f)
+		}
+	}
+	sum := sha256.Sum256([]byte(req.Prompt))
+	return reviewadapter.Result{State: a.State, Verdict: verdict, Findings: findings, EngineFamily: req.Profile.Family, Model: req.Profile.Model, Effort: req.Profile.Effort,
+		GuideRev: req.GuideRev, PromptDigest: hex.EncodeToString(sum[:]), ElapsedMS: 1}, nil
+}
+
+// Crosschecks scripts the next answers of one pass of a milestone's crosscheck (round, evidence round, pass, attempt), in order; a
+// pass no script answers is verified with no finding.
+func (l *Lab) Crosschecks(ms string, round, evidenceRound int, pass string, attempt int, answers ...Crosscheck) {
+	l.Crosschecker.mu.Lock()
+	defer l.Crosschecker.mu.Unlock()
+	key := fmt.Sprintf("%s/r%d/e%d/%s%d", ms, round, evidenceRound, pass, attempt)
+	l.Crosschecker.queue[key] = append(l.Crosschecker.queue[key], answers...)
+}

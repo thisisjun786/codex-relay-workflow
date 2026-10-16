@@ -11,10 +11,14 @@ import (
 )
 
 // A busy recipient never reaches the transport. Count deferrals only when the
-// compare-and-set of that recipient's current row succeeds, under the write lock.
+// compare-and-set of that recipient's current row succeeds, under the write lock. Like deferMessage
+// it asks the hold rule as defer first: a message read with a hold is left as it is (CRW-1500).
 func (c *Channel) deferBusy(ctx context.Context, row store.SupervisorMessagesRow, now float64) error {
 	at := delivery.ISOOf(now)
 	return c.Store.Transaction(ctx, func(tx context.Context, _ *sql.Conn) error {
+		if refused, err := c.refusesDeferral(tx, row, ""); err != nil || refused {
+			return err
+		}
 		var seen int64
 		err := c.Store.Q(tx).QueryRowContext(tx, "SELECT COUNT(*) FROM journal WHERE kind='supervisor_message_deferred' AND subject=? AND seq>(SELECT COALESCE(MAX(seq),0) FROM journal WHERE kind='supervisor_message_readdressed' AND subject=?)", row.MessageID, row.MessageID).Scan(&seen)
 		if err != nil {

@@ -77,7 +77,7 @@ func (r RelaySender) SendSupervisor(ctx context.Context, s SupervisorSend) (Send
 		if r.Fallback != nil {
 			return r.Fallback.SendSupervisor(ctx, s)
 		}
-		return SendResult{}, fmt.Errorf("report: report %s names no kind, run and project the supervisor channel stages it under", s.ReportID)
+		return SendResult{}, fmt.Errorf("report: report %s names no kind, run, or project for the 부모 channel to stage it under", s.ReportID)
 	}
 	summary := strings.TrimSpace(s.Subject)
 	if summary == "" {
@@ -93,7 +93,7 @@ func (r RelaySender) SendParent(ctx context.Context, p ParentSend) (SendResult, 
 		if r.Fallback != nil {
 			return r.Fallback.SendParent(ctx, p)
 		}
-		return SendResult{}, errors.New("report: the supervisor channel has no kind for notice " + p.LogicalID + " and no fallback is set")
+		return SendResult{}, errors.New("report: the 부모 channel has no kind for notice " + p.LogicalID + " and no fallback is set")
 	}
 	summary, _, _ := strings.Cut(strings.TrimSpace(p.Text), "\n")
 	return r.stage(ctx, supervisor.DirectMessage{Kind: p.Kind, Relationship: "project:" + p.Project, Subject: supervisor.FlowSubject(p.Run, p.LogicalID),

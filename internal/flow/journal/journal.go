@@ -167,6 +167,9 @@ var intents = map[string]bool{
 	engine.EvPrepared: true, engine.EvThreadRequested: true, engine.EvForkRequested: true, engine.EvTurnRequested: true, engine.EvInterruptRequested: true,
 	// the step a session call publishes is its intent: the step file and the packet are written only after it is stored
 	engine.EvStepPublished: true,
+	// the directory a session call is about to write a flow evidence record under is named before the record is written (CRW-1496):
+	// a process that dies after the write leaves the row the release and the restore read
+	engine.EvEvidencePlaced: true,
 }
 
 // IsIntent reports whether an event is a dispatch intent.

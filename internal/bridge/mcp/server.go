@@ -6,10 +6,12 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 
@@ -96,6 +98,9 @@ type handlers struct {
 	b       *bridge.Bridge
 	log     *slog.Logger
 	reports *childReports
+	// lookedUp, when set by a test, runs in createThread right after its own reservation lookup, before the bridge is
+	// called: the place where the ledger may change between that lookup and the bridge's.
+	lookedUp func()
 }
 
 // explained logs a failed call on the log stream and passes it through unchanged.
@@ -171,6 +176,42 @@ type createThreadIn struct {
 	Role            *string         `json:"role"`
 }
 
+// errMissingPrompt refuses a create_thread that brings no prompt on a request_id no receipt holds: a thread with no first
+// turn has no rollout, and thread/resume and thread/turns/list on it fail with "missing source rollout". Nothing is
+// reserved, so the call that brings a prompt may reuse the id. It is the bridge's own refusal (bridge.ErrPromptRequired).
+var errMissingPrompt = bridge.ErrPromptRequired
+
+// reservedBeforePrompt answers a create_thread on a request_id whose reservation was made without a prompt, before a
+// prompt was required, with exactly this call's other arguments, and never reached the host. Resumed, it would create a
+// thread with no first turn, so the bridge retires it before this answer is given (bridge.ErrRetiredBeforePrompt): its
+// receipt says failed, which every bridge build replays and none re-runs, so no later call on the id, with a prompt or
+// without, creates a thread. Its way on is a new request_id with a prompt.
+func reservedBeforePrompt(id string) error {
+	return &bridge.Invalid{Reason: "request_id " + strconv.Quote(id) + " holds a create_thread reservation made without a prompt, before a prompt was required, that never reached the host (it was not_attempted). " +
+		"Resumed, it would create a thread with no first turn, so it is retired instead: its receipt now says failed, and no call on this request_id, with a prompt or without, creates a thread. " +
+		"Create the thread with a prompt under a new request_id"}
+}
+
+// reservedWithOtherArguments refuses a create_thread without a prompt on a request_id whose receipt is a create_thread
+// reservation nothing of which reached the host (not_attempted), made with other arguments than this call's
+// (bridge.ReservationOther). The ledger keeps only the fingerprint of those arguments, so the text cannot say whether
+// they hold a prompt, and says what each case gets: a call that repeats them exactly under this request_id resumes the
+// reservation when they include a prompt, and retires it when they do not (reservedBeforePrompt). Nothing was reserved
+// or rewritten by this call. A row of another operation is never answered this way; it is the bridge's plain conflict.
+func reservedWithOtherArguments(id string) error {
+	return &bridge.Invalid{Reason: "request_id " + strconv.Quote(id) + " holds a create_thread reservation that never reached the host (status not_attempted), made with other arguments than this call's. " +
+		"A call that repeats its stored arguments exactly under this same request_id resumes it when those arguments include a prompt; " +
+		"a reservation made without a prompt, before a prompt was required, is never resumed, and that call retires it instead. Nothing was reserved or rewritten"}
+}
+
+// reservation tells what the ledger holds on request's request_id, compared with request's arguments without a prompt.
+func (h handlers) reservation(ctx context.Context, request bridge.CreateThread) (bridge.Reservation, error) {
+	if h.b == nil {
+		return bridge.ReservationNone, nil
+	}
+	return h.b.CreateThreadReservation(ctx, request)
+}
+
 func (h handlers) createThread(ctx context.Context, in createThreadIn) (map[string]any, error) {
 	for _, check := range []error{empty(in.Prompt, "prompt", 100000), empty(in.Title, "title", 500), empty(in.ProjectID, "app_server_project_id", 128), empty(in.Exception, "policy_exception", 128), empty(in.Role, "role", 64)} {
 		if check != nil {
@@ -185,7 +226,39 @@ func (h handlers) createThread(ctx context.Context, in createThreadIn) (map[stri
 	if in.Roots != nil {
 		roots = append([]string{}, *in.Roots...)
 	}
-	out, err := receipt(h.b.CreateThread(ctx, bridge.CreateThread{RequestID: in.RequestID, CWD: in.CWD, Prompt: deref(in.Prompt), Title: deref(in.Title), Sandbox: in.Sandbox, Model: in.Model, ProjectID: deref(in.ProjectID), Effort: in.ReasoningEffort, Exception: deref(in.Exception), Role: deref(in.Role), Roots: roots, Policy: policy}))
+	request := bridge.CreateThread{RequestID: in.RequestID, CWD: in.CWD, Prompt: deref(in.Prompt), Title: deref(in.Title), Sandbox: in.Sandbox, Model: in.Model, ProjectID: deref(in.ProjectID), Effort: in.ReasoningEffort, Exception: deref(in.Exception), Role: deref(in.Role), Roots: roots, Policy: policy, PromptRequired: true}
+	// CRW-1506: the bridge is the guard (PromptRequired). A call without a prompt never begins an attempt there and only
+	// replays a receipt that is not not_attempted, decided under the bridge's mutation lock right after its own lookup and
+	// again inside the ledger's transaction. A reservation made without a prompt, before prompts were required, is retired
+	// before the way to a new request_id is given, so no call on it, in any build, creates a thread.
+	// This handler's own lookup (CreateThreadReservation) only words a refusal, and it only ever refuses:
+	// - A call without a prompt on a request_id no receipt holds is refused before anything is reserved, so the call that
+	//   brings a prompt may reuse the id; one on a not_attempted create_thread reservation made with other arguments is
+	//   refused with what a call with its arguments gets (reservedWithOtherArguments). Any other call without a prompt
+	//   goes to the bridge: it replays a receipt with a host effect (a creation accepted with no prompt before the refusal
+	//   existed), refuses other arguments and another operation's row as any retry is refused (the plain conflict), and
+	//   retires a reservation made with exactly these arguments (reservedBeforePrompt).
+	// - A call with a prompt goes to the bridge. A conflict with a reservation that is this call's arguments without the
+	//   prompt retires it and is answered with the way to a new request_id (reservedBeforePrompt); a failure to read the
+	//   request_id then is returned in place of the conflict, and every other conflict is answered as it is.
+	if in.Prompt == nil {
+		held, err := h.reservation(ctx, request)
+		if h.lookedUp != nil {
+			h.lookedUp()
+		}
+		switch {
+		case err != nil:
+			return h.explained("create_thread", nil, err)
+		case held == bridge.ReservationNone:
+			return h.explained("create_thread", nil, errMissingPrompt)
+		case held == bridge.ReservationOther:
+			return h.explained("create_thread", nil, reservedWithOtherArguments(in.RequestID))
+		}
+	}
+	out, err := receipt(h.b.CreateThread(ctx, request))
+	if errors.Is(err, bridge.ErrRetiredBeforePrompt) {
+		err = reservedBeforePrompt(in.RequestID)
+	}
 	return h.explained("create_thread", out, err)
 }
 

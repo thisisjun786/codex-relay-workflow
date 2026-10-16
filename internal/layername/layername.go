@@ -2,8 +2,9 @@
 // role id written where a person reads a layer. The layers and their names are the table of
 // plugins/crw/skills/crw-canon/references/hierarchy.md "The levels": the relay role id `supervisor`
 // is the 부모 (the repository session), the relay role id `parent` is the 자식 (the project session),
-// and the relay role id `child` is an issue child, no layer. The role ids stay as they are in stored
-// rows, flags, wire fields and refusal codes; the text a person reads names the layer (CRW-1432).
+// and the relay role id `child` is named by its id, a `child` session, which is no layer. The role ids
+// stay as they are in stored rows, flags, wire fields and refusal codes; the text a person reads names
+// the layer (CRW-1432).
 //
 // Name, Gloss, Typed and ListGloss build that text. Find is the matcher the ci ratchet
 // (internal/dev/ci role_words_test.go) and the package tests share, so both count the same words.
@@ -11,13 +12,14 @@
 package layername
 
 import (
+	"sort"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 )
 
 // Name is the layer name a person reads for a relay role id: supervisor is 부모, parent is 자식,
-// child is "issue child". Any other id is returned unchanged.
+// child is "`child` session". Any other id is returned unchanged.
 func Name(roleID string) string {
 	switch roleID {
 	case "supervisor":
@@ -25,7 +27,7 @@ func Name(roleID string) string {
 	case "parent":
 		return "자식"
 	case "child":
-		return "issue child"
+		return "`child` session"
 	}
 	return roleID
 }
@@ -40,11 +42,11 @@ func Gloss(roleID string) string {
 }
 
 // Typed is a role id where a person types or reads it as a value, with its layer name:
-// "supervisor (부모)", "parent (자식)", "child (issue child)".
+// "supervisor (부모)", "parent (자식)", "child (`child` session)".
 func Typed(roleID string) string { return roleID + Gloss(roleID) }
 
 // ListGloss is the layer names of a list of role ids in the given order, written after the list's
-// own spelling: " (issue child, 자식)" for ["child", "parent"]; "" for an empty list.
+// own spelling: " (`child` session, 자식)" for ["child", "parent"]; "" for an empty list.
 func ListGloss(roleIDs []string) string {
 	if len(roleIDs) == 0 {
 		return ""
@@ -70,11 +72,18 @@ var roleWords = []string{"supervisors", "supervisor", "parents", "parent"}
 // case, a trailing 's counted as the same hit. A word counts only on its own: the character before
 // it is not a letter, digit, '_', '-' or '=', and the one after it is not a letter, digit, '_', '='
 // or a '.' followed by a letter (a field path). A following '-' ends the word (parent-authored is a
-// hit) except in parent-class, a decision class.
+// hit) except in parent-class, a decision class, and parent-title, a skill command.
+//
+// A command name that 1.0 keeps is no layer (CRW-1477): the supervisor or parent that begins the
+// command word right after "crw <family> " (crw manage supervisor register, crw relay supervisor-stage),
+// where crw stands alone, family is one of crwFamilies and the whole command token is one of the
+// family's commandNames (CRW-1546), is not counted. The running text around such a command is, and so
+// is a token that is no command of the family (crw manage the supervisor, crw manage supervisor's seat,
+// crw relay supervisor-authored, the supervisor section).
 //
 // Not counted: a typed role id (supervisor (부모), parent (자식)); a quoted role id followed by its
 // layer name ('parent' (자식), "parent" (자식)); a quoted role list followed by its ListGloss
-// (['child', 'parent'] (issue child, 자식), ["child","parent"] (issue child, 자식)); a flag value
+// (['child', 'parent'] (`child` session, 자식), ["child","parent"] (`child` session, 자식)); a flag value
 // (--role supervisor); and the git senses first parent, second parent, parent revision(s), parent
 // commit(s), parent %d and has %d parent(s). A wrong layer name after a role id is a hit. A possessive
 // names a layer's own thing, so it is a hit after a flag and before revision, commit or %d (the
@@ -190,7 +199,10 @@ func exempt(text string, i int, word string, end int) bool {
 	if flagValue(text[:i]) {
 		return true
 	}
-	if lower == "parent" && hasWordPrefix(rest, "-class") {
+	if family := commandWord(text[:i]); family != "" && commandNames[family][commandToken(text[i:])] {
+		return true
+	}
+	if lower == "parent" && (hasWordPrefix(rest, "-class") || hasWordPrefix(rest, "-title")) {
 		return true
 	}
 	if lower != "parent" && lower != "parents" {
@@ -206,6 +218,69 @@ func exempt(text string, i int, word string, end int) bool {
 	}
 	before := strings.ToLower(text[:i])
 	return strings.HasSuffix(before, "has %d ") && (before == "has %d " || !wordChar(lastRune(before[:len(before)-len("has %d ")])))
+}
+
+// crwFamilies are the crw command families that take a command word (cmd/crw's listed modes
+// without help and version).
+var crwFamilies = map[string]bool{
+	"relay": true, "bridge": true, "hook": true, "skill": true, "doctor": true, "install": true,
+	"review": true, "manage": true, "gui": true, "config": true, "tools": true, "recall": true,
+	"pabcd": true, "role": true, "provider": true, "map": true, "flow": true,
+}
+
+// commandNames are, per crw family, the command names 1.0 keeps that begin with supervisor or parent:
+// the only command tokens Find does not count after "crw <family> " (CRW-1546). The relay set is every
+// registered relay command so named (internal/relay/cli command_words_test.go keeps the two equal).
+var commandNames = map[string]map[string]bool{
+	"relay": {
+		"supervisor-standing": true, "supervisor-select": true, "supervisor-report-recorded": true,
+		"supervisor-stage": true, "supervisor-show": true, "supervisor-list": true,
+		"supervisor-acknowledge": true, "supervisor-send": true, "supervisor-read": true,
+	},
+	"manage": {"supervisor": true},
+	"skill":  {"parent-title": true},
+}
+
+// CommandNames is the family's command names that begin with supervisor or parent, sorted; nil for a
+// family that has none.
+func CommandNames(family string) []string {
+	var names []string
+	for name := range commandNames[family] {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// commandWord is the family when before ends with "crw <family> ", crw standing alone (not after a
+// letter, digit, '_' or '-') and family one of crwFamilies, so the word that follows is the family's
+// command; "" otherwise.
+func commandWord(before string) string {
+	if !strings.HasSuffix(before, " ") {
+		return ""
+	}
+	name := before[:len(before)-1]
+	k := strings.LastIndexByte(name, ' ')
+	if k < 0 || !crwFamilies[name[k+1:]] || !strings.HasSuffix(name[:k], "crw") {
+		return ""
+	}
+	rest := name[:k-len("crw")]
+	if rest != "" {
+		if r := lastRune(rest); wordChar(r) || r == '-' {
+			return ""
+		}
+	}
+	return name[k+1:]
+}
+
+// commandToken is the command token that starts text: up to the first rune that is neither a letter,
+// a digit, '_' nor '-'.
+func commandToken(text string) string {
+	end := strings.IndexFunc(text, func(r rune) bool { return !wordChar(r) && r != '-' })
+	if end < 0 {
+		return text
+	}
+	return text[:end]
 }
 
 // hasWordPrefix is whether rest starts with next (any ASCII case) and next ends a word there.

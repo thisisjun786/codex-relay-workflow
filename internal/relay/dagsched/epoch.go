@@ -517,7 +517,7 @@ func (s *Scheduler) resumeOf(ctx context.Context, q store.Querier, plan, actor s
 	case liveNodeState(n.State) && rel.ParentTaskID == actor:
 		out.Resume, out.ResumeDetail = ResumeAdopt, "the child is working and this actor holds its relationship: release nothing, carry on"
 	case liveNodeState(n.State):
-		out.Resume, out.ResumeDetail = ResumeNeedsOperator, "the issue child's relationship is held by "+rel.ParentTaskID+": a replacement 자식 registers its own with the old one superseded first"
+		out.Resume, out.ResumeDetail = ResumeNeedsOperator, "the `child` session's relationship is held by "+rel.ParentTaskID+": a replacement 자식 registers its own with the old one superseded first"
 	case n.State == StateAmbiguousNode:
 		out.Resume, out.ResumeDetail = ResumeNeedsOperator, n.Detail
 	case hasAcc && n.State == StateAccepted && acc.HeadSHA != "" && rel.ParentTaskID != actor:

@@ -18,9 +18,9 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
-// TestLegacyIssueChildRunIsNotResumed (CRW-1415): a run whose journal holds a crw.releaseChild row started an issue child under the
+// TestLegacyIssueChildRunIsNotResumed (CRW-1415): a run whose journal holds a crw.releaseChild row started a `child` session under the
 // old project lane, which the current lane does not replay. `crw flow resume RUN --detach` refuses it before a process is started, the
-// run process refuses it before it writes a row, the refusal names the legacy issue-child path, and `crw flow show` still reads the run.
+// run process refuses it before it writes a row, the refusal names the legacy `child` session path, and `crw flow show` still reads the run.
 func TestLegacyIssueChildRunIsNotResumed(t *testing.T) {
 	pw := newProcessWorld(t, twoCalls)
 	run := "run-legacy-child"
@@ -52,27 +52,27 @@ func TestLegacyIssueChildRunIsNotResumed(t *testing.T) {
 
 	before := len(pw.td.spawned)
 	code, out, errOut := pw.td.do("resume", run, "--detach", "--state", pw.state)
-	if code == 0 || !strings.Contains(errOut, "legacy issue-child run") || !strings.Contains(errOut, engine.OpLegacyReleaseChild) || strings.Contains(out, "resumed") {
-		t.Errorf("a detached resume of a legacy issue-child run: exit %d %q %q", code, out, errOut)
+	if code == 0 || !strings.Contains(errOut, "legacy `child` session run") || !strings.Contains(errOut, engine.OpLegacyReleaseChild) || strings.Contains(out, "resumed") {
+		t.Errorf("a detached resume of a legacy `child` session run: exit %d %q %q", code, out, errOut)
 	}
 	if n := len(pw.td.spawned) - before; n != 0 {
-		t.Errorf("a detached resume of a legacy issue-child run started %d processes", n)
+		t.Errorf("a detached resume of a legacy `child` session run started %d processes", n)
 	}
 
 	code, errOut = pw.execute(spec, true, make(chan os.Signal, 1))
-	if code == 0 || !strings.Contains(errOut, "legacy issue-child run") {
-		t.Errorf("the run process resumed a legacy issue-child run: exit %d %q", code, errOut)
+	if code == 0 || !strings.Contains(errOut, "legacy `child` session run") {
+		t.Errorf("the run process resumed a legacy `child` session run: exit %d %q", code, errOut)
 	}
 	if got := rowsOf(); got != rows {
 		t.Errorf("the refused resumes wrote rows: %d -> %d", rows, got)
 	}
 
 	if code, out, errOut := pw.td.do("show", run, "--state", pw.state); code != 0 || !strings.Contains(out, run) {
-		t.Errorf("crw flow show of a legacy issue-child run: exit %d %q %q", code, out, errOut)
+		t.Errorf("crw flow show of a legacy `child` session run: exit %d %q %q", code, out, errOut)
 	}
 }
 
-// TestLegacyIssueLaneRunIsNotResumed (CRW-1415, PR #889 round 1): a run started as the retired issue-lane is a legacy issue-child run
+// TestLegacyIssueLaneRunIsNotResumed (CRW-1415, PR #889 round 1): a run started as the retired issue-lane is a legacy `child` session run
 // whatever its journal holds besides. `crw flow resume RUN --detach` refuses it before a process is started, the run process and
 // `crw flow resume RUN /path/to/issue-lane.js` refuse it before a row is written, and `crw flow show` still reads it.
 func TestLegacyIssueLaneRunIsNotResumed(t *testing.T) {
@@ -108,16 +108,16 @@ func TestLegacyIssueLaneRunIsNotResumed(t *testing.T) {
 	rows := rowsOf()
 
 	code, out, errOut := pw.td.do("resume", run, "--detach", "--state", pw.state)
-	if code == 0 || !strings.Contains(errOut, "legacy issue-child run") || !strings.Contains(errOut, LegacyIssueLaneWorkflow) || len(pw.td.spawned) != 0 {
+	if code == 0 || !strings.Contains(errOut, "legacy `child` session run") || !strings.Contains(errOut, LegacyIssueLaneWorkflow) || len(pw.td.spawned) != 0 {
 		t.Errorf("a detached resume of an issue-lane run: exit %d %q %q, %d processes", code, out, errOut, len(pw.td.spawned))
 	}
-	if code, errOut := pw.execute(spec, true, make(chan os.Signal, 1)); code == 0 || !strings.Contains(errOut, "legacy issue-child run") {
+	if code, errOut := pw.execute(spec, true, make(chan os.Signal, 1)); code == 0 || !strings.Contains(errOut, "legacy `child` session run") {
 		t.Errorf("the run process resumed an issue-lane run: exit %d %q", code, errOut)
 	}
 	pw.world.close()
 	code, out, errOut = pw.td.do("resume", run, old, "--state", pw.state)
 	pw.world.open()
-	if code == 0 || !strings.Contains(errOut, "legacy issue-child run") {
+	if code == 0 || !strings.Contains(errOut, "legacy `child` session run") {
 		t.Errorf("crw flow resume RUN issue-lane.js: exit %d %q %q", code, out, errOut)
 	}
 	if got := rowsOf(); got != rows {
@@ -128,7 +128,7 @@ func TestLegacyIssueLaneRunIsNotResumed(t *testing.T) {
 	}
 }
 
-// legacyAsking is the asking run with the child start of an old project lane in its journal: a legacy issue-child run that waits for
+// legacyAsking is the asking run with the child start of an old project lane in its journal: a legacy `child` session run that waits for
 // an answer.
 func legacyAsking(t *testing.T, w *world) *asking {
 	t.Helper()
@@ -145,9 +145,9 @@ func legacyAsking(t *testing.T, w *world) *asking {
 	return a
 }
 
-// TestAnswerRefusesALegacyRun (CRW-1415, PR #889 round 1): `crw flow answer` writes nothing to a legacy issue-child run. With the
+// TestAnswerRefusesALegacyRun (CRW-1415, PR #889 round 1): `crw flow answer` writes nothing to a legacy `child` session run. With the
 // auto-resume and with --no-resume the answer is refused under the run lock before the claim is judged, with a reason that names the
-// legacy issue-child path, no decision_applied row (no row at all) is appended and no process is started.
+// legacy `child` session path, no decision_applied row (no row at all) is appended and no process is started.
 func TestAnswerRefusesALegacyRun(t *testing.T) {
 	w := newWorld(t)
 	a := legacyAsking(t, w)
@@ -156,7 +156,7 @@ func TestAnswerRefusesALegacyRun(t *testing.T) {
 	before := len(mustLoad(t, w))
 	for _, extra := range [][]string{nil, {"--no-resume"}} {
 		code, reply, errOut := a.answer(td, id, extra...)
-		if code == 0 || reply.Applied || reply.Refusal == nil || reply.Refusal.Code != RefusedLegacyRun || !strings.Contains(reply.Refusal.Detail, "legacy issue-child run") {
+		if code == 0 || reply.Applied || reply.Refusal == nil || reply.Refusal.Code != RefusedLegacyRun || !strings.Contains(reply.Refusal.Detail, "legacy `child` session run") {
 			t.Errorf("answer %v to a legacy run: exit %d %+v %q", extra, code, reply, errOut)
 		}
 		if got := len(mustLoad(t, w)); got != before || len(a.appliedRows(t)) != 0 {
@@ -168,7 +168,7 @@ func TestAnswerRefusesALegacyRun(t *testing.T) {
 	}
 }
 
-// TestNextRefusesALegacyRun (CRW-1415, PR #889 round 1): `crw flow next` of a legacy issue-child run with no process does not wait out
+// TestNextRefusesALegacyRun (CRW-1415, PR #889 round 1): `crw flow next` of a legacy `child` session run with no process does not wait out
 // --wait and answer running: the refusal of its resume is the command's answer, nonzero, and no process is started.
 func TestNextRefusesALegacyRun(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
@@ -191,7 +191,7 @@ func TestNextRefusesALegacyRun(t *testing.T) {
 	td.Ready = AwaitLock
 	began := time.Now()
 	code, out, errOut := td.do("next", run, "--wait", "5", "--json", "--state", w.state)
-	if code == 0 || !strings.Contains(errOut, "legacy issue-child run") || spawned != 0 {
+	if code == 0 || !strings.Contains(errOut, "legacy `child` session run") || spawned != 0 {
 		t.Errorf("next of a legacy run: exit %d, %d processes, %q %q", code, spawned, out, errOut)
 	}
 	if took := time.Since(began); took > 4*time.Second {
@@ -221,7 +221,7 @@ func TestResumeRefusedReadsTheJournalOnce(t *testing.T) {
 }
 
 // TestEveryJournalWriterRefusesALegacyRun (CRW-1415, PR #889 round 2): every command that can write to a run's journal refuses a legacy
-// issue-child run with legacy_issue_child_run before it writes, whether a process holds the run or not: `crw flow cancel` (which ends a
+// `child` session run with legacy_issue_child_run before it writes, whether a process holds the run or not: `crw flow cancel` (which ends a
 // run no process holds with a finished row and gives its executions up), `crw flow pause`, `crw flow recover` (which appends recovery
 // rows) and `crw flow dispatched` (whose report the run journals when it answers it). Nothing is appended, no execution is given up, the
 // recovery's engine is not reached and no report is put in the run's inbox; `crw flow show` still reads the run.
@@ -266,7 +266,7 @@ func TestEveryJournalWriterRefusesALegacyRun(t *testing.T) {
 		t.Helper()
 		for _, argv := range commands {
 			code, out, errOut := td.do(argv...)
-			if code == 0 || !strings.Contains(errOut, RefusedLegacyRun) || !strings.Contains(errOut, "legacy issue-child run") || !strings.Contains(errOut, engine.OpLegacyReleaseChild) {
+			if code == 0 || !strings.Contains(errOut, RefusedLegacyRun) || !strings.Contains(errOut, "legacy `child` session run") || !strings.Contains(errOut, engine.OpLegacyReleaseChild) {
 				t.Errorf("%s: %s of a legacy run: exit %d %q %q", when, argv[0], code, out, errOut)
 			}
 		}
@@ -301,7 +301,7 @@ func TestEveryJournalWriterRefusesALegacyRun(t *testing.T) {
 
 // TestPreFirstRowIssueLaneRunIsRefusedAsLegacy (CRW-1415, PR #889 round 2): an old issue-lane process that ended after the run's spec was
 // written and before its started row left a run whose journal holds nothing to name it legacy. A foreground resume, the run process's
-// and `crw flow resume RUN issue-lane.js`, refuses it as a legacy issue-child run by the workflow its spec or its script names (as the
+// and `crw flow resume RUN issue-lane.js`, refuses it as a legacy `child` session run by the workflow its spec or its script names (as the
 // detached resume does), and no row is written.
 func TestPreFirstRowIssueLaneRunIsRefusedAsLegacy(t *testing.T) {
 	pw := newProcessWorld(t, strings.Replace(twoCalls, "name: 'two'", "name: '"+LegacyIssueLaneWorkflow+"'", 1))
@@ -332,13 +332,13 @@ func TestPreFirstRowIssueLaneRunIsRefusedAsLegacy(t *testing.T) {
 		}
 		return len(events)
 	}
-	if code, errOut := pw.execute(spec, true, make(chan os.Signal, 1)); code == 0 || !strings.Contains(errOut, "legacy issue-child run") || !strings.Contains(errOut, LegacyIssueLaneWorkflow) {
+	if code, errOut := pw.execute(spec, true, make(chan os.Signal, 1)); code == 0 || !strings.Contains(errOut, "legacy `child` session run") || !strings.Contains(errOut, LegacyIssueLaneWorkflow) {
 		t.Errorf("the run process resumed a pre-first-row issue-lane run: exit %d %q", code, errOut)
 	}
 	pw.world.close()
 	code, out, errOut := pw.td.do("resume", run, old, "--state", pw.state)
 	pw.world.open()
-	if code == 0 || !strings.Contains(errOut, "legacy issue-child run") || !strings.Contains(errOut, LegacyIssueLaneWorkflow) {
+	if code == 0 || !strings.Contains(errOut, "legacy `child` session run") || !strings.Contains(errOut, LegacyIssueLaneWorkflow) {
 		t.Errorf("crw flow resume RUN issue-lane.js of a pre-first-row run: exit %d %q %q", code, out, errOut)
 	}
 	if got := rowsOf(); got != 0 || turns != 0 {
@@ -346,7 +346,7 @@ func TestPreFirstRowIssueLaneRunIsRefusedAsLegacy(t *testing.T) {
 	}
 }
 
-// TestReportUpAndAuditWriteNothingToALegacyRun (CRW-1415, PR #889 round 2): `crw flow report-up` about a legacy issue-child run is
+// TestReportUpAndAuditWriteNothingToALegacyRun (CRW-1415, PR #889 round 2): `crw flow report-up` about a legacy `child` session run is
 // refused with legacy_issue_child_run before its report row is written, and `crw flow audit` of a legacy run that has finished prints
 // its results and records no audit row (not_recorded_because names legacy_issue_child_run).
 func TestReportUpAndAuditWriteNothingToALegacyRun(t *testing.T) {
@@ -373,7 +373,7 @@ func TestReportUpAndAuditWriteNothingToALegacyRun(t *testing.T) {
 	if err := os.WriteFile(evidence, []byte("the legacy run is blocked"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if code := w.run("report-up", "--kind", "project_blocked", "--run", run, "--evidence", evidence, "--subject", "legacy"); code == ExitOK || !strings.Contains(w.errOut.String(), RefusedLegacyRun) || !strings.Contains(w.errOut.String(), "legacy issue-child run") {
+	if code := w.run("report-up", "--kind", "project_blocked", "--run", run, "--evidence", evidence, "--subject", "legacy"); code == ExitOK || !strings.Contains(w.errOut.String(), RefusedLegacyRun) || !strings.Contains(w.errOut.String(), "legacy `child` session run") {
 		t.Errorf("report-up about a legacy run: exit %d %q", code, w.errOut.String())
 	}
 	if got := rowsOf(); got != rows || len(w.sender.supervisor) != 0 {

@@ -13,6 +13,13 @@
 // The result of one acceptance is ok, mismatch or unobserved. unobserved is never a pass: a host that does not list the thread, or
 // does not return its items, proves nothing, and neither does a record without the pair of the executor. Only an ok result lets
 // the run archive the reviewer thread.
+//
+// An acceptance on a unit check (basis unit_check, CRW-1465) rests on no reviewer thread: the unit check is a run of the review
+// tool by the run itself, recorded as a crw.unitCheck row. Its audit vouches for that row in place of a thread - a completed unit
+// check of role unit-check whose result state is ok, of the node, on the head (its commit, or its tree equal to the head's
+// recorded tree), under the criteria digest of the node's release - and reads nothing from the host; the result names no thread,
+// so the close archives nothing for it. A land-head acceptance has no executor call, so its executor pair is unobserved and so is
+// the acceptance: that is not a mismatch, and close.js escalates only a mismatch.
 package audit
 
 import (
@@ -29,6 +36,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/acceptance/premerge"
 )
 
 // The results of an audit, of one check and of one acceptance.
@@ -55,6 +63,13 @@ func (b BusReader) ReadTurns(ctx context.Context, threadID string, turnIDs []str
 	return b.Bus.ReconcileTurns(ctx, threadID, turnIDs)
 }
 
+// The bases of an acceptance, as the crw.accept row names them: a verified review (a reviewer call) or a unit check (a crw.unitCheck
+// row). An acceptance row written before the row named its basis has none, and is read on the review path.
+const (
+	BasisReview    = "review"
+	BasisUnitCheck = "unit_check"
+)
+
 // Subject is an acceptance of a node on the agent path, with the call of the reviewer whose verdict it rests on.
 type Subject struct {
 	Plan         string `json:"plan"`
@@ -64,7 +79,11 @@ type Subject struct {
 	AcceptanceID string `json:"acceptance_id"`
 	// CriteriaDigest is the digest of the criteria set the verdict was given against.
 	CriteriaDigest string `json:"criteria_digest"`
-	ReviewerCall   string `json:"reviewer_call"`
+	// ReviewerCall is the call the acceptance rests on: the reviewer's agent call, or for basis unit_check the call of the
+	// crw.unitCheck row.
+	ReviewerCall string `json:"reviewer_call"`
+	// Basis is the basis the crw.accept row names (BasisReview, BasisUnitCheck), empty for an old row that names none.
+	Basis string `json:"basis,omitempty"`
 }
 
 // Check is one thing an audit looked at and what it found.
@@ -87,48 +106,74 @@ type Result struct {
 // The names of the checks.
 const (
 	CheckRecorded = "recorded"
-	CheckExecutor = "executor_pair"
-	CheckHost     = "host_read"
-	CheckStatus   = "turn_status"
-	CheckDigest   = "result_digest"
-	CheckHead     = "packet_head"
-	CheckCriteria = "packet_criteria"
+	// CheckUnitCheck takes the place of CheckRecorded for an acceptance on a unit check: the row of the check it rests on.
+	CheckUnitCheck = "unit_check_row"
+	CheckExecutor  = "executor_pair"
+	CheckHost      = "host_read"
+	CheckStatus    = "turn_status"
+	CheckDigest    = "result_digest"
+	CheckHead      = "packet_head"
+	CheckCriteria  = "packet_criteria"
 )
 
-// Subjects lists the acceptances of the agent path in the journal: the newest acceptance of each node and head, with the verified
-// review it rests on. An acceptance whose review row cannot be found is a subject with no reviewer call, which Audit reports as a
-// mismatch: an acceptance with no review behind it is not one the audit can vouch for.
+// Subjects lists the acceptances of the agent path in the journal: the newest acceptance of each node and head, with what it rests
+// on. An acceptance row that names its basis names the call too (reviewer_call): for basis unit_check the criteria digest is the
+// one of the node's release before the acceptance (the criteria the check had to judge against), for basis review the one of the
+// crw.review row of that call. An old row that names no basis takes the newest verified review of the head. An acceptance whose
+// review row cannot be found is a subject with no reviewer call, which Audit reports as a mismatch: an acceptance with no review
+// behind it is not one the audit can vouch for.
 func Subjects(events []engine.Event) []Subject {
 	var out []Subject
+	at := []int{}
 	seen := map[string]int{}
-	for _, ev := range events {
+	for i, ev := range events {
 		if ev.Kind != engine.KindCall || ev.Op != "crw.accept" || ev.Event != engine.EvCompleted {
 			continue
 		}
-		s := Subject{Node: str(ev.Data, "node"), Head: str(ev.Data, "head"), AcceptanceID: str(ev.Data, "acceptance_id"), Plan: str(ev.Data, "plan")}
+		s := Subject{Node: str(ev.Data, "node"), Head: str(ev.Data, "head"), AcceptanceID: str(ev.Data, "acceptance_id"), Plan: str(ev.Data, "plan"),
+			Basis: str(ev.Data, "basis")}
+		if s.Basis != "" {
+			s.ReviewerCall = str(ev.Data, "reviewer_call")
+		}
 		key := s.Node + "\x00" + s.Head
-		if i, ok := seen[key]; ok {
-			out[i] = s
+		if j, ok := seen[key]; ok {
+			out[j], at[j] = s, i
 			continue
 		}
 		seen[key] = len(out)
 		out = append(out, s)
+		at = append(at, i)
 	}
 	for i := range out {
 		s := &out[i]
-		for _, ev := range events {
+		for j, ev := range events {
 			if ev.Kind != engine.KindCall || ev.Event != engine.EvCompleted {
 				continue
 			}
 			switch {
 			case ev.Op == "crw.release" && str(ev.Data, "node") == s.Node && str(ev.Data, "milestone") != "":
 				s.Milestone = str(ev.Data, "milestone")
+				if s.Basis == BasisUnitCheck && j < at[i] && released(ev) {
+					s.CriteriaDigest = str(ev.Data, "criteria_digest")
+				}
 			case ev.Op == "crw.review" && str(ev.Data, "node") == s.Node && str(ev.Data, "head") == s.Head && str(ev.Data, "state") == "verdict" && str(ev.Data, "verdict") == "verified":
-				s.ReviewerCall, s.CriteriaDigest = str(ev.Data, "call"), str(ev.Data, "criteria_digest")
+				switch s.Basis {
+				case "":
+					s.ReviewerCall, s.CriteriaDigest = str(ev.Data, "call"), str(ev.Data, "criteria_digest")
+				case BasisReview:
+					if str(ev.Data, "call") == s.ReviewerCall {
+						s.CriteriaDigest = str(ev.Data, "criteria_digest")
+					}
+				}
 			}
 		}
 	}
 	return out
+}
+
+func released(ev engine.Event) bool {
+	b, _ := ev.Data["released"].(bool)
+	return b
 }
 
 // Audit audits one acceptance against the journal and the host. A nil reader is a host that does not answer.
@@ -136,6 +181,21 @@ func Audit(ctx context.Context, reader Reader, events []engine.Event, s Subject)
 	res := Result{Subject: s, Checks: []Check{}}
 	add := func(name, result, detail string) {
 		res.Checks = append(res.Checks, Check{Name: name, Result: result, Detail: detail})
+	}
+	if s.Basis == BasisUnitCheck {
+		// the check is a run of the review tool by the run itself: what the audit can vouch for is its row, and there is no thread
+		if detail := unitCheckRow(events, s); detail != "" {
+			add(CheckUnitCheck, Mismatch, detail)
+		} else {
+			add(CheckUnitCheck, OK, "")
+		}
+		if pair, detail := executorPair(events, s.Node); pair {
+			add(CheckExecutor, OK, "")
+		} else {
+			add(CheckExecutor, Unobserved, detail)
+		}
+		res.State, res.Reason = summarize(res.Checks)
+		return res
 	}
 
 	call := callOf(events, s.ReviewerCall)
@@ -162,6 +222,90 @@ func Audit(ctx context.Context, reader Reader, events []engine.Event, s Subject)
 	}
 	res.State, res.Reason = summarize(res.Checks)
 	return res
+}
+
+// unitCheckRow says why the crw.unitCheck row an acceptance on a unit check names is no basis for it, or "" when it is one: a
+// completed row of the node with role unit-check, row and result state ok, a verified verdict over no blocking finding (the judgment
+// crw.accept takes, UnitCheckVerdict), on the head (its commit, or with no commit its tree equal
+// to the tree the journal records for the head: the commit row of the head, else a land release of it), under the criteria digest
+// of the subject.
+func unitCheckRow(events []engine.Event, s Subject) string {
+	if s.ReviewerCall == "" {
+		return "the acceptance names no unit-check call it rests on"
+	}
+	var row *engine.Event
+	for i := range events {
+		ev := &events[i]
+		if ev.Kind == engine.KindCall && ev.CallID == s.ReviewerCall && ev.Op == "crw.unitCheck" && ev.Event == engine.EvCompleted {
+			row = ev
+		}
+	}
+	if row == nil {
+		return fmt.Sprintf("no completed crw.unitCheck row %s is recorded", s.ReviewerCall)
+	}
+	var res struct {
+		State    string `json:"state"`
+		Verdict  string `json:"verdict"`
+		Findings []struct {
+			ID       string `json:"id"`
+			Severity string `json:"severity"`
+			Impact   string `json:"impact"`
+		} `json:"findings"`
+	}
+	_ = json.Unmarshal([]byte(str(row.Data, "result")), &res)
+	switch {
+	case str(row.Data, "node") != s.Node:
+		return fmt.Sprintf("the unit check %s is of node %q, the acceptance is of %s", s.ReviewerCall, str(row.Data, "node"), s.Node)
+	case str(row.Data, "role") != "unit-check":
+		return fmt.Sprintf("the unit check %s names no role unit-check (%q): the tool was not run", s.ReviewerCall, str(row.Data, "role"))
+	case str(row.Data, "state") != OK || res.State != OK:
+		return fmt.Sprintf("the unit check %s gave no judgment (state %q, result state %q)", s.ReviewerCall, str(row.Data, "state"), res.State)
+	case res.Verdict != "verified":
+		// ok is that the tool gave a judgment; the acceptance needs it to be verified, as crw.accept does (UnitCheckVerdict)
+		return fmt.Sprintf("the unit check %s ruled %q, not verified", s.ReviewerCall, res.Verdict)
+	case s.CriteriaDigest == "" || str(row.Data, "criteria_digest") != s.CriteriaDigest:
+		return fmt.Sprintf("the unit check %s names criteria digest %q, the acceptance stands on %q", s.ReviewerCall, str(row.Data, "criteria_digest"), s.CriteriaDigest)
+	}
+	for _, f := range res.Findings {
+		if premerge.Blocks(f.Severity, f.Impact) {
+			return fmt.Sprintf("the unit check %s is verified over finding %s (%s %s), which blocks", s.ReviewerCall, f.ID, f.Severity, f.Impact)
+		}
+	}
+	if commit := str(row.Data, "commit"); commit != "" {
+		if commit != s.Head {
+			return fmt.Sprintf("the unit check %s is of commit %s, the acceptance stands on %s", s.ReviewerCall, commit, s.Head)
+		}
+		return ""
+	}
+	tree := headTree(events, s)
+	switch {
+	case tree == "":
+		return fmt.Sprintf("the journal records no tree of the head %s to compare the unit check %s with", s.Head, s.ReviewerCall)
+	case str(row.Data, "tree") != tree:
+		return fmt.Sprintf("the unit check %s saw tree %q, the head %s has tree %s", s.ReviewerCall, str(row.Data, "tree"), s.Head, tree)
+	}
+	return ""
+}
+
+// headTree is the tree the journal records for the head of a node: the newest commit row of the head, else the newest land release of
+// it; "" when neither names one.
+func headTree(events []engine.Event, s Subject) string {
+	commit, land := "", ""
+	for _, ev := range events {
+		if ev.Kind != engine.KindCall || ev.Event != engine.EvCompleted || str(ev.Data, "node") != s.Node || str(ev.Data, "tree") == "" {
+			continue
+		}
+		switch {
+		case ev.Op == "crw.commit" && str(ev.Data, "commit") == s.Head:
+			commit = str(ev.Data, "tree")
+		case ev.Op == "crw.release" && str(ev.Data, "kind") == "land" && str(ev.Data, "head") == s.Head:
+			land = str(ev.Data, "tree")
+		}
+	}
+	if commit != "" {
+		return commit
+	}
+	return land
 }
 
 // hostChecks reads the thread of the reviewer from the host and compares it with the journal.

@@ -9,7 +9,7 @@ import (
 
 // CRW-1313: hierarchy.md holds the one table of thread titles, a row per layer: the top session (CRW creates it
 // not, so no rule), the parent (the repository session, `[CRW] 부모 · <owner>/<repo>`), the child (the project
-// session, crw-plan's app presentation rule), the issue child (task-packet's Child task titles) and the subagents
+// session, crw-plan's app presentation rule) and the subagents
 // (no title). It says who names a thread and when (the creator, right after creation, with thread/name/set, never the
 // first prompt sentence) and that a naming failure warns and records. The documents that keep a layer's rule link the
 // table, and no other document spells the repository session's title.
@@ -24,8 +24,8 @@ func TestThreadTitlesAreOneTable(t *testing.T) {
 			table = candidate
 		}
 	}
-	if len(table) != 6 {
-		t.Fatalf("the thread titles table has %d lines, want a header and five layers: %v", len(table), table)
+	if len(table) != 5 {
+		t.Fatalf("the thread titles table has %d lines, want a header and four layers: %v", len(table), table)
 	}
 	rows := map[string]string{}
 	for _, row := range table[1:] {
@@ -33,9 +33,8 @@ func TestThreadTitlesAreOneTable(t *testing.T) {
 	}
 	for layer, want := range map[string][]string{
 		"총괄":     {"CRW does not create it"},
-		"부모":     {"`[CRW] 부모 · <owner>/<repo>`", "`create_thread`", "`supervisor`"},
-		"자식":     {"set-the-app-presentation-and-record", "`create_thread`", "`parent`"},
-		"Issue":  {"child-task-titles", "`ISSUE-ID · <title>`", "`child`"},
+		"부모":     {"`[CRW] 부모 · <owner>/<repo>`", "`create_thread`"},
+		"자식":     {"set-the-app-presentation-and-record", "`create_thread`"},
 		"서브에이전트": {"no title"},
 	} {
 		row, ok := rows[layer]

@@ -15,11 +15,17 @@
 //	invalid           the answer is not exactly one JSON value valid against the request's schema, has a field the answer does not
 //	                  know, a severity no grade word reads, or an impact outside premerge.Impacts, or its verdict is verified over a
 //	                  finding that premerge.Blocks (the adapter's form of verdict_invalid)
+//	not_read          the answer would be ok, but the profile sets a floor (Profile.MinElapsed, MinCacheRead, MinCommands) and the
+//	                  call ran shorter, its output reports no usage (Profile.Usage), or it read fewer cached tokens or ran fewer
+//	                  commands than the floor: a pass that read no repository gives no verdict
 //	ok                otherwise: verdict and findings are kept
 //
 // An answer that merely quotes a quota text on a successful call is not quota. Only an ok record carries a verdict and findings;
 // every record names the engine family (in canonical form: trimmed, lower case, as execution.ModelFamily gives an author's), model,
-// effort, guide revision, prompt digest and both fingerprints. Findings are graded
+// effort, guide revision, prompt digest and both fingerprints, and keeps, whatever its state, the call's elapsed time and the usage
+// its output reports (cached tokens read and commands run; zero when it reports none). The prompt digest names the bytes the tool was
+// given: the prompt when the profile's arguments hold it (PromptSent), else none, the empty string's digest (a tool whose Args leave
+// the prompt out, such as one that takes no prompt). Findings are graded
 // P0-P3 (review.NormalizeGrade) and carry an id that ignores the line (FindingID); findings of one id collapse into one.
 //
 // The adapter reaches the outside only through its seams (Run, Fingerprint), so it imports no store and no flow op.
@@ -37,6 +43,7 @@ import (
 	"os"
 	"os/exec"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -63,6 +70,7 @@ const (
 	StateInvalid         State = "invalid"
 	StateWorktreeChanged State = "worktree_changed"
 	StateToolFailed      State = "tool_failed"
+	StateNotRead         State = "not_read"
 )
 
 // The verdicts of an ok record.
@@ -101,10 +109,15 @@ var AnswerSchema = []byte(`{
 type Request struct {
 	Profile  Profile
 	Worktree string        // the directory the tool runs in and the fingerprint covers
-	Prompt   string        // the review prompt; the exec runner appends it to the argv
+	Prompt   string        // the review prompt; the exec runner gives it as the last argument unless the profile's Args say otherwise
 	Schema   []byte        // the JSON Schema the answer must satisfy (AnswerSchema)
 	Limit    time.Duration // the time limit of the call
 	GuideRev string        // the revision of the review guide the prompt was built from
+	// Base and Head are the committed range base..head a committed check asks about (land-head's check, CRW-1468), both empty for a
+	// check of the uncommitted changes. A profile whose reader reads a range (Profile.Ranged) needs both, and its reader is given
+	// them with the request: an answer about any other range, or one that names none, is no answer. A profile's Args may read them
+	// too (a tool that is given the range's base as an argument).
+	Base, Head string
 }
 
 // Finding is one finding of an ok record. Severity is a grade P0-P3; Impact is one of premerge.Impacts or empty (a security
@@ -129,9 +142,14 @@ type Result struct {
 	Effort            string    `json:"effort"`
 	GuideRev          string    `json:"guide_rev"`
 	PromptDigest      string    `json:"prompt_digest"`
+	PromptSent        bool      `json:"prompt_sent"` // the tool's arguments held the prompt; false: PromptDigest is the empty string's
 	FingerprintBefore string    `json:"fingerprint_before"`
 	FingerprintAfter  string    `json:"fingerprint_after"`
 	ElapsedMS         int64     `json:"elapsed_ms"`
+	// CacheReadTokens and Commands are the usage the tool's output reports (Profile.Usage): the cached input tokens it read and the
+	// commands it ran; both zero when it reports none.
+	CacheReadTokens int64 `json:"cache_read_tokens"`
+	Commands        int   `json:"commands"`
 }
 
 // RunFunc runs the profile's tool once under ctx (which carries the time limit). err is set when the tool did not start (wrapping
@@ -174,12 +192,15 @@ type call struct {
 	err            error
 	timedOut       bool
 	changed        bool
+	elapsed        time.Duration // from the start of the run to its end
+	usage          Usage         // what the output reports it read (Profile.Usage), when usageOK
+	usageOK        bool
 }
 
 // Check validates the request, runs the tool between two fingerprints of the worktree, and returns the record. A Go error means
 // the request or the adapter is wrong, a fingerprint could not be taken, or the caller's ctx ended; it is never a state.
 func (a Adapter) Check(ctx context.Context, req Request) (Result, error) {
-	schema, family, err := a.validate(req)
+	schema, family, sent, err := a.validate(req)
 	if err != nil {
 		return Result{}, err
 	}
@@ -187,8 +208,12 @@ func (a Adapter) Check(ctx context.Context, req Request) (Result, error) {
 	if now == nil {
 		now = time.Now
 	}
-	sum := sha256.Sum256([]byte(req.Prompt))
-	res := Result{Model: req.Profile.Model, Effort: req.Profile.Effort, EngineFamily: family, GuideRev: req.GuideRev, PromptDigest: hex.EncodeToString(sum[:])}
+	var given string // the prompt bytes the tool is given
+	if sent {
+		given = req.Prompt
+	}
+	sum := sha256.Sum256([]byte(given))
+	res := Result{Model: req.Profile.Model, Effort: req.Profile.Effort, EngineFamily: family, GuideRev: req.GuideRev, PromptDigest: hex.EncodeToString(sum[:]), PromptSent: sent}
 	if res.FingerprintBefore, err = a.Fingerprint(ctx, req.Worktree); err != nil {
 		return Result{}, fmt.Errorf("reviewadapter: fingerprint before the call: %w", err)
 	}
@@ -198,7 +223,14 @@ func (a Adapter) Check(ctx context.Context, req Request) (Result, error) {
 	c.stdout, c.stderr, c.exit, c.err = a.Run(rctx, req.Profile, req)
 	c.timedOut = c.err != nil && (errors.Is(c.err, context.DeadlineExceeded) || errors.Is(rctx.Err(), context.DeadlineExceeded))
 	cancel()
-	res.ElapsedMS = now().Sub(start).Milliseconds()
+	c.elapsed = now().Sub(start)
+	res.ElapsedMS = c.elapsed.Milliseconds()
+	if req.Profile.Usage != nil {
+		c.usage, c.usageOK = req.Profile.Usage(c.stdout)
+	}
+	if c.usageOK {
+		res.CacheReadTokens, res.Commands = c.usage.CacheRead, c.usage.Commands
+	}
 	if err := ctx.Err(); err != nil {
 		return Result{}, fmt.Errorf("reviewadapter: the caller ended the call: %w", err)
 	}
@@ -212,43 +244,62 @@ func (a Adapter) Check(ctx context.Context, req Request) (Result, error) {
 
 // validate refuses a request the adapter cannot run (D4), resolves its schema and gives the engine family the record names: the
 // profile's Family in canonical form (execution.CanonicalFamily), else the family of its model. A family that is blank after the
-// trim or is no family name is unknown, and the request is refused, as one that names no model is.
-func (a Adapter) validate(req Request) (*jsonschema.Resolved, string, error) {
+// trim or is no family name is unknown, and the request is refused, as one that names no model is. It also builds the tool's
+// arguments once (toolArgs): an Args that errs refuses the request, and sent says whether the arguments hold the prompt.
+func (a Adapter) validate(req Request) (*jsonschema.Resolved, string, bool, error) {
 	p := req.Profile
 	switch {
 	case a.Run == nil:
-		return nil, "", errors.New("reviewadapter: the adapter has no Run")
+		return nil, "", false, errors.New("reviewadapter: the adapter has no Run")
 	case a.Fingerprint == nil:
-		return nil, "", errors.New("reviewadapter: the adapter has no Fingerprint")
+		return nil, "", false, errors.New("reviewadapter: the adapter has no Fingerprint")
 	case strings.TrimSpace(req.Worktree) == "":
-		return nil, "", errors.New("reviewadapter: the request names no worktree")
+		return nil, "", false, errors.New("reviewadapter: the request names no worktree")
 	case len(bytes.TrimSpace(req.Schema)) == 0:
-		return nil, "", errors.New("reviewadapter: the request has no schema")
+		return nil, "", false, errors.New("reviewadapter: the request has no schema")
 	case strings.TrimSpace(req.GuideRev) == "":
-		return nil, "", errors.New("reviewadapter: the request names no guide revision")
+		return nil, "", false, errors.New("reviewadapter: the request names no guide revision")
 	case req.Limit <= 0:
-		return nil, "", errors.New("reviewadapter: the request has no time limit")
+		return nil, "", false, errors.New("reviewadapter: the request has no time limit")
 	case strings.TrimSpace(p.Model) == "" || strings.TrimSpace(p.Effort) == "":
-		return nil, "", fmt.Errorf("reviewadapter: profile %q names no model or no effort", p.Name)
+		return nil, "", false, fmt.Errorf("reviewadapter: profile %q names no model or no effort", p.Name)
 	case p.Answer == nil:
-		return nil, "", fmt.Errorf("reviewadapter: profile %q has no answer reader", p.Name)
+		return nil, "", false, fmt.Errorf("reviewadapter: profile %q has no answer reader", p.Name)
+	case p.Ranged && (strings.TrimSpace(req.Base) == "" || strings.TrimSpace(req.Head) == ""):
+		return nil, "", false, fmt.Errorf("reviewadapter: profile %q judges a committed range and the request names none (base %q, head %q)", p.Name, req.Base, req.Head)
+	}
+	_, sent, err := toolArgs(p, req)
+	if err != nil {
+		return nil, "", false, fmt.Errorf("reviewadapter: %w", err)
 	}
 	var sch jsonschema.Schema
 	if err := json.Unmarshal(req.Schema, &sch); err != nil {
-		return nil, "", fmt.Errorf("reviewadapter: the request's schema: %w", err)
+		return nil, "", false, fmt.Errorf("reviewadapter: the request's schema: %w", err)
 	}
 	r, err := sch.Resolve(nil)
 	if err != nil {
-		return nil, "", fmt.Errorf("reviewadapter: the request's schema: %w", err)
+		return nil, "", false, fmt.Errorf("reviewadapter: the request's schema: %w", err)
 	}
 	family, ok := execution.CanonicalFamily(p.Family)
 	if p.Family == "" {
 		family, ok = execution.CanonicalFamily(execution.ModelFamily(p.Model))
 	}
 	if !ok {
-		return nil, "", fmt.Errorf("reviewadapter: profile %q names no known engine family (family %q, model %q)", p.Name, p.Family, p.Model)
+		return nil, "", false, fmt.Errorf("reviewadapter: profile %q names no known engine family (family %q, model %q)", p.Name, p.Family, p.Model)
 	}
-	return r, family, nil
+	return r, family, sent, nil
+}
+
+// toolArgs gives the arguments the runner puts after the profile's argv for req: Args(req), or the prompt alone when the profile
+// has no Args. sent reports whether they hold the prompt as one argument (with no Args always: an empty prompt is still given).
+func toolArgs(p Profile, req Request) (args []string, sent bool, err error) {
+	if p.Args == nil {
+		return []string{req.Prompt}, true, nil
+	}
+	if args, err = p.Args(req); err != nil {
+		return nil, false, fmt.Errorf("profile %q could not build its arguments: %w", p.Name, err)
+	}
+	return args, slices.Contains(args, req.Prompt), nil
 }
 
 // classify decides the state of one call in the order of the package doc, and for ok the verdict and findings.
@@ -272,7 +323,7 @@ func classify(req Request, schema *jsonschema.Resolved, c call) (State, string, 
 	var answerErr error
 	blank := len(bytes.TrimSpace(c.stdout)) == 0
 	if !blank && c.exit == 0 {
-		answer, answerErr = req.Profile.Answer(c.stdout)
+		answer, answerErr = req.Profile.Answer(c.stdout, req)
 		blank = answerErr == nil && len(bytes.TrimSpace(answer)) == 0
 	}
 	if c.exit != 0 || blank {
@@ -299,8 +350,41 @@ func classify(req Request, schema *jsonschema.Resolved, c call) (State, string, 
 	if err != nil {
 		return StateInvalid, err.Error(), "", nil
 	}
+	if detail, void := shallow(req.Profile, c); void {
+		return StateNotRead, detail, "", nil
+	}
 	return StateOK, "", verdict, findings
 }
+
+// shallow reports whether a call whose answer would be ok read no repository under the profile's floors, and says why: it ran
+// shorter than MinElapsed, its output reports no usage, or it read fewer cached tokens than MinCacheRead or ran fewer commands than
+// MinCommands. A profile with no floor is never shallow.
+func shallow(p Profile, c call) (string, bool) {
+	var floors []string
+	if p.MinCacheRead > 0 {
+		floors = append(floors, fmt.Sprintf("%d tokens", p.MinCacheRead))
+	}
+	if p.MinCommands > 0 {
+		floors = append(floors, fmt.Sprintf("%d commands", p.MinCommands))
+	}
+	if p.MinElapsed > 0 {
+		floors = append(floors, seconds(p.MinElapsed)+" s")
+	}
+	if len(floors) == 0 {
+		return "", false
+	}
+	minimum := strings.Join(floors, ", ")
+	if !c.usageOK {
+		return fmt.Sprintf("the tool reported no usage in %s s (min %s); the pass read no repository", seconds(c.elapsed), minimum), true
+	}
+	if c.elapsed < p.MinElapsed || c.usage.CacheRead < p.MinCacheRead || c.usage.Commands < p.MinCommands {
+		return fmt.Sprintf("read %d tokens and %d commands in %s s (min %s); the pass read no repository", c.usage.CacheRead, c.usage.Commands, seconds(c.elapsed), minimum), true
+	}
+	return "", false
+}
+
+// seconds is d in seconds without trailing zeros ("20", "59.6").
+func seconds(d time.Duration) string { return strconv.FormatFloat(d.Seconds(), 'f', -1, 64) }
 
 // quotaText returns the first quota text found, case-insensitively, in any of outs. A text counts only where no letter or digit
 // borders it, so "429" is not found in "1429" or "4290".
@@ -405,16 +489,14 @@ func onlyValue(dec *json.Decoder) error {
 	}
 }
 
-// normalize applies the impact rules of the flow (CRW-1438) and collapses findings that share an id into the first of them,
-// keeping the most severe grade and the first blocking impact (else the first non-empty one), so ids are unique inside a record. security[i] is the security
-// flag review.NormalizeGrade read from the severity of findings[i]. In order:
+// normalize applies the impact rules of the flow (CRW-1438) and collapses findings that share an id (MergeFindings), so ids are
+// unique inside a record. security[i] is the security flag review.NormalizeGrade read from the severity of findings[i]. In order:
 //   - an impact that is not empty and not one of premerge.Impacts is an error;
 //   - a security finding without an impact gets safety_or_data;
 //   - after the collapse, a verified verdict over a finding that premerge.Blocks is an error naming the finding (the adapter's
 //     form of verdict_invalid).
 func normalize(verdict string, findings []Finding, security []bool) ([]Finding, error) {
-	out := make([]Finding, 0, len(findings))
-	at := map[string]int{}
+	checked := make([]Finding, 0, len(findings))
 	for k, f := range findings {
 		if f.Impact != "" && !slices.Contains(premerge.Impacts, f.Impact) {
 			return nil, fmt.Errorf("finding %s at %s:%d has an impact outside the closed set: %q", f.ID, f.File, f.Line, f.Impact)
@@ -422,25 +504,41 @@ func normalize(verdict string, findings []Finding, security []bool) ([]Finding, 
 		if f.Impact == "" && k < len(security) && security[k] {
 			f.Impact = impactSafetyOrData
 		}
-		i, seen := at[f.ID]
-		if !seen {
-			at[f.ID] = len(out)
-			out = append(out, f)
-			continue
-		}
-		if f.Severity < out[i].Severity { // "P0" < "P1" < "P2" < "P3"
-			out[i].Severity = f.Severity
-		}
-		if out[i].Impact == "" || (out[i].Impact == premerge.MinorSeparable && f.Impact != "" && f.Impact != premerge.MinorSeparable) {
-			out[i].Impact = f.Impact // a blocking impact of any duplicate is never hidden by a non-blocking one
-		}
+		checked = append(checked, f)
 	}
+	out := MergeFindings(checked)
 	if verdict == VerdictVerified {
 		if f, ok := firstBlocking(out); ok {
 			return nil, fmt.Errorf("the answer is verified over the blocking finding %s at %s:%d (severity %s, impact %q)", f.ID, f.File, f.Line, f.Severity, f.Impact)
 		}
 	}
 	return out, nil
+}
+
+// MergeFindings merges the findings of lists, in order, into one finding per id: the first copy's id, file, line and text, the
+// most severe grade of all copies ("P0" before "P3"), and a blocking impact of any copy over a non-blocking (minor_separable) or
+// empty one (else the first non-empty impact), whichever list holds which copy, so a blocking judgment is never hidden by the copy
+// that came first. Findings keep the order of their first copies. The lists are not changed, and the result is never nil.
+func MergeFindings(lists ...[]Finding) []Finding {
+	out := []Finding{}
+	at := map[string]int{}
+	for _, list := range lists {
+		for _, f := range list {
+			i, seen := at[f.ID]
+			if !seen {
+				at[f.ID] = len(out)
+				out = append(out, f)
+				continue
+			}
+			if f.Severity < out[i].Severity { // "P0" < "P1" < "P2" < "P3"
+				out[i].Severity = f.Severity
+			}
+			if out[i].Impact == "" || (out[i].Impact == premerge.MinorSeparable && f.Impact != "" && f.Impact != premerge.MinorSeparable) {
+				out[i].Impact = f.Impact
+			}
+		}
+	}
+	return out
 }
 
 // firstBlocking returns the first of findings that premerge.Blocks, the finding a verified verdict may not stand over.
@@ -477,7 +575,8 @@ const maxOutput = 8 << 20
 // killGrace is how long the exec runner waits for the streams after it killed the process group.
 const killGrace = 2 * time.Second
 
-// ExecRun is the real RunFunc: it runs the profile's argv with the prompt as the last argument, in the worktree, in a process
+// ExecRun is the real RunFunc: it runs the profile's argv followed by the profile's arguments for the request (toolArgs: the prompt
+// as the last argument when the profile has no Args; an Args that errs is a tool that did not start), in the worktree, in a process
 // group of its own that is killed when ctx ends (the time limit). A tool that did not start, ran past ctx, or wrote more than
 // the cap is an error. The first byte over the cap on either stream kills the process group at once, so a runaway tool ends the
 // call with the output-cap failure (ErrOutputCap) instead of running on to the time limit.
@@ -490,7 +589,11 @@ func ExecRun(ctx context.Context, p Profile, req Request) ([]byte, []byte, int, 
 	if len(p.Argv) == 0 {
 		return nil, nil, -1, fmt.Errorf("%w: profile %q has no argv", ErrNotStarted, p.Name)
 	}
-	args := append(append([]string{}, p.Argv[1:]...), req.Prompt)
+	extra, _, err := toolArgs(p, req)
+	if err != nil {
+		return nil, nil, -1, fmt.Errorf("%w: %w", ErrNotStarted, err)
+	}
+	args := append(append([]string{}, p.Argv[1:]...), extra...)
 	cmd := exec.CommandContext(ctx, p.Argv[0], args...)
 	cmd.Dir = req.Worktree
 	outR, outW, err := os.Pipe()

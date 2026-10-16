@@ -38,7 +38,7 @@ const supervisorExitHost = 3
 // supervisorHostValuesNote is what a run that passes a host value on the command line is told:
 // every host value comes from the supervisor section of the configuration, so the command line
 // cannot carry one.
-const supervisorHostValuesNote = "host values come from the supervisor section of the configuration"
+const supervisorHostValuesNote = "host values come from the supervisor (부모) section of the configuration"
 
 // supervisorSection is the configuration document's supervisor section: the management thread, the
 // host it runs on, its working directory and the settings file the pair record cites. Every value
@@ -115,7 +115,8 @@ func supervisorRun(ctx context.Context, e *Env, args []string) int {
 	case "-h", "--help", "help":
 		return supervisorUsageWrite(e, supervisorUsage,
 			"  register\tbind the calling management thread (--task, else CODEX_THREAD_ID, else the configured one) as its own management seat and record its pair",
-			"  show\t\tprint the recorded binding and the recorded settings")
+			"  show\t\tprint the recorded binding and the recorded settings",
+			"supervisor (부모): the repository session's management seat")
 	case "register":
 		return supervisorRegister(ctx, e, args[1:])
 	case "show":
@@ -131,7 +132,7 @@ func supervisorRun(ctx context.Context, e *Env, args []string) int {
 func supervisorSectionOf(e *Env, cfg *Config) (supervisorSection, int) {
 	var section supervisorSection
 	if err := cfg.Section("supervisor", &section); err != nil {
-		supervisorNote(e, fmt.Sprintf("crw manage supervisor: error: the supervisor section (%s) is not readable: %v\n", supervisorSectionKey, err))
+		supervisorNote(e, fmt.Sprintf("crw manage supervisor: error: the supervisor (부모) section (%s) is not readable: %v\n", supervisorSectionKey, err))
 		return section, usageExit
 	}
 	return section, 0

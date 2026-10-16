@@ -68,8 +68,10 @@ func AssemblePremerge(in PremergeInput) (premerge.Record, error) {
 // node's plan (expect) passes on the evidence of the passing verification of the head (its digest) and of the check (its call)
 // that left no blocking finding; each finding is a defect named by its finding id. A check that gave no judgment, that did not
 // verify, or that verified over a finding that blocks is no verified verdict (an error). An empty expect gives a verdict with no
-// criterion, which AssemblePremerge refuses: a node whose plan names no criterion is never accepted on a unit check.
-func UnitCheckVerdict(res reviewadapter.Result, call, verification string, expect []string) (ReviewVerdict, error) {
+// criterion, which AssemblePremerge refuses: a node whose plan names no criterion is never accepted on a unit check. receipt is the
+// executor's evidence receipt the check read (SHA256 "" for none) and whether its prompt reached the tool (Handed); the evidence and
+// the summary name it, and say when the tool was not given it.
+func UnitCheckVerdict(res reviewadapter.Result, call, verification string, expect []string, receipt UnitCheckReceipt) (ReviewVerdict, error) {
 	switch {
 	case res.State != reviewadapter.StateOK:
 		return ReviewVerdict{}, fmt.Errorf("unit check %s gave no judgment (state %s)", call, res.State)
@@ -87,6 +89,14 @@ func UnitCheckVerdict(res reviewadapter.Result, call, verification string, expec
 		family = execution.ModelFamily(res.Model)
 	}
 	evidence := fmt.Sprintf("verification %s of the head passed; unit check %s (%s %s) left no blocking finding", verification, call, family, res.Model)
+	if receipt.SHA256 != "" {
+		named := "; executor receipt " + receipt.SHA256
+		if !receipt.Handed {
+			named += " (read and kept; not handed to the tool, which takes no prompt)"
+		}
+		evidence += named
+		v.Summary += named
+	}
 	for _, id := range expect {
 		v.Criteria = append(v.Criteria, Criterion{ID: id, Met: true, Evidence: evidence})
 	}
@@ -94,6 +104,14 @@ func UnitCheckVerdict(res reviewadapter.Result, call, verification string, expec
 		v.Defects = append(v.Defects, Defect{Ref: f.ID, Kind: "other", Severity: f.Severity, Impact: f.Impact, Introduced: true, File: f.File, Line: f.Line, Finding: f.Text})
 	}
 	return v, nil
+}
+
+// UnitCheckReceipt is the executor receipt a unit check read, as crw.accept reads it from the check's row (CRW-1517): its sha256
+// ("" for none: no accepted receipt) and whether the prompt that holds it reached the tool that judged (the row's receipt handed; a row
+// written before handed was recorded, when every unit check took the prompt, reads true).
+type UnitCheckReceipt struct {
+	SHA256 string
+	Handed bool
 }
 
 // PremergeNeeds are the findings of a record the judgment asks a disposition for, in the order it asks.

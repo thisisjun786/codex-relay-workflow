@@ -5,9 +5,11 @@ Relay-owned records, not contract records. The five schemas under
 contract and none of them describes anything on this page. Nothing here is validated against
 them, and nothing here changed them.
 
+The sessions in this document are named by [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels): the parent is the repository session, the child is the project session, and a `child` session (a code id, not a layer) is no layer. The role ids that the commands, flags and stored rows keep (`supervisor`, `parent` and `child`) are read through [Names used only in code](../../plugins/crw/skills/crw-canon/references/hierarchy.md#names-used-only-in-code).
+
 ## Why these are separate tables
 
-`relationships` binds one parent task to one child task for one issue. That is the whole of the
+`relationships` binds the task of one child to the task of one `child` session for one issue. That is the whole of the
 registered hierarchy it can express, and three separate contracts break if a supervision is
 pushed into it:
 
@@ -60,12 +62,12 @@ Replacing the owner is supposed to produce a new binding rather than rewrite who
 was, so the old row stays, archived, with `supersededBy` pointing at its replacement.
 
 A **peer** id sorts its two scope keys before hashing. A peer relation is symmetric, so two
-parents registering it from opposite ends have to converge on one record rather than on two
+children registering it from opposite ends have to converge on one record rather than on two
 mirror images.
 
 A **directive** carries the revision of the link it arrived on, which is the one identity here
 that deliberately does NOT converge across a handover. Replaying an instruction to the same
-scope is meant to land on the same record, and a replacement supervisor re-issuing a
+scope is meant to land on the same record, and a replacement parent re-issuing a
 byte-identical instruction is a different fact: a handover advances the edge's revision, so
 without it the second directive derived its predecessor's id and the two became
 indistinguishable. Derive the id with the revision the edge carries when the directive is
@@ -79,18 +81,18 @@ lengthen a chain nor introduce a second execution owner. That is a property of t
 than a convention, and a test asserts the walk's output is unchanged by adding a peer row.
 
 One task holds one role. That single rule is also what makes mutual supervision unreachable: a
-task cannot be both a parent and somebody else's supervisor. The reachability walk exists for
+task cannot be both a child and somebody else's parent. The reachability walk exists for
 the case the role rule does not cover, a task that owns a scope BELOW the project it is being
 asked to supervise.
 
 A project has at most one live `execution` edge, whichever initiative or parent it names. Every
-other initiative uses a `reference`, and a reference must agree about who the parent (relay role `parent`) is. That is
+other initiative uses a `reference`, and a reference must agree about who the child of the project is. That is
 what stops a shared project from acquiring a second execution parent.
 
 ## The store seat
 
-A supervisor's own level is an initiative. `linkage-bind --role supervisor --scope-kind store
---scope store` claims the store instead: one key, one live owner, and the same identity rule, so
+The `supervisor` role's own level is an initiative.
+`linkage-bind --role supervisor --scope-kind store --scope store` claims the store instead: one key, one live owner, and the same identity rule, so
 the binding is `bindingID("supervisor","store","store",task)`. The store is the one scope no
 Linear level owns, so a task bound there holds a seat that is not an initiative execution
 binding. `--scope-kind` is accepted for that one combination and no other: another role, or
@@ -98,35 +100,35 @@ another key, is a named refusal rather than a second scope, and the seat writes 
 row, because a supervision edge joins an initiative to a project and the store has no initiative
 above it.
 
-The seat is for a session that manages the store rather than one project. The parent (repository session, relay role
-`supervisor`, [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels)) holds it, and LINA holds the same seat the same way — a task with one supervisor binding at the
-store — so neither is tied to a single initiative's execution. One task holds one supervisor
+The seat is for a session that manages the store rather than one project. The parent (repository session, [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels)) holds it, and LINA holds the same seat the same way — a task with one parent binding at the
+store — so neither is tied to a single initiative's execution. One task holds one such
 seat, so a session registered here cannot also supervise an initiative; that is the rule the role
 model already had, not a limit of the command. The seat is also what such a session needs to
 speak for the store scope: `limit-declare --scope-kind store` reads its declarer from a live
-supervisor binding, and the seat is the binding a session that manages the store holds.
+parent binding, and the seat is the binding a session that manages the store holds.
 
-The seat changes hands like any other: `linkage-handover --role supervisor --scope-kind store
---scope store --expect-task <incumbent> --task <successor> ...` archives the incumbent's binding
+The seat changes hands like any other:
+`linkage-handover --role supervisor --scope-kind store --scope store --expect-task <incumbent> --task <successor> ...` archives the incumbent's binding
 and binds the successor. The scope kind is the same `--scope-kind` decision `linkage-bind` makes,
-so it is accepted for the supervisor's store seat and no other combination; the handover rules are
+so it is accepted for the parent's store seat and no other combination; the handover rules are
 the ordinary ones, which is what makes the seat recoverable when the parent is
 replaced. `--expect-task` must name the live owner, and a successor that already supervises an
-initiative is refused `role_already_bound`, because one task holds one supervisor seat. Without
-`--scope-kind` the handover takes the role's own level as it always did, so `--role supervisor
---scope store` still looks for an initiative named `store` and refuses `unregistered_scope`.
+initiative is refused `role_already_bound`, because one task holds one role. Without
+`--scope-kind` the handover takes the role's own level as it always did, so
+`--role supervisor --scope store` still looks for an initiative named `store` and refuses `unregistered_scope`.
 
 ## Management seats
 
-A parent holds a seat of its own: `linkage-bind --role supervisor --scope-kind
-management --scope <seat id> --task <thread>` binds role `supervisor` at scope kind `management`,
+A parent holds a seat of its own:
+`linkage-bind --role supervisor --scope-kind management --scope <seat id> --task <thread>`
+binds role `supervisor` at scope kind `management`,
 keyed by the seat id, which is the thread that first registered it; `task_id` names the seat's
 current owner. Two parents have two keys, so neither overwrites the other, and a third
-task asking for a seat another one holds is refused `duplicate_scope_owner`. `crw manage supervisor
-register` is that line for the calling thread (`--task`, else `CODEX_THREAD_ID`, else the
-configuration's supervisor section; `--host`, else the section) followed by the settings record.
+task asking for a seat another one holds is refused `duplicate_scope_owner`. `crw manage supervisor register`
+is that line for the calling thread (`--task`, else `CODEX_THREAD_ID`, else the
+`supervisor` section of the configuration; `--host`, else the section) followed by the settings record.
 A thread that inherited a seat by handover and registers its own seat again (`--scope` its own
-thread) is answered with the seat it holds; one task holds one supervisor seat. A thread that
+thread) is answered with the seat it holds; one task holds one such seat. A thread that
 holds the store seat lays it down when it takes its management seat: the store binding is archived
 with `superseded_by` naming the management binding, and a `scope_seat_moved` journal row records
 the move, in the same transaction. The store scope's capacity has one declarer
@@ -153,9 +155,9 @@ seat bound again afterwards is live and answers for itself; the thread that laid
 again after handing its management seat over reactivates its old row with `superseded_by` cleared
 (`scope_rebound`), so that row is the store seat again.
 
-A lead (an initiative-scoped supervisor) registered by a thread that holds a live management seat gets the
-execution edge from that seat to its initiative in the same transaction: `linkage-bind --role
-supervisor --scope <INIT> --task <lead> --host ... --creator <management thread>`, where
+A lead (the `supervisor` role at an initiative) registered by a thread that holds a live management seat gets the
+execution edge from that seat to its initiative in the same transaction:
+`linkage-bind --role supervisor --scope <INIT> --task <lead> --host ... --creator <management thread>`, where
 `--creator` defaults to the caller's `CODEX_THREAD_ID`. The answer is the lead's binding with the
 edge under `managementLink`. A creator that holds no management seat (a lead registering itself)
 writes no edge. An initiative has one upward execution edge, and a second parent takes
@@ -164,12 +166,13 @@ creator holds another seat is not refused: the lead's binding stands, the standi
 second edge is written, the answer carries the warning under `managementLinkSkipped` (`reason`
 `link_conflict`, `detail`, the `standing` link id, the creator's seat and the creator) and a
 `management_link_skipped` journal row records it once. The edge's
-link id is made from the two scopes, so `linkage-handover --role supervisor --scope-kind management
---scope <seat id> --expect-task <old owner> --task <new owner> --evidence ...` keeps the edge and
+link id is made from the two scopes, so
+`linkage-handover --role supervisor --scope-kind management --scope <seat id> --expect-task <old owner> --task <new owner> --evidence ...`
+keeps the edge and
 moves its `upper_task_id` to the new owner, archives the old binding (`superseded_by`), gives the new
 one the evidence as `handover_note`, and writes `scope_handover`.
 
-On the 1.0 path the sessions are two layers, the parent and the child (project session, relay role `parent`, [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels)),
+On the 1.0 path the sessions are two layers, the parent and the child (project session, [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels)),
 and a parent binds its child itself. A child (role `parent` at its project) bound by a thread
 that holds a live management seat gets the execution edge from that seat to the project in the same
 transaction: `linkage-bind --role parent --scope <PROJECT> --task <owner> --host ... --creator
@@ -180,14 +183,14 @@ another seat writes no second edge and is warned and recorded the same way (`man
 `management_link_skipped`), not refused; another child is refused by the ordinary duplicate-owner rule,
 which is the store's own invariant (one live owner per scope and role); and the seat's handover moves
 the edge's `upper_task_id` with the
-`scope_handover` record, as a child's handover moves its `lower_task_id`. A project an
-initiative-scoped supervisor already supervises (the legacy configuration, `linkage-supervise`) keeps that edge:
+`scope_handover` record, as a child's handover moves its `lower_task_id`. A project a
+lead already supervises (the legacy configuration, `linkage-supervise`) keeps that edge:
 the binding is not refused, no management edge is written, the answer carries the warning under
 `managementLinkSkipped` (`reason` `link_conflict`, `detail`, the `standing` link id, the seat and the
 creator) and a `management_link_skipped` journal row records it once. In the other direction
 `linkage-supervise` refuses an initiative over a project a management edge already stands above
 (`duplicate_scope_owner`, naming the management seat), because the project has its execution
-supervisor. A thread that holds a management seat and still keeps a legacy initiative over a project
+parent. A thread that holds a management seat and still keeps a legacy initiative over a project
 therefore runs `linkage-supervise` before it binds the child: the binding then keeps the
 initiative's edge with the skip warning.
 
@@ -195,7 +198,7 @@ The walk up from an issue or a project reaches whatever stands above the project
 directly above the project is the recipient of the project's upward messages: a relationship's
 report, a `project:<key>` notice and the direct project kinds go to the owner of that seat (see [the
 supervisor channel](supervisor-channel.md#the-level-above-a-project)). Without one, a legacy
-initiative-scoped supervisor is the recipient, and without that the single store seat (a store seat laid
+lead is the recipient, and without that the single store seat (a store seat laid
 down for a management seat only for a decision the user owes, above). A management level above an
 initiative is not a project's recipient: the lead stands between and stays the recipient of the
 project's reports, while the lead's own messages go to the management seat through
@@ -236,10 +239,10 @@ rule reads and answers as it did.
 it, so `decision-answer` refuses every answerer `authority_unverified` - is recovered in one of three
 ways, none of which edits the record:
 
-1. a new parent thread binds the seat's key again: `linkage-bind --role supervisor --scope-kind
-   management --scope <seat id> --task <new thread> --host ...`; the seat's new owner answers;
-2. while the old parent's binding is still live, `linkage-handover --role supervisor --scope-kind
-   management --scope <seat id> --expect-task <old owner> --task <new thread> --evidence ...` moves
+1. a new parent thread binds the seat's key again:
+   `linkage-bind --role supervisor --scope-kind management --scope <seat id> --task <new thread> --host ...`; the seat's new owner answers;
+2. while the old parent's binding is still live,
+   `linkage-handover --role supervisor --scope-kind management --scope <seat id> --expect-task <old owner> --task <new thread> --evidence ...` moves
    the seat, and its edges, to the new thread, which then answers;
 3. the question is withdrawn (`decision-withdraw --decision ID --reason ...`) and raised again from
    the project: the new record names the seat that stands above the project then, or none (the store
@@ -277,7 +280,7 @@ than in a second one after a rollback.
 This is why `binding_plan` is separate from `apply_binding_plan`. An operation that binds two
 scopes and then links them has to be able to refuse on the second scope without having written
 the first. With the decision and the write folded together, a refused supervision committed its
-supervisor binding alongside the conflict row: the supervisor owned an initiative no accepted
+lead binding alongside the conflict row: the lead owned an initiative no accepted
 operation ever created. That was measured, not predicted, and
 `test_a_refused_supervision_leaves_neither_binding_behind` pins it.
 
@@ -289,7 +292,7 @@ unique index.
 ## Attachment is one operation
 
 `attach_in` is the only path that writes the lower level, and its idempotence is computed over
-all THREE of its facts: the `relationship_scope` row, the child binding, and the project to
+all THREE of its facts: the `relationship_scope` row, the `child` session's binding, and the project to
 issue edge. A relationship attached by an older writer, or by a run that stopped between two of
 them, is completed rather than reported as already done.
 
@@ -321,43 +324,43 @@ It moves the scope. It refuses outright while the scope still has unfinished wor
 which assignments it could not move.
 
 An assignment's identity is `sha256(parentTaskId|childTaskId|issueKey)` and its queued
-deliveries name the parent's thread. So a handover cannot carry that endpoint across: rewriting
+deliveries name the child's thread. So a handover cannot carry that endpoint across: rewriting
 `parent_task_id` in place would leave a row whose stored identity no longer derives from its
-own columns, and a replacement parent that cannot receive the work it just accepted. Both were
+own columns, and a replacement child that cannot receive the work it just accepted. Both were
 tried and both were wrong.
 
 Each assignment is moved by registering its successor with `supersedes`, which mints a correct
-new identity, carries the new parent's host and cwd, and repoints the project-to-issue edge.
+new identity, carries the new child's host and cwd, and repoints the project-to-issue edge.
 
 Merged work is the exception, and it is closed rather than moved. An assignment is *settled* when it reads
 `merged` (its merge mark matches its current head, generation and revision, and the criteria are still current) and
-nothing of it is still owed: no delivery of it that has not reached its parent (`queued`, `deferred_busy`,
-`withheld_pre_send`, `sending`, `held_uncertain` or `inbox_only`), no supervisor message of it that has not left (the same
+nothing of it is still owed: no delivery of it that has not reached the child (`queued`, `deferred_busy`,
+`withheld_pre_send`, `sending`, `held_uncertain` or `inbox_only`), no message of it on the supervisor channel that has not left (the same
 states without `inbox_only`), and, where it is the execution of a plan node, an active acceptance of this very head under
 the criteria now in force. A handover does not refuse for a settled row. It classifies the attached rows first, refuses on
 the others exactly as before, and only when every refusal check has passed (the binding plan included) archives each
-settled row that does not name the incoming parent, in the same transaction and before any binding or link moves. The row
+settled row that does not name the incoming child, in the same transaction and before any binding or link moves. The row
 is journalled as `status_changed` with the reason `merged_settled`, and the answer lists the ids as `closedMerged` (the
-key is absent when none was closed). A row left active would keep naming the parent that stepped down and could reopen
+key is absent when none was closed). A row left active would keep naming the child that stepped down and could reopen
 under it. Archived, it comes back only through `relationship-resume`, which is refused `foreign_scope` once the project
-has changed hands, so a fix after a handover is a new assignment under the current parent (the issue is free).
+has changed hands, so a fix after a handover is a new assignment under the current child (the issue is free).
 `Attached` and `Outstanding` keep their meaning: `linkage-completion` reads `attached` as the live assignments, so a
 project whose assignments are all merged still reads `complete_candidate` until they are closed.
 
 Handing a project BACK is the case where "a correct new identity" is not available. The id is
-`sha256(parentTaskId|childTaskId|issueKey)`, so returning to an earlier parent with the same
-child derives the id that parent already used. That is not a collision: the same triple is the
+`sha256(parentTaskId|childTaskId|issueKey)`, so returning to an earlier child with the same
+`child` session derives the id that child already used. That is not a collision: the same triple is the
 same relationship, and the return is a second TENURE of it, recorded as a new generation with
 `supersedes` and `supersededBy` carrying the lineage in both directions. Registering a dead
 identity without naming a live predecessor is refused rather than answered with the retired
 row, and the refusal says whether to pass `supersedes` or to use `relationship-resume`.
-Once no live assignment still names the parent that is stepping down, the scope changes hands
+Once no live assignment still names the child that is stepping down, the scope changes hands
 and nothing is left answering to it.
 
 That is the condition, and it is not "no unfinished work". Work re-registered under the
-INCOMING parent may still be unfinished and no longer blocks, because it already names the
-parent taking over. `linkage-outstanding --project` prints the PROJECT's unfinished set rather
-than one parent's, so work inherited from a previous parent still counts — and that set is
+INCOMING child may still be unfinished and no longer blocks, because it already names the
+child taking over. `linkage-outstanding --project` prints the PROJECT's unfinished set rather
+than one child's, so work inherited from a previous child still counts — and that set is
 frequently not empty at the moment a valid handover runs. `--acknowledge` has to equal
 whatever it prints then: restating it is the requirement, emptying it is not. Passing less is
 `handover_unconfirmed`, and waiting for every assignment to finish first is not required.
@@ -386,21 +389,21 @@ the recipients; the row then reads `merged` again and `generation-open` reopens 
 project is live, which says that nothing is attached rather than that everything finished, so it is read first and kept as
 the completion evidence.
 
-What the registry cannot decide is a completion report of a supervised project that was never staged. The supervisor
+What the registry cannot decide is a completion report of a supervised project that was never staged. The `supervisor`
 package derives it from the events and keeps it standing when the project has no coordination target, so it cannot be told
 from a report nobody will ever stage. It stays listed by `supervisor-standing` after the close, but staging and sending it
 are refused `unregistered_scope`. For a supervised project `supervisor-standing --project` is read, and neither a bulk apply nor a handover runs while
 an entry for an assignment about to be closed (its `relationId`) lacks a `decision.priorReport`; entries of assignments already
-closed are history and a discharged obligation is not listed, so neither blocks, and a project with no supervisor stages
+closed are history and a discharged obligation is not listed, so neither blocks, and a project with nothing above it stages
 nothing, so there the list is not a stop condition.
 
 ## Where an instruction stands
 
-A supervisor's instruction to a project is recorded by digest (`linkage-directive`), and with
+An instruction to a project from above is recorded by digest (`linkage-directive`), and with
 `--purpose` its envelope pointer says what it is for. The purpose decides what the instruction
 competes with (`envelope.directive_place`). Reading every two live instructions of different
 digests as contradictory made a relayed decision contest the assignment it was answering
-inside; on the installed relay that read as `instruction_conflict` for both of a supervisor's
+inside; on the installed relay that read as `instruction_conflict` for both of one parent's
 projects and held every report they owed upward for half an hour (CRW-124 G1, F-G1-2; CRW-230).
 
 | Purpose | Relation to the others |
@@ -425,9 +428,9 @@ Replacing one is always explicit: settle the one in force `superseded` (`linkage
 restate in the new instruction whatever of it still applies, and record the new one. `chosen`
 also takes a directive out of the live set, but it records the winner of a contest rather than
 a replacement. Two corrections are not merged, because the store keeps no order between them
-that a parent could apply: directives are read in recorded order and a tie falls to the id.
+that the receiving session could apply: directives are read in recorded order and a tie falls to the id.
 
-Priority is guidance for the parent and the store never reads it: a user stop comes first; the
+Priority is guidance for the session that receives the instruction and the store never reads it: a user stop comes first; the
 live correction amends the live assignment; a relayed decision applies within both; a
 midpoint check or a resume asks for an answer or a restart and changes nothing about the work.
 
@@ -440,7 +443,7 @@ say what it competes with, so it is recorded as it always was and any contest it
 reported by the walks as `instruction_conflict`, which holds the reports above it and is named
 in `supervisor-standing` ([supervisor channel](supervisor-channel.md#a-report-the-hierarchy-is-holding)).
 A previous link revision's instruction counts like any other: a handover does not dispose of
-what the outgoing supervisor said, and the successor settles it when it replaces it.
+what the outgoing owner of the edge said, and the successor settles it when it replaces it.
 
 One limit stays. A directive's id is derived from its scope, origin, digest and link revision,
 so an instruction recorded without a purpose cannot be recorded again with one under the same
@@ -483,8 +486,8 @@ the reader's job is to say so rather than to pick.
 
 `owner_drift` is reported at BOTH ends of an edge, by both walks. It is not only a corruption
 symptom: the sequence a stranding refusal prescribes passes through it on purpose, because each
-assignment is moved to the incoming parent before the scope is, and during that window the
-project-to-issue edge names the new parent while the project binding still names the old one.
+assignment is moved to the incoming child before the scope is, and during that window the
+project-to-issue edge names the new child while the project binding still names the old one.
 A walk that checked one end called that window internally consistent.
 
 When the store could not install one of its partial unique indexes, `linkage-up`,
@@ -514,7 +517,7 @@ a linkage that demonstrably exists.
 | `unregistered_scope` | the scope, or the link a caller named, does not exist or is not live |
 | `scope_role_mismatch` | a task already holds another role, or a pair may not address each other |
 | `scope_cycle` | a self-link at either edge, or a chain that reaches itself |
-| `foreign_scope` | an issue whose parent does not own the project, an issue already scoped elsewhere, or an assignment reactivated into a project its parent no longer holds |
+| `foreign_scope` | an issue whose assigning child does not own the project, an issue already scoped elsewhere, or an assignment reactivated into a project its child no longer holds |
 | `duplicate_scope_owner` | a second owner for one scope, or a second execution edge for one project |
 | `role_already_bound` | one task asked for a second live scope of a role it already holds |
 | `handover_unconfirmed` | no evidence, the wrong outgoing owner, or an outstanding set that does not match |
@@ -526,7 +529,7 @@ a linkage that demonstrably exists.
 
 It registers and queries. It delivers no message: a peer link is not a channel, and
 `scope_directives` records that an instruction exists and its digest rather than carrying one.
-Delivery, acknowledgement and merge order between parents belong to CRW-122 and CRW-123.
+Delivery, acknowledgement and merge order between children belong to CRW-122 and CRW-123.
 
 Nothing here is evidence about an installed runtime. A green suite in this repository says the
 source builds, imports and behaves as its tests describe; it says nothing about any host.

@@ -17,12 +17,11 @@ import (
 
 // The flow evidence assignment of a session call (CRW-1482, 1209 field trial defect C9). An executor subagent of a session run works
 // in the call's directory P, while the stop hook judged its receipt under the owner's native cwd, where the child never writes: no
-// assignment named P, so three blocks spent the budget and a tombstone released the child. The engine is now the trusted writer of
+// assignment named P, so three blocks spent the budget and a tombstone released the child. The engine is the trusted writer of
 // that contract. When the run has an EvidenceCwd, every spawn step of a gated agent type (executor, executor-t1, the QA capture call
-// included) gets a flow record (evidence.NewFlowAssignment) under EvidenceCwd before its step_published row, rooted at P with the
-// step's marker as its op; the spawn message and the packet name its one receipt file; the bind writes the same record under the
-// host cwd the hook reads when that differs; and the completed row records what the hook accepted (evidence_receipt). No row kind is
-// added: the facts go into the rows of before.
+// included) gets a flow record (evidence.NewFlowAssignment) rooted at P with the step's marker as its op; the spawn message and the
+// packet name its one receipt file; the bind places the same record under the host cwd the hook reads when that differs; and the
+// completed row records what the hook accepted (evidence_receipt).
 //
 // A record lives and ends with its call attempt: its id names the call's generation (evidenceCallKey) and the attempt's marker, so
 // no later attempt or generation takes it over, and it is released (removed while still open and unclaimed) whenever its attempt ends
@@ -30,16 +29,19 @@ import (
 // prepared again by one (evidenceRelease). Only a call held with its step published and no subagent bound keeps it, because the held
 // call goes on in place with that step. An attempt held because the subagent that took its step could not be bound with its record
 // (evidenceUnbound) has ended: it is never bound again, and the held call goes on with a new attempt and a new subagent.
-
 //
-// Where a record lives (Devin review of PR #893). The stop hook claims under its payload cwd, the cwd the owner thread runs in, which
-// its subagents inherit; the run may have been started in another directory (EvidenceCwd) and may be resumed from yet another. So
-// a step's record is written under its base directory (EvidenceCwd when the step is first published, the directory it was first
-// written under when a resumed run publishes it again) and under the owner's cwd as the host reports it (thread/read of the owner),
-// both before the step_published row, which names them (evidence_cwds); the call's prepared row names the base directory of a
-// gated call (evidence_cwd). Every restore, reuse and release reads those directories from the rows, never only the process's own
-// EvidenceCwd. P's .crw/evidence holds a .gitignore of "*" the engine writes when it is missing, so a receipt never enters the
-// pending tree or a commit of P in a repository that does not ignore .crw/.
+// Write after naming (CRW-1496). The stop hook claims under its payload cwd, the cwd the owner thread runs in, which its subagents
+// inherit, or the host cwd the host reports for the subagent; the run may have been started in another directory (EvidenceCwd) and
+// may be resumed from yet another. A step's record is written under its base directory (EvidenceCwd when the step is first
+// published, the directory it was first written under when a resumed run publishes it again), under the owner's cwd as the host
+// reports it (thread/read of the owner), both before the step_published row, and under the bound subagent's host cwd before its
+// thread_started row. The engine writes a record under a directory only through evidencePlace, and only once a durable row of the
+// call's newest generation (the rows from its newest prepared row on) names that directory: the prepared row's evidence_cwd and
+// evidence_cwds, a step_published row's evidence_cwds, a thread_started row's evidence_cwd, or an evidence_placed row, the intent
+// evidencePlace commits first when no other row names the directory yet. So a process that dies after any write leaves a row naming
+// where it wrote, and every restore, reuse and release reads the directories from the rows (evidenceRowCwds), never only the
+// process's own EvidenceCwd. P's .crw/evidence holds a .gitignore of "*" the engine writes when it is missing, so a receipt never
+// enters the pending tree or a commit of P in a repository that does not ignore .crw/.
 
 // ReasonEvidenceAssignmentFailed holds a session call whose flow evidence assignment could not be recorded (CRW-1482).
 const ReasonEvidenceAssignmentFailed = "evidence_assignment_failed"
@@ -75,10 +77,10 @@ func (c *callRun) evidenceGated() bool {
 // ensureEvidence records the flow evidence assignment of the spawn step marker of the call's current attempt, or reuses the record
 // it already has (a step published again, an adopted subagent: the id is derived from the owner, the run, the call and the marker,
 // and a record that is open or already claimed for the same root and op is the contract the step was dispatched with). The record
-// is written under the step's base directory (EvidenceCwd, or for a step published again the directory its row names first) and
-// under the owner thread's cwd when the host reports one that differs, before the step is published, so a child that stops before
-// it is bound finds its contract where the hook reads it. It makes P's .crw/evidence directory with its .gitignore (realEvidenceDir).
-// An error holds the call: no step may be dispatched with a contract the hook cannot read.
+// is placed (evidencePlace) under the step's base directory (EvidenceCwd, or for a step published again the directory its row names
+// first) and under the owner thread's cwd when the host reports one that differs, before the step is published, so a child that
+// stops before it is bound finds its contract where the hook reads it. It makes P's .crw/evidence directory with its .gitignore
+// (realEvidenceDir). An error holds the call: no step may be dispatched with a contract the hook cannot read.
 func (c *callRun) ensureEvidence(ctx context.Context, marker string) error {
 	s, sc := c.sess, c.e.cfg.Session
 	if err := realEvidenceDir(c.cwd); err != nil {
@@ -97,17 +99,22 @@ func (c *callRun) ensureEvidence(ctx context.Context, marker string) error {
 	if prev != nil && len(prev.cwds) > 0 {
 		base = prev.cwds[0]
 	}
-	rec, err := evidence.EnsureFlowAssignment(base, a)
+	rec, err := c.evidencePlace(base, a)
 	if err != nil {
 		return fmt.Errorf("the flow evidence assignment under %s: %w", base, err)
 	}
 	ev := &sessionEvidence{id: id, attempt: s.attempt, op: marker, rec: rec, receipt: evidence.FlowReceiptPath(rec), cwds: []string{base}, readCwd: base}
 	if prev != nil {
-		// a recovered step keeps where its record was written and read (the owner's cwd, the bind's host cwd)
+		// a recovered step keeps where its record was written and read (the owner's cwd, the bind's host cwd), and the base's record
+		// is placed there again: a copy of a tree that is gone (a worktree recreated) is replaced, a claimed copy kept (CRW-1496)
 		for _, cwd := range prev.cwds {
-			if !slices.Contains(ev.cwds, cwd) {
-				ev.cwds = append(ev.cwds, cwd)
+			if slices.ContainsFunc(ev.cwds, func(have string) bool { return filepath.Clean(have) == filepath.Clean(cwd) }) {
+				continue
 			}
+			if _, err := c.evidencePlace(cwd, rec); err != nil {
+				return fmt.Errorf("the flow evidence assignment under %s: %w", cwd, err)
+			}
+			ev.cwds = append(ev.cwds, cwd)
 		}
 		if prev.readCwd != "" {
 			ev.readCwd = prev.readCwd
@@ -115,7 +122,7 @@ func (c *callRun) ensureEvidence(ctx context.Context, marker string) error {
 		ev.ignored = prev.ignored
 	}
 	if owner := c.e.evidenceOwnerCwd(ctx); owner != "" && !slices.ContainsFunc(ev.cwds, func(cwd string) bool { return filepath.Clean(cwd) == filepath.Clean(owner) }) {
-		if _, err := evidence.EnsureFlowAssignment(owner, rec); err != nil {
+		if _, err := c.evidencePlace(owner, rec); err != nil {
 			return fmt.Errorf("the flow evidence assignment under the owner's cwd %s: %w", owner, err)
 		}
 		ev.cwds = append(ev.cwds, owner)
@@ -130,6 +137,117 @@ func (c *callRun) ensureEvidence(ctx context.Context, marker string) error {
 	}
 	s.evidence = ev
 	return nil
+}
+
+// evidenceRefresh places the record of a call that goes on in place with its attempt again under every directory of that attempt,
+// rooted at the call's directory as it is now (CRW-1496): a call recovered with its subagent bound, or with its repair step
+// (send_input) published, binds no subagent and publishes no spawn step again, so ensureEvidence does not run for it, while its
+// directory may have been recreated at the same path (a new tree) since its record was written. The base's record is placed first
+// (a stale open record is replaced, a claimed one kept, evidence.EnsureFlowAssignment) and the record it returns under every other
+// directory, the one the hook reads included. Those directories are named by the attempt's rows, so no row is written, and an
+// unchanged tree rewrites nothing. A call whose record no process could read back (the zero record) is left as it is. An error
+// holds the call.
+func (c *callRun) evidenceRefresh(_ context.Context) error {
+	s, sc := c.sess, c.e.cfg.Session
+	ev := s.evidence
+	if ev == nil || ev.attempt != s.attempt || ev.rec.ID == "" || len(ev.cwds) == 0 {
+		return nil
+	}
+	if err := realEvidenceDir(c.cwd); err != nil {
+		return fmt.Errorf("the receipt directory in %s: %w", c.cwd, err)
+	}
+	a, err := evidence.NewFlowAssignment(sc.Owner, ev.id, c.cwd, ev.op, c.e.cfg.Now())
+	if err != nil {
+		return err
+	}
+	rec, err := c.evidencePlace(ev.cwds[0], a)
+	if err != nil {
+		return fmt.Errorf("the flow evidence assignment under %s: %w", ev.cwds[0], err)
+	}
+	done := []string{filepath.Clean(ev.cwds[0])}
+	for _, cwd := range append(slices.Clone(ev.cwds[1:]), ev.readCwd) {
+		if cwd == "" || slices.Contains(done, filepath.Clean(cwd)) {
+			continue
+		}
+		if _, err := c.evidencePlace(cwd, rec); err != nil {
+			return fmt.Errorf("the flow evidence assignment under %s: %w", cwd, err)
+		}
+		done = append(done, filepath.Clean(cwd))
+	}
+	ev.rec, ev.receipt = rec, evidence.FlowReceiptPath(rec)
+	return nil
+}
+
+// evidencePlace writes the flow record rec under cwd (evidence.EnsureFlowAssignment) once a durable row of the call's newest
+// generation names cwd. When none does, it first appends the call's evidence_placed row (evidence_assignment, evidence_cwd, attempt,
+// marker), an intent the journal commits before Append returns; a row that cannot be stored is an error, and nothing is written. It
+// is the only writer of a flow record in the engine: every write of ensureEvidence and evidenceBind goes through it, so a process
+// that dies after a write always leaves a row naming the directory, which the release and the restore read (CRW-1496).
+func (c *callRun) evidencePlace(cwd string, rec evidence.Assignment) (evidence.Assignment, error) {
+	if cwds, _ := evidenceRowCwds(evidenceRows(CallEvents(c.e.j, c.id))); !slices.Contains(cwds, filepath.Clean(cwd)) {
+		attempt := 0
+		if c.sess != nil {
+			attempt = c.sess.attempt
+		}
+		// appended directly, not through c.event: the row is no progress of the call, so the call's last row (lastSeq, lastEvent)
+		// stays the one an interrupt reads
+		c.e.j.Append(Event{RunID: c.e.runID, Kind: KindCall, CallID: c.id, Path: c.path.id, Position: c.position, Op: "agent", Label: c.label, Event: EvEvidencePlaced,
+			Data: map[string]any{"evidence_assignment": rec.ID, "evidence_cwd": cwd, "attempt": attempt, "marker": rec.Op}})
+		if err := journalErr(c.e.j); err != nil {
+			return evidence.Assignment{}, fmt.Errorf("the evidence_placed row of %s cannot be stored: %w", cwd, err)
+		}
+	}
+	return evidence.EnsureFlowAssignment(cwd, rec)
+}
+
+// evidenceRows are the rows of a call's newest generation: those from its last prepared row on (all of them when it has none).
+func evidenceRows(rows []Event) []Event {
+	for i := len(rows) - 1; i >= 0; i-- {
+		if rows[i].Event == EvPrepared {
+			return rows[i:]
+		}
+	}
+	return rows
+}
+
+// evidenceRowCwds are the directories a call's rows name as holding a flow record (the prepared row's evidence_cwd and
+// evidence_cwds, a step_published row's evidence_cwds, a thread_started or evidence_placed row's evidence_cwd), each cleaned
+// (filepath.Clean) and once, and the record ids they name (a step_published or evidence_placed row's evidence_assignment).
+func evidenceRowCwds(rows []Event) (cwds, ids []string) {
+	addCwd := func(cwd string) {
+		if cwd == "" {
+			return
+		}
+		if cwd = filepath.Clean(cwd); !slices.Contains(cwds, cwd) {
+			cwds = append(cwds, cwd)
+		}
+	}
+	addID := func(id string) {
+		if id != "" && !slices.Contains(ids, id) {
+			ids = append(ids, id)
+		}
+	}
+	for _, row := range rows {
+		d := row.Data
+		switch row.Event {
+		case EvPrepared:
+			addCwd(rowStr(d, "evidence_cwd"))
+			for _, cwd := range rowStrs(d, "evidence_cwds") {
+				addCwd(cwd)
+			}
+		case EvStepPublished:
+			addID(rowStr(d, "evidence_assignment"))
+			for _, cwd := range rowStrs(d, "evidence_cwds") {
+				addCwd(cwd)
+			}
+		case EvThreadStarted:
+			addCwd(rowStr(d, "evidence_cwd"))
+		case EvEvidencePlaced:
+			addID(rowStr(d, "evidence_assignment"))
+			addCwd(rowStr(d, "evidence_cwd"))
+		}
+	}
+	return cwds, ids
 }
 
 // evidenceOwner is the owner thread's cwd as the host reports it, read once per process: the cwd the stop hook claims the owner's
@@ -231,13 +349,27 @@ func (c *callRun) evidenceCallKey() string {
 
 // evidenceHold is the held result of a call whose assignment could not be recorded: nothing was dispatched. unbound is the subagent
 // that took the step and was closed unbound (evidenceUnbound), "" when there is none; the held row names it (evidence_unbound), and a
-// held call that goes on reads it there and starts a new attempt (sessionResumeHeld).
-func (c *callRun) evidenceHold(err error, unbound string) CallResult {
+// held call that goes on reads it there and starts a new attempt (sessionResumeHeld). The held row records P_held (heldSnapshot): the
+// directory may be edited from outside while the call is held, and the unbound subagent may have edited it before it was closed, so a
+// held call goes on in place only over the tree the hold left (heldStateHolds; CRW-1561).
+func (c *callRun) evidenceHold(ctx context.Context, err error, unbound string) CallResult {
 	data := map[string]any{"input_state": "not_delivered",
 		"detail": "the flow evidence assignment of the step could not be recorded, so no subagent was dispatched: " + err.Error()}
 	if unbound != "" {
 		data["evidence_unbound"] = unbound
 	}
+	c.heldSnapshot(ctx, data)
+	return c.terminal(EvHeld, StatusHeld, ReasonEvidenceAssignmentFailed, data)
+}
+
+// evidenceRefreshHold is the held result of a call recovered in place whose record could not be placed again (evidenceRefresh): its
+// step was published, and it may have been delivered, so the held row records the input as it is (inputState), never as
+// not_delivered when a turn of the call was delivered (CRW-1496). The held row records P_held (heldSnapshot), so a held call goes on
+// in place only over the tree the hold left (heldStateHolds; CRW-1561).
+func (c *callRun) evidenceRefreshHold(ctx context.Context, err error) CallResult {
+	data := map[string]any{"input_state": c.inputState(),
+		"detail": "the flow evidence assignment of the recovered call could not be placed again: " + err.Error()}
+	c.heldSnapshot(ctx, data)
 	return c.terminal(EvHeld, StatusHeld, ReasonEvidenceAssignmentFailed, data)
 }
 
@@ -254,10 +386,11 @@ func (s *sessionCall) evidenceStepData(data map[string]any) {
 	}
 }
 
-// evidenceBind writes the record under the host cwd the subagent agent runs in when no directory of the record is that cwd (the hook
-// reads its payload cwd) before the subagent is bound, and adds to the thread_started data the cwd the receipt is claimed under. A
-// record that cannot be written there leaves the subagent with no contract the hook can see: it is not bound, and the reply closes it; the call
-// is then held (evidenceUnbound).
+// evidenceBind places the record under the host cwd the subagent agent runs in when no directory of the record is that cwd (the hook
+// reads its payload cwd) before the subagent is bound, so the evidence_placed row that names that cwd, when no row does yet, comes
+// before the thread_started row; it adds to the thread_started data the cwd the receipt is claimed under. A record that cannot be
+// placed there (its row cannot be stored, or the record cannot be written) leaves the subagent with no contract the hook can see: it
+// is not bound, and the reply closes it; the call is then held (evidenceUnbound).
 func (c *callRun) evidenceBind(agent, marker, hostCwd string, data map[string]any) (DispatchReply, bool) {
 	s := c.sess
 	ev := s.evidence
@@ -266,7 +399,7 @@ func (c *callRun) evidenceBind(agent, marker, hostCwd string, data map[string]an
 	}
 	if hostCwd != "" {
 		if !slices.ContainsFunc(ev.cwds, func(cwd string) bool { return filepath.Clean(cwd) == filepath.Clean(hostCwd) }) {
-			if _, err := evidence.EnsureFlowAssignment(hostCwd, ev.rec); err != nil {
+			if _, err := c.evidencePlace(hostCwd, ev.rec); err != nil {
 				ev.bindErr, ev.unbound = fmt.Errorf("under the host cwd %s of %s: %w", hostCwd, agent, err), agent
 				return DispatchReply{Status: ReplyClose, Close: agent, Detail: fmt.Sprintf("close %s: its evidence assignment cannot be recorded under its cwd %s: %v", agent, hostCwd, err)}, false
 			}
@@ -282,32 +415,36 @@ func (c *callRun) evidenceBind(agent, marker, hostCwd string, data map[string]an
 // and whether there is one. The attempt ends with it: the held row naming the rejected subagent is written first (a process that dies
 // after it never binds that subagent, which the marker search still finds for the step), then the subagent is closed and the
 // attempt's record released. The held call that goes on starts a new attempt, which a new subagent takes (sessionResumeHeld).
-func (c *callRun) evidenceUnbound() (CallResult, bool) {
+func (c *callRun) evidenceUnbound(ctx context.Context) (CallResult, bool) {
 	ev := c.sess.evidence
 	if ev == nil || ev.bindErr == nil {
 		return CallResult{}, false
 	}
 	err, agent := ev.bindErr, ev.unbound
 	ev.bindErr, ev.unbound = nil, ""
-	res := c.evidenceHold(err, agent)
+	res := c.evidenceHold(ctx, err, agent)
 	c.sessionClose(agent, c.sess.attempt)
 	c.evidenceDrop()
 	return res, true
 }
 
 // evidenceRestore reads back what a call's rows of its newest attempt say of its assignment: the last spawn step that recorded one,
-// and the cwd its bind recorded for that attempt.
+// the cwd its bind recorded for that attempt, and every directory an evidence_placed row of the generation names for its record.
 func (c *callRun) evidenceRestore(rows []Event) {
 	s, sc := c.sess, c.e.cfg.Session
 	if sc == nil || sc.EvidenceCwd == "" {
 		return
 	}
 	var ev *sessionEvidence
+	var placed []Event
 	for _, row := range rows {
 		d := row.Data
 		switch row.Event {
 		case EvPrepared:
-			ev = nil
+			ev, placed = nil, nil
+		case EvEvidencePlaced:
+			// a write of ensureEvidence comes before the step_published row: merged against the final ev below
+			placed = append(placed, row)
 		case EvStepPublished:
 			if id := rowStr(d, "evidence_assignment"); id != "" && rowStr(d, "action") == StepSpawn {
 				ev = &sessionEvidence{id: id, attempt: rowInt(d, "attempt"), op: rowStr(d, "marker"), cwds: []string{sc.EvidenceCwd}, readCwd: sc.EvidenceCwd}
@@ -331,6 +468,12 @@ func (c *callRun) evidenceRestore(rows []Event) {
 		}
 	}
 	if ev != nil {
+		for _, row := range placed {
+			if cwd := rowStr(row.Data, "evidence_cwd"); cwd != "" && rowStr(row.Data, "evidence_assignment") == ev.id &&
+				!slices.ContainsFunc(ev.cwds, func(have string) bool { return filepath.Clean(have) == filepath.Clean(cwd) }) {
+				ev.cwds = append(ev.cwds, cwd)
+			}
+		}
 		for _, cwd := range append(slices.Clone(ev.cwds), ev.readCwd) {
 			if rec, ok := evidence.RecordedAssignment(cwd, sc.Owner, ev.id); ok {
 				ev.rec, ev.receipt = rec, evidence.FlowReceiptPath(rec)
@@ -353,42 +496,28 @@ func (c *callRun) evidenceDrop() {
 	s.evidence = nil
 }
 
-// evidenceRelease releases the records the rows of a call name (each spawn step's evidence_assignment) where they are still open and
-// unclaimed, under every directory the rows say a record was written to (the prepared row's evidence_cwd and evidence_cwds, each
-// step's evidence_cwds, a bind's evidence_cwd), EvidenceCwd and the owner's cwd: the attempts those rows hold have ended without going on,
-// because the call was superseded or is prepared again. A claimed record stays: it is the receipt the hook accepted. The record of a
-// step whose process died after writing it and before the step_published row that would name it is released too: its id is derived
-// (evidenceDerivedIDs), since no row names it.
+// evidenceRelease releases the records the rows of a call name where they are still open and unclaimed: the attempts those rows hold
+// have ended without going on, because the call was superseded or is prepared again. It reads every row it is given, of every
+// generation (evidenceRowCwds): each spawn step's and each evidence_placed row's evidence_assignment, under every directory the rows
+// name (the prepared row's evidence_cwd and evidence_cwds, each step's evidence_cwds, a bind's evidence_cwd, each evidence_placed
+// row's evidence_cwd). It also reads EvidenceCwd, the owner's cwd as the host reports it now and the derived ids (evidenceDerivedIDs):
+// those cover a journal written before evidence_placed rows, and a record of a step whose process died after writing it and before
+// the step_published row that would name its id. A claimed record stays: it is the receipt the hook accepted.
 func (e *Engine) evidenceRelease(rows []Event) {
 	sc := e.cfg.Session
 	if sc == nil || sc.EvidenceCwd == "" {
 		return
 	}
-	cwds := []string{sc.EvidenceCwd}
+	cwds := []string{filepath.Clean(sc.EvidenceCwd)}
 	add := func(cwd string) {
-		if cwd != "" && !slices.Contains(cwds, cwd) {
-			cwds = append(cwds, cwd)
+		if cwd != "" && !slices.Contains(cwds, filepath.Clean(cwd)) {
+			cwds = append(cwds, filepath.Clean(cwd))
 		}
 	}
 	add(e.evidenceOwnerCwd(e.ctx))
-	var ids []string
-	for _, row := range rows {
-		switch row.Event {
-		case EvPrepared:
-			add(rowStr(row.Data, "evidence_cwd"))
-			for _, cwd := range rowStrs(row.Data, "evidence_cwds") {
-				add(cwd)
-			}
-		case EvStepPublished:
-			if id := rowStr(row.Data, "evidence_assignment"); id != "" && !slices.Contains(ids, id) {
-				ids = append(ids, id)
-			}
-			for _, cwd := range rowStrs(row.Data, "evidence_cwds") {
-				add(cwd)
-			}
-		case EvThreadStarted:
-			add(rowStr(row.Data, "evidence_cwd"))
-		}
+	named, ids := evidenceRowCwds(rows)
+	for _, cwd := range named {
+		add(cwd)
 	}
 	for _, id := range e.evidenceDerivedIDs(rows) {
 		if !slices.Contains(ids, id) {

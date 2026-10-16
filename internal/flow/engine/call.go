@@ -937,7 +937,7 @@ func (c *callRun) startThread(ctx context.Context) (CallResult, bool) {
 	if res, down := c.journalDown(); down {
 		return res, true
 	}
-	info, err := e.cfg.Backend.StartThread(ctx, ThreadSpec{CallID: c.id, Role: p.role, Pair: p.spec.Pair, Sandbox: p.spec.Sandbox, Cwd: cwd, Node: p.node, Head: p.opts.Head, Placement: placement, AutoCompactTokenLimit: p.spec.AutoCompactTokenLimit, Send: send, QA: p.qa})
+	info, err := e.cfg.Backend.StartThread(ctx, ThreadSpec{CallID: c.id, Role: p.role, Pair: p.spec.Pair, Sandbox: p.spec.Sandbox, Cwd: cwd, Node: p.node, Head: p.opts.Head, Placement: placement, AutoCompactTokenLimit: p.spec.AutoCompactTokenLimit, Send: send, QA: p.qa, Tools: c.e.cfg.Tools})
 	if err != nil {
 		return c.fromError(ctx, err), true
 	}
@@ -973,7 +973,7 @@ func (c *callRun) forkThread(ctx context.Context) (CallResult, bool) {
 		return res, true
 	}
 	info, err := forker.ForkThread(ctx, ForkSpec{CallID: c.id, Role: p.role, Node: p.node, Pair: p.spec.Pair, Sandbox: p.spec.Sandbox, Cwd: cwd,
-		SourceThreadID: p.resume.ThreadID, ThroughTurnID: p.resume.ThroughTurnID, ThroughOp: throughOp, AutoCompactTokenLimit: p.spec.AutoCompactTokenLimit, Send: send, QA: p.qa})
+		SourceThreadID: p.resume.ThreadID, ThroughTurnID: p.resume.ThroughTurnID, ThroughOp: throughOp, AutoCompactTokenLimit: p.spec.AutoCompactTokenLimit, Send: send, QA: p.qa, Tools: c.e.cfg.Tools})
 	if err != nil {
 		return c.fromError(ctx, err), true
 	}
@@ -1367,7 +1367,7 @@ func (c *callRun) turnLoop(ctx context.Context, resolved *jsonschema.Resolved, k
 				host, _ := e.cfg.Backend.(ReconHost)
 				turnCtx, endTurn := c.beginTurn(ctx, pre.op)
 				c.setIntent(pre.intent)
-				out, err = host.AwaitTurn(turnCtx, c.threadID, pre.turnID, pre.op)
+				out, err = host.AwaitTurn(turnCtx, c.threadID, pre.turnID, pre.op, e.cfg.Tools)
 				endTurn()
 			} else {
 				c.setIntent(pre.intent)
@@ -1411,7 +1411,8 @@ func (c *callRun) turnLoop(ctx context.Context, resolved *jsonschema.Resolved, k
 				turnCtx, endTurn := c.beginTurn(ctx, op)
 				out, err = e.cfg.Backend.RunTurn(turnCtx, TurnSpec{
 					CallID: c.id, Op: op, K: k, ThreadID: c.threadID, Role: p.role, Node: p.node, Pair: p.spec.Pair,
-					Input: "crw-flow-op: " + op + "\n\n" + input, Schema: p.schema, Cwd: c.cwd, Repair: repair, QA: p.qa,
+					Input: "crw-flow-op: " + op + "\n\n" + input + toolsSuffix(e.cfg.Tools), Schema: p.schema, Cwd: c.cwd, Repair: repair, QA: p.qa,
+					Tools: e.cfg.Tools,
 					Started: func(turnID string) {
 						c.turnIDs = append(c.turnIDs, turnID)
 						c.delivered = true

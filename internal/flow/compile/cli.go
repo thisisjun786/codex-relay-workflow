@@ -30,10 +30,10 @@ with dag-plan-put.
 A project's target is the absolute path of the local checkout the run integrates on and the short name of its branch (dev): a
 repository that is not an absolute path is a warning, and a base_ref written refs/heads/BRANCH is read as BRANCH with a warning.
 A bundle's target may also name pr_base, the branch its pull request is opened against; a base_ref that is the pr_base is refused.
-  --thread T    the owner thread whose live parent bindings each project key is compared with (default: CODEX_THREAD_ID)
+  --thread T    the owner thread whose live 자식 bindings each project key is compared with (default: CODEX_THREAD_ID)
   --state DIR, --socket P  the relay state the bindings are read from (read-only)
 
-A project key the owner thread holds no live parent binding of is a warning (project_key_bound), as it is for crw flow start; with no
+A project key the owner thread holds no live 자식 binding of is a warning (project_key_bound), as it is for crw flow start; with no
 thread named the key is not compared. Warnings the handoff carries (crw flow plan-input records its key warning in the project's
 "warnings") are kept as the plan's own.
 Warnings are printed on stderr and kept in the plan's "warnings"; they do not refuse the handoff.

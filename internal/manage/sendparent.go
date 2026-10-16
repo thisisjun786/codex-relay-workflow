@@ -43,7 +43,7 @@ type sendParentArgs struct {
 // fake bridge and a temporary state directory.
 var sendParentConfig = coreDefaults
 
-var sendParentCommand = Command{Name: "send-parent", Summary: "deliver one message to a parent thread, or queue it", Run: sendParentRun}
+var sendParentCommand = Command{Name: "send-parent", Summary: "deliver one message to the 자식's thread, or with --role supervisor to the 부모's, or queue it", Run: sendParentRun}
 
 func init() { Register(sendParentCommand) }
 
@@ -96,7 +96,10 @@ func sendParentDispatch(ctx context.Context, e *Env, cfg *Config, parsed sendPar
 		}
 		return sendParentReport(e, sendParentClassQueued, "", logicalID)
 	}
-	out, err := Deliver(ctx, e, cfg, Message{LogicalID: logicalID, Thread: parsed.thread, Text: string(text), Role: "parent", Settings: cfg.Settings.Parent})
+	// A summary notice's retry id that was saved and never sent is sent under that id on resume, also at the retry cap (CRW-1548):
+	// refusing it would raise a summary_notice_refused for a notice no send was spent on. Every other logical id keeps the cap.
+	out, err := Deliver(ctx, e, cfg, Message{LogicalID: logicalID, Thread: parsed.thread, Text: string(text), Role: "parent", Settings: cfg.Settings.Parent,
+		SendUnrecordedAtCap: summaryIsLogical(logicalID)})
 	if err != nil {
 		fmt.Fprintf(e.Stderr, "crw manage send-parent: error: %v\n", err)
 	}
@@ -124,10 +127,10 @@ func sendParentQueueSafe(cfg *Config, thread, logicalID string) error {
 		return err
 	}
 	queue := crwconfig.JoinRoot(cfg.StateDir, sendParentQueueDir)
-	if err := sendParentNoSymlink(queue, "parent queue directory"); err != nil {
+	if err := sendParentNoSymlink(queue, "자식 queue directory"); err != nil {
 		return err
 	}
-	return sendParentNoSymlink(crwconfig.JoinRoot(queue, thread), "parent queue thread directory")
+	return sendParentNoSymlink(crwconfig.JoinRoot(queue, thread), "자식 queue thread directory")
 }
 
 // sendParentNoSymlink refuses a directory that is a symlink. A path that does not exist yet is
@@ -170,17 +173,25 @@ func sendParentParse(args []string, out io.Writer) (sendParentArgs, error) {
 	var parsed sendParentArgs
 	set := flag.NewFlagSet("send-parent", flag.ContinueOnError)
 	set.SetOutput(out)
-	set.StringVar(&parsed.thread, "thread", "", "the parent thread to deliver to")
+	set.StringVar(&parsed.thread, "thread", "", "the thread to deliver to: the 자식's, or the 부모's with --role supervisor")
 	set.StringVar(&parsed.messageFile, "message-file", "", "the file holding the message text")
 	set.StringVar(&parsed.logicalID, "logical-id", "", "the logical message id (default: the message sha256, first 16 characters)")
 	set.BoolVar(&parsed.queue, "queue", false, "write the notice for the pump instead of sending it")
-	set.StringVar(&parsed.role, "role", "parent", "the role to send with: parent (default) or supervisor")
-	set.StringVar(&parsed.report, "report", "", "the flow report a supervisor notice is about (--role supervisor)")
-	set.StringVar(&parsed.initiative, "initiative", "", "the initiative a supervisor notice is for (--role supervisor)")
+	set.StringVar(&parsed.role, "role", "", "the role to send with: 'parent' (자식), the default, or 'supervisor' (부모)")
+	set.StringVar(&parsed.report, "report", "", "the flow report a 부모 notice is about (--role supervisor)")
+	set.StringVar(&parsed.initiative, "initiative", "", "the initiative a 부모 notice is for (--role supervisor)")
 	set.StringVar(&parsed.relayState, "state", "", "the relay state directory the report was written in (--role supervisor; default: the configuration's)")
 	set.StringVar(&parsed.relaySocket, "socket", "", "the App Server control socket of that relay (--role supervisor; default: the configuration's)")
 	if err := set.Parse(args); err != nil {
 		return sendParentArgs{}, err
+	}
+	// The flag's own default stays empty so -h prints no unglossed role id (flag.PrintDefaults quotes a
+	// non-empty default); a --role the command line did not give is the parent role, and an explicit empty
+	// one is refused below.
+	roleGiven := false
+	set.Visit(func(f *flag.Flag) { roleGiven = roleGiven || f.Name == "role" })
+	if !roleGiven {
+		parsed.role = "parent"
 	}
 	if set.NArg() > 0 {
 		return sendParentArgs{}, fmt.Errorf("unexpected argument %q", set.Arg(0))
@@ -189,7 +200,7 @@ func sendParentParse(args []string, out io.Writer) (sendParentArgs, error) {
 		return sendParentArgs{}, fmt.Errorf("--thread and --message-file are required")
 	}
 	if parsed.role != "parent" && parsed.role != supervisorRole {
-		return sendParentArgs{}, fmt.Errorf("--role is parent or supervisor, not %q", parsed.role)
+		return sendParentArgs{}, fmt.Errorf("--role is 'parent' (자식) or 'supervisor' (부모), not %q", parsed.role)
 	}
 	if parsed.role == "parent" && (parsed.report != "" || parsed.initiative != "") {
 		return sendParentArgs{}, fmt.Errorf("--report and --initiative apply to --role supervisor")

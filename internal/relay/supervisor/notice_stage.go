@@ -3,6 +3,7 @@ package supervisor
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
@@ -45,7 +46,7 @@ func (n NoticeChannel) StageNotice(ctx context.Context, notice map[string]any) (
 		// composed from the pre-lock read, and a hierarchy that moved only in the kind (the seat
 		// answering instead of an initiative's supervisor) would otherwise freeze the stale one.
 		if live["sender"] != resolution["sender"] || live["recipient"] != resolution["recipient"] || live["projectKey"] != resolution["projectKey"] || live["recipientScopeKind"] != resolution["recipientScopeKind"] {
-			return &faults.NoticeError{Kind: "relation_owner_drift", Detail: "the hierarchy moved while this was being decided: it was read as '" + noticeString(resolution, "sender") + "' reporting to '" + noticeString(resolution, "recipient") + "', and under the write lock it is '" + noticeString(live, "sender") + "' reporting to '" + noticeString(live, "recipient") + "'. Nothing was written; staging again addresses the report to the live supervisor"}
+			return &faults.NoticeError{Kind: "relation_owner_drift", Detail: "the hierarchy moved while this was being decided: it was read as '" + noticeString(resolution, "sender") + "' reporting to '" + noticeString(resolution, "recipient") + "', and under the write lock it is '" + noticeString(live, "sender") + "' reporting to '" + noticeString(live, "recipient") + "'. Nothing was written; staging again addresses the report to the live 부모"}
 		}
 		r, err := l.Store.One(ctx, "SELECT * FROM supervisor_messages WHERE obligation_kind='"+store.SupervisorNoticeObligationKind+"' AND obligation_id=?", notice["notificationId"])
 		if err != nil {
@@ -89,16 +90,30 @@ func (n NoticeChannel) StageNotice(ctx context.Context, notice map[string]any) (
 			staged = packetWithoutRecipientScopeKind(packet)
 		}
 		same := noticeDumps(staged) == r.Text("packet")
-		if same && !moved && r.Get("hold_reason") == nil {
+		// The hold rule (CRW-1500, plan-r3 section 3): a superseded_by_report hold is released only when
+		// the rule answers release. For a notice's park the rule answers what dev did (its notification
+		// is reserved again, or the message is re-addressed); the rule is asked so that the staging stays
+		// pinned to it. The non-moving CASE is split by word: its superseded_by_report half is the
+		// rule's, its hierarchy_unresolved half is that word's own release and stays as it was.
+		kept, err := n.noticeHoldKept(ctx, id, live, moving)
+		if err != nil {
+			return err
+		}
+		if same && !moved && (r.Get("hold_reason") == nil || kept) {
 			return finish(false, "this notification is already staged; one notification is one message", false)
 		}
-		released := (r.Text("hold_reason") == store.SupervisorHoldSuperseded || r.Text("hold_reason") == store.SupervisorHoldUnaddressed) && !moving
+		released := ((r.Text("hold_reason") == store.SupervisorHoldSuperseded && !kept) || r.Text("hold_reason") == store.SupervisorHoldUnaddressed) && !moving
 		bounds := " hold_reason=CASE WHEN hold_reason IN (?,?) THEN NULL ELSE hold_reason END,"
 		args := []any{noticeDumps(packet), relation, live["sender"], live["recipient"], live["projectKey"]}
-		if moving {
+		switch {
+		case moving && kept:
+			bounds = " "
+		case moving:
 			bounds = " state=?,next_eligible_at=NULL,hold_reason=NULL,"
 			args = append(args, "queued")
-		} else {
+		case kept:
+			args = append(args, store.SupervisorHoldUnaddressed, store.SupervisorHoldUnaddressed)
+		default:
 			args = append(args, store.SupervisorHoldSuperseded, store.SupervisorHoldUnaddressed)
 		}
 		args = append(args, stamp, id, r.Get("packet"), r.Get("relationship_id"), r.Get("sender_task_id"), r.Get("recipient_task_id"))
@@ -111,7 +126,7 @@ func (n NoticeChannel) StageNotice(ctx context.Context, notice map[string]any) (
 		}
 		if moved {
 			var hold, state any
-			if moving {
+			if moving && !kept {
 				hold = r.Get("hold_reason")
 				state = r.Get("state")
 			}
@@ -120,7 +135,7 @@ func (n NoticeChannel) StageNotice(ctx context.Context, notice map[string]any) (
 			}
 		}
 		if !same {
-			if err = n.journal(ctx, "supervisor_message_restated", id, map[string]any{"at": "staging", "reason": "what the notification says about its fault moved and nothing had been sent"}); err != nil {
+			if err = n.journal(ctx, "supervisor_message_restated", id, map[string]any{"at": "staging", "reason": "what the notification says about its fault, or the words it is written in, moved and nothing had been sent"}); err != nil {
 				return err
 			}
 		}
@@ -139,6 +154,22 @@ func (n NoticeChannel) StageNotice(ctx context.Context, notice map[string]any) (
 func (n NoticeChannel) Park(ctx context.Context, id, reason string) error {
 	l := n.Ledger
 	return l.Store.Compose(ctx, func(ctx context.Context, _ *sql.Conn) error {
+		// The hold rule's notice_park entry: a park is set only on a message that carries no hold; a
+		// held one (already parked, or held under another word) is left as it is and nothing is written.
+		row, err := l.Store.SupervisorMessage(ctx, id)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		kind, err := holdKindOf(ctx, l.Store, row)
+		if err != nil {
+			return err
+		}
+		if verdict, _, err := holdDecision(kind, holdChange{Entry: entryNoticePark}, nil); err != nil || verdict != holdSet {
+			return err
+		}
 		result, err := noticeExec(ctx, l.Store, "UPDATE supervisor_messages SET hold_reason=?,updated_at=? WHERE message_id=? AND obligation_kind='"+store.SupervisorNoticeObligationKind+"' AND hold_reason IS NULL AND "+store.SupervisorNeverSentSQL(), store.SupervisorHoldSuperseded, l.Clock.ISO(), id)
 		if err != nil {
 			return err
@@ -148,6 +179,32 @@ func (n NoticeChannel) Park(ctx context.Context, id, reason string) error {
 		}
 		return nil
 	})
+}
+
+// noticeHoldKept asks the hold rule whether the staging of a notice keeps the superseded_by_report
+// hold its message id carries, live being the hierarchy now and moving whether the message's
+// endpoints or project moved. The staging is the rule's restage entry and, when the message moves,
+// also its readdress entry; a release by either is a release. A message with no such hold keeps
+// nothing. A fault notice's park reads as kind notice, which the rule releases on both entries, as
+// dev did. owed is never asked there (no ifOwed cell for these entries and that kind), so none is
+// given: a kind that would ask is refused with an error rather than guessed.
+func (n NoticeChannel) noticeHoldKept(ctx context.Context, id string, live map[string]any, moving bool) (bool, error) {
+	row, err := n.Ledger.Store.SupervisorMessage(ctx, id)
+	if err != nil || row.HoldReason.String != store.SupervisorHoldSuperseded {
+		return false, err
+	}
+	kind, err := holdKindOf(ctx, n.Ledger.Store, row)
+	if err != nil {
+		return false, err
+	}
+	change := holdChange{Entry: entryRestage, SameRecipient: row.RecipientTaskID == live["recipient"], SameSender: row.SenderTaskID == live["sender"]}
+	verdict, _, err := holdDecision(kind, change, nil)
+	if err != nil || verdict == holdRelease || !moving {
+		return verdict != holdRelease, err
+	}
+	change.Entry = entryReaddress
+	verdict, _, err = holdDecision(kind, change, nil)
+	return verdict != holdRelease, err
 }
 
 // journal writes the row a notice's staging, restating, re-addressing, reopening or parking leaves. Its

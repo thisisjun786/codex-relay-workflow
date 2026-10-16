@@ -5,7 +5,7 @@ description: "Diagnose, read-only, which documents and issues fall short of alre
 
 # CRW Tidy
 
-Here the parent (repository session, relay role `supervisor`) and the child (project session, relay role `parent`) are layers of [the level table](../crw-canon/references/hierarchy.md#the-levels).
+Here the parent (repository session) and the child (project session) are layers of [the level table](../crw-canon/references/hierarchy.md#the-levels).
 
 Compare tracking records against the rules already agreed for writing and managing them, and close the gaps whose evidence is unambiguous. Tidy judges a record against a rule that already exists; it never decides what the rule should be. It has two jobs, kept under two headings because they have different actors:
 
@@ -53,7 +53,7 @@ An exception is not a defect and is reported as the exception it is. A conflict 
 Supplement writes, and only the owner of the body being written runs it, under the levels' record ownership in [scope of each level](../crw-canon/references/hierarchy.md#scope-of-each-level):
 
 - the parent for a milestone description it opened;
-- the child for a project or issue body (an issue child returns its proposal to it);
+- the child for a project or issue body (a `child` session returns its proposal to it);
 - the parent runs a store-wide sweep, which is requested through `crw manage`: the parent holds the management seat, with the store seat read through it, and no tracking body, so it sends each supplement to the owner of that body through `crw manage` and writes none itself. A body with no owner bound stays a proposal in the sweep report for Jun.
 
 Any other actor that finds a gap hands the owner the proposal Diagnose produced, carrying the passage it proposes, and writes nothing, as [record writes and returned proposals](../crw-canon/references/tracking-model.md#record-writes-and-returned-proposals) says.

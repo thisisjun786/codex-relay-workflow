@@ -1,6 +1,6 @@
 // Package trackingfake is a fake GitHub for the tests of the packages that use the tracking adapter (internal/tracking): an
 // httptest server over one repository that keeps pull requests and comments in memory and answers the REST routes the adapter's
-// pull request operations and its comment use. It never reaches a real GitHub; a test points tracking.WithBaseURL at URL.
+// pull request operations and its comment use (write and list). It never reaches a real GitHub; a test points tracking.WithBaseURL at URL.
 package trackingfake
 
 import (
@@ -32,6 +32,7 @@ type Pull struct {
 
 // Comment is a comment the fake keeps.
 type Comment struct {
+	ID     int
 	Number int
 	Body   string
 }
@@ -65,6 +66,7 @@ type Server struct {
 	next     int
 	pulls    map[int]*Pull
 	comments []Comment
+	lastID   int
 	requests []string
 	checks   map[string]fakeChecks
 }
@@ -139,6 +141,24 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		reply(w, http.StatusOK, out)
 		return
 	}
+	if m := commentsRoute.FindStringSubmatch(path); r.Method == http.MethodGet && repoOK(m) {
+		n, _ := strconv.Atoi(m[2])
+		s.mu.Lock()
+		_, ok := s.pulls[n]
+		out := []map[string]any{}
+		for _, c := range s.comments {
+			if c.Number == n {
+				out = append(out, map[string]any{"id": c.ID, "body": c.Body})
+			}
+		}
+		s.mu.Unlock()
+		if !ok {
+			reply(w, http.StatusNotFound, map[string]any{"message": "Not Found"})
+			return
+		}
+		reply(w, http.StatusOK, out)
+		return
+	}
 	if m := commentsRoute.FindStringSubmatch(path); r.Method == http.MethodPost && repoOK(m) {
 		n, _ := strconv.Atoi(m[2])
 		var in struct{ Body string }
@@ -148,10 +168,12 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		s.mu.Lock()
 		_, ok := s.pulls[n]
+		id := 0
 		if ok {
-			s.comments = append(s.comments, Comment{Number: n, Body: in.Body})
+			s.lastID++
+			id = s.lastID
+			s.comments = append(s.comments, Comment{ID: id, Number: n, Body: in.Body})
 		}
-		id := len(s.comments)
 		s.mu.Unlock()
 		if !ok {
 			reply(w, http.StatusNotFound, map[string]any{"message": "Not Found"})
@@ -267,6 +289,20 @@ func (s *Server) Comments(n int) []string {
 		}
 	}
 	return out
+}
+
+// DropComments removes every comment written on the pull request n and no other: a test models "the pass died before the
+// comment call" with it. The comments of other pull requests stay.
+func (s *Server) DropComments(n int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	kept := s.comments[:0:0]
+	for _, c := range s.comments {
+		if c.Number != n {
+			kept = append(kept, c)
+		}
+	}
+	s.comments = kept
 }
 
 // Requests is "METHOD /path" of every request, in order.

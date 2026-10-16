@@ -104,8 +104,8 @@ func TestSizeFitClosedSet(t *testing.T) {
 	}
 
 	t.Run("fixture: a table with a missing, an extra or a renamed value is reported", func(t *testing.T) {
-		good := "| Field | Values |\n|---|---|\n| `size_fit` | `executor`, `child`, `split` |\n| `size_reason` | `regions_gt3`, `own_goal`, `fits_executor` |\n| `issue_size` | `ok`, `over_line`, `over_line_accepted` |\n"
-		fits, reasons, answers := []string{"executor", "child", "split"}, []string{"regions_gt3", "own_goal", "fits_executor"}, []string{"ok", "over_line", "over_line_accepted"}
+		good := "| Field | Values |\n|---|---|\n| `size_fit` | `executor`, `split`, `bundle_split` |\n| `size_reason` | `regions_gt3`, `own_goal`, `fits_executor` |\n| `issue_size` | `ok`, `over_line`, `over_line_accepted` |\n"
+		fits, reasons, answers := []string{"executor", "split", "bundle_split"}, []string{"regions_gt3", "own_goal", "fits_executor"}, []string{"ok", "over_line", "over_line_accepted"}
 		if p := closedSetProblems(good, fits, reasons, answers); len(p) > 0 {
 			t.Fatalf("the good table is reported: %v", p)
 		}

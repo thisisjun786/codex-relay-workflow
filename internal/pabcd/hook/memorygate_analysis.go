@@ -113,7 +113,7 @@ func commandUnreadableReason(rule, reason string, leaf bool, names string) strin
 		out += names + " "
 	}
 	if leaf {
-		return out + "Report the blocked command and this reason to your parent."
+		return out + "Report the blocked command and this reason to the session that spawned you."
 	}
 	return out + "Use a direct command with a literal program and absolute write paths; change the part the reason names. A readable script file must meet the same checks."
 }

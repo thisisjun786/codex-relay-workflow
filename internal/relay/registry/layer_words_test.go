@@ -17,7 +17,7 @@ import (
 // shows as a value ('parent' (자식)), and never leaves a bare role word layername.Find counts. The role
 // ids themselves (codes, fields, flag values) are unchanged.
 
-// layerWordsPolicy declares every role, the 자식 and the issue child on one pair.
+// layerWordsPolicy declares every role, the 자식 and the `child` session on one pair.
 const layerWordsPolicy = `{"roles": {"supervisor": {"expectation": "record"}, "parent": {"model": "anthropic/claude-opus-5-5", "reasoningEffort": "xhigh"}, "child": {"model": "anthropic/claude-opus-5-5", "reasoningEffort": "xhigh"}}}`
 
 // layerWordsPolicyWithout declares every role but one.
@@ -124,15 +124,15 @@ func TestRegistryRefusalTextNamesLayers(t *testing.T) {
 	t.Run("linkage.go and rolepolicy.go an unknown role lists the roles typed", func(t *testing.T) {
 		r := newRegistry(t)
 		_, err := r.BindScope(ctx(), "bogus", "K1", layerWordsEndpoint("T1"))
-		layerWordsText(t, layerWordsRefusal(t, err), "a role is one of child (issue child), parent (자식), supervisor (부모), not \"bogus\"")
+		layerWordsText(t, layerWordsRefusal(t, err), "a role is one of child (`child` session), parent (자식), supervisor (부모), not \"bogus\"")
 		_, err = bindingScopeKind("bogus", "", "")
-		layerWordsText(t, layerWordsRefusal(t, err), "a role is one of child (issue child), parent (자식), supervisor (부모), not \"bogus\"")
+		layerWordsText(t, layerWordsRefusal(t, err), "a role is one of child (`child` session), parent (자식), supervisor (부모), not \"bogus\"")
 	})
 
 	t.Run("rolepolicy.go a scope kind the role does not take", func(t *testing.T) {
 		_, err := bindingScopeKind("child", "store", "store")
 		layerWordsText(t, layerWordsRefusal(t, err),
-			"--scope-kind 'store' is not a scope a 'child' (issue child) takes; the store seat is the 부모's and goes with --scope store, and a management seat is the 부모's and goes with --scope <seat id>")
+			"--scope-kind 'store' is not a scope a 'child' (`child` session) takes; the store seat is the 부모's and goes with --scope store, and a management seat is the 부모's and goes with --scope <seat id>")
 	})
 
 	t.Run("linkage.go a restore under a project whose 자식 changed", func(t *testing.T) {
@@ -178,11 +178,11 @@ func TestRegistryRefusalTextNamesLayers(t *testing.T) {
 		layerWordsBind(t, r, "b-parent", "parent", "project", "P1", "T1")
 		layerWordsBind(t, r, "b-child", "child", "issue", "ISSUE-1", "T1")
 		_, err := r.RecordSettings(ctx(), "T1", layerWordsSettings(t), "creation_result", "", Citation{})
-		layerWordsText(t, layerWordsRefusal(t, err), "'T1' holds live bindings at ['child', 'parent'] (issue child, 자식); one task holds one role")
+		layerWordsText(t, layerWordsRefusal(t, err), "'T1' holds live bindings at ['child', 'parent'] (`child` session, 자식); one task holds one role")
 		_, _, err = CheckBoundRole(ctx(), r.Store, "T1", layerWordsSettings(t), r.Policy)
-		layerWordsText(t, layerWordsRefusal(t, err), "'T1' holds live bindings at ['child', 'parent'] (issue child, 자식), and one task holds one role")
+		layerWordsText(t, layerWordsRefusal(t, err), "'T1' holds live bindings at ['child', 'parent'] (`child` session, 자식), and one task holds one role")
 		err = r.refuseRoleDisagreement(ctx(), []settingsWrite{{task: "T1", values: layerWordsSettings(t), role: "child"}})
-		layerWordsText(t, layerWordsRefusal(t, err), "\"T1\" holds live bindings at [\"child\",\"parent\"] (issue child, 자식); one task holds one role")
+		layerWordsText(t, layerWordsRefusal(t, err), "\"T1\" holds live bindings at [\"child\",\"parent\"] (`child` session, 자식); one task holds one role")
 	})
 
 	t.Run("record.go a later record states another role", func(t *testing.T) {
@@ -191,7 +191,7 @@ func TestRegistryRefusalTextNamesLayers(t *testing.T) {
 			t.Fatal(err)
 		}
 		_, err := r.RecordSettings(ctx(), "T1", layerWordsSettings(t), "creation_result", "child", Citation{})
-		layerWordsText(t, layerWordsRefusal(t, err), "'T1' was created citing role 'parent' (자식) and this record states 'child' (issue child).")
+		layerWordsText(t, layerWordsRefusal(t, err), "'T1' was created citing role 'parent' (자식) and this record states 'child' (`child` session).")
 	})
 
 	t.Run("record.go a bound task with no policy to read", func(t *testing.T) {
@@ -210,7 +210,7 @@ func TestRegistryRefusalTextNamesLayers(t *testing.T) {
 	})
 
 	t.Run("rolepolicy.go a task created citing one role and bound as another", func(t *testing.T) {
-		want := "this task was created citing role 'parent' (자식) and is being bound as 'child' (issue child); "
+		want := "this task was created citing role 'parent' (자식) and is being bound as 'child' (`child` session); "
 		x := newRoleRun(t)
 		x.policy(layerWordsPolicy)
 		if _, err := x.r.BindScope(ctx(), "child", "ISSUE-1", layerWordsEndpoint("T1")); err != nil {
@@ -225,7 +225,7 @@ func TestRegistryRefusalTextNamesLayers(t *testing.T) {
 		layerWordsText(t, layerWordsRefusal(t, err), want)
 		// A cited role that is not a string is shown as the value it is, with no layer name.
 		finding := CheckBinding(int64(7), "child", layerWordsSettings(t), x.r.Policy)
-		layerWordsText(t, findingText(finding, "detail"), "created citing role 7 and is being bound as 'child' (issue child); ")
+		layerWordsText(t, findingText(finding, "detail"), "created citing role 7 and is being bound as 'child' (`child` session); ")
 	})
 
 	t.Run("rolepolicy.go the finding prose glosses the role", func(t *testing.T) {

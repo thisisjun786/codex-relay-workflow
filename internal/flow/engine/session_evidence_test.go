@@ -5,14 +5,18 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/callstate"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/evidence"
 )
 
@@ -443,13 +447,20 @@ return [qa.status]`)
 			t.Fatalf("result %v", got)
 		}
 		rows := k.rowsOf("exe")
-		if got := eventsOf(rows); got != oneAttempt {
+		// the host cwd is neither EvidenceCwd nor an owner cwd the prepared row names: the bind's evidence_placed row names it before
+		// the copy is written there (CRW-1496)
+		if got := eventsOf(rows); got != "prepared,step_published,evidence_placed,thread_started,turn_started,completed" {
 			t.Fatalf("rows %s", got)
 		}
-		if rowStr(rows[2].Data, "evidence_cwd") != host {
-			t.Errorf("thread_started %v, want evidence_cwd %s", rows[2].Data, host)
+		if placed := rowsNamed(rows, EvEvidencePlaced)[0]; rowStr(placed.Data, "evidence_cwd") != host ||
+			rowStr(placed.Data, "evidence_assignment") != rowStr(rows[1].Data, "evidence_assignment") || rowStr(placed.Data, "marker") != rowStr(rows[1].Data, "marker") ||
+			rowInt(placed.Data, "attempt") != rowInt(rows[1].Data, "attempt") {
+			t.Errorf("evidence_placed %v, want evidence_cwd %s and the step_published row's assignment %v", placed.Data, host, rows[1].Data)
 		}
-		if r := receiptOf(t, rows[4]); r["state"] != "accepted" {
+		if bound := rowsNamed(rows, EvThreadStarted)[0]; rowStr(bound.Data, "evidence_cwd") != host {
+			t.Errorf("thread_started %v, want evidence_cwd %s", bound.Data, host)
+		}
+		if r := receiptOf(t, rows[len(rows)-1]); r["state"] != "accepted" {
 			t.Errorf("evidence_receipt %v", r)
 		}
 		if got := evidenceRecords(t, k.evCwd); len(got) != 0 {
@@ -845,7 +856,8 @@ return [arch.status, rev.status, exp.status]`)
 				t.Fatalf("result %v", got)
 			}
 			rows := k.rowsOf("exe")
-			if got := eventsOf(rows); got != "prepared,step_published,held" {
+			// the evidence_placed row of the host cwd is written before the copy that fails there (CRW-1496)
+			if got := eventsOf(rows); got != "prepared,step_published,evidence_placed,held" {
 				t.Errorf("rows %s", got)
 			}
 			if held := rows[len(rows)-1]; !strings.Contains(rowStr(held.Data, "detail"), host) {
@@ -854,4 +866,128 @@ return [arch.status, rev.status, exp.status]`)
 			waitFor(t, "the unbound subagent closed", func() bool { return len(k.orch.closedAgents()) == 1 && k.orch.closedAgents()[0] == "agent-1" })
 		})
 	})
+
+	// PlacedRowFailureHolds: the evidence_placed row that names a directory cannot be stored. Nothing is written under that
+	// directory, nothing is dispatched with a contract no row names, and the call holds evidence_assignment_failed; the journal's
+	// failure ends the run as any intent failure does. In the bind the subagent that took the step is closed, never bound.
+	t.Run("PlacedRowFailureHolds", func(t *testing.T) {
+		t.Run("owner cwd", func(t *testing.T) {
+			k := newEvidenceKit(t, true, ".crw/\n")
+			owner := t.TempDir()
+			k.setHostCwd(owner)
+			k.setOwnerCwd(owner)
+			// the owner read fails while the prepared row is written, so that row names no owner cwd and the step's write there needs
+			// its evidence_placed row
+			k.cfg.Host = &ownerReadAfterPrepared{fakeSessionHost: k.host, j: k.h.journal}
+			j := &failingJournal{MemoryJournal: k.h.journal, failAt: EvEvidencePlaced}
+			k.h.cfg.Journal = j
+			res := k.h.run(evidenceExe)
+			placedHolds(t, k, res, owner)
+			if n := len(k.orch.spawned()); n != 0 {
+				t.Errorf("%d spawns", n)
+			}
+		})
+		t.Run("host cwd", func(t *testing.T) {
+			k := newEvidenceKit(t, true, ".crw/\n")
+			host := t.TempDir()
+			k.setHostCwd(host)
+			j := &failingJournal{MemoryJournal: k.h.journal, failAt: EvEvidencePlaced}
+			k.h.cfg.Journal = j
+			res := k.h.run(evidenceExe)
+			placedHolds(t, k, res, host)
+			waitFor(t, "the unbound subagent closed", func() bool { return len(k.orch.closedAgents()) == 1 && k.orch.closedAgents()[0] == "agent-1" })
+			if bound := rowsNamed(k.rowsOf("exe"), EvThreadStarted); len(bound) != 0 {
+				t.Errorf("the subagent was bound: %v", bound)
+			}
+		})
+	})
+
+	// EvidencePlacedIsInvisibleToCallState: an evidence_placed row changes no reading of a call's rows: stateOf, callstate.Classify,
+	// sessionStageOf and lastTerminal answer the same with and without it, wherever it stands.
+	t.Run("EvidencePlacedIsInvisibleToCallState", func(t *testing.T) {
+		row := func(ev string, data map[string]any) Event {
+			return Event{RunID: "run-x", Kind: KindCall, CallID: "c1", Op: "agent", Label: "exe", Event: ev, Data: data}
+		}
+		placed := row(EvEvidencePlaced, map[string]any{"evidence_assignment": "A", "evidence_cwd": "/h", "attempt": 1, "marker": "c1/t1-a1"})
+		step := row(EvStepPublished, map[string]any{"k": 1, "op": "c1/t1", "marker": "c1/t1-a1", "attempt": 1, "action": StepSpawn, "evidence_assignment": "A"})
+		bound := row(EvThreadStarted, map[string]any{"thread_id": "agent-1", "attempt": 1, "via": "session", "marker": "c1/t1-a1"})
+		turn := row(EvTurnStarted, map[string]any{"k": 1, "op": "c1/t1", "turn_id": "agent-1-turn1", "attempt": 1, "marker": "c1/t1-a1"})
+		prep := row(EvPrepared, map[string]any{"backend": BackendSession})
+		for _, tc := range []struct {
+			name string
+			rows []Event
+		}{
+			{"published", []Event{prep, step}},
+			{"bound", []Event{prep, step, bound, turn}},
+			{"completed", []Event{prep, step, bound, turn, row(EvCompleted, map[string]any{})}},
+			{"held", []Event{prep, step, row(EvHeld, map[string]any{"reason": ReasonEvidenceAssignmentFailed})}},
+			{"superseded", []Event{prep, step, row(EvSuperseded, map[string]any{})}},
+			{"outcome unknown", []Event{prep, step, bound, turn, row(EvOutcomeUnknown, map[string]any{"reason": "dispatch_unknown"})}},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				for at := 1; at <= len(tc.rows); at++ {
+					with := append(append(append([]Event(nil), tc.rows[:at]...), placed), tc.rows[at:]...)
+					if got, want := callStateReading(with), callStateReading(tc.rows); got != want {
+						t.Errorf("with evidence_placed at %d: %s\nwithout: %s", at, got, want)
+					}
+				}
+			})
+		}
+	})
+}
+
+// callStateReading is what every reader of a call's rows makes of them, as one string.
+func callStateReading(rows []Event) string {
+	st := stateOf("c1", rows)
+	return fmt.Sprintf("state last=%s terminal=%s thread=%s cwd=%s open=%v held=%v | class %s | stage %+v | terminal %s",
+		st.last, st.terminal, st.thread, st.cwd, st.open(), st.held(), callstate.Classify(callstateRows(rows)), *sessionStageOf(rows), lastTerminal(rows).Event)
+}
+
+// placedHolds checks a run whose evidence_placed row of cwd could not be stored: nothing is under cwd, the call's result is held
+// evidence_assignment_failed in the rows the journal kept in memory (failingJournal keeps every row it reports as failed), and the run
+// ends with the journal's error. It also checks itself: the same rows with the held row dropped must fail the check.
+func placedHolds(t *testing.T, k *evidenceKit, res *Result, cwd string) {
+	t.Helper()
+	rows, records := k.rowsOf("exe"), evidenceRecords(t, cwd)
+	for _, fault := range placedHoldsFaults(res, rows, records, cwd) {
+		t.Error(fault)
+	}
+	dropped := slices.DeleteFunc(slices.Clone(rows), func(e Event) bool { return e.Event == EvHeld })
+	if len(placedHoldsFaults(res, dropped, records, cwd)) == 0 {
+		t.Errorf("the check passes the rows with the held row dropped: %s", eventsOf(dropped))
+	}
+}
+
+// placedHoldsFaults is what placedHolds finds wrong with a run's result, the call's rows and the records under cwd.
+func placedHoldsFaults(res *Result, rows []Event, records []string, cwd string) []string {
+	var faults []string
+	if res.Status != RunScriptError || !strings.Contains(res.Error, "journal cannot be written") {
+		faults = append(faults, fmt.Sprintf("run %s %s %q, want the journal's error", res.Status, res.ErrorKind, res.Error))
+	}
+	if len(records) != 0 {
+		faults = append(faults, fmt.Sprintf("records written under %s although no row names it: %v", cwd, records))
+	}
+	if placed := rowsNamed(rows, EvEvidencePlaced); len(placed) != 1 || rowStr(placed[0].Data, "evidence_cwd") != cwd {
+		faults = append(faults, fmt.Sprintf("evidence_placed rows %v, want the one of %s (rows %s)", placed, cwd, eventsOf(rows)))
+	}
+	switch held := rowsNamed(rows, EvHeld); {
+	case len(held) != 1:
+		faults = append(faults, fmt.Sprintf("held rows %v, want one (rows %s)", held, eventsOf(rows)))
+	case rowStr(held[0].Data, "reason") != ReasonEvidenceAssignmentFailed:
+		faults = append(faults, fmt.Sprintf("held %v, want reason %s", held[0].Data, ReasonEvidenceAssignmentFailed))
+	}
+	return faults
+}
+
+// ownerReadAfterPrepared is a host whose read of the owner thread fails until a prepared row is in the journal.
+type ownerReadAfterPrepared struct {
+	*fakeSessionHost
+	j Journal
+}
+
+func (h *ownerReadAfterPrepared) ReadAgent(ctx context.Context, id string) (SessionAgent, error) {
+	if id == sessionOwner && len(rowsNamed(h.j.Events(), EvPrepared)) == 0 {
+		return SessionAgent{}, errors.New("the owner cannot be read yet")
+	}
+	return h.fakeSessionHost.ReadAgent(ctx, id)
 }

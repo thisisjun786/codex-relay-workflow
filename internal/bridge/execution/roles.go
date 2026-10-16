@@ -19,7 +19,12 @@ const (
 // roleNames is roles.ROLES in declaration order; checks that iterate roles follow it.
 var roleNames = [...]string{Supervisor, Parent, Child}
 
-const supportedRoles = `"child", "parent", "supervisor"`
+// supportedRoles is the role ids a policy may key, with the layer each names (layername.ListGloss),
+// written as one literal so the role-word ratchet reads the list and its gloss together.
+const supportedRoles = "[\"child\", \"parent\", \"supervisor\"] (`child` session, 자식, 부모)"
+
+// SupportedRoles is supportedRoles for another package's refusal of an unknown role.
+const SupportedRoles = supportedRoles
 
 // RolePair is one model and reasoning effort a role may run on. A request matches a pair only when
 // both halves are equal: an effort name belongs to the model beside it, so two models that both
@@ -146,7 +151,7 @@ func parseRoles(declared any) (map[string]Role, error) {
 		}
 		if has(entry, "mcp") {
 			if name == Supervisor {
-				return nil, &PolicyError{"role 'supervisor' cannot declare \"mcp\": a supervisor's thread is the user's own, so no profile switches anything off in it"}
+				return nil, &PolicyError{"role 'supervisor' (부모) cannot declare \"mcp\": the 부모's thread is the user's own, so no profile switches anything off in it"}
 			}
 			if role.MCP, err = parseMCP(name, entry.Get("mcp")); err != nil {
 				return nil, err
@@ -169,14 +174,14 @@ func parseRole(name string, entry object) (Role, error) {
 		return Role{}, &PolicyError{fmt.Sprintf("role %s expectation must be 'pair' or 'record'", repr(name))}
 	}
 	if name == Supervisor && expectation != any(Record) {
-		return Role{}, &PolicyError{"role 'supervisor' expectation must be 'record': its model and effort are the user's own selection, not something the policy pins"}
+		return Role{}, &PolicyError{"role 'supervisor' (부모) expectation must be 'record': its model and effort are the user's own selection, not something the policy pins"}
 	}
 	if name != Supervisor && expectation != any(Pair) {
-		return Role{}, &PolicyError{fmt.Sprintf("role %s expectation must be 'pair': only 'supervisor' defers to the recorded authorization, and letting another role do so would exempt it from the role check", repr(name))}
+		return Role{}, &PolicyError{fmt.Sprintf("role %s expectation must be 'pair': only 'supervisor' (부모) defers to the recorded authorization, and letting another role do so would exempt it from the role check", repr(name))}
 	}
 	if name == Supervisor {
 		if named := present(entry, "autoCompactTokenLimit", "model", "pairs", "reasoningEffort"); len(named) > 0 {
-			return Role{}, &PolicyError{fmt.Sprintf("role 'supervisor' cannot declare %s: its model and effort are the user's own selection, so its expectation is the recorded authorization and it carries no pair for a limit to belong to", repr(named))}
+			return Role{}, &PolicyError{fmt.Sprintf("role 'supervisor' (부모) cannot declare %s: its model and effort are the user's own selection, so its expectation is the recorded authorization and it carries no pair for a limit to belong to", repr(named))}
 		}
 		return Role{Expectation: Record}, nil
 	}

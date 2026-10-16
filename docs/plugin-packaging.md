@@ -902,6 +902,16 @@ after it run, and they check no role; whether the host starts a refused bridge a
 measured. A bridge already running may keep going from the removed directory, as all of them did at
 the second measured replacement, with the policy it started under.
 
+A rollback can also raise a false `summary_notice_refused`. A build from CRW-1548 on sends the plan-summary notice
+in the text its `summary_notice` row holds, in words the earlier builds do not write. An earlier build ignores that
+text and composes its own words, and `crw manage send-parent` keys `summary-<id>` to the sha256 of the first text it
+carried. So when the newer build sent a summary notice and the record is not settled yet (the outcome is undetermined,
+or the bridge accepted it and the flow has not written its settlement), the earlier build's retry is refused locally
+("already belongs to another message"), and the run settles the notice refused and escalates. Let the newer build's
+summary notices settle before rolling back, and read a `summary_notice_refused` that appears right after a rollback
+against the outbox record of `summary-<id>` and `crw relay dag-summary-status` before acting on it
+([the plan summary](flow/reporting.md#the-plan-summary)).
+
 Removing the plugin deletes the cached version directory and the plugin entry in
 `config.toml`. It leaves the marketplace registration, so removing that is a
 separate step, and it does not touch the relay store, the bridge ledger, the hook

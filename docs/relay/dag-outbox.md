@@ -1,9 +1,9 @@
 # DAG summary outbox
 
-Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels).
+The sessions in this document are named by [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels): the child is the project session that writes the summary of its plan, and a `child` session (a code id, not a layer), which is no layer, is the session that runs one issue of it.
 
-A DAG plan's Linear summary is written by the project's parent with its own Linear connector. The relay holds no Linear credential, makes no Linear call and has no Linear client; what it holds is the
-durable, ordered queue the parent drains: one table in the DAG zone and seven commands. A summary that is lost, refused or overtaken is recovered by writing a summary again. It never re-runs a child,
+A DAG plan's Linear summary is written by the child (project session) with its own Linear connector. The relay holds no Linear credential, makes no Linear call and has no Linear client; what it holds is the
+durable, ordered queue the child drains: one table in the DAG zone and seven commands. A summary that is lost, refused or overtaken is recovered by writing a summary again. It never re-runs a `child` session,
 re-sends a correction or makes a second summary, because every command here writes the summary table and no other. This page is the normative description. It follows the DAG execution contract
 (CRW-182) sections 1.3 and 7.6, the metrics of 8.6 and decision D-17: the relationship outbox (`sync_outbox`, [the relay README](README.md)) cannot hold a project summary, because
 `sync_outbox.relationship_id` is NOT NULL, so a project-level outbox is a new table.
@@ -15,13 +15,13 @@ The queue is the Linear projection of every issue a plan runs. `sync_outbox` is 
 and the plan still holds the node, that is, `dag_nodes` has a live version of it) enqueues no `sync_outbox` row, since the issue's row in the plan's summary states that verdict. A relationship of a node the plan retired or
 replaced is no plan relationship: no row of any summary states its verdict, so its verdict keeps its `sync_outbox` row. The `sync_outbox` table and its drain stay as they are for the relationships outside a plan.
 
-The supervisor reads the record of a verdict for its discharge: for a relationship a plan runs that record is the plan's summary, so a confirmed entry of the relationship's `coordination_document` target that was enqueued at
+The supervisor channel reads the record of a verdict for its discharge: for a relationship a plan runs that record is the plan's summary, so a confirmed entry of the relationship's `coordination_document` target that was enqueued at
 or after the instant the verdict was decided, and made at a plan revision where the node the relationship is bound to was live, discharges the verdict's obligation (`delivery.PlanSummaryCarriesVerdict`, read next to the confirmed `sync_outbox` row by `Reportable`, `ReportableCurrent` and `Selection`). An entry that
 is not confirmed, one enqueued before the verdict, one of another document and one made at a plan revision where the node was not live does not discharge it. An entry made while the node was live keeps discharging after the plan retires or replaces the node.
 
 The entry's `document` and the relationship's `coordination_document` target (`sync_targets.target_ref`) are compared as the two texts they are, byte for byte, the way `Reportable`, `ReportableCurrent` and `Selection` compare a
-`sync_outbox` row's `target_ref` with the target: neither is normalised or resolved, so a document named by its URL is not the target recorded by its id, and the reverse. The parent therefore gives `dag-summary-enqueue --document`
-the spelling the relationship's target is recorded in. An entry of another spelling does not discharge the verdict: it stays standing until a confirmed record of the target's own spelling discharges it (the safe side). Whether the supervisor reports it again is a separate decision (`Selection` keeps `standing` and sets `report` false when a report was already made under the obligation, or when the recipient is not contactable); a report does not discharge it. The order of the two instants is the
+`sync_outbox` row's `target_ref` with the target: neither is normalised or resolved, so a document named by its URL is not the target recorded by its id, and the reverse. The child therefore gives `dag-summary-enqueue --document`
+the spelling the relationship's target is recorded in. An entry of another spelling does not discharge the verdict: it stays standing until a confirmed record of the target's own spelling discharges it (the safe side). Whether the supervisor channel reports it again is a separate decision (`Selection` keeps `standing` and sets `report` false when a report was already made under the obligation, or when the recipient is not contactable); a report does not discharge it. The order of the two instants is the
 writers' own: the verdict is stamped by the delivery clock in `Ack.RecordVerdict`, the entry by `Scheduler.Now` in `EnqueueSummary`, and an entry stamped at or after the verdict's instant discharges it once it is confirmed
 (`TestPlanSummaryDischargesTheVerdictThroughTheRecordingWriters` runs the order through the writers with both clocks injected).
 
@@ -43,7 +43,7 @@ An entry is keyed by the decision it states, the document, the plan revision and
 | `state` | `pending`, `claimed`, `confirmed`, `failed`, `superseded` |
 | `attempts`, `last_error` | failures recorded and the last one's text |
 | `claim_token`, `claimed_by`, `claimed_at` | the claim: the token is present exactly while the entry is claimed |
-| `readback`, `confirmed_at` | the block the parent read back, and when it was confirmed |
+| `readback`, `confirmed_at` | the block the child read back, and when it was confirmed |
 | `enqueued_by`, `coordinator_epoch`, `created_at`, `updated_at` | who made the entry, the coordinator epoch (0 on every entry: these writers are not epoch-fenced, see [What is not here](#what-is-not-here)) and the times |
 
 An entry never changes its identity, and nothing is deleted. The moves of its state:
@@ -59,23 +59,23 @@ An entry never changes its identity, and nothing is deleted. The moves of its st
 | `failed` | `pending` | `dag-summary-retry`: attempts back to 0 |
 | `pending`, `claimed`, `failed` | `superseded` | `dag-summary-enqueue`, for every entry of the stream that was not confirmed when a newer one is appended |
 
-`confirmed` and `superseded` are final. There is no lease and no backoff: nothing here is resolved by time passing, and the parent decides when to claim again.
+`confirmed` and `superseded` are final. There is no lease and no backoff: nothing here is resolved by time passing, and the child decides when to claim again.
 
 ## An older summary never overwrites a newer one
 
 Three layers keep it, and the first two are the relay's:
 
 1. **The commands.** Only the newest open entry of a stream can be claimed; a claim, a confirmation, a failure or a retry of an entry that a newer one superseded is refused (`sync_not_claimable`). A claim holds
-   a token and only a claim does, so a claimant that was overtaken, or a parent that was replaced (it is no longer the project's registered parent: `scope_role_mismatch`), can neither confirm nor fail the entry it no
+   a token and only a claim does, so a claimant that was overtaken, or a child that was replaced (it is no longer the child registered for the project: `scope_role_mismatch`), can neither confirm nor fail the entry it no
    longer owns.
 2. **The zone.** The same rules are enforced where the rows live, so a writer that skips the commands is refused too (`internal/relay/store/dag_zone.go`): an entry is appended pending, with the next sequence
    number of its stream and a plan revision that does not go back; there is one open entry per stream (a partial unique index), so older entries are superseded before a newer one is appended; only the legal moves
    above are allowed; an entry that has a newer sibling is never claimed or confirmed; a confirmed or superseded entry never changes; nothing is deleted.
 3. **The document.** The write itself is one atomic conditional replacement of the plan's container text, and so is the creation of the container (a replacement of the whole document text that was read with that text and
-   the empty container: two claimants that both found no container cannot make two). The parent's connector is Linear's `save_document` with `patch`: its description says the edits are applied to the
+   the empty container: two claimants that both found no container cannot make two). The child's connector is Linear's `save_document` with `patch`: its description says the edits are applied to the
    current content in order and atomically, and an `old_string` must match the current content exactly once. So a write prepared before a newer summary landed no longer matches (the container changed) and is refused whole.
-   The parent also writes only against the one read it reconciled, and never when `writable` is false or the document already holds a newer summary (`relation: newer`): a claimant that reads the document after a newer summary
-   landed would otherwise match what it just read. This layer belongs to the connector and to the parent's procedure. The relay states the exact text to write and checks what was read back; it cannot make Linear conditional.
+   The child also writes only against the one read it reconciled, and never when `writable` is false or the document already holds a newer summary (`relation: newer`): a claimant that reads the document after a newer summary
+   landed would otherwise match what it just read. This layer belongs to the connector and to the child's procedure. The relay states the exact text to write and checks what was read back; it cannot make Linear conditional.
 
 What the relay cannot close: a write that is not conditioned (a whole-document `content` save, an append) by a writer outside this procedure can put an older summary over a newer one. The next `dag-summary-reconcile` of the newest
 confirmed entry reports it (`outcome: stale`, `relation: older`, `again: true`) and `dag-summary-enqueue --again` writes the summary anew. The relay's tests model the connector as the conditional replacement and show the
@@ -84,7 +84,7 @@ effect of a writer that is not (the overwrite is counted, detected and repaired)
 ## The commands
 
 All are relay commands (`codex-session-relay [--state DIR] <command>`); output is JSON on stdout. Exit 0 is an answer, 2 a refusal with its reason (JSON), or the parser's refusal of a missing option (usage on stderr, nothing on stdout), 3 the host's failure (a plan or a progress that disagrees with itself), 4 a usage
-error of the command (a `@file` that cannot be read, a document over 8 MiB or not valid UTF-8: a document is read whole or not at all). The write commands name the task that acts (`--actor`): it must be the one registered parent of the plan's project.
+error of the command (a `@file` that cannot be read, a document over 8 MiB or not valid UTF-8: a document is read whole or not at all). The write commands name the task that acts (`--actor`): it must be the one child registered for the plan's project.
 
 | Command | Reads or writes | Answer | Refusals |
 | --- | --- | --- | --- |
@@ -101,14 +101,14 @@ readback does not carry this job's record; `sync_target_mismatch`: the right tex
 
 **Enqueue** records the summary the plan owes the document now. The same state of the plan is one entry: if the stream's newest entry already states it (same `subject_digest`), that entry is answered with
 `replayed: true`, whatever state it is in. `--again` makes a new entry even then, but only when the newest entry is confirmed: an entry that is still owed is never doubled. `status` says whether the plan has moved on since the newest
-entry (`up_to_date`), so the parent enqueues when a document is owed nothing and is out of date.
+entry (`up_to_date`), so the child enqueues when a document is owed nothing and is out of date.
 
 **Claim** gives the operation: the exact `block`, the exact `container` text that the document's current container is replaced with, the `empty_container` that `initialize` adds to a document that has none, and the protocol
 as the relay states it. A second claim of the same entry is allowed at once (the answer of the first may be lost): it issues a new token and the old one is dead.
 
 **Reconcile** describes a document against an entry and is how a lost response is resolved without writing twice. `repair` says how the entry is written into that document:
 
-| Outcome | The document holds | `repair` | The parent |
+| Outcome | The document holds | `repair` | The child |
 | --- | --- | --- | --- |
 | `already_written` | this entry's block (with or without the blank line a Linear save adds before its end marker, see [what a save does to a block](#what-a-linear-save-does-to-a-block)), and nothing else in the plan's container | `none` | confirms with `complete`; writes nothing |
 | `absent` | no block of this plan | `initialize` when there is no container, else `replace_container` | writes |
@@ -128,27 +128,27 @@ parks the entry as `failed` and a claim of it is refused until `dag-summary-retr
 
 ## The issue rows
 
-A row is the state of one live node of the plan, for an agent node and for a node a managed child runs (an oversized issue) alike. It is read in the transaction that writes the entry, from the progress itself (the stage,
+A row is the state of one live node of the plan, for an agent node and for a node a managed `child` session runs (an oversized issue) alike. It is read in the transaction that writes the entry, from the progress itself (the stage,
 the acceptance of `acceptanceOf`, the executions of both sides) and from the side that ran the node:
 
 | Part of the row | Where it is read |
 | --- | --- |
 | `stage`, `issue_key`, `kind` | the progress document |
 | surface | `agent` or `relationship`: the side of the node's current execution (`executionOf`); the only side that ever held one when none is current; none when neither applies |
-| newest verdict (`verified` or `needs_changes`) | a managed child: the newest ruling over the relationships the plan bound to the node (`verdicts`, by `decided_at`). An agent: the newest completed reviewer call of the node whose result document carries a verdict (`flow_calls`) |
-| revision and generation | a managed child: the ruled event's revision hash and execution generation. An agent: the commit the reviewer judged and the attempt of the execution it ran in |
-| criteria set, ruling, queued correction, child | a managed child: the criteria set digest and the findings of the ruling's context, how many times the event was ruled, the generation a `needs_changes` ruling opened, and the child thread. An agent: the criteria digest the reviewer's input carried |
-| findings | a managed child: the findings of the ruling, one line each (`id: verdict — note`). An agent: the defects of the verdict document, one line each (`ref: severity kind file:line — finding`) |
+| newest verdict (`verified` or `needs_changes`) | a managed `child` session: the newest ruling over the relationships the plan bound to the node (`verdicts`, by `decided_at`). An agent: the newest completed reviewer call of the node whose result document carries a verdict (`flow_calls`) |
+| revision and generation | a managed `child` session: the ruled event's revision hash and execution generation. An agent: the commit the reviewer judged and the attempt of the execution it ran in |
+| criteria set, ruling, queued correction, `child` session | a managed `child` session: the criteria set digest and the findings of the ruling's context, how many times the event was ruled, the generation a `needs_changes` ruling opened, and the `child` session's thread. An agent: the criteria digest the reviewer's input carried |
+| findings | a managed `child` session: the findings of the ruling, one line each (`id: verdict — note`). An agent: the defects of the verdict document, one line each (`ref: severity kind file:line — finding`) |
 | acceptance | `acceptanceOf` through the progress: the id of the acceptance that stands, whichever side holds it |
 | integration batch | the batch of the newest `marked` row of that acceptance, in the stage table of the relationship side or of the agent side |
 
 An issue nobody ruled on has no verdict; a node nothing ran has no surface. The rows hold what a `sync_outbox` verdict summary held of the issue (the verdict, the generation and revision, the criteria set and ruling,
-the correction it queued, the child and the findings) and the acceptance and the integration the verdict summary could not state.
+the correction it queued, the `child` session and the findings) and the acceptance and the integration the verdict summary could not state.
 
 ## The subject digest
 
 `subject_digest` is the sha256 of the version tag `dag-summary-subject/2`, the progress digest and the normalised render of every row: the issue, its stage, the newest verdict with its generation, revision, criteria set,
-ruling, queued correction and child, the digest of its findings (taken over every finding whole: the text of the summary clips a finding line for display, the digest does not), the acceptance id and the integration batch. One function (`summarySubject`, `internal/relay/dagsched/outbox.go`) computes it, and both
+ruling, queued correction and `child` session, the digest of its findings (taken over every finding whole: the text of the summary clips a finding line for display, the digest does not), the acceptance id and the integration batch. One function (`summarySubject`, `internal/relay/dagsched/outbox.go`) computes it, and both
 `dag-summary-enqueue` (the replay comparison) and `dag-summary-status` (`up_to_date`) call it. So a verdict or a finding that changes while the node stays in its stage is another subject: `up_to_date` reads false
 until the plan is enqueued again, and the enqueue appends a new entry and supersedes the open one. Nothing changed is one subject, and the entry is answered with `replayed: true`. The progress document is not
 changed by the rows: `dag-summary-status` prints the fields it printed, and `progress_digest` is still the digest of the progress document.
@@ -158,7 +158,7 @@ changed by the rows: `dag-summary-status` prints the fields it printed, and `pro
 The text is a function of the progress document and the issue rows and holds no clock: equal progress and equal rows are equal text. It names the plan, the project and the revision, the counts of accepted and integrated nodes against the
 denominator, the denominator's last change, what the revisions took out of the plan, every stage with its nodes, the blocked nodes with their closed reasons, and every live node with its issue key, kind, stage, reason, the
 plan's lifecycle for it and its pull request. Under that, `Issues` lists the row of every live node: its surface and stage, the newest verdict (`verdict V, generation G, revision R`, the criteria set and the ruling when
-it is not the first), the child, the correction queued, the findings (at most twelve lines, with the count and the digest of all of them), the acceptance and the batch that integrated it; an issue without a verdict reads `no verdict`.
+it is not the first), the `child` session, the correction queued, the findings (at most twelve lines, with the count and the digest of all of them), the acceptance and the batch that integrated it; an issue without a verdict reads `no verdict`.
 
 It is written as a block inside a container: HTML comments around a fenced body, the grammar the relationship outbox relies on (JUN-92 measured it for Linear). A connector keeps it as written, with one change that a real Linear save makes ([below](#what-a-linear-save-does-to-a-block)):
 
@@ -198,40 +198,40 @@ block's end marker dropped on both sides**. Nothing else is ignored:
   and whose digest the header states). So is any text between the block and the container's end marker, since the container holds the block and nothing else (line breaks at the container's edges are not text).
 * The refusal is the one it was: `readback_mismatch` for `complete`, with the problem in `last_error` and the entry still claimed. No reason is added.
 
-The text the relay tells the parent to write (`block`, `container`) is unchanged, so the parent writes the same bytes as before and a block that a Linear save has already changed needs no rewrite. A document read back with the blank line is
+The text the relay tells the child to write (`block`, `container`) is unchanged, so the child writes the same bytes as before and a block that a Linear save has already changed needs no rewrite. A document read back with the blank line is
 `already_written`: `complete` confirms the entry, `previous_block` and the stored `readback` hold the block as the document held it (blank line included), and a confirmed entry that the document still carries is not `again`.
 
 This change adds that one tolerance to the block comparison. A different change that a Linear save makes elsewhere inside the block is not tolerated until it has been measured: the readback is not `already_written` and `complete` refuses it. (The check that the container holds the block and nothing else has always ignored line breaks at the container's edges; that is unchanged.) Other readback comparisons (the relationship outbox's
 `sync-complete`, the fault readback) are separate and are not changed here. A new block format that avoids the blank line was not chosen: it would have to be saved to Linear to show that Linear leaves it alone, and blocks already in
 documents would read as stale against it.
 
-## The parent's flow
+## The child's flow
 
 The procedure is in the crw-run skill (`references/relay.md`, "The coordination summary of a DAG plan"). In order:
 
 1. `dag-summary-status --plan P`: a document whose newest entry is owed, or is not up to date, needs a turn. If the plan has moved on, `dag-summary-enqueue --plan P --actor A --document D` first.
-2. `dag-summary-claim --summary S --actor A`: take the newest open entry. An entry that already reads `claimed` (an earlier session of the parent, a restart) is claimed again the same way: only the second claim ends the earlier token.
+2. `dag-summary-claim --summary S --actor A`: take the newest open entry. An entry that already reads `claimed` (an earlier session of the child, a restart) is claimed again the same way: only the second claim ends the earlier token.
 3. Read the document from Linear and keep that one text. `dag-summary-reconcile` on it. `writable: false` or `relation: newer`: stop, the entry was overtaken, take the newest entry. `already_written`: go to 5.
 4. Write as `repair` says: `replace_container`: one `save_document` with `patch` [`{op: replace, old_string: <the container text from that read>, new_string: <the container text>}`]; `initialize`: one `patch` that replaces the whole document
    text that was read with that text, a blank line and the empty container, then read again and reconcile again; `manual`: write nothing, record the failure and report it to a person. On any failure: `dag-summary-fail` with the claim token and the error, and go back to 2 for the same entry.
 5. Read the document back and `dag-summary-complete` with the claim token, the document and the whole text. `readback_mismatch`: reconcile the readback and act on its `repair`. `sync_not_claimable` after a newer summary was enqueued: take the newest entry.
 
-Everything in this loop touches the summary table only. A lost response (the write landed and its answer did not) is a failure to the parent, and the next turn finds the block in the document (`already_written`) and confirms it
-without a second write; a concurrent edit makes the replacement refuse whole, and the retry reads the document as it is then; a replaced parent is refused at the relay, and the one write it had prepared is refused by the
+Everything in this loop touches the summary table only. A lost response (the write landed and its answer did not) is a failure to the child, and the next turn finds the block in the document (`already_written`) and confirms it
+without a second write; a concurrent edit makes the replacement refuse whole, and the retry reads the document as it is then; a replaced child is refused at the relay, and the one write it had prepared is refused by the
 connector once the container changed.
 
 ## What is not here
 
-* The relay never reads Linear and never writes it. There is no Linear client, no credential and no daemon for this queue; the parent calls these commands when a wake, a block or a decision brings it back (see
-  [the scheduler's parent turn](dag-scheduler.md#the-goal-free-parents-turn)).
+* The relay never reads Linear and never writes it. There is no Linear client, no credential and no daemon for this queue; the child calls these commands when a wake, a block or a decision brings it back (see
+  [the scheduler's goal-free turn of the child](dag-scheduler.md#the-goal-free-parents-turn)).
 * A store that still owes a repair the writable opener makes (a settlement backfilled from an observation, an index that was dropped) gets it at the first write-open of any write command, the five write commands here included.
   That is the opener's behaviour and not summary recovery: `status` and `reconcile` open the store read-only and change nothing.
 * A summary is only as good as the document it is written into. A document with markers that appear twice, an unclosed block or container, or a block outside its container is `malformed` and no exact-once replacement can repair it:
-  the relay never confirms such a document, and a person removes the surplus text. Two sessions of the parent that both initialise a container are made safe by the conditional replacement of the whole document, not by the relay.
-* A failure has no backoff. The eighth parks the entry, so a parent that fails in a loop cannot burn more than eight attempts on one entry, and they can all be spent in one turn.
+  the relay never confirms such a document, and a person removes the surplus text. Two sessions of the child that both initialise a container are made safe by the conditional replacement of the whole document, not by the relay.
+* A failure has no backoff. The eighth parks the entry, so a child that fails in a loop cannot burn more than eight attempts on one entry, and they can all be spent in one turn.
 * A change of the progress document's content, or of the definition of the subject digest, between builds gives a different digest: one extra entry after an upgrade (the next sequence number with the same content), never a wrong one.
 * The rows are read from the relay's records. The relay does not read what Linear shows of an issue and does not decide an issue's status: a row says what the relay holds.
-* The progress replay ([DAG progress](dag-progress.md#rebuilding-the-view)) is not used: a summary states the whole live view, so enqueue reads `Scheduler.Progress` and compares digests. Stale handling and the parent's base refresh are other issues. These writers decide nothing about the plan and are not fenced by [the coordinator epoch](dag-scheduler.md#the-coordinator-epoch): a summary states the store's current progress, enqueueing it again is a replay, and the claim token fences a replaced session's confirmation or failure. A coordinator claim (`dag-coordinator-claim`) does not touch summary tokens: a restarted or replacement session claims again, at once, any entry that reads `claimed` (step 2 of the flow), and that second claim is what kills the old session's token. `coordinator_epoch` is 0 on every entry, so a later fence has the column.
+* The progress replay ([DAG progress](dag-progress.md#rebuilding-the-view)) is not used: a summary states the whole live view, so enqueue reads `Scheduler.Progress` and compares digests. Stale handling and the child's base refresh are other issues. These writers decide nothing about the plan and are not fenced by [the coordinator epoch](dag-scheduler.md#the-coordinator-epoch): a summary states the store's current progress, enqueueing it again is a replay, and the claim token fences a replaced session's confirmation or failure. A coordinator claim (`dag-coordinator-claim`) does not touch summary tokens: a restarted or replacement session claims again, at once, any entry that reads `claimed` (step 2 of the flow), and that second claim is what kills the old session's token. `coordinator_epoch` is 0 on every entry, so a later fence has the column.
 
 ## The store
 
@@ -249,7 +249,7 @@ Each write runs in one composing transaction of the store; `EnqueueSummary` read
 
 * Contract D-17 leaves the key open: this page keys an entry by the plan, the document, the plan revision, the decision it states (the progress digest) and a sequence number that only goes up in the stream. The contract's
   "decision identity" for a relationship job is its verdict; for a project summary it is the progress the summary states.
-* Contract 7.6 says a Linear write is retried as the summary only and starts no child and no judgement. That is the table above: no other table is read or written by any of these commands but the plan's own rows
-  (the progress reading) and the project's scope bindings (who the parent is).
+* Contract 7.6 says a Linear write is retried as the summary only and starts no `child` session and no judgement. That is the table above: no other table is read or written by any of these commands but the plan's own rows
+  (the progress reading) and the project's scope bindings (who the child is).
 * D-19: the contract's citations of the sections this issue consumes (`relay-sqlite.sql` lines 356-386 and 362 for `sync_outbox` and its `relationship_id`, and `operations.md` 1040-1045 for "the queue is the truth, a wake is only a hint") were
   resolved at the contract's commit and at this baseline: all identical.

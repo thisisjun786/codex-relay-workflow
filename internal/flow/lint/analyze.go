@@ -95,7 +95,8 @@ type fnInfo struct {
 	parent    *fnInfo
 	scope     *scope
 	freeReads []read
-	// life is set when the function calls crw.commit, crw.verify, crw.review or crw.land itself.
+	// life is set when the function makes a lifecycle call itself (callEvent): crw.commit, crw.verify, crw.review,
+	// crw.land, crw.unitCheck or a land release.
 	life bool
 }
 

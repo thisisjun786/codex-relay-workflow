@@ -14,6 +14,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/acceptance/premerge"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
 )
 
 // NodeSpec is a node of the lab's plan.
@@ -26,6 +27,9 @@ type NodeSpec struct {
 	Criteria            []string
 	// EndCondition are the commands of the issue's done condition, as the relay reads them from the body the handoff carries (CRW-1382).
 	EndCondition []string
+	// Planned are the node's regions with their planned change and hold, as the relay passes them when one is not a plain edit
+	// (CRW-1461): the whole list, in the order of Regions.
+	Planned []ops.LaneRegion
 }
 
 func (n NodeSpec) criteria() []string {
@@ -56,6 +60,15 @@ type FakeRelay struct {
 	// the scheduler's stale coordinator epoch is); HoldBack holds every release back unreleased with this reason (CRW-1320).
 	ReleaseErr func(node string) error
 	HoldBack   string
+	// HoldBackIf, when it answers a reason for a release, holds that release back unreleased with it (the relay's own judgment of the
+	// release, as relayRegionRule makes it): it is asked after HoldBack and the replay of a release, with the regions of the nodes the
+	// relay holds released (holding: the request's regions of each, carrying the planned change and hold of the node's Planned by the
+	// normal form, as declareRegions declares them; a node stops holding them at its integration or its close).
+	HoldBackIf func(req ops.ReleaseRequest, holding map[string][]ops.LaneRegion) string
+	// OnRelease runs at the top of every release and OnIntegrate at the top of every integration, outside the relay's lock, so a scenario
+	// may block on a channel there to order what the lanes do.
+	OnRelease   func(req ops.ReleaseRequest)
+	OnIntegrate func(node string)
 	// Surfaces, Grade and Commands are what the plan says of the milestone: the surfaces of its criteria, the work grade and the
 	// required verification commands (CRW-1206).
 	Surfaces []string
@@ -68,6 +81,7 @@ type FakeRelay struct {
 	n        int
 	clock    int
 	accepted map[string]ops.AcceptRequest
+	holding  map[string][]ops.LaneRegion
 
 	Releases   []ops.ReleaseRequest
 	Accepts    []ops.AcceptRequest
@@ -102,7 +116,8 @@ func (r *FakeRelay) Milestone(_ context.Context, plan, milestone string) (ops.Mi
 	ms := ops.Milestone{ID: milestone, Plan: plan, Title: "milestone " + milestone, Criteria: []string{"the milestone is done"}, CriteriaDigest: sha("milestone " + milestone),
 		Surfaces: r.Surfaces, Grade: r.Grade, RequiredCommands: r.Commands}
 	for _, n := range r.nodes {
-		pn := ops.PlanNode{ID: n.ID, Issue: n.Issue, Title: n.Title, After: n.After, Regions: n.Regions, Group: n.Group, Criteria: n.criteria(), EndCondition: n.EndCondition}
+		pn := ops.PlanNode{ID: n.ID, Issue: n.Issue, Title: n.Title, After: n.After, Regions: n.Regions, Group: n.Group, Criteria: n.criteria(), EndCondition: n.EndCondition,
+			PlannedRegions: n.Planned}
 		pn.CriteriaDigest = sha(strings.Join(pn.Criteria, "\n"))
 		pn.SliceDigest = sliceOf(n)
 		ms.Nodes = append(ms.Nodes, pn)
@@ -110,14 +125,21 @@ func (r *FakeRelay) Milestone(_ context.Context, plan, milestone string) (ops.Mi
 	return ms, nil
 }
 
-// sliceOf is a node's slice of the plan.
+// sliceOf is a node's slice of the plan; the planned attributes are part of it only when the node has them, so a node without them
+// keeps the slice it had.
 func sliceOf(n NodeSpec) string {
+	if len(n.Planned) > 0 {
+		return sha(fmt.Sprintf("%s|%s|%v|%v|%v", n.ID, n.Issue, n.After, n.Regions, n.Planned))
+	}
 	return sha(fmt.Sprintf("%s|%s|%v|%v", n.ID, n.Issue, n.After, n.Regions))
 }
 
 // Release implements ops.Relay. Like the relay, it compares the slice the flow compared with the node's slice of the plan it holds
 // when it records the release (CRW-1288), answers a replay only under the slice it was released under, and answers that slice.
 func (r *FakeRelay) Release(_ context.Context, req ops.ReleaseRequest) (ops.ReleaseResult, error) {
+	if r.OnRelease != nil {
+		r.OnRelease(req)
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.Releases = append(r.Releases, req)
@@ -135,6 +157,17 @@ func (r *FakeRelay) Release(_ context.Context, req ops.ReleaseRequest) (ops.Rele
 		}
 		prior.Replayed = true
 		return prior, nil
+	}
+	if r.HoldBackIf != nil {
+		holding := make(map[string][]ops.LaneRegion, len(r.holding))
+		for node, regions := range r.holding {
+			if node != req.Node {
+				holding[node] = regions
+			}
+		}
+		if reason := r.HoldBackIf(req, holding); reason != "" {
+			return ops.ReleaseResult{Reason: reason}, nil
+		}
 	}
 	slice := ""
 	for _, n := range r.nodes {
@@ -158,7 +191,60 @@ func (r *FakeRelay) Release(_ context.Context, req ops.ReleaseRequest) (ops.Rele
 	res := ops.ReleaseResult{Released: true, ExecutionID: fmt.Sprintf("exec-%s-%d", req.Node, r.n), SlotID: "slot-" + req.Node, SliceDigest: slice}
 	r.released[req.Node] = res
 	r.held[req.Node] = true
+	if r.holding == nil {
+		r.holding = map[string][]ops.LaneRegion{}
+	}
+	r.holding[req.Node] = r.plannedRegions(req.Node, req.Regions)
 	return res, nil
+}
+
+// plannedRegions are a node's request regions as the relay declares them: a region whose normal form is one of the node's Planned
+// regions carries that region's change and hold.
+func (r *FakeRelay) plannedRegions(node string, texts []string) []ops.LaneRegion {
+	var planned []ops.LaneRegion
+	for _, n := range r.nodes {
+		if n.ID == node {
+			planned = n.Planned
+		}
+	}
+	out := make([]ops.LaneRegion, 0, len(texts))
+	for _, t := range texts {
+		reg := ops.LaneRegion{Text: t}
+		for _, p := range planned {
+			if ops.RegionOf(p.Text) == ops.RegionOf(t) {
+				reg.Change, reg.Exclusive = p.Change, p.Exclusive
+				break
+			}
+		}
+		out = append(out, reg)
+	}
+	return out
+}
+
+// relayRegionRule is the relay's region judgment of a release (dagsched.Overlaps over the declared normal forms, with the planned change
+// and hold): a release whose regions overlap a region another released node holds is held back defer:edit_overlap. A node with no
+// regions, on either side, overlaps every other.
+func (r *FakeRelay) relayRegionRule(req ops.ReleaseRequest, holding map[string][]ops.LaneRegion) string {
+	mine := r.plannedRegions(req.Node, req.Regions)
+	for _, theirs := range holding {
+		if len(mine) == 0 || len(theirs) == 0 {
+			return dagsched.DeferEditOverlap
+		}
+		for _, a := range mine {
+			for _, b := range theirs {
+				if dagsched.Overlaps(relayRegion(a), relayRegion(b)) {
+					return dagsched.DeferEditOverlap
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// relayRegion is a region in the relay's form: its normal form, with its change and hold.
+func relayRegion(r ops.LaneRegion) dagsched.Region {
+	f := ops.RegionOf(r.Text)
+	return dagsched.Region{Path: f.Path, Kind: f.Kind, Key: f.Key, Change: r.Change, Exclusive: r.Exclusive}
 }
 
 // ReleaseStands implements ops.Relay.
@@ -239,6 +325,9 @@ func (r *FakeRelay) AcceptState(_ context.Context, id string) (ops.AcceptState, 
 // Integrate implements ops.Relay: the head is merged into the integration branch (a fast-forward when the branch has not moved
 // past the head's base, else a merge commit), and the slot of the node returns.
 func (r *FakeRelay) Integrate(_ context.Context, req ops.IntegrateRequest) (ops.IntegrateResult, error) {
+	if r.OnIntegrate != nil {
+		r.OnIntegrate(req.Node)
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.Integrates = append(r.Integrates, req)
@@ -247,8 +336,11 @@ func (r *FakeRelay) Integrate(_ context.Context, req ops.IntegrateRequest) (ops.
 	}
 	l := r.lab
 	tip := l.git(l.Repo, "rev-parse", IntegrationRef)
-	if out, err := l.gitErr(l.Repo, "merge-base", "--is-ancestor", req.Head, tip); err == nil {
-		_ = out
+	if _, err := l.gitErr(l.Repo, "merge-base", "--is-ancestor", req.Head, tip); err == nil {
+		// a head already on the tip lands as a replay; the node is landed all the same, so it holds neither its slot nor its regions
+		// (a replay after a real land finds them clear)
+		r.held[req.Node] = false
+		delete(r.holding, req.Node)
 		return ops.IntegrateResult{Landed: true, BatchCommit: tip, IntegrationRef: IntegrationRef, Tip: tip, Replayed: true}, nil
 	}
 	batch := req.Head
@@ -271,6 +363,7 @@ func (r *FakeRelay) Integrate(_ context.Context, req ops.IntegrateRequest) (ops.
 	l.git(l.Repo, "update-ref", IntegrationRef, batch)
 	r.Landed = append(r.Landed, req.Node)
 	r.held[req.Node] = false
+	delete(r.holding, req.Node)
 	return ops.IntegrateResult{Landed: true, BatchCommit: batch, IntegrationRef: IntegrationRef, Tip: batch}, nil
 }
 
@@ -291,6 +384,7 @@ func (r *FakeRelay) Close(_ context.Context, req ops.CloseRequest) (ops.CloseRes
 	was := r.held[req.Node]
 	exec := r.released[req.Node].ExecutionID
 	r.held[req.Node] = false
+	delete(r.holding, req.Node)
 	// as the interface says, a closed execution does not stand: ReleaseStands is false for it from now on
 	delete(r.released, req.Node)
 	return ops.CloseResult{Closed: true, SlotReleased: was, State: "escalated", ExecutionID: exec}, nil

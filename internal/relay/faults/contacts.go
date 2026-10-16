@@ -25,7 +25,7 @@ var contacts Contacts
 // that links both has it; call this only from init. Not parallel-safe, like the command registry.
 func SetContacts(c Contacts) { contacts = c }
 
-var errNoContacts = errors.New("no supervisor contact reading is installed, so whether the level above can be told is unknown")
+var errNoContacts = errors.New("no 부모 contact reading is installed, so whether the level above can be told is unknown")
 
 // contactable asks the installed reading. With none installed it refuses rather than guess: a missing
 // host measurement never authorizes a send.

@@ -334,7 +334,7 @@ func ReadUnknownSend(ctx context.Context, adapter Adapter, clock Clock, attempt,
 		foldedText = " nor in " + strings.Join(ids, ", ") + ", the turns begun by it"
 	}
 	// "held for the 자식" names the session that owns the decision to recover the held send, not its
-	// addressee: for every kind (a completion to the 자식, a revision request to the issue child) the
+	// addressee: for every kind (a completion to the 자식, a revision request to the `child` session) the
 	// reconciler names the relay parent, the 자식, as the recovery actor (Reconciler.awaiting,
 	// parent_recovers_unknown_send_lost / parent_recovers_held_correction). Pinned by
 	// TestLostSendDetailNamesTheLayerThatRecovers.

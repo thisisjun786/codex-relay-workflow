@@ -1,8 +1,8 @@
 # dots contact: how a Linna request reaches a repository manager
 
-Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels).
+The sessions in this document are named by [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels): the parent is the repository session, which a Linna request reaches, and no session below it takes part.
 
-This page records the control point between the Linna dots app and a repository's parent (repository session, relay role `supervisor`,
+This page records the control point between the Linna dots app and a repository's parent (repository session,
 [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels)).
 It states what is verified, what is unknown, and how a request is identified, admitted, converged
 and answered. It does not assume any dots API, webhook or internal extension.
@@ -136,7 +136,7 @@ the delivery input. These tests are simulated. They prove the decision rules, no
 
 ## Manager task: the live round trip
 
-The parent (repository session) runs this on the host. The child does not run it, because the child has no
+The parent (repository session) runs this on the host. The sessions below the parent do not run it, because they have no
 network access and no MCP servers.
 
 1. Ask Linna for the dots interface list. Mark each capability in the table above as verified or
