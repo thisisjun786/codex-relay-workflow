@@ -1158,9 +1158,13 @@ any row is written. `crw flow shadow` replays either from the trace and names th
 
   A `send_input` message is the marker line and the turn's input. The packet is self-contained: where the subagent works (only
   under the absolute path P; a role that writes nothing changes nothing; nobody runs `git commit`, `add`, `branch`, `reset` or
-  `checkout`), the repository tools when the configuration names them (CRW-1488: a `Repository tools` section with the go of
+  `checkout`), the repository tools when the run has them (CRW-1488: a `Repository tools` section with the go of
   `verifier.go_root`, the file that sets it, and the prefix `PATH=<go_root>/bin:"$PATH" GOROOT=<go_root> GOTOOLCHAIN=local` that
-  every command running go takes, because the subagent's shell is the owner session's and spawn_agent takes no environment), the
+  every command running go takes, because the subagent's shell is the owner session's and spawn_agent takes no environment;
+  CRW-1570: the run's recorded TMPDIR, `env.TMPDIR` of its run.json and never the TMPDIR of the shell that relaunched the run, is
+  a tool of its own, first: a fact that names the directory and run.json, `TMPDIR=<dir>` first in the prefix, which then goes in
+  front of every command the subagent runs, and `TMPDIR=<dir>` first in the entries; a configuration with no go gives the TMPDIR
+  alone, a spec without env the tools of before; on the session backend the packet is its only carrier), the
   role's overlay of `internal/flow/roles` without its native-spawn section, the earlier attempts, for a continuation the packet of
   the call it continues and a file with that call's answer, the task, and the output contract (the schema the final message
   satisfies). An App Server call's turn text ends with the same section (after the task; the journaled input is the script's), and

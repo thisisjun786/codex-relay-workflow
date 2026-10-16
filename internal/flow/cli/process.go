@@ -293,8 +293,8 @@ func (c *command) execute(spec Spec, state string, resume bool, sigs <-chan os.S
 		RunID: spec.RunID, Backend: world.Backend, Policy: table, Journal: world.Journal, Args: args, Pool: spec.Pool, TokenBudget: budget, SpentBefore: spent,
 		Ops: world.Ops, Prover: world.Prover, InputSnapshot: world.InputSnapshot, Workflows: src.Workflows, Control: ctl, OmitSeq: true,
 		Upward: world.Upward, Session: world.Session,
-		// the go the verifier runs reaches every agent call the run starts (CRW-1488)
-		Tools: repositoryTools(c.getenv),
+		// the run's recorded TMPDIR (CRW-1570) and the go the verifier runs (CRW-1488) reach every agent call the run starts
+		Tools: repositoryTools(c.getenv, spec.Env),
 	}
 	if resume {
 		cfg.Resume = &engine.ResumeOptions{}

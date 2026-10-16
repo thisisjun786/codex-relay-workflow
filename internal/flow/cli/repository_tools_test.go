@@ -26,7 +26,7 @@ func TestRepositoryToolsFromVerifierGoRoot(t *testing.T) {
 	}
 
 	write(`{"verifier":{"go_root":"` + root + `"}}`)
-	tools := repositoryTools(getenv)
+	tools := repositoryTools(getenv, nil)
 	if tools == nil {
 		t.Fatal("verifier.go_root gave no tools")
 	}
@@ -44,7 +44,7 @@ func TestRepositoryToolsFromVerifierGoRoot(t *testing.T) {
 
 	for _, doc := range []string{`{}`, `{"verifier":{"crw_dev":"tree"}}`, `{"verifier":{"go_root":"relative"}}`} {
 		write(doc)
-		if tools := repositoryTools(getenv); tools != nil {
+		if tools := repositoryTools(getenv, nil); tools != nil {
 			t.Errorf("%s gave tools %+v", doc, tools)
 		}
 	}
