@@ -152,7 +152,8 @@ func (v CILocalVerifier) Verify(ctx context.Context, req VerifyRequest) (VerifyO
 }
 
 // FailedStep is one failed step of a verification record (CRW-1469, CRW-1488 item 16): the job and the step, the tests (`--- FAIL:
-// <Test>`) and the packages (`FAIL\t<pkg>`) its reason names, each once in the order of the reason, and the last lines of the reason.
+// <Test>`) and the packages (`FAIL\t<pkg>`) its reason names, each once in the order of the reason, and its tail (failedTail): the
+// last lines of the reason, after the marked block of a test that failed early when the reason leads with one (CRW-1569).
 // A reason with no such line (a build error, a missing tool, a reason cut before its test lines) has no test and no package, and the
 // tail is what it says.
 type FailedStep struct {
@@ -167,10 +168,14 @@ type FailedStep struct {
 // verification, but its reason says only that, so it names no failed test.
 const stepSkipped = "skipped"
 
-// The tail of a failed step's reason: its last failedTailLines lines, at most failedTailBytes bytes.
+// The tail of a failed step's reason: at most failedTailLines lines and failedTailBytes bytes. Of a reason that leads with a marked
+// block (failedHead), the tail keeps the block's first failedHeadLines lines, at most failedHeadBytes bytes of them, then `...`, then
+// the last lines of the reason in the room left.
 const (
 	failedTailLines = 20
 	failedTailBytes = 2048
+	failedHeadLines = 10
+	failedHeadBytes = 1024
 )
 
 // failedSteps reads the reason of a failed step: the tests and the packages its lines name, and its tail. A reason of crw-dev ci local
@@ -180,10 +185,8 @@ func failedSteps(job, step, reason string) FailedStep {
 	out := FailedStep{Job: job, Step: step, Tests: []string{}, Packages: []string{}}
 	lines := strings.Split(strings.TrimRight(reason, "\n"), "\n")
 	for i, line := range lines {
-		if exited := strings.TrimPrefix(line, "timeout: "); i == 0 && strings.HasPrefix(exited, "exit status ") {
-			if _, rest, ok := strings.Cut(exited, ": "); ok {
-				line = rest
-			}
+		if i == 0 {
+			line = failedExited(line)
 		}
 		if rest, ok := strings.CutPrefix(strings.TrimLeft(line, " "), "--- FAIL: "); ok {
 			if name, _, _ := strings.Cut(rest, " "); name != "" && !slices.Contains(out.Tests, name) {
@@ -195,14 +198,72 @@ func failedSteps(job, step, reason string) FailedStep {
 			}
 		}
 	}
+	out.Tail = failedTail(lines)
+	return out
+}
+
+// failedExited is the first line of a reason without how the command exited ("exit status N: " or "timeout: exit status N: ").
+func failedExited(line string) string {
+	if exited := strings.TrimPrefix(line, "timeout: "); strings.HasPrefix(exited, "exit status ") {
+		if _, rest, ok := strings.Cut(exited, ": "); ok {
+			return rest
+		}
+	}
+	return line
+}
+
+// failedTail is the tail of a reason's lines. A reason that fits failedTailLines and failedTailBytes is its own tail. Otherwise a
+// reason that leads with a marked block (failedHead) keeps the block's first lines, then `...`, then its last lines; any other reason
+// keeps its last lines, cut to failedTailBytes from the end.
+func failedTail(lines []string) string {
+	if head, rest, ok := failedHead(lines); ok && (len(lines) > failedTailLines || len(strings.Join(lines, "\n")) > failedTailBytes) {
+		kept := head[:min(len(head), failedHeadLines)]
+		block := strings.Join(kept, "\n")
+		for len(kept) > 1 && len(block) > failedHeadBytes {
+			kept = kept[:len(kept)-1]
+			block = strings.Join(kept, "\n")
+		}
+		if len(block) > failedHeadBytes {
+			block = strings.ToValidUTF8(block[:failedHeadBytes], "")
+		}
+		block += "\n...\n"
+		rest = rest[max(0, len(rest)-(failedTailLines-len(kept)-1)):]
+		return block + failedCutEnd(strings.Join(rest, "\n"), failedTailBytes-len(block))
+	}
 	if len(lines) > failedTailLines {
 		lines = lines[len(lines)-failedTailLines:]
 	}
-	out.Tail = strings.Join(lines, "\n")
-	if len(out.Tail) > failedTailBytes {
-		out.Tail = strings.ToValidUTF8(out.Tail[len(out.Tail)-failedTailBytes:], "")
+	return failedCutEnd(strings.Join(lines, "\n"), failedTailBytes)
+}
+
+// failedHead splits a reason at its marked block: crw-dev ci local's reason leads with the failing lines of the output that came before
+// its last lines (`--- FAIL`, `FAIL`, `panic:`, each --- FAIL line with its indented message lines), then a `...` line, then the last
+// lines (dev/ci/local.go localReason). ok is false for a reason without a `...` line or whose lines before it are not all marked or
+// indented: a `...` line of the output itself is not taken for the end of a block.
+func failedHead(lines []string) (head, rest []string, ok bool) {
+	at := slices.Index(lines, "...")
+	if at <= 0 {
+		return nil, nil, false
 	}
-	return out
+	for i, line := range lines[:at] {
+		if i == 0 {
+			line = failedExited(line)
+		}
+		trimmed := strings.TrimLeft(line, " \t")
+		marked := strings.HasPrefix(trimmed, "--- FAIL") || strings.HasPrefix(trimmed, "FAIL") || strings.HasPrefix(trimmed, "panic:")
+		if strings.TrimSpace(line) == "" || (!marked && trimmed == line) {
+			return nil, nil, false
+		}
+	}
+	return lines[:at], lines[at+1:], true
+}
+
+// failedCutEnd is the last n bytes of the text, valid UTF-8.
+func failedCutEnd(text string, n int) string {
+	if len(text) > n {
+		return strings.ToValidUTF8(text[len(text)-n:], "")
+	}
+	return text
 }
 
 // ciRecordDirMade is called with .crw/verify right after ciRecordDir has made and checked it, before its ignore file is
