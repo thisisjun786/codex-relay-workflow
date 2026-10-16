@@ -15,6 +15,7 @@ import (
 	"modernc.org/sqlite"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // holdStat is registration_hold's resolved.stat(), taken before the fence's Admission: the
@@ -371,7 +372,7 @@ func (s *Store) Projection(ctx context.Context) (_ *Store, release func() error,
 	if open, ok := ctx.Value(openTxKey{}).(openTx); ok && open.store == s {
 		return nil, nil, ErrNestedTransaction
 	}
-	dir, err := os.MkdirTemp("", "crw-projection-")
+	dir, err := tmploc.MkdirTemp("crw-projection-")
 	if err != nil {
 		return nil, nil, err
 	}

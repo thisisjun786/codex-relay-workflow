@@ -170,7 +170,8 @@ func badTempBase(t *testing.T) string {
 
 // TestGuardRowsRunWhereTMPDIRHoldsARefusedWord runs the rows that put a fixture path into the program of a command, in a
 // child test process whose TMPDIR is a directory with a refused word (CRW-1183): TestReproductionRows (272 rows),
-// TestCRW941ShapesThroughTheThreeEntryPoints and the GitHub post guard's body-file case. Each must run and pass: the child sets
+// TestCRW941ShapesThroughTheThreeEntryPoints and the GitHub post guard's body-file cases (a fixture body under the test's
+// TMPDIR named through links, and the committed body named by its absolute path). Each must run and pass: the child sets
 // CRW_TEST_REQUIRE_CLEAN_TMPBASE so a missing clean base fails and does not skip, and a SKIP line in the child's output fails here.
 func TestGuardRowsRunWhereTMPDIRHoldsARefusedWord(t *testing.T) {
 	if os.Getenv("CRW_TEMPBASE_CHILD") != "" {
@@ -180,7 +181,8 @@ func TestGuardRowsRunWhereTMPDIRHoldsARefusedWord(t *testing.T) {
 		t.Skip("runs a child test process")
 	}
 	bad := badTempBase(t)
-	names := []string{"TestReproductionRows", "TestCRW941ShapesThroughTheThreeEntryPoints", "TestGitHubPostGuardRefusesABodyFileOutsideTheRoots"}
+	names := []string{"TestReproductionRows", "TestCRW941ShapesThroughTheThreeEntryPoints",
+		"TestGitHubPostGuardRefusesAFinalLinkBody_andFollowsADirectoryLink", "TestGitHubPostGuardAcceptsAReadableRegularBodyAnywhere"}
 	cmd := exec.Command(os.Args[0], "-test.count=1", "-test.v", "-test.run", "^("+strings.Join(names, "|")+")$")
 	cmd.Env = append(os.Environ(), "TMPDIR="+bad, "CRW_TEMPBASE_CHILD=1", "CRW_TEST_REQUIRE_CLEAN_TMPBASE=1")
 	out, err := cmd.CombinedOutput()

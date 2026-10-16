@@ -8,10 +8,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // DefaultModel is the model of a call unless Config.Model says otherwise. It is the one place the model is chosen.
@@ -60,13 +63,15 @@ type Config struct {
 	Model            string        // default DefaultModel
 	LockPath         string        // the host-wide lock file; default DefaultLockPath()
 	LockWait         time.Duration // how long to wait for the lock; default 30 minutes, negative: try once
-	WorkRoot         string        // the directory the per-call directory is made in; default os.TempDir()
+	WorkRoot         string        // the directory the per-call directory is made in; default tmploc.Dir(), the temporary directory
 	TimeLimitFloor   time.Duration // the call time limit for a prompt up to 100 KiB; default 5 minutes
 	TimeLimitCeiling time.Duration // the most the limit grows to; default 20 minutes
 	MaxOutputBytes   int           // what is kept of stdout and of stderr, each; default 8 MiB
 }
 
-func (c Config) withDefaults() Config {
+// withDefaults fills the zero fields. A default that cannot be had (no home for the lock, a TMPDIR tmploc refuses) is an error, and nothing is
+// chosen in its place.
+func (c Config) withDefaults() (Config, error) {
 	if c.Binary == "" {
 		c.Binary = "agy"
 	}
@@ -74,13 +79,21 @@ func (c Config) withDefaults() Config {
 		c.Model = DefaultModel
 	}
 	if c.LockPath == "" {
-		c.LockPath = DefaultLockPath()
+		path, err := DefaultLockPath()
+		if err != nil {
+			return c, err
+		}
+		c.LockPath = path
 	}
 	if c.LockWait == 0 {
 		c.LockWait = 30 * time.Minute
 	}
 	if c.WorkRoot == "" {
-		c.WorkRoot = os.TempDir()
+		dir, err := tmploc.Dir()
+		if err != nil {
+			return c, fmt.Errorf("agy: the working root: %w", err)
+		}
+		c.WorkRoot = dir
 	}
 	if c.TimeLimitFloor <= 0 {
 		c.TimeLimitFloor = 5 * time.Minute
@@ -91,7 +104,7 @@ func (c Config) withDefaults() Config {
 	if c.MaxOutputBytes <= 0 {
 		c.MaxOutputBytes = 8 << 20
 	}
-	return c
+	return c, nil
 }
 
 // Request is one call: the prompt, sent on stdin exactly as given, and, if the answer must be structured, the text of the JSON Schema.
@@ -118,7 +131,9 @@ type Result struct {
 // back. The error is for a cancelled ctx, an empty prompt and a failure of the host (the lock file, the working directory, removing the directory);
 // when removing the directory fails, the Result is still valid.
 func Run(ctx context.Context, cfg Config, req Request) (res Result, err error) {
-	cfg = cfg.withDefaults()
+	if cfg, err = cfg.withDefaults(); err != nil {
+		return Result{}, err
+	}
 	if len(req.Prompt) == 0 {
 		return Result{}, errors.New("agy: the prompt is empty")
 	}

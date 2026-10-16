@@ -478,6 +478,46 @@
       "sha256": "d475811791725c15bef59ea260b8d06b507c439b34cafdbef6e97e99b3e38952"
     },
     {
+      "file": "scripts/diagram-to-html.sh",
+      "reason": "CRW-1579: the temporary directory follows the one TMPDIR rule: an unset or empty TMPDIR is /tmp, a relative TMPDIR stops with tmpdir_not_absolute and exit status 2 before any directory is made; the output directory was a fixed /tmp path that ignored TMPDIR",
+      "hunks": [
+        {
+          "line": 11,
+          "old": [
+            "#   diagram-to-html.sh mermaid diagram.mmd /tmp/codex-diagrams/out.html\n"
+          ],
+          "new": [
+            "#   diagram-to-html.sh mermaid diagram.mmd /path/to/out.html\n"
+          ]
+        },
+        {
+          "line": 14,
+          "old": [
+            "# When output-file is omitted, writes to /tmp/codex-diagrams/<type>-<timestamp>-<pid>-<random>.html\n"
+          ],
+          "new": [
+            "# When output-file is omitted, writes to <tmp>/codex-diagrams/<type>-<timestamp>-<pid>-<random>.html,\n",
+            "# where <tmp> is TMPDIR (an absolute directory) and /tmp when TMPDIR is unset or empty. A relative\n",
+            "# TMPDIR stops the script with tmpdir_not_absolute and exit status 2 before any directory is made.\n"
+          ]
+        },
+        {
+          "line": 20,
+          "old": [
+            "OUTDIR=\"/tmp/codex-diagrams\"\n"
+          ],
+          "new": [
+            "TMPBASE=\"${TMPDIR:-/tmp}\"\n",
+            "case \"$TMPBASE\" in\n",
+            "  /*) ;;\n",
+            "  *) printf 'tmpdir_not_absolute: TMPDIR=%s; set TMPDIR to an absolute directory\\n' \"$TMPBASE\" >&2; exit 2 ;;\n",
+            "esac\n",
+            "OUTDIR=\"$TMPBASE/codex-diagrams\"\n"
+          ]
+        }
+      ]
+    },
+    {
       "file": "tests/exhibit-contract.test.mjs",
       "reason": "Move the S-class skill-script test exhibit-contract.test.mjs from CXC v0.2.40 plugins/codexclaw/test/ beside the skill it protects, changing only its import paths to the staged layout and the name table of contract/schema/cxc/name-substitution.json; it runs under Node in the skill-scripts-node CI job.",
       "add": true,

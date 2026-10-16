@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc/tmploctest"
 )
 
 // loadProofDeadlines lengthens the hook's real absolute, guard and transcript scan deadlines for the
@@ -100,6 +101,7 @@ func fakeControl(t *testing.T, home string, serve func(net.Conn) error) (<-chan 
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		t.Fatal(err)
 	}
+	tmploctest.CheckSocket(t, socketRootOf(t, path), path)
 	listener, err := net.Listen("unix", path)
 	if err != nil {
 		t.Fatal(err)

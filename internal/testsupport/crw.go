@@ -11,6 +11,8 @@ import (
 	"sync"
 	"syscall"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // CRWBinaryEnv names the crw binary every test runs instead of building its own. `make test`
@@ -173,7 +175,7 @@ func goBuild(pkg string, flags []string) (string, error) {
 	if goTool == "" {
 		return "", fmt.Errorf("testsupport: no go tool on PATH to build %s", pkg)
 	}
-	dir, err := os.MkdirTemp("", "crw-test-binary-")
+	dir, err := tmploc.MkdirTemp("crw-test-binary-")
 	if err != nil {
 		return "", err
 	}

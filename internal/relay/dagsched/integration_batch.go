@@ -16,6 +16,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // The integration batch (CRW-965). One batch takes the plan's ready accepted candidates, merges them in node-id order
@@ -536,7 +537,7 @@ type stageView struct {
 
 // settleCandidates merges, verifies and settles the candidates in a temporary worktree, removed on every path.
 func (s *Scheduler) settleCandidates(ctx context.Context, in IntegrationBatchInput, deps IntegrationBatchDeps, start, baseTip string, candidates []Candidate) (settledIntegration, error) {
-	tmp, err := os.MkdirTemp("", "crw-965-integrate-")
+	tmp, err := tmploc.MkdirTemp("crw-965-integrate-")
 	if err != nil {
 		return settledIntegration{}, err
 	}
@@ -1388,7 +1389,7 @@ func (s *Scheduler) recordVerifiedHead(ctx context.Context, in IntegrationBatchI
 // verifyHead verifies the tree of a branch head in a temporary worktree, with no merge: the record is judged by the same
 // judge a merged tree is (CRW-965, parent decision D2). The worktree is removed on every path.
 func (s *Scheduler) verifyHead(ctx context.Context, in IntegrationBatchInput, deps IntegrationBatchDeps, head, baseTip string) (VerificationRecord, string, bool, error) {
-	tmp, err := os.MkdirTemp("", "crw-965-verify-")
+	tmp, err := tmploc.MkdirTemp("crw-965-verify-")
 	if err != nil {
 		return VerificationRecord{}, "", false, err
 	}

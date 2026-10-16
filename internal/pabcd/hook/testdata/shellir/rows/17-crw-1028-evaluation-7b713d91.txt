@@ -174,8 +174,8 @@ gh api repos/o/r/issues/1/comments --input {TMP}/body-link
 --cmd
 gh pr comment 1 --body-file {TMP}/body-link
 
-=== CRW-1028-ev-d14-control-inside | B
---why d14 control: a link to a clean file inside the root.
+=== CRW-1028-ev-d14-control-inside | P
+--why d14: a link to a clean file inside the root is refused; a final link is refused wherever it points (CRW-1578).
 --file {TMP}/real.json
 {"body":"hello"}
 --link {TMP}/inner-link {TMP}/real.json

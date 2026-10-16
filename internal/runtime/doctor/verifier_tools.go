@@ -10,10 +10,10 @@ import (
 // VerifierToolsReport is the verifierTools entry of the doctor report (CRW-1319): the verifier's tools as a run with env reads them
 // (the configuration's verifier section, else PATH), the go it runs, where that go came from and its version, whether crw-dev is
 // runnable and, with no Go root configured, the Go toolchain roots found on the host (crwconfig.ProbeVerifierTools, the probe the
-// preflight fact verifier_prerequisites reads too, with the seams of opts). Everything wrong is a warning; the entry never makes
-// the report a fault.
-func VerifierToolsReport(ctx context.Context, env scope.Env, opts crwconfig.ProbeOptions) Object {
-	p := crwconfig.ProbeVerifierToolsWith(ctx, env, "", opts)
+// preflight fact verifier_prerequisites reads too). Everything wrong is a warning, the probe's home refused by the one temporary
+// place (tmploc) included; the entry never makes the report a fault.
+func VerifierToolsReport(ctx context.Context, env scope.Env) Object {
+	p := crwconfig.ProbeVerifierTools(ctx, env, "")
 	warnings := []any{}
 	for _, w := range append(append([]string{}, p.Problems...), p.Notes...) {
 		warnings = append(warnings, w)

@@ -11,17 +11,15 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/doctor"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/golden"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc/tmploctest"
 )
 
 // CRW-958: `crw doctor storage` is the storage check `crw config check` runs, so a host reads one
 // verdict from either command: the same report, exit 1 on a structural fault, exit 0 otherwise.
 func TestDoctorStorageIsTheConfigCheck(t *testing.T) {
 	home := t.TempDir()
-	short, err := os.MkdirTemp("", "ds")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.RemoveAll(short) })
+	// the relay state's store sockets lie below XDG_STATE_HOME: a socket directory, never below TMPDIR (CRW-1568)
+	short := tmploctest.SocketDir(t, "ds")
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_STATE_HOME", short)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "config"))

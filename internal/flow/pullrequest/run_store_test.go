@@ -10,6 +10,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/journal"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc/tmploctest"
 )
 
 // stateWith makes a relay state directory whose store holds run runID with the rows of spec, and answers the directory.
@@ -57,7 +58,7 @@ func TestOpenFromARunReadsTheJournalOfTheNamedState(t *testing.T) {
 		want  bool
 	}{{"state A holds the closed run", a, true}, {"state B holds the failed run", b, false}} {
 		t.Run(c.name, func(t *testing.T) {
-			events, err := readJournal(ctx, Source{State: c.state, Socket: filepath.Join(t.TempDir(), "relay.sock")}, "run-r1")
+			events, err := readJournal(ctx, Source{State: c.state, Socket: tmploctest.SocketPath(t, "relay.sock")}, "run-r1")
 			if err != nil {
 				t.Fatal(err)
 			}

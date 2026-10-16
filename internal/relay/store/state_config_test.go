@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc/tmploctest"
 )
 
 // storageConfig points the process at a configuration file naming the given paths section, under a
@@ -25,15 +27,10 @@ func storageConfig(t *testing.T, paths string) string {
 }
 
 // shortRoot is a relay_state root short enough that the store socket below it stays under the bind
-// limit, which the structural check enforces.
+// limit, which the structural check enforces: below a socket directory, never below TMPDIR (CRW-1568).
 func shortRoot(t *testing.T) string {
 	t.Helper()
-	dir, err := os.MkdirTemp("", "rs")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.RemoveAll(dir) })
-	return filepath.Join(dir, "relay")
+	return filepath.Join(tmploctest.SocketDir(t, "rs"), "relay")
 }
 
 // CRW-958: a relay_state the configuration names is the root of the per-scope store directories for

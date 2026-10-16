@@ -27,9 +27,9 @@ var issueID = regexp.MustCompile(`^[A-Z][A-Z0-9]*-[0-9]+$`)
 // Config is every setting of one run: a flag, else a CRW_REVIEW_* variable, else the default. Paths are absolute once parsed.
 type Config struct {
 	Repo, Base, Head, Issue, Out string
-	StateDir                     string        // holds ledger.jsonl and run.lock; default: the directory of the agy lock
+	StateDir                     string        // holds ledger.jsonl and run.lock; default: the directory of agy.DefaultLockPath()
 	DailyCap                     int           // reviews that may start per UTC day; default 20
-	Model, Binary, LockPath      string        // default agy.DefaultModel, "agy", agy.DefaultLockPath()
+	Model, Binary, LockPath      string        // default agy.DefaultModel, "agy", agy.DefaultLockPath(); with no home the lock and StateDir must be given
 	LockWait                     time.Duration // for the run lock and for agy's own lock; default 30 minutes, negative tries once
 	TimeLimitFloor               time.Duration // the agy call time limits; zero takes agy's defaults
 	TimeLimitCeiling             time.Duration
@@ -53,7 +53,13 @@ func parseConfig(args []string, stdout, stderr io.Writer) (c Config, exit int) {
 	dur := func(dst *time.Duration, name string) {
 		env(name, func(v string) (err error) { *dst, err = time.ParseDuration(v); return })
 	}
-	c = Config{Repo: ".", StateDir: filepath.Dir(agy.DefaultLockPath()), DailyCap: defaultDailyCap, Model: agy.DefaultModel, Binary: "agy", Gh: "gh", LockPath: agy.DefaultLockPath()}
+	c = Config{Repo: ".", DailyCap: defaultDailyCap, Model: agy.DefaultModel, Binary: "agy", Gh: "gh"}
+	// The lock and the ledger directory default below the state home. Without one there is no default; that is a usage error below only when
+	// the environment and the flags leave one of them unset, so -h and an explicit --lock and --state-dir still work on such a host.
+	lockPath, noDefaultLock := agy.DefaultLockPath()
+	if noDefaultLock == nil {
+		c.LockPath, c.StateDir = lockPath, filepath.Dir(lockPath)
+	}
 	str(&c.StateDir, "CRW_REVIEW_STATE_DIR")
 	str(&c.Model, "CRW_REVIEW_MODEL")
 	str(&c.Binary, "CRW_REVIEW_AGY")
@@ -110,6 +116,16 @@ func parseConfig(args []string, stdout, stderr io.Writer) (c Config, exit int) {
 		bad = append(bad, fmt.Sprintf("unrecognized argument %q", fs.Arg(0)))
 	case !issueID.MatchString(c.Issue):
 		bad = append(bad, fmt.Sprintf("--issue %q is not an issue id like CRW-506", c.Issue))
+	}
+	if noDefaultLock != nil && (c.LockPath == "" || c.StateDir == "") {
+		var give []string
+		if c.LockPath == "" {
+			give = append(give, "the agy lock file (CRW_REVIEW_LOCK, --lock)")
+		}
+		if c.StateDir == "" {
+			give = append(give, "the run ledger directory (CRW_REVIEW_STATE_DIR, --state-dir)")
+		}
+		bad = append(bad, fmt.Sprintf("%v; with no state home give %s", noDefaultLock, strings.Join(give, " and ")))
 	}
 	if c.DailyCap < 1 {
 		bad = append(bad, fmt.Sprintf("the daily cap must be at least 1, got %d", c.DailyCap))

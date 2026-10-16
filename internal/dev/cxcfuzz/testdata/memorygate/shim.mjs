@@ -13,7 +13,7 @@
 // denies an unauthorized memory write and answers "" for everything else.
 import { createInterface } from "node:readline";
 
-const oracleRoot = process.env.ORACLE_ROOT || "/var/tmp/cxc-v0.2.40/plugins/codexclaw/components";
+const oracleRoot = process.env.ORACLE_ROOT; if (!oracleRoot) throw new Error("ORACLE_ROOT is unset; the harness sets it from the target's Oracle.Root");
 const { handleMemoryWriteGate } = await import(oracleRoot + "/pabcd-state/dist/memory-write-gate.js");
 
 function substitute(value, root) {
