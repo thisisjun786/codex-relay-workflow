@@ -22,7 +22,8 @@ import (
 // `child` session path; the rows of the run are what they were.
 
 // newChildBranch is the current project lane's handling of a node sized for a child; oldChildBranch is the old lane's (before CRW-1415):
-// it decided the child (SP-CHILD-2) and started it (crw.releaseChild).
+// it decided the child (SP-CHILD-2) and started it (crw.releaseChild). The old lane is built on legacyDesignLane: its architect answered a
+// DESIGN of before S-1 (CRW-1435), which sized a node for a child.
 const (
 	newChildBranch = `    // the issue-child path is retired (CRW-1415): a node sized for a child goes up as a size split, and no child is started
     const esc = await crw.escalate(node, { reason: 'size_split', detail: 'child_retired', evidence: { size_reason: plan.size_reason } })
@@ -95,10 +96,8 @@ func legacyNight(l *Lab, lane *script.Program, extra map[string]engine.Op, resum
 
 func TestLegacyIssueChildRunIsNotResumedUnderTheNewLane(t *testing.T) {
 	l := NewLab(t, NodeSpec{ID: "A", Issue: "CRW-A", Title: "a big issue", Regions: []string{"a/"}, SizeFit: "child", SizeReason: "regions_gt3"})
-	text, err := workflows.Source(cli.ProjectLaneWorkflow)
-	if err != nil {
-		t.Fatal(err)
-	}
+	l.UseLegacyDesign()
+	text := legacyDesignLane(t)
 	if !bytes.Contains(text, []byte(newChildBranch)) {
 		t.Fatalf("project-lane.js no longer holds the retired child branch this test replaces")
 	}
@@ -154,10 +153,8 @@ func TestLegacyIssueChildRunIsNotResumedUnderTheNewLane(t *testing.T) {
 // is refused all the same, before anything is written: it would escalate the node live and leave the started child running.
 func TestLegacyChildStartWithNoReleaseChildRowIsNotResumed(t *testing.T) {
 	l := NewLab(t, NodeSpec{ID: "A", Issue: "CRW-A", Title: "a big issue", Regions: []string{"a/"}, SizeFit: "child", SizeReason: "regions_gt3"})
-	text, err := workflows.Source(cli.ProjectLaneWorkflow)
-	if err != nil {
-		t.Fatal(err)
-	}
+	l.UseLegacyDesign()
+	text := legacyDesignLane(t)
 	oldLane, err := script.Load(script.Source{Name: "project-lane.js", Text: bytes.Replace(text, []byte(newChildBranch), []byte(oldChildBranch), 1), Dir: workflows.FS})
 	if err != nil {
 		t.Fatal(err)

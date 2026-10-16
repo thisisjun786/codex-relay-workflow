@@ -267,6 +267,8 @@ func TestChildSizedNodeEscalatesOnceAcrossAResume(t *testing.T) {
 		{ID: "B", Issue: "CRW-B", Title: "issue B", Regions: []string{"b/"}},
 	}
 	l := NewLab(t, nodes...)
+	// only a DESIGN recorded before S-1 sizes a node for a child (CRW-1435): the run and its resume are an old run's
+	l.UseLegacyDesign()
 	l.Verify.Unavailable = map[string]bool{"B": true}
 	got := mustRunIncomplete(t, l)
 	if state, reason := laneOf(t, got, "B"); state != "held" || reason != "verify_unavailable" {
