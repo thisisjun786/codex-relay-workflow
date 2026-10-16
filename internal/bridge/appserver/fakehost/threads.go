@@ -83,6 +83,8 @@ type TurnPlan struct {
 	ItemsListError map[string]any
 	// Tokens is the turn's token usage; the zero value is a small fixed usage.
 	Tokens int64
+	// CachedInputTokens is the cached part of this turn's input (the input is Tokens / 2).
+	CachedInputTokens int64
 	// Commentary adds an agentMessage item of phase "commentary" before the final answer, announced like any item.
 	Commentary string
 	// DropFinalItem keeps the final answer in the thread but sends no item/completed for it (every other
@@ -176,16 +178,17 @@ type threadState struct {
 	config    map[string]any
 	// layer is the thread's override layer as the host built it when it last loaded the thread (overrideLayer): the server's own
 	// overrides, then the config of the start, fork or cold resume that loaded it.
-	layer    map[string]any
-	start    map[string]any
-	forkedOf string
-	parent   string
-	source   string
-	archived bool
-	created  int64
-	turns    []*turnState
-	active   *turnState
-	used     int64
+	layer       map[string]any
+	start       map[string]any
+	forkedOf    string
+	parent      string
+	source      string
+	archived    bool
+	created     int64
+	turns       []*turnState
+	active      *turnState
+	used        int64
+	cachedInput int64
 	// The subagent fields (subagents.go): a thread Spawn made, its agentRole, agentNickname, rollout path (Thread.path) and
 	// spawn depth. unloadIdle makes the thread notLoaded when its turn ends; unloaded is that state (a restart sets it for
 	// every thread, a resume or a new turn clears it).
@@ -1023,7 +1026,9 @@ func (t *Threads) run(conn *Conn, th *threadState, tu *turnState) {
 		message = tu.items[len(tu.items)-1]
 	}
 	th.used += tokens
+	th.cachedInput += plan.CachedInputTokens
 	total := th.used
+	cachedTotal := th.cachedInput
 	t.mu.Unlock()
 
 	rest := plan.Silent || plan.SilentAfterCommentary
@@ -1033,10 +1038,10 @@ func (t *Threads) run(conn *Conn, th *threadState, tu *turnState) {
 	if message != nil {
 		t.notify(th.id, rest || plan.DropFinalItem, Notification{Method: "item/completed", Params: map[string]any{"item": message, "threadId": th.id, "turnId": tu.id, "completedAtMs": 1790000041000}})
 	}
-	breakdown := func(n int64) map[string]any {
-		return map[string]any{"cachedInputTokens": 0, "inputTokens": n / 2, "outputTokens": n - n/2, "reasoningOutputTokens": 0, "totalTokens": n}
+	breakdown := func(n, cached int64) map[string]any {
+		return map[string]any{"cachedInputTokens": cached, "inputTokens": n / 2, "outputTokens": n - n/2, "reasoningOutputTokens": 0, "totalTokens": n}
 	}
-	t.notify(th.id, rest || plan.NoTokenUsage, Notification{Method: "thread/tokenUsage/updated", Params: map[string]any{"threadId": th.id, "turnId": tu.id, "tokenUsage": map[string]any{"last": breakdown(tokens), "total": breakdown(total), "modelContextWindow": 272000}}})
+	t.notify(th.id, rest || plan.NoTokenUsage, Notification{Method: "thread/tokenUsage/updated", Params: map[string]any{"threadId": th.id, "turnId": tu.id, "tokenUsage": map[string]any{"last": breakdown(tokens, plan.CachedInputTokens), "total": breakdown(total, cachedTotal), "modelContextWindow": 272000}}})
 	if failure != nil && !failure.NoError {
 		t.notify(th.id, rest, Notification{Method: "error", Params: map[string]any{"threadId": th.id, "turnId": tu.id, "willRetry": false, "error": map[string]any{"message": failure.Message, "codexErrorInfo": failure.CodexErrorInfo, "additionalDetails": nil}}})
 	}

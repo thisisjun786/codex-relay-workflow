@@ -387,3 +387,127 @@ func TestDesignLoopCapsWarnAndTellTheOrchestrator(t *testing.T) {
 		}
 	})
 }
+
+// Cached input remains in the usage journal, but must not spend the design loop's token allowance.
+// Exercise every source of design usage, including a null-model explorer's repair and fresh retry.
+func TestDesignLoopCacheDoesNotEscalate(t *testing.T) {
+	for _, stage := range []string{"architect", "audit", "explorer", "answers", "fix", "explorer retry"} {
+		t.Run(stage, func(t *testing.T) {
+			l := NewLab(t, oneNode()...)
+			sender := l.wireUpward(t, false)
+			approved := map[string]any{"verdict": "approved", "findings": []any{}, "summary": "approved"}
+			answer := map[string]any{"answer": "answer", "evidence": []string{"README.md"}, "verified": []string{}, "inferred": []string{}, "unknown": []string{}}
+			cachedPlan := func(v any) *fakehostPlan {
+				p := Say(v)
+				// 4,000,000 input - 3,999,980 cached + 4,000,000 output = 4,000,020 counted.
+				p.Tokens, p.CachedInputTokens = 8_000_000, 3_999_980
+				return &p
+			}
+			if stage == "explorer" || stage == "answers" || stage == "explorer retry" {
+				d := l.designFor()
+				d.OpenQuestions = openQuestions(1)
+				l.Design = &d
+			}
+			wantCached := int64(3_999_980)
+			switch stage {
+			case "architect":
+				l.On("^architect$", func(*Call) *fakehostPlan { return cachedPlan(l.designFor()) })
+			case "audit":
+				l.On("^design-audit:r1$", func(*Call) *fakehostPlan { return cachedPlan(approved) })
+			case "explorer":
+				l.On("^explore:", func(*Call) *fakehostPlan { return cachedPlan(answer) })
+			case "answers":
+				l.On("^design-answers:", func(*Call) *fakehostPlan { return cachedPlan(l.designFor()) })
+			case "fix":
+				l.Sequence("^design-audit:r\\d+$", designAuditNeedsChanges, func(*Call) fakehostPlan { return Say(approved) })
+				l.On("^design-fix:r1$", func(*Call) *fakehostPlan { return cachedPlan(l.designFor()) })
+			case "explorer retry":
+				// Two turns in the null-model call, one in its successful retry:
+				// 9,000,000 total - 4,499,970 cached = 4,500,030 counted.
+				wantCached = 4_499_970
+				l.On("^explore:", func(c *Call) *fakehostPlan {
+					p := nullModelTurns(c)
+					if strings.HasSuffix(c.Label, ":retry") {
+						p = cachedPlan(answer)
+					}
+					p.Tokens, p.CachedInputTokens = 3_000_000, 1_499_990
+					return p
+				})
+			}
+			res := l.Run()
+			if got := Value[laneResult](t, res); got.State != "closed" {
+				t.Fatalf("the design did not finish: %+v", got)
+			}
+			if slices.Contains(escalationReasons(l), "design_loop_tokens") {
+				t.Errorf("cached input triggered design_loop_tokens: %v", l.FlowRows(engine.EvEscalation))
+			}
+			for _, ev := range l.FlowRows("log") {
+				if text := str(ev.Data, "message"); strings.HasPrefix(text, "warn design_loop_cap tokens:") {
+					t.Errorf("cached input caused a design warning: %s", text)
+				}
+			}
+			for _, notice := range sender.Parent {
+				if strings.Contains(notice.Text, "reason=design_loop_tokens") {
+					t.Errorf("the orchestrator was escalated for cached input: %s", notice.Text)
+				}
+			}
+			var cached int64
+			for _, ev := range l.Events() {
+				cached += engine.TerminalTokens(ev).CachedInput
+			}
+			if cached != wantCached {
+				t.Errorf("journal cached input = %d, want %d recorded separately", cached, wantCached)
+			}
+			if len(l.Rows("crw.designLedger")) == 0 || len(l.Rows("crw.release")) == 0 {
+				t.Error("the design did not reach its ledger and release")
+			}
+		})
+	}
+}
+
+func TestDesignLoopNonCachedCapExplainsAccountingAndReplays(t *testing.T) {
+	l := NewLab(t, oneNode()...)
+	l.wireUpward(t, false)
+	l.On("^architect$", func(*Call) *fakehostPlan {
+		p := Say(l.designFor())
+		// Input 4,999,970 - cache 4,999,950 + output 4,999,970 = 4,999,990.
+		// The first audit's 10 tokens reach exactly the unchanged 5,000,000 cap.
+		p.Tokens, p.CachedInputTokens = 9_999_940, 4_999_950
+		return &p
+	})
+	if got := Value[laneResult](t, l.Run()); got.State != "closed" {
+		t.Fatalf("the token warning blocked the design: %+v", got)
+	}
+	var details []string
+	for _, ev := range l.FlowRows(engine.EvEscalation) {
+		if str(ev.Data, "reason") == "design_loop_tokens" {
+			details = append(details, str(ev.Data, "detail"))
+		}
+	}
+	if len(details) != 1 {
+		t.Fatalf("design token escalations %q, want exactly one", details)
+	}
+	for _, want := range []string{"used 5000000 tokens by audit round 1", "uncached input + output", "cached input 4999950 excluded"} {
+		if !strings.Contains(details[0], want) {
+			t.Errorf("detail %q does not explain %q", details[0], want)
+		}
+	}
+	before := l.LastSeq()
+	escalations := len(l.FlowRows(engine.EvEscalation))
+	l.Budget = 12_000_000
+	l.NewProcess("proc-cached-budget")
+	if got := Value[laneResult](t, l.Resume()); got.State != "closed" {
+		t.Fatalf("resume: %+v", got)
+	}
+	if live := turnsSince(l, before); len(live) != 0 {
+		t.Errorf("cached usage replay sent %d live turns", len(live))
+	}
+	for _, ev := range rowsAfter(l, before) {
+		if ev.Kind == engine.KindCall && (ev.Event == engine.EvCompleted || ev.Event == engine.EvSuperseded) {
+			t.Errorf("cached usage replay ran %s (%s)", ev.Op, ev.Event)
+		}
+	}
+	if got := len(l.FlowRows(engine.EvEscalation)); got != escalations {
+		t.Errorf("replay changed escalation count from %d to %d", escalations, got)
+	}
+}
