@@ -72,7 +72,7 @@ async function landHead(n) {
         return endLand(node, { reason: 'land_verification_failed', detail: ci.summary || '', evidence: { record: ci.digest, failures: ci.failures } }, { head: head.commit })
       }
     }
-    const uc = await crw.unitCheck(node, ex, { round: round + 1, final: round >= LAND_FIX_ROUNDS, commit: head, base, evidence })
+    const uc = await crw.unitCheck(node, ex, { round: round + 1, final: round >= LAND_FIX_ROUNDS, commit: head, base: base, evidence })
     if (uc.hold) {
       await crw.hold(node, { reason: uc.hold, source: 'unit_check' })
       return { node, state: 'held', reason: uc.hold, source: 'unit_check', detail: uc.detail || '' }
