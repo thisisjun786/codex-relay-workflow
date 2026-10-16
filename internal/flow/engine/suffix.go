@@ -274,6 +274,13 @@ func refPart(s string) string {
 	return b.String()
 }
 
+// RetiredRef names the saved HEAD and working snapshot of an executor attempt.
+// Run and node ids use the same ref encoding as superseded snapshots, including
+// synthetic milestone ids such as "milestone:M1".
+func RetiredRef(runID, node string, attempt int) string {
+	return fmt.Sprintf("refs/crw/flow/%s/retired/%s/a%d", refPart(runID), refPart(node), attempt)
+}
+
 // SupersededRef is the ref the HEAD and the working snapshot of an old worktree are kept on:
 // refs/crw/flow/<run>/superseded/<lineage>/<path>, one commit per lineage and path of the flow (the node's id follows the
 // path, so two nodes of one path keep one each). The path is percent-encoded into one component, so the ref of a path is

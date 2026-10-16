@@ -94,7 +94,7 @@ func (a *Allocator) callPathFor(events []engine.Event, callID string) string {
 
 // RetiredRef is the ref an attempt worktree's HEAD and working snapshot are kept on when it is retired.
 func (a *Allocator) RetiredRef(node string, attempt int) string {
-	return fmt.Sprintf("refs/crw/flow/%s/retired/%s/a%d", a.cfg.RunID, node, attempt)
+	return engine.RetiredRef(a.cfg.RunID, node, attempt)
 }
 
 // pathPart makes a node id one safe path element.
@@ -163,17 +163,21 @@ func journaled(events []engine.Event, node string) (restores, prepared []allocat
 	return restores, prepared
 }
 
-// pendingRestore is the node's latest restored worktree that no call has adopted yet.
+// pendingRestore is the node's latest restored worktree that no call has adopted yet. A later
+// allocation supersedes an unused restore (a fresh call pinned another head); no old snapshot is
+// adopted after that.
 func pendingRestore(restores, prepared []allocation) *allocation {
 	adopted := map[string]bool{}
+	latestPrepared := -1
 	for _, p := range prepared {
+		latestPrepared = max(latestPrepared, p.seq)
 		if p.kind == engine.PlaceRestore {
 			adopted[p.path] = true
 		}
 	}
 	var pending *allocation
 	for i := range restores {
-		if !adopted[restores[i].path] {
+		if !adopted[restores[i].path] && restores[i].seq > latestPrepared {
 			pending = &restores[i]
 		}
 	}
@@ -255,7 +259,17 @@ func (a *Allocator) Place(req engine.PlaceRequest) (engine.Placement, error) {
 		}
 		return engine.Placement{Kind: engine.PlaceCall, Path: a.callPathFor(events, req.CallID), Start: start}, nil
 	}
-	if pending != nil {
+	// An explicit head pins the commit a new executor thread works over; a restored worktree of
+	// the node may only be adopted when it was made at that same head (CRW-1490).
+	pinned := ""
+	if req.Continues == nil && req.Head != "" {
+		var err error
+		pinned, err = a.commitOf(context.Background(), req.Head)
+		if err != nil {
+			return engine.Placement{}, err
+		}
+	}
+	if pending != nil && (pinned == "" || pending.start == pinned) {
 		// (B) adoption: the restored worktree is the call's cwd as it is; nothing is made and no file is reset.
 		return engine.Placement{Kind: engine.PlaceRestore, Attempt: pending.attempt, Lineage: pending.lineage, Path: pending.path,
 			Start: pending.start, Pending: pending.pending, Digest: pending.digest, Fork: req.Continues != nil}, nil
@@ -275,18 +289,15 @@ func (a *Allocator) Place(req engine.PlaceRequest) (engine.Placement, error) {
 	for _, r := range restores {
 		lineage = max(lineage, r.lineage)
 	}
-	start := lastCommit(events, node)
+	// An explicit pin wins even over the node's last checkpoint and the first base: the close's
+	// repair at a moved target is made over the moved head (CRW-1490). A mismatching restore stays
+	// untouched; Establish preserves its snapshot on its retired ref before making the new worktree.
+	start := pinned
+	if start == "" {
+		start = lastCommit(events, node)
+	}
 	if start == "" {
 		start = firstBase(restores, prepared)
-	}
-	if start == "" && req.Head != "" {
-		// a call that names a head and has no history of the node starts at it (the close's repair executor works on the failed
-		// gate's head, CRW-1490)
-		if s, err := a.commitOf(context.Background(), req.Head); err != nil {
-			return engine.Placement{}, err
-		} else {
-			start = s
-		}
 	}
 	if start == "" {
 		var err error

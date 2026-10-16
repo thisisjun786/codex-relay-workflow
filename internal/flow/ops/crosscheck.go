@@ -296,7 +296,7 @@ func (o *crosscheckOp) Run(ctx context.Context, req engine.OpRequest) (engine.Op
 	switch {
 	case round == 1:
 		if present(opts.Prior) {
-			return invalid(fmt.Sprintf("round 1 with a prior: a first round has no verdict to recheck"))
+			return invalid("round 1 with a prior: a first round has no verdict to recheck")
 		}
 	case round == 2:
 		var p CrosscheckVerdictRecord

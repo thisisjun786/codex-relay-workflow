@@ -87,6 +87,8 @@ type FakeRelay struct {
 	Accepts    []ops.AcceptRequest
 	Integrates []ops.IntegrateRequest
 	Closes     []ops.CloseRequest
+	// Repairs is the repair publications the milestone closes asked for, in order (CRW-1490).
+	Repairs []ops.MilestoneRepairRequest
 	// Landed are the nodes in the order they landed.
 	Landed []string
 }
@@ -365,6 +367,34 @@ func (r *FakeRelay) Integrate(_ context.Context, req ops.IntegrateRequest) (ops.
 	r.held[req.Node] = false
 	delete(r.holding, req.Node)
 	return ops.IntegrateResult{Landed: true, BatchCommit: batch, IntegrationRef: IntegrationRef, Tip: batch}, nil
+}
+
+// IntegrateMilestoneRepair publishes a close's repair (CRW-1490): the lab's synthetic
+// compare-and-swap of the integration ref, the way Integrate moves it - a real-Git and
+// relay-store fixture seam, not a proof of production fencing.
+func (r *FakeRelay) IntegrateMilestoneRepair(ctx context.Context, req ops.MilestoneRepairRequest) (ops.MilestoneRepairResult, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.Repairs = append(r.Repairs, req)
+	if req.VerificationDigest == "" {
+		return ops.MilestoneRepairResult{}, fmt.Errorf("close repair has no verification digest")
+	}
+	tip := r.lab.Tip()
+	if tip == req.Head {
+		return ops.MilestoneRepairResult{Tip: tip}, nil
+	}
+	if tip != req.Base {
+		return ops.MilestoneRepairResult{Tip: tip, Moved: true}, nil
+	}
+	cmd := exec.CommandContext(ctx, "git", "-C", r.lab.Repo, "update-ref", IntegrationRef, req.Head, req.Base)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		now := r.lab.Tip()
+		if now != req.Base {
+			return ops.MilestoneRepairResult{Tip: now, Moved: now != req.Head}, nil
+		}
+		return ops.MilestoneRepairResult{}, fmt.Errorf("publish close repair: %w: %s", err, out)
+	}
+	return ops.MilestoneRepairResult{Tip: req.Head}, nil
 }
 
 // IntegrationTip implements ops.Relay.
