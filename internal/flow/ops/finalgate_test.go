@@ -17,6 +17,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/reviewadapter"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/roles"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/script"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/acceptance/premerge"
 )
@@ -756,6 +757,144 @@ func TestQAOracleMissingPassInconclusive(t *testing.T) {
 	last := w.gates()[len(w.gates())-1]
 	if last.State != GateFailed || last.Reason != GateQAInconclusive || evidenceOf(last, "qa").Verdict != QAInconclusive {
 		t.Errorf("gate %+v", last)
+	}
+}
+
+// ---- the old reviewer-final results as the close reads them (CRW-1206 correction; read path since CRW-1450) ----
+
+// The close's review is the crosscheck (CRW-1473), and reviewer-final is retired with its op (CRW-1450). What stays is the read of what
+// the old op answered: an old close passed the result of crw.reviewerFinal to crw.milestoneClose as the final review of its evidence, and
+// the close closes on it only when it is a verified verdict (finalVerified).
+
+func finalAnswer(verdict string, criteria []map[string]any, defects ...map[string]any) string {
+	cs := []any{}
+	for _, c := range criteria {
+		cs = append(cs, c)
+	}
+	ds := []any{}
+	for _, d := range defects {
+		ds = append(ds, d)
+	}
+	return jsonOf(map[string]any{"verdict": verdict, "criteria": cs, "defects": ds,
+		"alignment": map[string]any{"verdict": "ALIGNED", "drift": []any{}}, "summary": "reviewed"})
+}
+
+func crit(id string, met bool) map[string]any {
+	return map[string]any{"id": id, "met": met, "evidence": "read the range"}
+}
+
+// oldFinalResult is the result the crw.reviewerFinal op of a build before CRW-1450 answered for a call whose answer was answer: with state
+// verdict, the answer and its alignment; with any other state, that state, its reason and no verdict (null). retried is the op's own
+// option: the close asked once more after an answer that was no verdict.
+func oldFinalResult(state, reason, answer string, retried bool) map[string]any {
+	verdict, alignment := json.RawMessage(`null`), ""
+	if state == StateVerdict {
+		verdict, alignment = json.RawMessage(answer), "ALIGNED"
+	}
+	return map[string]any{"state": state, "reason": reason, "milestone": "M1", "head": headOne, "range": "base.." + headOne, "verdict": verdict,
+		"alignment": alignment, "drift": 0, "call": map[string]any{"callId": "c_f", "handle": "", "status": "completed", "reason": "", "role": "reviewer-final"},
+		"retried": retried}
+}
+
+// closeOnFinal asks crw.milestoneClose to close M1 over a passed gate of the integration tip with final as the final review of its
+// evidence and no crosscheck (the evidence an old close passed). It answers whether a row was written, and the close's error.
+func closeOnFinal(t *testing.T, final any) (bool, error) {
+	t.Helper()
+	w := newWorld(t)
+	before := len(w.j.Events())
+	_, err := w.op(NameMilestoneClose, "M1", map[string]any{"gate": map[string]any{"milestone": "M1", "head": w.relay.tip, "state": "pass"}, "final": final})
+	return len(w.j.Events()) > before, err
+}
+
+// wantFinalRead fails unless the close on the old result final closes (a row, no error) when closes, and is refused close_unverified
+// with no row otherwise.
+func wantFinalRead(t *testing.T, what string, final any, closes bool) {
+	t.Helper()
+	wrote, err := closeOnFinal(t, final)
+	if closes {
+		if err != nil || !wrote {
+			t.Errorf("%s: the close on the old result was refused (%v) or wrote no row (%v)", what, err, wrote)
+		}
+		return
+	}
+	if err == nil || ReasonOf(err.Error()) != ReasonCloseUnverified || !strings.Contains(err.Error(), "the final review of the evidence is not a verified verdict") || wrote {
+		t.Errorf("%s: the close on the old result: %v, a row written %v; want close_unverified and no row", what, err, wrote)
+	}
+}
+
+// TestReviewerFinalVerifiedMustBeComplete: a verified final review evaluated every criterion of the milestone once and found each met,
+// and names no defect that blocks. The old reviewer-final op held a schema-valid answer that said verified over criteria it never
+// evaluated, over a criterion it did not meet, over a criterion of no plan or over a defect of P1 to no verdict (null_model,
+// verdict_invalid, after the one retry), and only a complete answer, in any order of its criteria, to a verdict. The op is retired
+// (CRW-1450); its results stay read as they were judged: the close on a result of no verdict is refused close_unverified and writes no
+// row, the close on a verdict closes. A result whose answer says verified under a state that is not verdict is no verified review either.
+func TestReviewerFinalVerifiedMustBeComplete(t *testing.T) {
+	p1 := map[string]any{"ref": "d1", "kind": "correctness", "severity": "P1", "introduced": true, "impact": "core_function", "inPromise": true, "file": "a.go", "line": 1, "finding": "broken", "evidence_question": nil}
+	for name, c := range map[string]struct {
+		answer   string
+		verified bool
+	}{
+		"no criterion evaluated":    {finalAnswer("verified", nil), false},
+		"one criterion left out":    {finalAnswer("verified", []map[string]any{crit("c1", true)}), false},
+		"a criterion named twice":   {finalAnswer("verified", []map[string]any{crit("c1", true), crit("c1", true)}), false},
+		"a criterion of no plan":    {finalAnswer("verified", []map[string]any{crit("c1", true), crit("c9", true)}), false},
+		"a criterion not met":       {finalAnswer("verified", []map[string]any{crit("c1", true), crit("c2", false)}), false},
+		"a P1 defect stands":        {finalAnswer("verified", []map[string]any{crit("c1", true), crit("c2", true)}, p1), false},
+		"every criterion met":       {finalAnswer("verified", []map[string]any{crit("c1", true), crit("c2", true)}), true},
+		"criteria in another order": {finalAnswer("verified", []map[string]any{crit("c2", true), crit("c1", true)}), true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			state, reason := StateNullModel, "verdict_invalid"
+			if c.verified {
+				state, reason = StateVerdict, ""
+			}
+			wantFinalRead(t, name, oldFinalResult(state, reason, c.answer, !c.verified), c.verified)
+		})
+	}
+	t.Run("a verified answer under a state that is not verdict", func(t *testing.T) {
+		final := oldFinalResult(StateNullModel, "verdict_invalid", "", true)
+		final["verdict"] = json.RawMessage(finalAnswer("verified", []map[string]any{crit("c1", true), crit("c2", true)}))
+		wantFinalRead(t, "a verified answer under state null_model", final, false)
+	})
+}
+
+// TestReviewerFinalRuleTheCheckAppliedHoldsOnTheClose is the successor of TestReviewerFinalPacketSaysTheRuleTheCheckApplies (CRW-1505
+// item 1). The reviewer-final packet and overlay that told the rule are retired with the role (CRW-1450: lib/packets.js finalPacket and
+// roles/reviewer-final.md are removed); the close's review is the crosscheck now, and its packets say the rule (CrosscheckRule, held to
+// the packets and the close by TestCrosscheckRuleIsOneTableForPacketOpAndClose and TestCloseFollowsTheCrosscheckRule). What the old op
+// applied stays readable: it held verified over a P3 core_function defect to no verdict (verdict_invalid after the retry), and verified
+// over a P3 minor_separable defect to a verdict, as premerge.Blocks rules; the close on the first result is refused close_unverified and
+// the close on the second closes.
+func TestReviewerFinalRuleTheCheckAppliedHoldsOnTheClose(t *testing.T) {
+	const rule = "a finding of P0 to P2 blocks whatever its impact, and of the impacts only minor_separable does not block"
+	if !strings.Contains(CrosscheckRule, rule) {
+		t.Errorf("the crosscheck's rule does not say %q: %s", rule, CrosscheckRule)
+	}
+	for _, impact := range premerge.Impacts {
+		if !strings.Contains(CrosscheckRule, impact) {
+			t.Errorf("the crosscheck's rule does not name the impact %s: %s", impact, CrosscheckRule)
+		}
+	}
+	if _, err := roles.Overlay("reviewer-final", roles.Options{}); err == nil {
+		t.Error("the retired reviewer-final overlay still loads")
+	}
+	p3 := func(impact string) map[string]any {
+		return map[string]any{"ref": "d1", "kind": "correctness", "severity": "P3", "introduced": true, "impact": impact, "inPromise": true, "file": "a.go", "line": 1, "finding": "a nit", "evidence_question": nil}
+	}
+	met := []map[string]any{crit("c1", true), crit("c2", true)}
+	for name, c := range map[string]struct {
+		impact, state, reason string
+		closes                bool
+	}{
+		"verified over a P3 core_function defect":   {"core_function", StateNullModel, "verdict_invalid", false},
+		"verified over a P3 minor_separable defect": {premerge.MinorSeparable, StateVerdict, "", true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if blocks := premerge.Blocks("P3", c.impact); blocks == c.closes {
+				t.Fatalf("premerge.Blocks(P3, %s) = %v: the old op's judgment of the case is not the rule's", c.impact, blocks)
+			}
+			wantFinalRead(t, name, oldFinalResult(c.state, c.reason, finalAnswer("verified", met, p3(c.impact)), !c.closes), c.closes)
+		})
 	}
 }
 

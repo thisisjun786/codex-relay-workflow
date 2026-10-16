@@ -260,6 +260,36 @@ return { need: g.need_tests, ran: out.map((v) => v.command), state: again.state,
 	}
 }
 
+// TestReviewerFinalIndependenceAndStates: reviewer-final was a review of another family than every author of the milestone, as a node's
+// reviewer was. The old op answered refused independence_unproven when no author was known, refused independence_refused for a reviewer
+// of an author's family, a verdict for one of another family, null_model verdict_invalid for an answer that was no VERDICT_FINAL or
+// said MISALIGNED with no drift, and the call's own state for a call that did not complete. The op and its independence judgment are
+// retired (CRW-1450); the close's review is the crosscheck, whose engine is of another family than every author
+// (TestCrosscheckEngineIsOfAnotherFamilyThanTheAuthors). The results the op left read as they did: the close closes on the verdict
+// alone, and every other state, the refusals of independence included, is no verified review (close_unverified, no row).
+func TestReviewerFinalIndependenceAndStates(t *testing.T) {
+	ok := finalAnswer("verified", nil)
+	for name, c := range map[string]struct {
+		state, reason string
+		closes        bool
+	}{
+		"an answer that is no VERDICT_FINAL":      {StateNullModel, "verdict_invalid", false},
+		"no author is known":                      {StateRefused, "independence_unproven", false},
+		"a reviewer of another family":            {StateVerdict, "", true},
+		"a reviewer of the family of the authors": {StateRefused, engine.ReasonIndependenceRefused, false},
+		"a call that ended held":                  {StateHeld, "", false},
+		"a call that ended unknown":               {StateUnknown, "", false},
+		"a call that ended refused":               {StateRefused, "policy_refused", false},
+		"a call that ended null_model":            {StateNullModel, "", false},
+		"a call that ended superseded":            {StateSuperseded, "", false},
+		"MISALIGNED with no drift named":          {StateNullModel, "verdict_invalid", false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			wantFinalRead(t, name, oldFinalResult(c.state, c.reason, ok, false), c.closes)
+		})
+	}
+}
+
 // The receipt stands on the tree the capture call exercised, not on the head it was asked to exercise (CRW-1206 correction, d2): a
 // capture whose scratch worktree ended on another commit, with uncommitted work, with a source nobody could read or with none
 // recorded is INCONCLUSIVE - never a PASS over code the gate did not pin - and the receipt row keeps the identity it rests on.
