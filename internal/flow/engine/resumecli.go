@@ -64,6 +64,12 @@ type ResumeHold struct {
 	// Tools are the repository tools the caller's configuration names (CRW-1488): the resumed run's calls are given them, as the run
 	// process's are. Nil gives none.
 	Tools *RepositoryTools
+	// Prepare restores disposable checkouts after the resume's input and budget
+	// checks, before any new engine row. The caller holds the run lock.
+	Prepare func([]Event) error
+	// Finished runs after the resumed world's rows were successfully stored and its connections
+	// closed, while the caller still holds the run lock. Nil leaves cleanup to the caller.
+	Finished func(*Result)
 }
 
 type resumeHoldKey struct{}
@@ -183,12 +189,16 @@ func resumeCmd(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		fmt.Fprintf(stderr, "crw flow resume: error: %v\n", err)
 		return 2
 	}
-	closeSetup := func() {
-		if setup.Close != nil {
-			if cerr := setup.Close(); cerr != nil {
+	closeSetup := func() bool {
+		close := setup.Close
+		setup.Close = nil
+		if close != nil {
+			if cerr := close(); cerr != nil {
 				fmt.Fprintf(stderr, "crw flow resume: error: the rows of the run could not be stored: %v\n", cerr)
+				return false
 			}
 		}
+		return true
 	}
 	defer closeSetup()
 	// a legacy `child` session run is refused as one, before the check of its started row: the run of an old issue-lane process that ended
@@ -219,6 +229,12 @@ func resumeCmd(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	case *budget > 0:
 		ceiling = spentBefore + *budget
 	}
+	if hold.Prepare != nil {
+		if err := hold.Prepare(setup.Journal.Events()); err != nil {
+			fmt.Fprintf(stderr, "crw flow resume: error: %v\n", err)
+			return 2
+		}
+	}
 	inFlight := *pool
 	if setup.Session != nil {
 		setup.Session.Process = hold.Process
@@ -240,6 +256,9 @@ func resumeCmd(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	if err != nil {
 		fmt.Fprintf(stderr, "crw flow resume: error: %v\n", err)
 		return 2
+	}
+	if closeSetup() && hold.Finished != nil {
+		hold.Finished(res)
 	}
 	enc := json.NewEncoder(stdout)
 	enc.SetIndent("", "  ")

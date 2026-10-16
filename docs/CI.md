@@ -14,7 +14,7 @@ workflow starts only on a manual dispatch, and integration does not wait on it.
 | Command | Where CI runs it |
 | --- | --- |
 | `crw-dev ci validate` | `validate`: skill metadata, local Markdown links (and, for the documents under `plugins/crw/skills` and `docs`, the `#fragment` of each link: it must be a heading slug of the file it leads to, by GitHub's rule, or an explicit `id` or `name` attribute of an HTML element outside code (the slug is taken from the rendered heading text, in which an inline link, and a full or collapsed reference link whose label a complete CommonMark link reference definition (destination, optional title, nothing after them on the line) defines, is its text; a setext heading is its whole paragraph; the attribute value is read with its character references decoded and an HTML comment, which opens only where markup can and never inside a quoted attribute value, holds no element), and a target that cannot be read is an error, not a pass; `TestSkillAnchorsResolve`), the base rule of the skill inventory map ([docs/skills/README.md](skills/README.md)), and that Python sits only in skill assets: a `.py` file or a python-shebang script, tracked or untracked and not ignored, fails it unless it is below `<skill>/scripts/` or `<skill>/examples/` of `plugins/crw/skills` (`TestTrackedPythonStaysInSkillAssets` holds the tracked files for `make test`); CI installs no Python and runs no skill script (`TestWorkflow_installs_no_python`); and that no blob over 2 MiB comes into the history unless the allow list names it ([large blobs](#large-blobs)); and that `go.mod` and `go.sum` are what `go mod tidy` writes, checked offline (`GOPROXY=off`, `GONOPROXY=none`, `GOSUMDB=off`: no module download, also none for a module an inherited `GOPRIVATE` or `GONOPROXY` names, and no checksum database lookup) by `go mod tidy -diff`, which prints a note instead of failing when the module cache lacks a module the import graph needs |
-| `crw-dev ci plugin` | `validate`: plugin package shape, payload hygiene and the recorded version digest ([below](#plugin-package)) |
+| `crw-dev ci plugin` | `validate`: plugin package shape, payload hygiene, the manifest's fixed release version, and the staged artifact's derived version ([below](#plugin-package)) |
 | `crw-dev ci contracts` | `validate`: the offline contract checks built into `crw-dev`: the hook replay, the CXC corpus lint (which also holds the plugin's hook declarations to K1; `crw-dev cxc hooks` regenerates them), the operations shape check (`crw-dev ci operations`), the component definition, the start-policy self-test and the parent-title replay |
 | `crw-dev ci refactor-backlog` | `validate`: the generated refactor backlog: assembles `docs/port/refactor-backlog.md` from the fragments under `docs/port/refactor-backlog.d` and refuses when the committed file differs from the fragments (`--write` regenerates it. The file ends in a comment that seals everything above it: a file that still matches its seal is replaced freely, because every line the fragments no longer produce is the old text of an edited or removed fragment; a file that does not match (edited by hand, or written before the seal) is refused when it holds an entry, compared as its whole line, that no fragment produces. It also refuses when the file or the fragments cannot be read, or when both are missing from this repository, whatever is left of `docs/port`) |
 | `bash scripts/ci/secrets.sh` | `secrets`: checksum-pinned Gitleaks scan: on a manual dispatch every fetched ref ([scope](#secret-scanning)) |
@@ -196,10 +196,25 @@ no pinMismatch. Any other record is not reused: the engine runs the table again 
 
 ### Reuse
 
-`--reuse <record>` answers an existing record instead of running only when the **tree**, the
-**ci.yml digest**, the **tool versions**, the **dependency digests**, the **OS and
-architecture** and the **base commit** and the **commit range** all match,
-and the record passed with no pin mismatch. The head commit is not a key on its own. The commit range (the commits between base and head) is one: a rebase or an amend that changes that list reruns the checks, and a record is reused only when the list and the tree both match. Changing any one key re-runs.
+The verifier finds sealed PASS records in
+`<git-common-dir>/crw-ci/<tree>/<rules-key>/<record-digest>.json`, shared across linked worktrees.
+`--reuse <record>` supplies a preferred candidate; `--fresh` disables reuse and still publishes a
+new pass. The tree, command/plan digest, ci.yml, tools and pins, dependency digests, platform,
+GOFLAGS, GOENV, heavy gate and verifier identity must match. Every candidate still faces the
+record digest, plan structure and recomputed pin checks above. Failed records are never cached
+or reused. An unavailable cache falls back to execution without choosing another storage location.
+
+`verifierKind` identifies the implementation and `verifierRules` its contract version; legacy
+records mean `local` and `ci-local/1`. `runner` remains a caller label. Other verifier kinds need
+explicit compatibility support before their records can answer a local run.
+
+Only **full** (tree-scoped) steps are reused. Every **range** step runs on the current base/head,
+even when the range is unchanged. Earlier setup steps run too, to recreate files those checks
+need: for example, the verifier binary used by `ci validate`. The aggregate gate runs after all
+jobs and can fail despite reused tree checks. Each reused step has zero `seconds` and a
+`reusedFrom` containing the source record path, digest, head, verifier kind, job and step index.
+The new record names the current head/base/range and records the fresh execution environment;
+only a plan requiring no fresh execution keeps the original run environment and package count.
 
 ### The heavy-check gate and TMPDIR
 
@@ -630,15 +645,15 @@ credential names and a personal home path in shipped instructions are all reject
 timeout over 20 seconds (the longest K1 timeout) is refused; each declared
 skill must carry `SKILL.md` and `agents/openai.yaml`, and the manifest may carry only keys the
 ingestion validator knows, in the shapes it accepts. The working tree is checked with the same
-rules, because a local marketplace installs it.
+rules, so source edits are checked before they become a committed packaging input.
 
-The manifest version carries the payload's digest as build metadata, `0.4.0+640ccf7eadf4`. The
-check re-derives that suffix from the bytes and rejects a stale one, naming the value to record,
-for the release payload, the working tree and, with `--payload <dir>`, an installed cache
-directory. `--record-version` writes the derived suffix into the working-tree manifest, and
-`--json` prints the digest and the namespaced skill names. Passing is evidence about this source,
-not that a plugin installed or a skill loaded on a host; see
-[plugin packaging](plugin-packaging.md#the-version-names-the-payload).
+The committed manifest names the fixed release (CRW-1582); the check requires that fixed source
+version, and the derived version - the release plus the payload's digest suffix - is what
+`--stage <new-directory>` stamps into a generated local marketplace. `--payload <dir>` validates
+an installed or staged directory's stamped suffix against its bytes, and `--record-version` is
+retired: it refuses and writes nothing. `--json` prints the digest and the namespaced skill
+names. Passing is evidence about this source, not that a plugin installed or a skill loaded on a
+host; see [plugin packaging](plugin-packaging.md#the-version-names-the-payload).
 
 ## Scope of the checks
 

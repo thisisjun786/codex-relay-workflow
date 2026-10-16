@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,98 @@ import (
 )
 
 const helloScript = "../../../testdata/flow/hello.js"
+
+// Cleanup must observe a durable end and a closed world; a failed journal close keeps the
+// worktrees available for recovery. The deferred close must not run the close operation twice.
+func TestResumeCleanupAfterClose(t *testing.T) {
+	previous := ResumeEnv
+	t.Cleanup(func() { ResumeEnv = previous })
+	for _, test := range []struct {
+		name                   string
+		failClose, failPrepare bool
+	}{
+		{"closed", false, false}, {"flush failed", true, false}, {"restore failed", false, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			h := newHarness(t)
+			body := "return 1\n"
+			prog := h.load(body)
+			dir := t.TempDir()
+			file := filepath.Join(dir, "t.js")
+			if err := os.WriteFile(file, []byte(header+body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			sentinel := filepath.Join(dir, "worktree")
+			if err := os.WriteFile(sentinel, []byte("keep until durable\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			run := "run-cleanup"
+			h.journal.Append(Event{RunID: run, Kind: KindRun, Event: "started", Data: map[string]any{
+				"workflow": "t", "script_digest": prog.Digest, "args_digest": digestJSON(json.RawMessage("null")),
+			}})
+			var order []string
+			ResumeEnv = func(context.Context, ResumeEnvRequest) (ResumeSetup, error) {
+				return ResumeSetup{Journal: h.journal, Backend: h.fake, Close: func() error {
+					order = append(order, "close")
+					if test.failClose {
+						return errors.New("flush failed")
+					}
+					return nil
+				}}, nil
+			}
+			ctx := WithResumeHold(context.Background(), ResumeHold{
+				Prepare: func(events []Event) error {
+					order = append(order, "prepare")
+					if len(events) != 1 {
+						t.Errorf("prepare ran after new engine rows: %d", len(events))
+					}
+					if test.failPrepare {
+						return errors.New("restore failed")
+					}
+					return nil
+				},
+				Finished: func(res *Result) {
+					order = append(order, "finished")
+					if res.Status != RunCompleted {
+						t.Errorf("unexpected result: %+v", res)
+					}
+					if err := os.Remove(sentinel); err != nil {
+						t.Error(err)
+					}
+				}})
+			var out, errOut bytes.Buffer
+			code := RunCLI(ctx, []string{"resume", "--state", dir, run, file}, &out, &errOut)
+			if test.failPrepare {
+				if code != 2 || !strings.Contains(errOut.String(), "restore failed") ||
+					strings.Join(order, ",") != "prepare,close" || len(h.journal.Events()) != 1 {
+					t.Fatalf("failed preparation: exit %d order %v rows %d %s", code, order, len(h.journal.Events()), &errOut)
+				}
+				if raw, err := os.ReadFile(sentinel); err != nil || string(raw) != "keep until durable\n" {
+					t.Errorf("failed preparation changed the worktree: %v %q", err, raw)
+				}
+				return
+			}
+			if code != 0 {
+				t.Fatalf("resume: %d\n%s%s", code, &out, &errOut)
+			}
+			want := "prepare,close,finished"
+			if test.failClose {
+				want = "prepare,close"
+				if !strings.Contains(errOut.String(), "flush failed") {
+					t.Errorf("close failure was hidden: %s", &errOut)
+				}
+				if raw, err := os.ReadFile(sentinel); err != nil || string(raw) != "keep until durable\n" {
+					t.Errorf("failed close lost worktree: %v %q", err, raw)
+				}
+			} else if _, err := os.Lstat(sentinel); !os.IsNotExist(err) {
+				t.Errorf("successful close did not run cleanup: %v", err)
+			}
+			if got := strings.Join(order, ","); got != want {
+				t.Errorf("close/cleanup order = %q; want %q", got, want)
+			}
+		})
+	}
+}
 
 func runFlow(t *testing.T, args ...string) (int, string, string) {
 	t.Helper()

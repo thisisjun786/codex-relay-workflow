@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/tracking"
 )
@@ -124,7 +123,6 @@ func (r *Runner) integrate(ctx context.Context, tag string, entries []Entry, pr 
 	added = true
 
 	out := Outcome{verifyRC: -1}
-	rerecord := false
 	for _, e := range entries {
 		if ctx.Err() != nil {
 			return fail("%v", ctx.Err())
@@ -133,7 +131,7 @@ func (r *Runner) integrate(ctx context.Context, tag string, entries []Entry, pr 
 		if pr != nil {
 			msg = fmt.Sprintf("Merge pull request %s (%s) at %s into %s", pr.Ref, pr.HeadRef, shortHead(e.Head), c.Branch)
 		}
-		reason, resolvedVersion := r.mergeOne(ctx, wt, base, e, msg, logf)
+		reason := r.mergeOne(ctx, wt, e, msg, logf)
 		if ctx.Err() != nil {
 			// A git call that ended with the context says nothing about the head.
 			return fail("%v", ctx.Err())
@@ -141,22 +139,11 @@ func (r *Runner) integrate(ctx context.Context, tag string, entries []Entry, pr 
 		switch {
 		case reason == "":
 			out.merged = append(out.merged, e)
-			rerecord = rerecord || resolvedVersion
 		default:
 			out.left = append(out.left, leftOut{Entry: e, Reason: reason})
 		}
 	}
 
-	pluginChanged := false
-	if len(out.merged) > 0 {
-		rc, err := r.git(ctx, wt, nil, "diff", "--quiet", base, "HEAD", "--", c.PluginDir)
-		pluginChanged = err != nil || rc != 0
-	}
-	if rerecord || pluginChanged {
-		if err := r.recordVersion(ctx, tag, wt, tmp, logf); err != nil {
-			return fail("%v", err)
-		}
-	}
 	if ctx.Err() != nil {
 		return fail("%v", ctx.Err())
 	}
@@ -285,65 +272,31 @@ func joinSpace(list, item string) string {
 	return list + " " + item
 }
 
-// mergeOne merges one head into the worktree and returns why it was left out ("" when merged)
-// and whether a version-line conflict was resolved on the way.
-func (r *Runner) mergeOne(ctx context.Context, wt, base string, e Entry, msg string, log io.Writer) (string, bool) {
+// mergeOne merges one head into the worktree and returns why it was left out ("" when merged).
+func (r *Runner) mergeOne(ctx context.Context, wt string, e Entry, msg string, log io.Writer) string {
 	if !headRE.MatchString(e.Head) {
-		return reasonBadHead, false
+		return reasonBadHead
 	}
 	if rc, err := r.git(ctx, wt, nil, "cat-file", "-e", e.Head+"^{commit}"); err != nil || rc != 0 {
-		return reasonNotInCheck, false
+		return reasonNotInCheck
 	}
 	if rc, err := r.git(ctx, wt, nil, "merge-base", "--is-ancestor", e.Head, "HEAD"); err == nil && rc == 0 {
-		return reasonAlreadyInDev, false
+		return reasonAlreadyInDev
 	}
 	rc, err := r.git(ctx, wt, log, "merge", "--no-ff", "-m", msg, e.Head)
 	if err == nil && rc == 0 {
-		return "", false
+		return ""
 	}
 	// A merge that stopped for conflicts leaves MERGE_HEAD; anything else is not a conflict.
 	inMerge := false
 	if rc, err := r.git(ctx, wt, nil, "rev-parse", "-q", "--verify", "MERGE_HEAD"); err == nil && rc == 0 {
 		inMerge = true
 	}
-	if inMerge && r.resolveVersionOnly(ctx, wt, log) {
-		return "", true
-	}
 	_, _ = r.git(ctx, wt, log, "merge", "--abort")
 	if !inMerge {
-		return reasonMergeError, false
+		return reasonMergeError
 	}
-	return reasonConflict, false
-}
-
-// resolveVersionOnly resolves the merge in progress when the one conflicted file is the
-// plugin manifest and its conflicts are only the version line, and commits the merge. It
-// reports whether it did; on false the merge is left for the caller to abort.
-func (r *Runner) resolveVersionOnly(ctx context.Context, wt string, log io.Writer) bool {
-	c := r.Cfg
-	unmerged, err := r.gitOut(ctx, wt, "diff", "--name-only", "--diff-filter=U")
-	if err != nil || unmerged != c.PluginManifest {
-		return false
-	}
-	path := filepath.Join(wt, filepath.FromSlash(c.PluginManifest))
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return false
-	}
-	resolved, err := ResolveVersionConflict(data)
-	if err != nil {
-		fmt.Fprintf(log, "%s: %v\n", c.PluginManifest, err)
-		return false
-	}
-	if err := os.WriteFile(path, resolved, 0o644); err != nil {
-		return false
-	}
-	fmt.Fprintf(log, "%s: version-line conflict resolved; re-derived after the merges\n", c.PluginManifest)
-	if rc, err := r.git(ctx, wt, log, "add", "--", c.PluginManifest); err != nil || rc != 0 {
-		return false
-	}
-	rc, err := r.git(ctx, wt, log, "commit", "--no-edit", "-q")
-	return err == nil && rc == 0
+	return reasonConflict
 }
 
 // treeIsTheCommit reports an error unless the worktree's HEAD is still the commit that was
@@ -366,41 +319,6 @@ func (r *Runner) treeIsTheCommit(ctx context.Context, wt, head string) error {
 	return nil
 }
 
-// recordVersion re-derives the manifest's version line on the merged tree with the configured
-// command and commits the change. A failing command is logged and left to the verification; a
-// change that cannot be committed is an error, because the verification would see a tree the
-// push does not carry.
-func (r *Runner) recordVersion(ctx context.Context, tag, wt, tmp string, log io.Writer) error {
-	c := r.Cfg
-	if err := os.MkdirAll(tmp, 0o775); err != nil {
-		fmt.Fprintf(log, "record version: %v\n", err)
-		return nil
-	}
-	pairs := []string{"{tmpdir}", tmp, "{tag}", tag}
-	// The command finds its repository from its directory, the private worktree, so no
-	// inherited Git routing variable reaches it. record_version_env is the operator's explicit
-	// word and is applied after that cleanup.
-	env := r.gitEnv()
-	for _, k := range sortedKeys(c.RecordVersionEnv) {
-		env = append(env, k+"="+expand(c.RecordVersionEnv[k], pairs...))
-	}
-	rc, err := r.Exec(ctx, Cmd{Argv: expandAll(c.RecordVersionCommand, pairs...), Dir: wt, Env: env, Stdout: log, Stderr: log})
-	if err != nil || rc != 0 {
-		fmt.Fprintf(log, "record version command: status %d, %v\n", rc, err)
-	}
-	if rc, err := r.git(ctx, wt, nil, "diff", "--quiet", "--", c.PluginManifest); err == nil && rc == 0 {
-		return nil
-	}
-	if rc, err := r.git(ctx, wt, log, "add", "--", c.PluginManifest); err != nil || rc != 0 {
-		return fmt.Errorf("record version: git add of %s failed (status %d, %v); nothing is verified or pushed", c.PluginManifest, rc, err)
-	}
-	msg := "integration " + tag + ": re-derive the plugin version line (payload digest) after the merges"
-	if rc, err := r.git(ctx, wt, log, "commit", "-q", "-m", msg); err != nil || rc != 0 {
-		return fmt.Errorf("record version: the re-derived version line could not be committed (status %d, %v); nothing is verified or pushed", rc, err)
-	}
-	return nil
-}
-
 // verify runs the verification command on the merged tree and returns its status (127 when it
 // could not be started).
 func (r *Runner) verify(ctx context.Context, tag, wt, head, base, record string) int {
@@ -410,7 +328,7 @@ func (r *Runner) verify(ctx context.Context, tag, wt, head, base, record string)
 		return 127
 	}
 	defer vlog.Close()
-	// Like the record command, the verification runs against the private worktree only.
+	// The verification runs against the private worktree only.
 	env := append(r.gitEnv(), "CRW_VERIFY_HEAD="+head, "CRW_VERIFY_BASE="+base, "CRW_VERIFY_RECORD="+record)
 	rc, err := r.Exec(ctx, Cmd{Argv: c.VerifyCommand, Dir: wt, Env: env, Stdout: vlog, Stderr: vlog})
 	if err != nil {
@@ -435,13 +353,4 @@ func (r *Runner) writeSummary(s *Summary) error {
 		}
 	}
 	return first
-}
-
-func sortedKeys(m map[string]string) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }

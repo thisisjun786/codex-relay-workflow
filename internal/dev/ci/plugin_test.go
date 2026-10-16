@@ -14,6 +14,8 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pluginversion"
 )
 
 // files is a payload fixture: text files of mode 100644.
@@ -126,7 +128,31 @@ func parse(t *testing.T, text string) map[string]any {
 // manifestErrs is manifestErrors of m, read as the check reads it from the manifest's text.
 func manifestErrs(t *testing.T, m doc, root string, p payload) []string {
 	t.Helper()
-	return manifestErrors(parse(t, dumps(m)), root, "t", p)
+	parsed := parse(t, dumps(m))
+	errs := manifestErrors(parsed, root, "t", p)
+	// the payload's version rules live at the artifact callers now (CRW-1582); the unit
+	// scenarios exercise the artifact ones
+	if p != nil && semverPattern.MatchString(manifestVersion(parsed)) {
+		errs = append(errs, versionErrors(parsed, p, "t")...)
+	}
+	return errs
+}
+
+// sourceFiles is the fixture a source checkout carries (CRW-1582): the manifest's recorded
+// version without its derived suffix, the fixed release a commit names. A manifest that does
+// not parse, or names no suffixed version, is left as the fixture wrote it.
+func sourceFiles(t *testing.T, f files) files {
+	t.Helper()
+	var m doc
+	if err := json.Unmarshal([]byte(f[manifestPath]), &m); err != nil {
+		return f
+	}
+	version, _ := m["version"].(string)
+	release, suffix, _ := strings.Cut(version, "+")
+	if suffix == "" {
+		return f
+	}
+	return f.with(manifestPath, dumps(m.set("version", release)))
 }
 
 func hygieneErrs(t *testing.T, f files, m doc) []string {
@@ -361,7 +387,7 @@ func Test47_PLG_8_MarketplaceEntryIsPinned(t *testing.T) {
 	expectFragment(t, "no entry", marketplaceErrs(t, testCatalog().set("plugins", []any{"x", 5})), "expected exactly one entry")
 	expectFragment(t, "plugins not a list", marketplaceErrs(t, testCatalog().set("plugins", 5)), "marketplace: plugins must be a list")
 	// Read from the revision: a committed wrong path fails the CLI even with a clean tree.
-	r := pluginRepo(t, goodFiles(t))
+	r := pluginRepo(t, sourceFiles(t, goodFiles(t)))
 	broken := catalogWithEntry(testEntry().set("source", source.set("path", "./plugins/elsewhere")))
 	r.write(marketplacePath, dumps(broken))
 	r.gitCommit("break")
@@ -497,7 +523,7 @@ func Test47_PLG_12_VersionNamesItsPayload(t *testing.T) {
 	expectEqual(t, "elided manifest", string(elided[manifestPath].data), dumps(testManifest()))
 	stale := recorded.set("version", "0.1.0+000000000000")
 	errs := manifestErrs(t, stale, "crw", good.with(manifestPath, dumps(stale)).payload())
-	expectFragment(t, "stale", errs, "does not name this payload. Record "+show(version))
+	expectFragment(t, "stale", errs, "does not name this payload. Expected "+show(version))
 	suffix := strings.SplitN(version, "+", 2)[1]
 	errs = manifestErrs(t, recorded, "crw", good.with("skills/crw-run/references/built.md", "built from "+suffix).payload())
 	expectFragment(t, "repeat", errs, "t skills/crw-run/references/built.md: a shipped file repeats the payload suffix")
@@ -509,8 +535,8 @@ func Test47_PLG_12_VersionNamesItsPayload(t *testing.T) {
 	// CLI: a committed skill edited after recording; an installed LICENSE edited.
 	r := pluginRepo(t, good.with("skills/crw-run/SKILL.md", testSkill+"\nAn extra paragraph.\n"))
 	got := pluginCLI(t, r.root)
-	if got.code != 1 || !strings.Contains(got.stderr, "does not name this payload") {
-		t.Errorf("CLI release digest: %+v", got)
+	if got.code != 1 || !strings.Contains(got.stderr, "must be a fixed release") {
+		t.Errorf("a committed suffixed manifest is not a source release: %+v", got)
 	}
 	dir := writePayload(t, good.with("LICENSE", "MIT, with a later edit"))
 	got = pluginPayload(t, dir)
@@ -519,37 +545,9 @@ func Test47_PLG_12_VersionNamesItsPayload(t *testing.T) {
 	}
 }
 
-func Test47_PLG_13_RecordVersionWritesAndSettles(t *testing.T) {
-	plain := goodFiles(t).with(manifestPath, dumps(testManifest()))
-	r := pluginRepo(t, plain)
-	written := func(r *fixtureRepo) string {
-		data, err := os.ReadFile(filepath.Join(r.root, "plugins/crw", manifestPath))
-		if err != nil {
-			t.Fatal(err)
-		}
-		return string(data)
-	}
-	got := goCheck(t, r.root, nil, "plugin", "--record-version")
-	want := goodFiles(t)[manifestPath]
-	version := parse(t, want)["version"].(string)
-	expectEqual(t, "record", got, result{0, "Version " + version + " in " + manifestPath +
-		", recorded from 4 shipped files. Commit it: the release payload is read from the revision, not from this tree\n", ""})
-	expectEqual(t, "written manifest", written(r), want)
-	got = goCheck(t, r.root, nil, "plugin", "--record-version")
-	expectEqual(t, "again", got, result{0, "Version " + version + " in " + manifestPath + ": already recorded\n", ""})
-	expectEqual(t, "settled", written(r), want)
-	twice := doc(parse(t, goodFiles(t)[manifestPath]))
-	twice = twice.set("description", twice["version"])
-	r = pluginRepo(t, goodFiles(t).with(manifestPath, dumps(twice)))
-	got = goCheck(t, r.root, nil, "plugin", "--record-version")
-	if got.code != 1 || !strings.Contains(got.stderr, "elided") || strings.Contains(got.stderr, "panic") {
-		t.Errorf("cannot derive: %+v", got)
-	}
-}
-
 func Test47_PLG_14_RepositoryCheckReadsTheRevision(t *testing.T) {
 	good := goodFiles(t)
-	expectEqual(t, "healthy", pluginCLI(t, pluginRepo(t, good).root).code, 0)
+	expectEqual(t, "healthy", pluginCLI(t, pluginRepo(t, sourceFiles(t, good)).root).code, 0)
 	for _, row := range []struct {
 		f        files
 		fragment string
@@ -559,7 +557,7 @@ func Test47_PLG_14_RepositoryCheckReadsTheRevision(t *testing.T) {
 		{good.with("LICENSE", "Apache"), "repository license"},
 		{good.with(manifestPath, dumps(testManifest().set("license", "Apache-2.0"))), "license"},
 	} {
-		got := pluginCLI(t, pluginRepo(t, row.f).root)
+		got := pluginCLI(t, pluginRepo(t, sourceFiles(t, row.f)).root)
 		if got.code != 1 || !strings.Contains(got.stderr, row.fragment) {
 			t.Errorf("%s: %+v", row.fragment, got)
 		}
@@ -569,8 +567,8 @@ func Test47_PLG_14_RepositoryCheckReadsTheRevision(t *testing.T) {
 func Test47_PLG_15_RootSkillsEntryIsNeitherRequiredNorRead(t *testing.T) {
 	// The root `skills` compatibility link left in todo 44: nothing installs through it, so a
 	// checkout without it passes, and so does one whose root entry names something else.
-	expectEqual(t, "no link", pluginCLI(t, pluginRepo(t, goodFiles(t)).root).code, 0)
-	r := pluginRepo(t, goodFiles(t))
+	expectEqual(t, "no link", pluginCLI(t, pluginRepo(t, sourceFiles(t, goodFiles(t))).root).code, 0)
+	r := pluginRepo(t, sourceFiles(t, goodFiles(t)))
 	if err := os.Symlink("plugins/crw", filepath.Join(r.root, "skills")); err != nil {
 		t.Fatal(err)
 	}
@@ -579,7 +577,7 @@ func Test47_PLG_15_RootSkillsEntryIsNeitherRequiredNorRead(t *testing.T) {
 }
 
 func Test47_PLG_16_WorkingTreeGetsTheSameChecks(t *testing.T) {
-	r := pluginRepo(t, goodFiles(t))
+	r := pluginRepo(t, sourceFiles(t, goodFiles(t)))
 	r.write("plugins/crw/"+manifestPath, "not-json")
 	got := pluginCLI(t, r.root)
 	if got.code != 1 || !strings.Contains(got.stderr, "working tree") {
@@ -588,7 +586,7 @@ func Test47_PLG_16_WorkingTreeGetsTheSameChecks(t *testing.T) {
 	withPlan := goodFiles(t).with("skills/crw-plan/SKILL.md", "---\nname: crw-plan\ndescription: d\n---\n").
 		with("skills/crw-plan/agents/openai.yaml", testInterface("crw-plan"))
 	withPlan = recordedFiles(t, withPlan, doc(parse(t, withPlan[manifestPath])).set("version", "0.1.0"))
-	r = pluginRepo(t, withPlan)
+	r = pluginRepo(t, sourceFiles(t, withPlan))
 	if err := os.RemoveAll(filepath.Join(r.root, "plugins/crw/skills/crw-plan")); err != nil {
 		t.Fatal(err)
 	}
@@ -596,7 +594,7 @@ func Test47_PLG_16_WorkingTreeGetsTheSameChecks(t *testing.T) {
 	if got.code != 1 || !strings.Contains(got.stderr, "working tree: crw-plan ships in the revision but is missing here") {
 		t.Errorf("missing skill: %+v", got)
 	}
-	r = pluginRepo(t, goodFiles(t))
+	r = pluginRepo(t, sourceFiles(t, goodFiles(t)))
 	r.write("plugins/crw/notes.txt", "local")
 	got = pluginCLI(t, r.root)
 	if got.code != 1 || !strings.Contains(got.stderr, "working tree plugins/crw/notes.txt: untracked or ignored files") {
@@ -605,7 +603,7 @@ func Test47_PLG_16_WorkingTreeGetsTheSameChecks(t *testing.T) {
 }
 
 func Test47_PLG_17_DirectoryPayloadHasNoEmptyDirOrSymlink(t *testing.T) {
-	r := pluginRepo(t, goodFiles(t))
+	r := pluginRepo(t, sourceFiles(t, goodFiles(t)))
 	if err := os.Mkdir(filepath.Join(r.root, "plugins/crw/extra-empty"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -634,7 +632,34 @@ func Test47_PLG_17_DirectoryPayloadHasNoEmptyDirOrSymlink(t *testing.T) {
 // The --json report prints each top-level member on its own line, two spaces in, which is how
 // docs/plugin-packaging.md reads stopHooks and hooksDigest out of it with sed.
 func Test47_PLG_18_JSONReport(t *testing.T) {
-	root := repoRoot()
+	// The shipped payload committed under its fixed release (CRW-1582): the check reads a
+	// coherent revision, so the fixture holds the actual plugin files, catalog and LICENSE of
+	// this checkout with the manifest's fixed version.
+	p, payloadErrs := pluginversion.DirectoryPayload(filepath.Join(repoRoot(), pluginversion.PluginRelative))
+	if len(payloadErrs) != 0 {
+		t.Fatalf("payload: %v", payloadErrs)
+	}
+	r0 := newRepo(t)
+	for name, e := range p {
+		r0.write("plugins/crw/"+name, string(e.Data))
+		if e.Mode == "100755" {
+			if err := os.Chmod(filepath.Join(r0.root, "plugins/crw", name), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	license, err := os.ReadFile(filepath.Join(repoRoot(), "LICENSE"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := os.ReadFile(filepath.Join(repoRoot(), marketplacePath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r0.write("LICENSE", string(license))
+	r0.write(marketplacePath, string(catalog))
+	r0.gitCommit("package")
+	root := r0.root
 	got := goCheck(t, root, nil, "plugin", "--json")
 	var r map[string]any
 	if err := json.Unmarshal([]byte(got.stdout), &r); err != nil {

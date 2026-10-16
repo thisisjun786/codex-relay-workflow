@@ -35,7 +35,7 @@ import (
 // does not name this command.
 const backupStateUsage = `usage: crw install backup-state --to <dir> [--state <dir>] [--socket <path>]
 
-Copy the whole relay state directory to <dir> outside an install: the stopped byte copy the install
+Copy the relay databases and record files to <dir> outside an install: the stopped byte copy the install
 route takes before a swap that brings the additive DAG zone or an ordinary index, with the same manifest
 beside it and the same integrity_check gate. Unlike the install route it reads nothing of the store first, so
 a write-ahead log the service left unmerged is copied as it lies, beside relay.sqlite3. The relay service must be stopped: this command refuses while
@@ -46,6 +46,12 @@ must not lie inside the state directory or the runtime destination tree, exactly
 The manifest records the copy's integrityCheck and whether it is a restoreCandidate (true only when
 PRAGMA integrity_check passed on a scratch duplicate of the copy, never on the copy itself; the duplicate
 holds the copied log, so the check judges the store with its log replayed).
+Regenerable flow worktrees (land-wt, node-wt, wt and calls' wt/wt-N) are listed in the manifest without
+copying their contents only while a current cleanup ref proves the checkout preserved and pristine;
+worktrees with changed, unpreserved or unproven data are copied like any other directory. Links inside
+them are recorded without following them. The copy's files/bytes and free-space check exclude the
+proven worktrees. crw flow cleanup-worktrees previews accumulated worktrees; only its explicit
+--apply flag removes them.
 `
 
 // serviceReading is the relay's own service reading, the same signal the swap gate takes
@@ -67,12 +73,12 @@ var serviceReading = func(ctx context.Context, o Options) Object {
 func runBackupState(ctx context.Context, args []string, env scope.Env, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("crw install backup-state", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	to := flags.String("to", "", "the directory the whole relay state directory is copied to (required)")
+	to := flags.String("to", "", "the directory the relay databases and records are copied to (required)")
 	codexHome := flags.String("codex-home", "", "the Codex home (default $CODEX_HOME or ~/.codex)")
 	recordPath := flags.String("record", "", "the host record (default $XDG_STATE_HOME/codex-relay-workflow/host-record.json)")
 	issue := flags.String("issue", DefaultIssue, "the issue recorded as the evidence of this run")
 	socket := flags.String("socket", "", "the App Server socket the relay service reading is made against")
-	state := flags.String("state", "", "the relay state directory to copy")
+	state := flags.String("state", "", "the relay state directory whose databases and records are copied")
 	for _, arg := range args {
 		if arg == "--help" || arg == "-h" || arg == "help" {
 			fmt.Fprint(stdout, backupStateUsage)
@@ -166,5 +172,5 @@ func BackupState(ctx context.Context, o Options, dest string) (Object, int) {
 			field("note", "nothing but what is reported under stateBackup was written: a partial copy stays where it is and is never vouched for by a manifest it did not write.")}, Refused
 	}
 	return Object{field("command", "backup-state"), field("applied", true), field("stateBackup", backup),
-		field("note", "the state directory was copied byte for byte with the relay service stopped and the store's write gate held exclusively; the copy and its manifest stay where they are, and a rerun needs a new destination.")}, OK
+		field("note", "the state databases and records were copied byte for byte with the relay service stopped and the store's write gate held exclusively; preserved regenerable worktrees were inventoried without their contents. The copy and its manifest stay where they are, and a rerun needs a new destination.")}, OK
 }

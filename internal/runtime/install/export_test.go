@@ -154,7 +154,7 @@ func ReplaceModeSync(wrap func(path string, next func(string) error) error) (res
 // ListedModes is what the backup's listing of a state directory records for each entry: its mode in the source and
 // the mode its copy is to be given.
 func ListedModes(source, dbPath string) (map[string][2]os.FileMode, error) {
-	entries, _, err := listState(source, dbPath)
+	entries, _, err := listState(context.Background(), source, dbPath)
 	if err != nil {
 		return nil, err
 	}
