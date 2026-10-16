@@ -15,6 +15,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
+	"github.com/thisisjun786/codex-relay-workflow/internal/publication"
 	"github.com/thisisjun786/codex-relay-workflow/internal/publishpolicy"
 	"github.com/thisisjun786/codex-relay-workflow/internal/review"
 )
@@ -45,13 +47,44 @@ func (e env) forgeFor(cfg Config) forge {
 }
 
 // ghForge is forge over "gh api". The body travels on stdin (-F body=@-), so no text of a review reaches a command line.
-type ghForge struct{ binary, dir string }
+type ghForge struct{ binary, dir, repo string }
+
+// resolve pins the repository gh itself posts to — its default target, which may differ from the
+// checkout's origin remote (CRW-1549: the policy that scrubs the text must be the policy of the
+// repository that receives it). A failure answers an error and nothing is posted.
+func (g ghForge) resolve(ctx context.Context) (ghForge, error) {
+	if g.repo != "" {
+		return g, nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	c := exec.CommandContext(ctx, g.binary, "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner")
+	c.Dir, c.WaitDelay = g.dir, 5*time.Second
+	out, err := c.Output()
+	if err != nil {
+		return ghForge{}, fmt.Errorf("resolve GitHub publication repository: %w", err)
+	}
+	repo := strings.TrimSpace(string(out))
+	if err := crwconfig.ValidateRepo(repo); err != nil {
+		return ghForge{}, errors.New("gh did not resolve an OWNER/NAME publication repository")
+	}
+	g.repo = repo
+	return g, nil
+}
 
 func (g ghForge) api(ctx context.Context, body string, args ...string) ([]byte, error) {
+	bound, err := g.resolve(ctx)
+	if err != nil {
+		return nil, err
+	}
+	g = bound
 	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
 	if body != "" {
 		args = append(args, "-F", "body=@-")
+	}
+	for i, a := range args {
+		args[i] = strings.Replace(a, "{owner}/{repo}", g.repo, 1)
 	}
 	c := exec.CommandContext(ctx, g.binary, append([]string{"api"}, args...)...)
 	c.Dir, c.WaitDelay = g.dir, 5*time.Second
@@ -69,6 +102,14 @@ func (g ghForge) api(ctx context.Context, body string, args ...string) ([]byte, 
 
 // List returns the comments, oldest first. gh prints the pages one after another, so the output is read as a sequence of arrays.
 func (g ghForge) List(ctx context.Context, pr int) ([]prComment, error) {
+	if g, err := g.resolve(ctx); err != nil {
+		return nil, err
+	} else {
+		return g.list(ctx, pr)
+	}
+}
+
+func (g ghForge) list(ctx context.Context, pr int) ([]prComment, error) {
 	out, err := g.api(ctx, "", "--method", "GET", "--paginate", fmt.Sprintf("repos/{owner}/{repo}/issues/%d/comments?per_page=100", pr))
 	if err != nil {
 		return nil, err
@@ -93,7 +134,48 @@ func (g ghForge) one(ctx context.Context, body string, args ...string) (c prComm
 	return c, err
 }
 
+// prepareBody scrubs the comment body with the checkout's publication policy (CRW-1549): postSummary
+// already does this, so a prepared copy that reaches here again changes nothing; a direct call gets
+// the same treatment. The event, if the body changed or was stopped, goes to stderr. A blocked text
+// keeps the historical refusal wording and never the value.
+func (g ghForge) prepareBody(ctx context.Context, body string) (string, error) {
+	pol, err := publication.Policy(g.repo, os.Getenv)
+	if err != nil {
+		return "", err
+	}
+	c := publishpolicy.HostContext()
+	if g.dir != "" {
+		c.Paths = append(c.Paths, g.dir)
+	}
+	out, err := publication.Prepare(g.repo, "pr_comment", "body", body, c, pol, os.Stderr)
+	if err != nil {
+		return "", secretRefusal(body, err)
+	}
+	return out, nil
+}
+
+// secretRefusal is ErrSecret in the wording this command has always used, with the line the secret
+// is on when the line-based detector sees it — the value itself is never in it.
+func secretRefusal(body string, err error) error {
+	if !errors.Is(err, publishpolicy.ErrSecret) {
+		return err
+	}
+	if line, _ := publishpolicy.RawSecretLine(body); line > 0 {
+		return fmt.Errorf("GitHub summary blocked (secret-in-github-text) at body:%d", line)
+	}
+	return errors.New("GitHub summary blocked (secret-in-github-text)")
+}
+
 func (g ghForge) Create(ctx context.Context, pr int, body string) (prComment, error) {
+	g2, err := g.resolve(ctx)
+	if err != nil {
+		return prComment{}, err
+	}
+	g = g2
+	body, err = g.prepareBody(ctx, body)
+	if err != nil {
+		return prComment{}, err
+	}
 	if err := checkSummaryBody(body); err != nil {
 		return prComment{}, err
 	}
@@ -101,16 +183,26 @@ func (g ghForge) Create(ctx context.Context, pr int, body string) (prComment, er
 }
 
 func (g ghForge) Update(ctx context.Context, id int64, body string) (prComment, error) {
+	g2, err := g.resolve(ctx)
+	if err != nil {
+		return prComment{}, err
+	}
+	g = g2
+	body, err = g.prepareBody(ctx, body)
+	if err != nil {
+		return prComment{}, err
+	}
 	if err := checkSummaryBody(body); err != nil {
 		return prComment{}, err
 	}
 	return g.one(ctx, body, "--method", "PATCH", fmt.Sprintf("repos/{owner}/{repo}/issues/comments/%d", id))
 }
 
-// The exact rendered body is data. A refusal never includes its matching value.
+// The exact rendered body is data; only a secret shape stops it now (privacy kinds were already
+// scrubbed upstream). A refusal never includes its matching value.
 func checkSummaryBody(body string) error {
-	if line, found := publishpolicy.RawSecretLine(body); found {
-		return fmt.Errorf("GitHub summary blocked (secret-in-github-text) at body:%d", line)
+	if r := publishpolicy.Scrub(body, publishpolicy.Context{}, publishpolicy.Policy{Disabled: true}); r.Blocked {
+		return fmt.Errorf("GitHub summary blocked (secret-in-github-text)")
 	}
 	return nil
 }
@@ -173,6 +265,37 @@ func postSummary(ctx context.Context, cfg Config, f forge, sum *Summary, stderr 
 		return fmt.Errorf("the artifact %s is not a valid review: %w", path, err)
 	}
 	body := renderSummary(a, sha)
+	// the posted copy is the sanitized one (CRW-1549): it is scrubbed before the comparison, so the
+	// stored comment and what it is compared to are the same text; the artifact itself is not
+	// touched. When the forge is gh the repository it resolves is the policy's repository — the
+	// target gh actually posts to, which may differ from the checkout's origin.
+	var repo string
+	var pol publishpolicy.Policy
+	var perr error
+	if gh, ok := f.(ghForge); ok {
+		g2, gerr := gh.resolve(ctx)
+		if gerr != nil {
+			return gerr
+		}
+		f = g2
+		repo = g2.repo
+		pol, perr = publication.Policy(g2.repo, os.Getenv)
+	} else {
+		repo, pol, perr = publication.ForCheckout(ctx, cfg.Repo)
+	}
+	err = perr
+	if err != nil {
+		return err
+	}
+	pubctx := publishpolicy.HostContext()
+	if cfg.Repo != "" {
+		pubctx.Paths = append(pubctx.Paths, cfg.Repo)
+	}
+	raw := body
+	body, err = publication.Prepare(repo, "pr_comment", "body", body, pubctx, pol, stderr)
+	if err != nil {
+		return secretRefusal(raw, err)
+	}
 	comments, err := f.List(ctx, cfg.PR)
 	if err != nil {
 		return err

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -234,9 +235,110 @@ func TestReadingAnIssueStillRefusesAPullRequest(t *testing.T) {
 	}
 }
 
+// CRW-1549: text bound for the public forge passes the publication scrub before the request: host
+// paths, the host's name, private addresses and e-mail are replaced, never sent as they are.
+func TestPublicPullRequestScrubsInternalText(t *testing.T) {
+	f := newFake(t)
+	host, _ := os.Hostname()
+	var sent map[string]any
+	f.handle("POST /repos/o/r/pulls", func(w http.ResponseWriter, r *http.Request) {
+		reqs := f.requests()
+		if err := json.Unmarshal([]byte(reqs[len(reqs)-1].Body), &sent); err != nil {
+			t.Errorf("decode: %v", err)
+		}
+		writeJSON(w, 201, pullJSON(21, "open", false, map[string]any{"body": sent["body"], "title": sent["title"]}))
+	})
+	body := "Work ran in /home/private/build on " + host + " at 10.2.3.4; dev@private.example knows."
+	_, err := newClient(t, f).OpenPullRequest(bg, NewPullRequest{Head: "crw/m1", Base: "dev", Title: "log /home/private/build", Body: body,
+		Issues: []Ref{{Repo: "o/r", Number: 10}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sentBody, _ := sent["body"].(string)
+	sentTitle, _ := sent["title"].(string)
+	for _, want := range []string{"/home/private/build", host, "10.2.3.4", "dev@private.example"} {
+		if strings.Contains(sentBody+sentTitle, want) {
+			t.Errorf("the sent text holds %q: title %q body %q", want, sentTitle, sentBody)
+		}
+	}
+	for _, want := range []string{"[path]", "[hostname]", "[ip]", "[email]"} {
+		if !strings.Contains(sentBody+sentTitle, want) {
+			t.Errorf("the sent text lacks %q: title %q body %q", want, sentTitle, sentBody)
+		}
+	}
+}
+
+// CRW-1549: a token-shaped secret in public text stops the request before any HTTP: nothing is
+// sent, and the error carries no echo of the secret.
+func TestPublicPullRequestStopsSecretBeforeHTTP(t *testing.T) {
+	f := newFake(t)
+	f.reply("POST /repos/o/r/pulls", 201, pullJSON(21, "open", false, nil))
+	secret := "ghp_" + strings.Repeat("A", 24)
+	_, err := newClient(t, f).OpenPullRequest(bg, NewPullRequest{Head: "crw/m1", Base: "dev", Title: "milestone M1",
+		Body: "the key is " + secret, Issues: []Ref{{Repo: "o/r", Number: 10}}})
+	if err == nil {
+		t.Fatal("a token-shaped secret reached the forge")
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Errorf("the error echoes the secret: %v", err)
+	}
+	if n := len(f.requests()); n != 0 {
+		t.Errorf("%d requests left for the forge; want 0", n)
+	}
+}
+
 func TestParseCarries(t *testing.T) {
 	got := ParseCarries("o/r", "Carries: #1, o/r#2\n**Carries:** other/x#3 #1\nnot Carries: #4\n")
 	if want := []Ref{{Repo: "o/r", Number: 1}, {Repo: "o/r", Number: 2}, {Repo: "other/x", Number: 3}}; !reflect.DeepEqual(got, want) {
 		t.Errorf("ParseCarries = %v; want %v", got, want)
+	}
+}
+
+// TestPublicPullRequestPreservesCarriedReferences (CRW-1549 v2): the publication scrub must leave
+// relative source file names and `owner/repo#N` Carries references intact in a real POST body — the
+// issues it names stay machine-readable.
+func TestPublicPullRequestPreservesCarriedReferences(t *testing.T) {
+	for _, repo := range []string{
+		"acme/session-management",
+		"session-maintainers/thread-status-tests",
+		"acme/req_0123456789abcdef01234567",
+		"acme/123e4567-e89b-42d3-a456-426614174000",
+	} {
+		t.Run(repo, func(t *testing.T) {
+			f := newFake(t)
+			var sent map[string]any
+			f.handle("POST /repos/"+repo+"/pulls", func(w http.ResponseWriter, r *http.Request) {
+				reqs := f.requests()
+				if err := json.Unmarshal([]byte(reqs[len(reqs)-1].Body), &sent); err != nil {
+					t.Errorf("decode: %v", err)
+				}
+				writeJSON(w, 201, pullJSON(21, "open", false, map[string]any{
+					"body": sent["body"], "head": map[string]any{"ref": "feature", "sha": strings.Repeat("a", 40), "repo": map[string]any{"full_name": repo}},
+				}))
+			})
+			g, err := NewGitHub(repo, StaticToken(testToken), WithBaseURL(f.srv.URL))
+			if err != nil {
+				t.Fatal(err)
+			}
+			body := "See internal/flow/engine/session_evidence.go and thread_status_test.go."
+			wantBody := body + "\n\nCarries: " + repo + "#7"
+			pr, err := g.OpenPullRequest(bg, NewPullRequest{Head: "feature", Base: "dev", Title: "Fix source references", Body: body,
+				Issues: []Ref{{Repo: repo, Number: 7}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if sent["body"] != wantBody {
+				t.Errorf("sent body %q, want %q", sent["body"], wantBody)
+			}
+			if !reflect.DeepEqual(pr.Issues, []Ref{{Repo: repo, Number: 7}}) {
+				t.Errorf("issues %v", pr.Issues)
+			}
+			if refs := ParseCarries(repo, wantBody); !reflect.DeepEqual(refs, []Ref{{Repo: repo, Number: 7}}) {
+				t.Errorf("ParseCarries %v", refs)
+			}
+			if n := len(f.requests()); n != 1 {
+				t.Errorf("%d requests; want 1", n)
+			}
+		})
 	}
 }

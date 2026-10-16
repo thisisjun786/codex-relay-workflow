@@ -99,7 +99,7 @@ function missingLine(a) {
 // (internal/flow/roles/architect.md) states the same two to the architect.
 const EXECUTOR_CONTRACT = [
   '- the executor never commits: its edits stay uncommitted in its own directory, and it runs no branch-level git command;',
-  '- the run commits the directory after the executor\'s turn, with the fixed message `crw <node> <call>` and the request id, so no done condition can ask for text in a commit message or a commit body;',
+  '- the run commits the directory after the executor\'s turn, with the fixed message `crw <node> [call_id:<12-hex SHA-256>]`, a blank line and one `CRW-Request: <64-hex SHA-256>` line. The lowercase hashes are the first 12 hex digits of the original call id\'s SHA-256 and all 64 hex digits of the original request id\'s SHA-256; raw call/run/request ids are not written. This metadata format is fixed before the repository\'s publication filter runs, so no done condition can ask for text in a commit message or a commit body;',
   '- the executor reports a RECEIPT (outcome, files, verification, summary, gap, research_question, plan_mismatch), which has no field for a commit, a commit message or the reason for an exception;',
   '- a done condition is a check that runs at the committed HEAD of the node or a state of the worktree; one that needs the executor to commit first, or a check that compares with HEAD before the run\'s commit exists (as `make gui` does through `crw-dev ci gui-drift`), cannot be carried out;',
   '- a generated asset is planned with its generation command and its verification command, the verification running at the committed HEAD.',
