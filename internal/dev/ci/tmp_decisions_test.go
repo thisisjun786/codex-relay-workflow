@@ -114,19 +114,6 @@ const (
 // tmpPending are the sites still to move, each with the unit that moves it. Each A5 unit deletes its
 // own entries; U-A5-9 deletes the mechanism and adds TestNoPendingTempDecisions.
 var tmpPending = []tmpEntry{
-	{"internal/flow/ops/gitsnap.go", `dir, err := os.MkdirTemp("", "crw-snapshot-")`, tmpU8},
-	{"internal/flow/ops/gitsnap.go", `dir, err := os.MkdirTemp("", "crw-restore-")`, tmpU8},
-	{"internal/relay/dagsched/baserefresh_git.go", `dir, err := os.MkdirTemp("", "dag-base-refresh-")`, tmpU8},
-	{"internal/relay/dagsched/conflicts.go", `dir, err := os.MkdirTemp("", "dag-merge-tree-")`, tmpU8},
-	{"internal/relay/dagsched/integration_batch.go", `tmp, err := os.MkdirTemp("", "crw-965-integrate-")`, tmpU8},
-	{"internal/relay/dagsched/integration_batch.go", `tmp, err := os.MkdirTemp("", "crw-965-verify-")`, tmpU8},
-	{"internal/relay/mergeturn/train.go", `dir, err := os.MkdirTemp("", "crw-train-")`, tmpU8},
-	{"internal/relay/store/hold.go", `dir, err := os.MkdirTemp("", "crw-projection-")`, tmpU8},
-	{"internal/relay/store/ownership/record.go", `dir, err := os.MkdirTemp("", "crw-ownership-")`, tmpU8},
-	{"internal/runtime/doctor/hooktrust_retrust.go", `temp, err := os.MkdirTemp("", "crw-retrust-verify-")`, tmpU8},
-	{"internal/runtime/exercise/exercise.go", `scratch, err := os.MkdirTemp("", "crw-bridge-exercise-")`, tmpU8},
-	{"internal/runtime/install/archive.go", `scratch, err := os.MkdirTemp("", "crw-install-release-")`, tmpU8},
-	{"internal/skill/base_refresh.go", `dir, err := os.MkdirTemp("", "base-refresh-")`, tmpU8},
 	{"plugins/crw/skills/crw-dev-visualizer/scripts/diagram-to-html.sh", `OUTDIR="/tmp/codex-diagrams"`, tmpU9},
 }
 

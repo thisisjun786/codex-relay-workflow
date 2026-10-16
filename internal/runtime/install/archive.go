@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/definition"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // SumsName is the checksum file a release publishes beside its archives (.goreleaser.yaml).
@@ -94,7 +95,7 @@ func Resolve(ctx context.Context, source Source) (Archive, func(), error) {
 		if !releaseVersion.MatchString(version) {
 			return Archive{}, done, refuse("--release %q is not a release tag (v<version>, the version in the archive name's grammar: letters, digits, '.', '+', '~' and '-', starting with a letter or digit); nothing was fetched", source.Release)
 		}
-		scratch, err := os.MkdirTemp("", "crw-install-release-")
+		scratch, err := tmploc.MkdirTemp("crw-install-release-")
 		if err != nil {
 			return Archive{}, done, err
 		}

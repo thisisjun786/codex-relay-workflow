@@ -14,6 +14,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // ConflictInput names two implementation nodes of a plan and the heads of their parallel branches in a local checkout of one repository.
@@ -231,7 +232,7 @@ func isolate(ctx context.Context, checkout string) (*isolated, error) {
 	if err != nil {
 		return nil, err
 	}
-	dir, err := os.MkdirTemp("", "dag-merge-tree-")
+	dir, err := tmploc.MkdirTemp("dag-merge-tree-")
 	if err != nil {
 		return nil, err
 	}
