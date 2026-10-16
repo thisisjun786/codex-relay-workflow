@@ -7,7 +7,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -68,8 +67,6 @@ func longDir(t *testing.T) string {
 	}
 	return long
 }
-
-var integrationTmpName = regexp.MustCompile(`^crw-[0-9a-f]{8}$`)
 
 // TestLandHeadVerifyAndBatchVerifyShareTheRunsTMPDIR (F6, not parallel: the run's body applies the recorded env to this process): a
 // project-lane run started with TMPDIR A runs its process in a shell with another TMPDIR B, or none; the node's crw.verify runs its
