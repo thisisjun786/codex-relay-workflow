@@ -134,12 +134,17 @@ func newBackend(cfg Config) (*Backend, error) {
 // of a thread it started when the first turn there ends (it only retains a never-run thread), and a host sends a thread's
 // notifications only to subscribed connections, so without the hold the second turn of a call - a repair, a fix - would
 // never be heard on the bus.
-func (b *Backend) hold(ctx context.Context, thread string) error {
+//
+// The hold's thread/resume carries the call's run tools as leaf keys (tools.ShellOverrides; none without tools), so a thread the
+// host loads cold on it, after an App Server restart, gets them in its shell as the thread/start or thread/fork that created it did
+// (CRW-1559). The tools come from the caller, per call: the backend keeps none. A thread this process already holds is not resumed
+// again and keeps the shell it was loaded with, which within a call is that call's.
+func (b *Backend) hold(ctx context.Context, thread string, tools *engine.RepositoryTools) error {
 	b.threads.Add(thread)
 	if b.client.ThreadHeld(thread) {
 		return nil
 	}
-	if err := b.client.HoldThread(ctx, thread); err != nil {
+	if err := b.client.HoldThreadWith(ctx, thread, tools.ShellOverrides()); err != nil {
 		return requestError(err)
 	}
 	return nil

@@ -2,11 +2,14 @@ package agent_test
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
@@ -115,10 +118,11 @@ func TestRepositoryToolsReachForkedThreadShell(t *testing.T) {
 }
 
 // After an App Server restart a thread the flow goes on with is loaded again by a thread/resume, which rebuilds its configuration
-// from the host's: its shell has the server's policy only, and the backend keeps no tools to send with the resume. The turn the run
-// sends there names the tools in its text: the go, the setting and the prefix. Here the first process is killed after it asked for
-// the call's turn and before it sent it; the host restarts; the second process proves the turn absent and sends it on the cold thread.
-func TestAColdResumedTurnNamesTheRepositoryTools(t *testing.T) {
+// from the host's and that request's config only. The backend resumes it with the call's run tools as leaf keys (CRW-1559), taken from
+// the turn's spec and kept nowhere, so its shell has the server's policy plus the tools again, and the turn the run sends there still
+// names them in its text: the go, the setting and the prefix. Here the first process is killed after it asked for the call's turn and
+// before it sent it; the host restarts; the second process proves the turn absent and sends it on the cold thread.
+func TestAColdResumedThreadGetsTheRepositoryTools(t *testing.T) {
 	e := newEnv(t, withOwner("proc-1"))
 	serverPolicy(e)
 	tools := toolsFor1488()
@@ -143,12 +147,12 @@ func TestAColdResumedTurnNamesTheRepositoryTools(t *testing.T) {
 		t.Fatal("the turn on the cold thread sent no thread/resume")
 	}
 	for _, r := range resumes {
-		if _, has := r.Params["config"]; has {
-			t.Errorf("a thread/resume carries config %v: the backend keeps no tools", r.Params["config"])
+		if got := r.Params["config"]; !jsonEqualAny(t, got, tools.ShellOverrides()) {
+			t.Errorf("a thread/resume carries config %v, want the run's tools as leaf keys %v", got, tools.ShellOverrides())
 		}
 	}
-	if got := shellPolicyOf(t, e, thread); !reflect.DeepEqual(got, noTools) {
-		t.Errorf("the resumed thread's shell policy is %v, want the server's alone %v", got, noTools)
+	if got := shellPolicyOf(t, e, thread); !reflect.DeepEqual(got, withTools) {
+		t.Errorf("the resumed thread's shell policy is %v, want the server's with the tools %v", got, withTools)
 	}
 	starts := e.requests("turn/start")
 	if len(starts) != 1 {
@@ -159,5 +163,129 @@ func TestAColdResumedTurnNamesTheRepositoryTools(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Errorf("the cold-resumed turn does not name %q:\n%s", want, text)
 		}
+	}
+}
+
+// otherTools1559 are another run's tools: another go.
+func otherTools1559() *engine.RepositoryTools {
+	return &engine.RepositoryTools{
+		Env:    []string{"PATH=/opt/go-1.26/bin:/usr/bin", "GOROOT=/opt/go-1.26"},
+		Prefix: `PATH=/opt/go-1.26/bin:"$PATH" GOROOT=/opt/go-1.26`,
+		Facts:  []string{"go: /opt/go-1.26/bin/go (verifier.go_root /opt/go-1.26 in /cfg/config.json), the go crw.verify runs"},
+	}
+}
+
+// resumeConfigs are the config of each thread/resume the host received for thread, in order (nil for one with none).
+func resumeConfigs(e *env, thread string) []any {
+	var out []any
+	for _, r := range e.requests("thread/resume") {
+		if str(r.Params, "threadId") == thread {
+			out = append(out, r.Params["config"])
+		}
+	}
+	return out
+}
+
+// hostRestart restarts the App Server under the backend's connection and waits until the client has seen its socket close, as it
+// does when a real host goes away; the next request connects again.
+func hostRestart(t *testing.T, e *env) {
+	t.Helper()
+	e.threads.Restart()
+	deadline := time.Now().Add(10 * time.Second)
+	for e.client.ConnectionID() != 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("the client never saw the restarted host's socket close")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// CRW-1559: the backend keeps no run's tools. Three runs share one backend and one host: run A with tools, run B with other tools
+// and run C with none. After an App Server restart each thread is loaded cold again by the hold of its call's next turn, and each
+// resume carries only its own run's leaf keys (C's none), so each shell is the server's policy plus that run's tools. A cold
+// AwaitTurn, as the first hold after a restart, carries its run's keys too, and the RunTurn after it does not resume again.
+func TestTwoRunsColdResumeEachWithItsOwnTools(t *testing.T) {
+	e := newEnv(t)
+	serverPolicy(e)
+	type run struct {
+		name   string
+		tools  *engine.RepositoryTools
+		policy map[string]any
+		thread engine.ThreadInfo
+		last   engine.TurnOutcome
+	}
+	runs := []*run{
+		{name: "a", tools: toolsFor1488(), policy: withTools},
+		{name: "b", tools: otherTools1559(), policy: map[string]any{"inherit": "none", "set": map[string]any{"KEEP": "x", "PATH": "/opt/go-1.26/bin:/usr/bin", "GOROOT": "/opt/go-1.26"}}},
+		{name: "c", tools: nil, policy: noTools},
+	}
+	role := "explorer"
+	spec := e.policy.Roles[role]
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	turn := func(r *run, k int) {
+		t.Helper()
+		call := "c_" + r.name
+		op := fmt.Sprintf("%s/t%d", call, k)
+		out, err := e.backend.RunTurn(ctx, engine.TurnSpec{CallID: call, Op: op, K: k, ThreadID: r.thread.ID, Role: role, Pair: spec.Pair,
+			Input: "crw-flow-op: " + op + "\n\nwork", Tools: r.tools})
+		if err != nil || out.Failed != nil {
+			t.Fatalf("run %s turn %d: %v %+v", r.name, k, err, out.Failed)
+		}
+		r.last = out
+	}
+	for _, r := range runs {
+		cwd := filepath.Join(e.root, "run-"+r.name)
+		if err := os.MkdirAll(cwd, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		info, err := e.backend.StartThread(ctx, engine.ThreadSpec{CallID: "c_" + r.name, Role: role, Pair: spec.Pair, Sandbox: spec.Sandbox, Cwd: cwd, Tools: r.tools})
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.thread = info
+		turn(r, 1)
+	}
+	hostRestart(t, e)
+	for _, r := range runs {
+		turn(r, 2)
+	}
+	for _, r := range runs {
+		configs := resumeConfigs(e, r.thread.ID)
+		if len(configs) != 1 {
+			t.Fatalf("run %s: %d thread/resume requests after the restart, want 1: %v", r.name, len(configs), configs)
+		}
+		want := r.tools.ShellOverrides()
+		if want == nil {
+			if configs[0] != nil {
+				t.Errorf("run %s has no tools but its thread/resume carries config %v", r.name, configs[0])
+			}
+		} else if !jsonEqualAny(t, configs[0], want) {
+			t.Errorf("run %s: its thread/resume carries config %v, want only its own leaf keys %v", r.name, configs[0], want)
+		}
+		if got := shellPolicyOf(t, e, r.thread.ID); !reflect.DeepEqual(got, r.policy) {
+			t.Errorf("run %s: the resumed thread's shell policy is %v, want %v", r.name, got, r.policy)
+		}
+	}
+
+	// A cold AwaitTurn as the first hold: run A follows its last turn after a second restart, then runs another turn.
+	a := runs[0]
+	hostRestart(t, e)
+	if _, err := e.backend.AwaitTurn(ctx, a.thread.ID, a.last.TurnID, "c_a/t2", a.tools); err != nil {
+		t.Fatal(err)
+	}
+	configs := resumeConfigs(e, a.thread.ID)
+	if len(configs) != 2 || !jsonEqualAny(t, configs[1], a.tools.ShellOverrides()) {
+		t.Fatalf("the cold AwaitTurn's thread/resume configs are %v, want a second one with run a's leaf keys", configs)
+	}
+	if got := shellPolicyOf(t, e, a.thread.ID); !reflect.DeepEqual(got, a.policy) {
+		t.Errorf("after the cold AwaitTurn the thread's shell policy is %v, want %v", got, a.policy)
+	}
+	turn(a, 3)
+	if configs := resumeConfigs(e, a.thread.ID); len(configs) != 2 {
+		t.Errorf("the RunTurn after the AwaitTurn resumed the thread again: %d thread/resume requests, want 2", len(configs))
+	}
+	if got := shellPolicyOf(t, e, a.thread.ID); !reflect.DeepEqual(got, a.policy) {
+		t.Errorf("after the next turn the thread's shell policy is %v, want %v", got, a.policy)
 	}
 }

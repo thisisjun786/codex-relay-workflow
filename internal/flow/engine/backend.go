@@ -104,6 +104,9 @@ type TurnSpec struct {
 	Repair bool
 	// QA is set on a turn of a QA capture call's thread (the capture turn and the turns that continue it).
 	QA bool
+	// Tools are the run's repository tools for this turn (nil: none). A backend that loads the turn's thread again (a cold
+	// thread/resume after an App Server restart) gives them to its shell there, as the thread's creation did (CRW-1559).
+	Tools *RepositoryTools
 	// Started is called once the host has accepted the turn and named it; the packet counts as delivered from then on.
 	Started func(turnID string)
 }

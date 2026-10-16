@@ -121,7 +121,7 @@ func (b *Backend) RunTurn(ctx context.Context, spec engine.TurnSpec) (engine.Tur
 	if err := b.bindTurn(spec); err != nil {
 		return engine.TurnOutcome{}, err
 	}
-	if err := b.hold(ctx, spec.ThreadID); err != nil {
+	if err := b.hold(ctx, spec.ThreadID, spec.Tools); err != nil {
 		return engine.TurnOutcome{}, err
 	}
 	feed := b.client.Bus().Subscribe(spec.ThreadID)
@@ -278,7 +278,7 @@ func (w *turnWatch) await(ctx context.Context) (engine.TurnOutcome, error) {
 			if out, finished, err := poll(); finished {
 				return out, err
 			}
-			_ = b.hold(rpc, w.spec.ThreadID)
+			_ = b.hold(rpc, w.spec.ThreadID, w.spec.Tools)
 		case <-ticker.C:
 			if out, finished, err := poll(); finished {
 				return out, err
