@@ -138,28 +138,23 @@ func runSkillUnitCheckProblems(section string) []string {
 	return problems
 }
 
-// spawnPolicyUnitCheckProblems judges the reviewer rows of the spawn policy: SP-REV-1, SP-REV-2 and SP-EXPL-3 are the old reviewer
-// path, and SP-REV-1 says what the project lane does instead.
+// spawnPolicyUnitCheckProblems judges the spawn policy's account of the node's judgment: the rows of the old reviewer path (SP-REV-1,
+// SP-REV-2 and SP-EXPL-3, retired by CRW-1429) are gone, and the executor's row SP-EXEC-1 says the run judges a node by its unit check.
 func spawnPolicyUnitCheckProblems(page string) []string {
 	var problems []string
 	for _, id := range []string{"SP-REV-1", "SP-REV-2", "SP-EXPL-3"} {
-		row := lineWithPrefix(page, "| `"+id+"` |")
-		if row == "" {
-			problems = append(problems, "the spawn policy has no row "+id)
-			continue
-		}
-		if !regexp.MustCompile(`(?i)old reviewer path`).MatchString(row) {
-			problems = append(problems, id+" does not name the old reviewer path")
+		if lineWithPrefix(page, "| `"+id+"` |") != "" {
+			problems = append(problems, "the spawn policy keeps the row of "+id+", a rule of the retired reviewer path")
 		}
 	}
-	if row := lineWithPrefix(page, "| `SP-REV-1` |"); !regexp.MustCompile("(?i)unit check[^|]*`crw.unitCheck`|`crw.unitCheck`[^|]*unit check").MatchString(row) {
-		problems = append(problems, "SP-REV-1 does not say the project lane judges a node by its unit check (crw.unitCheck)")
+	if row := lineWithPrefix(page, "| `SP-EXEC-1` |"); !regexp.MustCompile("(?i)unit check[^|]*`crw.unitCheck`|`crw.unitCheck`[^|]*unit check").MatchString(row) {
+		problems = append(problems, "SP-EXEC-1 does not say the run judges a node by its unit check (crw.unitCheck)")
 	}
 	return problems
 }
 
 // flowPageUnitCheckProblems judges the canon's flow page: the ownership table's audit row and step 3 of the C4 procedure name the
-// unit check (step 3 keeps the words "candidate review", which TestFlowControlOwnershipTableWording reads).
+// unit check, and step 3 puts it before the commit.
 func flowPageUnitCheckProblems(section string) []string {
 	var problems []string
 	audit := lineWithPrefix(section, "| Audit |")
@@ -167,8 +162,8 @@ func flowPageUnitCheckProblems(section string) []string {
 		problems = append(problems, "the Audit row does not name the unit check: "+audit)
 	}
 	step := lineWithPrefix(section, "3. ")
-	if !strings.Contains(step, "candidate review") || !regexp.MustCompile(`(?i)unit check[^.]*before[^.]*commit`).MatchString(step) {
-		problems = append(problems, "step 3 of the C4 procedure is not the candidate review by the unit check before the commit: "+step)
+	if !regexp.MustCompile(`(?i)unit check[^.]*before[^.]*commit`).MatchString(step) {
+		problems = append(problems, "step 3 of the C4 procedure is not the unit check before the commit: "+step)
 	}
 	return problems
 }
