@@ -2,6 +2,9 @@ package faults
 
 import (
 	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -187,4 +190,80 @@ func TestFaultNoticeIDsIgnoreWording(t *testing.T) {
 		t.Fatalf("decision notification %v %v", decision, err)
 	}
 	check("decision notification_id", decision.Text("notification_id"), wantDecision)
+}
+
+// CRW-1554 (follow-up of CRW-1448): the clears text of a fault class is a contract text (contract/schema/fault-kinds.json
+// holds the same words, and Test22_FLT_2_Registry requires the two to be equal), and the publication summary of every
+// fault carries it as "clears when: ...". It names the layer (부모), never the relay role id `supervisor` as a bare word,
+// in the declared class and in the contract file alike. integration_target_moved says the blocking notice is not withdrawn
+// before the 부모 is told.
+func TestClearsTextNamesTheLayers(t *testing.T) {
+	t.Parallel()
+	for name, policy := range declaredClasses {
+		requireNoRoleWords(t, "the clears text of "+name, policy.clears)
+	}
+	requireNames(t, "the clears text of integration_target_moved", declaredClasses["integration_target_moved"].clears, "before the 부모 is told")
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "contract", "schema", "fault-kinds.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest struct {
+		Classes map[string]struct{ Clears string }
+	}
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	for name, policy := range manifest.Classes {
+		requireNoRoleWords(t, "fault-kinds.json clears of "+name, policy.Clears)
+	}
+	requireNames(t, "fault-kinds.json clears of integration_target_moved", manifest.Classes["integration_target_moved"].Clears, "before the 부모 is told")
+}
+
+// A publication row keeps the summary it was written with: the clears text is rendered into the row when the publication is
+// created, and the row's identity (publication id, identity digest) and its block digest (summarySha256 of the stored summary)
+// never read the declared class again. A row written under the old words reads with them, and creating the publication
+// again leaves it alone; only a new publication carries the new words.
+func TestAPublicationRowKeepsItsOldClearsText(t *testing.T) {
+	l, ctx := testLedger(t)
+	if err := RegisterClass("integration_target_moved", 0); err != nil {
+		t.Fatal(err)
+	}
+	o := testObservation("moved-1", "integration_target_moved", Broken)
+	record(t, l, ctx, o)
+	row, err := l.Store.One(ctx, "SELECT publication_id, fault_id, kind, trigger_key, identity_digest, summary FROM fault_publications ORDER BY created_at LIMIT 1")
+	if err != nil || row == nil {
+		t.Fatalf("no publication for the broken fault: %v", err)
+	}
+	summary := row.Text("summary")
+	requireNames(t, "a new publication", summary, "clears when: ")
+	requireNames(t, "a new publication", summary, "before the 부모 is told")
+	requireNoRoleWords(t, "a new publication", summary)
+
+	oldSummary := strings.Replace(summary, "before the 부모 is told", "before the supervisor is told", 1)
+	if oldSummary == summary {
+		t.Fatal("the fixture holds no clears text to age")
+	}
+	if _, err := l.Store.Q(ctx).ExecContext(ctx, "UPDATE fault_publications SET summary = ? WHERE publication_id = ?", oldSummary, row.Text("publication_id")); err != nil {
+		t.Fatal(err)
+	}
+	fault, err := l.one(ctx, "SELECT * FROM fault_ledger WHERE fault_id = ?", row.Text("fault_id"))
+	if err != nil || fault == nil {
+		t.Fatalf("no fault row: %v", err)
+	}
+	if err := l.insertPublication(ctx, row.Text("fault_id"), row.Text("kind"), row.Text("trigger_key"), l.Clock.ISO(), declaredClasses["integration_target_moved"].clears); err != nil {
+		t.Fatal(err)
+	}
+	after, err := l.Store.One(ctx, "SELECT summary, identity_digest FROM fault_publications WHERE publication_id = ?", row.Text("publication_id"))
+	if err != nil || after == nil {
+		t.Fatalf("the row is gone: %v", err)
+	}
+	if after.Text("summary") != oldSummary {
+		t.Errorf("a publication row written under the old words was rewritten:\n%s", after.Text("summary"))
+	}
+	if after.Text("identity_digest") != row.Text("identity_digest") {
+		t.Errorf("the identity digest moved with the clears text: %s then %s", row.Text("identity_digest"), after.Text("identity_digest"))
+	}
+	if identityDigest(row.Text("fault_id"), row.Text("kind"), row.Text("trigger_key"), integer(fault, "cycle")) != row.Text("identity_digest") {
+		t.Error("the identity digest reads something besides the fault, the kind, the trigger and the cycle")
+	}
 }
