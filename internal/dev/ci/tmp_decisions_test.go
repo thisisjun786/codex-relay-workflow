@@ -101,7 +101,6 @@ var tmpGlobs = []tmpGlob{
 
 // The units that move the pending sites (plan-r2 of bundle 1566-tmp-arch).
 const (
-	tmpU2 = "U-A5-2 verifier probe: no location judgement"
 	tmpU3 = "U-A5-3 spawn hook temp root from tmploc"
 	tmpU4 = "U-A5-4 agy, report sender, review bundle"
 	tmpU5 = "U-A5-5 laneparity, cxcfuzz, cxccorpus: the recorded scratch constant"
@@ -120,8 +119,6 @@ var tmpPending = []tmpEntry{
 	{"internal/contracttest/hook.go", `dir, err := os.MkdirTemp("", "crw-hc-standin-")`, tmpU7},
 	{"internal/contracttest/mcp.go", `if err := testsupport.WriteSandboxConfig(filepath.Join(userHome, ".config", "crw", "config.json"), os.TempDir()); err != nil {`, tmpU7},
 	{"internal/contracttest/records.go", `home, err := os.MkdirTemp("", "crw-hc-doc-")`, tmpU7},
-	{"internal/crwconfig/verifier_probe.go", `var defaultTemporaryDirs = []string{"/tmp", "/var/tmp"}`, tmpU2},
-	{"internal/crwconfig/verifier_probe.go", `home, err := os.MkdirTemp("", "crw-verifier-probe-")`, tmpU2},
 	{"internal/dev/cxccorpus/command.go", `scratch := set.String("scratch", "/var/tmp", "parent directory of every case root")`, tmpU5},
 	{"internal/dev/cxcfuzz/root.go", `if err := homeguard.Refuse(os.TempDir()); err != nil {`, tmpU5},
 	{"internal/dev/cxcfuzz/root.go", `return os.MkdirTemp("", pattern)`, tmpU5},
