@@ -369,7 +369,7 @@ func restoreCleanupCheckout(ctx context.Context, git ops.GitFunc, root *os.Root,
 	named, nerr := os.Stat(filepath.Join(root.Name(), filepath.Dir(row.Path)))
 	_ = parent.Close()
 	if herr != nil || nerr != nil || !os.SameFile(held, named) {
-		return fmt.Errorf("the restore parent of %s changed", row.Path)
+		return fmt.Errorf("the directory containing restore target %s changed", row.Path)
 	}
 	_, err = git(ctx, repo, nil, "worktree", "move", stage, filepath.Join(root.Name(), row.Path))
 	return err
