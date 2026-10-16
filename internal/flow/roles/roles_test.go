@@ -483,3 +483,63 @@ func TestRoleHeadHasNoPerRunValues(t *testing.T) {
 		}
 	}
 }
+
+// CRW-1498: the executor overlays tell the executor to batch its tool calls: read every file it needs in one command, apply a
+// multi-file edit with one script and run the target test in the same command as the edit. The rule is one bullet of the fixed
+// head ("## Your thread", before the Skills bullet) of the executor and the second tier; the QA capture call has no edit to batch.
+func TestExecutorOverlayTellsToReadOnceEditByOneScriptAndTestInTheSameCall(t *testing.T) {
+	rules := []string{
+		"read every file you need in one command",
+		"apply a multi-file edit with one script",
+		"run the target test in the same command as the edit",
+	}
+	var bullets []string
+	for _, role := range []string{"executor", "executor-t1"} {
+		overlay, err := Overlay(role, Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		thread := sectionOf(overlay, "## Your thread")
+		if thread == "" {
+			t.Fatalf("%s: the overlay has no \"## Your thread\" section", role)
+		}
+		skills := strings.Index(thread, "\n- Skills:")
+		if skills < 0 {
+			t.Fatalf("%s: the \"## Your thread\" section has no Skills bullet", role)
+		}
+		var bullet string
+		for _, line := range strings.Split(thread, "\n") {
+			if strings.HasPrefix(line, "- ") && strings.Contains(line, rules[0]) {
+				bullet = line
+			}
+		}
+		if bullet == "" {
+			t.Errorf("%s: no bullet of \"## Your thread\" says to %s", role, rules[0])
+			continue
+		}
+		bullets = append(bullets, bullet)
+		for _, rule := range rules {
+			if !strings.Contains(bullet, rule) {
+				t.Errorf("%s: the batching bullet does not say to %s: %q", role, rule, bullet)
+			}
+			if n := strings.Count(overlay, rule); n != 1 {
+				t.Errorf("%s: the overlay says %q %d times, want once", role, rule, n)
+			}
+		}
+		if at := strings.Index(thread, bullet); at > skills {
+			t.Errorf("%s: the batching bullet comes after the Skills bullet", role)
+		}
+	}
+	if len(bullets) == 2 && bullets[0] != bullets[1] {
+		t.Errorf("the executor and the second tier carry different batching bullets:\n%q\n%q", bullets[0], bullets[1])
+	}
+	qa, err := Overlay("executor", Options{QA: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rule := range rules {
+		if strings.Contains(qa, rule) {
+			t.Errorf("the QA overlay carries the batching rule %q", rule)
+		}
+	}
+}
