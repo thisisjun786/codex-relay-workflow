@@ -268,10 +268,12 @@ async function nodeLane(n, rel, sig) {
   // before it, so its packet carries them; the first build has none.
   const last = { findings: [], ci: null, receipt: null }
   // the sub-tasks of a node sized for a split (CRW-1459) run in their order on one executor thread: done is the sub-tasks with a
-  // checkpoint commit of the node, from the first, and failed the receipts of those that reported failed, by id. A sub-task before the
-  // last is checked like any work of the node (a commit holds only checked work) and then committed as a checkpoint, with no
-  // verification and no land, and the same thread goes on to the next; the receipt of the last, and every one after it, goes on to the
-  // node's commit, verification and land, so the node is judged once, as a whole. A fresh thread (a rebuild, the executor-t1 build)
+  // checkpoint commit of the node, from the first, and failed the receipts of those that reported failed, by id. Each sub-task's work is
+  // checked against that sub-task alone (its done condition and edit regions; the later ones are not due yet), a commit holding only
+  // checked work. A sub-task before the last is then committed as a checkpoint, with no verification and no land, and the same thread
+  // goes on to the next; the receipt of the last, and every one after it, goes on to the node's commit and verification, then the check
+  // of the node's whole change (base..head, every criterion of the node) and the land, so the node is judged once, as a whole, and its
+  // acceptance rests on that check. A fresh thread (a rebuild, the executor-t1 build)
   // starts at the node's last commit, which holds the done ones, and its packet starts at the first one not done: the progress is part
   // of the node's last state (last.split), which a fresh thread's packet carries.
   const subs = (plan.size_fit === 'split' && plan.sub_tasks) || []
@@ -285,6 +287,51 @@ async function nodeLane(n, rel, sig) {
     if (step && tier === 'executor-t1') opts.stepDecision = step.id
     return agent.call(packet(node, plan, checkpoint, last), opts)
   }
+  // what a unit check of the round comes to: end (the lane's result: a hold, a check that judged nothing, carried findings that
+  // block), fix (a thunk that sends every finding back to the executor's own thread, one round trip), step (the tier evidence stands
+  // while round trips are left: the executor-t1 starts at the node's last commit, which holds only checked work, and the tree whose
+  // findings are not answered stays in the attempt the step leaves), or none of them (no finding, or carried ones that do not block).
+  // fixOnly: the check judges a change made after the check of a split node's whole change (a fix, a tier's build), which that check
+  // judges again after the commit: verified, it is no reviewed round of the node, so two checks of the whole change in a row that share
+  // a finding stay the tier evidence they are
+  async function judge(uc, round, fixOnly) {
+    if (uc.hold) {
+      await crw.hold(node, { reason: uc.hold, call: ex.callId, source: 'unit_check' })
+      return { end: { node, state: 'held', reason: uc.hold, source: 'unit_check', call: ex.callId } }
+    }
+    if (uc.state !== 'ok') {
+      const esc = await crw.escalate(node, { reason: 'unit_check_' + uc.state, call: ex.callId, ask: 'configuration', detail: uc.detail || '' })
+      return { end: { node, state: 'escalated', reason: 'unit_check_' + uc.state, call: ex.callId, escalation: esc.id } }
+    }
+    const found = uc.findings || []
+    last.findings = found
+    if (!(fixOnly && uc.verdict === 'verified')) ev.unitCheck(tier, uc.check_id, uc.verdict, found.map((f) => f.id))
+    if (found.length === 0) return {}
+    if (fixes >= UNIT_CHECK_ROUNDS) {
+      // the findings after the last round trip are carried, before any tier step: a blocking one does not land
+      for (const f of found) {
+        if (!carried.includes(f.id)) {
+          carried.push(f.id)
+          carriedBy[f.id] = uc.check_id
+        }
+      }
+      if (uc.verdict !== 'verified') {
+        const esc = await crw.escalate(node, { reason: 'unit_check_carried', call: ex.callId, ask: 'land', evidence: { carried, check: uc.check_id },
+          detail: found.map((f) => f.id + ' ' + f.file + ' ' + f.text).join(' | ') })
+        return { end: { node, state: 'escalated', reason: 'unit_check_carried', call: ex.callId, carried, escalation: esc.id } }
+      }
+      return {}
+    }
+    if (ev.tierStepDue(tier)) return { step: true }
+    const label = 'fix:' + node + ':' + tier + ':r' + round
+    return {
+      fix: () => {
+        fixes++
+        return agent.call(fixPacket(node, { verdict: uc.verdict, findings: found }, null, null, ex.output), { resume: ex, schema: RECEIPT, label })
+      },
+    }
+  }
+
   ex = await start('build:' + node + ':' + tier, null)
 
   for (let round = 1; ; round++) {
@@ -340,49 +387,21 @@ async function nodeLane(n, rel, sig) {
       }
     } else {
       // ready or self_failed: the run judges the worktree, never the executor's report. The unit check reads the uncommitted
-      // changes the call left (the tree crw.commit will commit); final: no fix round can follow it on this tier.
-      const uc = await crw.unitCheck(node, ex, { round, final: fixes >= UNIT_CHECK_ROUNDS })
-      if (uc.hold) {
-        await crw.hold(node, { reason: uc.hold, call: ex.callId, source: 'unit_check' })
-        return { node, state: 'held', reason: uc.hold, source: 'unit_check', call: ex.callId }
+      // changes the call left (the tree crw.commit will commit); final: no fix round can follow it on this tier. The check of a
+      // split node's sub-task judges that sub-task (sub): its done condition and edit regions, with the later sub-tasks not due yet.
+      const sub = split.done < subs.length ? subs[split.done] : null
+      const opts = { round, final: fixes >= UNIT_CHECK_ROUNDS }
+      if (sub) opts.sub = sub.id
+      const uc = await judge(await crw.unitCheck(node, ex, opts), round, subs.length > 0 && !sub)
+      if (uc.end) return uc.end
+      if (uc.fix) {
+        ex = await uc.fix()
+        continue
       }
-      if (uc.state !== 'ok') {
-        const esc = await crw.escalate(node, { reason: 'unit_check_' + uc.state, call: ex.callId, ask: 'configuration', detail: uc.detail || '' })
-        return { node, state: 'escalated', reason: 'unit_check_' + uc.state, call: ex.callId, escalation: esc.id }
-      }
-      const found = uc.findings || []
-      last.findings = found
-      ev.unitCheck(tier, uc.check_id, uc.verdict, found.map((f) => f.id))
-      let stepDue = false
-      if (found.length > 0) {
-        if (fixes >= UNIT_CHECK_ROUNDS) {
-          // the findings after the last round trip are carried, before any tier step: a blocking one does not land
-          for (const f of found) {
-            if (!carried.includes(f.id)) {
-              carried.push(f.id)
-              carriedBy[f.id] = uc.check_id
-            }
-          }
-          if (uc.verdict !== 'verified') {
-            const esc = await crw.escalate(node, { reason: 'unit_check_carried', call: ex.callId, ask: 'land', evidence: { carried, check: uc.check_id },
-              detail: found.map((f) => f.id + ' ' + f.file + ' ' + f.text).join(' | ') })
-            return { node, state: 'escalated', reason: 'unit_check_carried', call: ex.callId, carried, escalation: esc.id }
-          }
-        } else if (ev.tierStepDue(tier)) {
-          // the tier evidence stands while round trips are left: the executor-t1 starts at the node's last commit, which holds only
-          // checked work, and this tree, whose findings are not answered, stays in the attempt the step leaves
-          stepDue = true
-        } else {
-          // every finding goes back to the executor's own thread
-          fixes++
-          ex = await agent.call(fixPacket(node, { verdict: uc.verdict, findings: found }, null, null, ex.output), { resume: ex, schema: RECEIPT, label: 'fix:' + node + ':' + tier + ':r' + round })
-          continue
-        }
-      }
+      let stepDue = uc.step
       if (!stepDue && split.done + 1 < subs.length) {
         // a sub-task before the last: a checkpoint commit of its checked tree against its own regions, and the next sub-task on the
         // same thread; a sub-task that reported failed is no judgement of the node, which judges it with the rest after the last
-        const sub = subs[split.done]
         await crw.commit(node, ex, sub.edit_regions)
         if (s === 'self_failed') split.failed[sub.id] = { summary: (ex.output && ex.output.summary) || '', gap: (ex.output && ex.output.gap) || '' }
         split.done++
@@ -392,7 +411,12 @@ async function nodeLane(n, rel, sig) {
       }
       if (!stepDue) {
         head = await crw.commit(node, ex, plan.regions)
-        split.done = subs.length
+        if (split.done < subs.length) {
+          // the node's commit holds every sub-task: the check of its whole change below has round trips of its own, as each
+          // sub-task's check had from its checkpoint
+          split.done = subs.length
+          fixes = 0
+        }
         const ci = await crw.verify(node, head)
         if (!ci.ran) {
           await crw.hold(node, { reason: 'verify_unavailable', call: ex.callId, source: 'verify' })
@@ -400,14 +424,27 @@ async function nodeLane(n, rel, sig) {
         }
         ev.verification(tier, head.commit, ci.pass, ci.digest)
         last.ci = ci
-        if (ci.pass) {
+        if (ci.pass && subs.length) {
+          // a split node is judged as a whole (CRW-1459): its sub-tasks' checks judged each one alone, so the committed range from the
+          // node's base (the base its verification stands on) to its head is checked against every criterion of the node, and the
+          // acceptance rests on this check; its findings go to the same thread as a fix round, whose work is checked, committed,
+          // verified and checked as a whole again
+          const whole = await judge(await crw.unitCheck(node, ex, { round, final: fixes >= UNIT_CHECK_ROUNDS, commit: head, base: ci.base }), round)
+          if (whole.end) return whole.end
+          if (whole.fix) {
+            ex = await whole.fix()
+            continue
+          }
+          stepDue = whole.step
+        }
+        if (ci.pass && !stepDue) {
           const landed = await crw.land(node, carried.length ? { head, ci, carried: carried.map((id) => ({ id, check: carriedBy[id] })) } : { head, ci })
           if (landed.state === 'landed') return carried.length ? Object.assign(landed, { carried }) : landed
           if (landed.reason === EPOCH_LOST) return { node, state: 'stopped', reason: EPOCH_LOST, detail: landed.detail }
           const esc = await crw.escalate(node, { reason: landed.reason || 'land_refused', detail: landed.detail || '', ask: 'land' })
           return { node, state: 'escalated', reason: landed.reason, escalation: esc.id }
         }
-        if (!ev.tierStepDue(tier)) {
+        if (!ci.pass && !ev.tierStepDue(tier)) {
           // fix the verification on the executor's own thread; its work is checked again before the next commit
           ex = await agent.call(fixPacket(node, null, ci, null, ex.output), { resume: ex, schema: RECEIPT, label: 'fix:' + node + ':' + tier + ':r' + round })
           continue

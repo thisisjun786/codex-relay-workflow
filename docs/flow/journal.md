@@ -168,7 +168,9 @@ as such:
   call of the node as a fix is, and the checkpoint commit of each sub-task before the last is one more `crw.commit` row of the chain, made
   against the sub-task's `edit_regions`. A split node makes one checkpoint `crw.commit` per sub-task before the last and is judged once:
   no `crw.verify` or `crw.land` row of the node precedes the last sub-task's commit, and verify and land read the node's last commit, as
-  they read the last of a fix round's. A fresh attempt (a rebuild, a tier step) starts at that last commit, so the sub-tasks it holds stay
+  they read the last of a fix round's. Each sub-task's `crw.unitCheck` row names the sub-task (`sub`) and judged it alone; after the
+  verification of the node's commit a committed `crw.unitCheck` row (no `sub`) judges the node's whole change, `base..commit` from the
+  verification's base, and the node's `crw.accept` rests on it (its `reviewer_call`), never on a row with a `sub`. A fresh attempt (a rebuild, a tier step) starts at that last commit, so the sub-tasks it holds stay
   proven while the current `HEAD` descends from it, by the rule above.
 - A worktree a resume restored (below) holds the pending tree P of the last build or fix of the replayed prefix. It is the node's
   current worktree from the call that adopts it on, and it proves the calls of the prefix - the call P belongs to and the calls
@@ -200,7 +202,9 @@ which names the milestone), and the QA evidence a `crw.qaReceipt` row (it holds 
 **Unit check.** A row `crw.unitCheck` is one unit check of a node's work, run by the run itself (the op runs the review tool through
 the review adapter; no agent call, no reviewer thread). Its data: `node`; `mode` (`uncommitted`: the changes the judged executor call left in
 the node's worktree, or `committed`: the range `base..commit` checked out in it); `call` (the executor call it judged, uncommitted mode) or
-`commit` and `base` (committed mode); `round` and `final` as the lane passed them; `execution_id` and `criteria_digest` of the node's release
+`commit` and `base` (committed mode; a committed check of a run's node, the check of a split node's whole change, also names the `call`
+whose receipt the range ends on); `sub` (the sub-task of a split node an uncommitted check judged, CRW-1459; absent for a check of the
+node); `round` and `final` as the lane passed them; `execution_id` and `criteria_digest` of the node's release
 row; `tree` (the fingerprint the check saw, the snapshot `crw.commit` commits as its `tree`); `role` `unit-check`; `state`, `verdict` and
 `findings` (their count); `retried` and `first_state` `invalid` when an invalid answer was asked once more and the second record kept;
 `fallback_from` (the name of the first profile, such as `codex-review`), `fallback_state` (`quota`), `fallback_model` and, when that
@@ -212,7 +216,7 @@ evidence receipt could not be read) when the lane is to hold the node; `receipt`
 read, with the `path` it was read from in place of the copy (where the hook accepted it, the bytes still hashing to the `sha256`) and the
 `copy_error`; an accepted receipt also names `handed`, true when the tool that judged (the row's `result`) was given the prompt that
 holds the receipt and false for the Codex review profiles, which take no prompt (`crw.accept` then names the receipt as read and kept,
-not handed to the tool; a row with no `handed` was written when every unit check took the prompt and reads as handed); `not_assigned` when the call was given none, or `no_executor` for a committed check); and `result`, the `reviewadapter.Result` of the call that answered last (state, verdict, findings with their line-free ids, engine family, model, effort, guide
+not handed to the tool; a row with no `handed` was written when every unit check took the prompt and reads as handed); `not_assigned` when the call was given none, or `no_executor` for a committed check that names no call); and `result`, the `reviewadapter.Result` of the call that answered last (state, verdict, findings with their line-free ids, engine family, model, effort, guide
 revision, prompt digest, both fingerprints), with `fallback`, the first profile's quota record, when the check fell back. `crw.accept` and the relay take a row of role `unit-check` whose result state is `ok` and that is
 on the head (its `commit`, or its `tree` equal to the head's tree) as the judgment of the head. A check that was not run names no role: when
 the worktree is no longer the judged call's pending tree the row has `state` `tree_moved`, `tree_moved` true, `pending_tree` and `tree`

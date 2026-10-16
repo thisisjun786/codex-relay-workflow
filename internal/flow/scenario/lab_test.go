@@ -1056,6 +1056,8 @@ type LabChecker struct {
 type CheckInfo struct {
 	Node     string
 	Round, N int
+	// Prompt and Worktree are the request's: the prompt the op built and the worktree the check judges.
+	Prompt, Worktree string
 }
 
 type labRoundKey struct{}
@@ -1115,7 +1117,7 @@ func (u *LabChecker) Check(ctx context.Context, req reviewadapter.Request) (revi
 	round, _ := ctx.Value(labRoundKey{}).(int)
 	c, ruled := UnitCheck{}, false
 	for _, rl := range rules {
-		if c, ruled = rl(CheckInfo{Node: node, Round: round, N: n}); ruled {
+		if c, ruled = rl(CheckInfo{Node: node, Round: round, N: n, Prompt: req.Prompt, Worktree: req.Worktree}); ruled {
 			break
 		}
 	}

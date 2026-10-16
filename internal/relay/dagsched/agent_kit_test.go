@@ -208,6 +208,8 @@ type unitCheckCall struct {
 	execution string
 	// run is the run that recorded the row; run-1 when empty.
 	run string
+	// sub is the sub-task of a split node the check judged alone (CRW-1459); empty for a check of the node.
+	sub string
 }
 
 // unitCheck writes the single completed flow_calls row of a crw.unitCheck op: an op row has no prepared or thread_started row, so its pair is the model and effort of its result. It returns the call id.
@@ -228,6 +230,9 @@ func (k *agentKit) unitCheck(c unitCheckCall) string {
 	data := map[string]string{"role": execution.AgentUnitCheck, "node": c.node, "execution_id": c.execution, "tree": c.tree, "criteria_digest": c.criteria}
 	if c.commit != "" {
 		data["commit"] = c.commit
+	}
+	if c.sub != "" {
+		data["sub"] = c.sub
 	}
 	detail, _ := json.Marshal(data)
 	result, _ := json.Marshal(c.res)

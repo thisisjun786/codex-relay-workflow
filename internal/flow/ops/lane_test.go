@@ -1885,6 +1885,55 @@ func (c *acceptCapture) Accept(_ context.Context, r AcceptRequest) (AcceptResult
 	return AcceptResult{Accepted: true, AcceptanceID: "acc-A"}, nil
 }
 
+// CRW-1459: the check of one sub-task of a split node judged that sub-task, not the node's criteria, so crw.accept never rests on it,
+// even when it saw the head's tree: with only such a check the head has no basis (reviewer_missing), and the check of the node's whole
+// change, the committed range base..head, is the basis once it is recorded, also when a sub-task's check comes after it.
+func TestAcceptRestsOnNoCheckOfASubTask(t *testing.T) {
+	head, base := strings.Repeat("a", 40), strings.Repeat("b", 40)
+	w := newWorld(t)
+	w.relay.plan = planOfNodes(map[string]string{"A": "a1"}, "A")
+	w.relay.plan.Nodes[0].Criteria = []string{"first", "second"}
+	w.ledgered(true, designOf("A"))
+	w.must("release", "plan-1", "A", "M")
+	capture := &acceptCapture{stubRelay: w.relay}
+	w.lane.d.Relay = capture
+	w.lane.d.Git = func(context.Context, string, []string, ...string) (string, error) {
+		return "", errors.New("this test runs no git")
+	}
+	appendRow := func(op, callID string, data map[string]any) {
+		b, _ := json.Marshal(data)
+		var row map[string]any
+		_ = json.Unmarshal(b, &row)
+		w.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: callID, Op: op, Event: engine.EvCompleted, Data: row})
+	}
+	appendRow(OpCommit, "c_commit", map[string]any{"node": "A", "commit": head, "parent": base, "tree": "t-head", "result": "{}"})
+	appendRow(OpVerify, "c_verify", map[string]any{"node": "A", "head": head, "ok": true, "base": base, "digest": strings.Repeat("d", 64), "result": "{}"})
+	check := func(callID string, extra map[string]any) {
+		res, _ := json.Marshal(map[string]any{"state": "ok", "detail": "", "verdict": "verified", "findings": []any{}, "engine_family": "grok", "model": "grok-4.7-medium",
+			"effort": "medium", "guide_rev": "g1", "prompt_digest": "pd-" + callID, "fingerprint_before": "t-head", "fingerprint_after": "t-head", "elapsed_ms": 1})
+		data := map[string]any{"role": "unit-check", "node": "A", "execution_id": "exec-A", "tree": "t-head", "criteria_digest": strings.Repeat("c", 64), "result": string(res)}
+		for k, v := range extra {
+			data[k] = v
+		}
+		appendRow(OpUnitCheck, callID, data)
+	}
+	check("c_sub_two", map[string]any{"mode": UnitCheckUncommitted, "sub": "two"})
+	if _, err := w.op("accept", "A", head); err == nil || ReasonOf(err.Error()) != "reviewer_missing" {
+		t.Errorf("crw.accept on a sub-task's check alone: %v, want refused reviewer_missing", err)
+	}
+	if len(capture.got) != 0 {
+		t.Fatalf("the relay was asked to accept on a sub-task's check: %+v", capture.got)
+	}
+	check("c_whole", map[string]any{"mode": UnitCheckCommitted, "commit": head, "base": base})
+	check("c_sub_late", map[string]any{"mode": UnitCheckUncommitted, "sub": "two"})
+	if _, err := w.op("accept", "A", head); err != nil {
+		t.Fatalf("crw.accept on the check of the whole change: %v", err)
+	}
+	if len(capture.got) != 1 || capture.got[0].ReviewerCall != "c_whole" {
+		t.Errorf("accept requests %+v, want one on c_whole", capture.got)
+	}
+}
+
 // CRW-1456: crw.accept assembles the premerge record of a head from a unit-check record when no newer verified review stands on
 // it. The record's grader is the unit check's pair and prompt, every criterion of the node's plan passes on the evidence of the
 // passing verification and the clean check, and each finding is a defect named by its finding id. A check that is not verified,
@@ -3410,6 +3459,58 @@ func TestUnitCheckCarriesTheExecutorReceiptToTheCheckAndTheAcceptance(t *testing
 	}
 	if rc := checkReceiptOf(u.lastCheck()); str(rc, "state") != "accepted" || str(rc, "sha256") != longDigest {
 		t.Errorf("the long receipt's row %v", rc)
+	}
+}
+
+// TestACommittedCheckOfAnExecutorsRangeCarriesItsReceipt (CRW-1459): the check of a split node's whole change is a committed check that
+// names the executor call the range ends on. That call's accepted receipt is read, put in the prompt and recorded on the row as an
+// uncommitted check's is, and crw.accept rests on the committed check and names the receipt in the premerge record. A committed check
+// of one sub-task is refused: a sub-task is judged in its uncommitted change.
+func TestACommittedCheckOfAnExecutorsRangeCarriesItsReceipt(t *testing.T) {
+	u := newUCWorld(t)
+	body := "RED-FIRST: go test -run TestA ./a: FAIL TestA\n"
+	copyPath, digest := receiptCopy(t, body)
+	ex := u.buildWithReceipt("c_ex1", "built\n", map[string]any{"assignment": "as1", "state": "accepted", "path": "/p/receipt.md", "sha256": digest,
+		"agent_id": "agent-1", "turn_id": "turn-1", "turn_match": true, "copy": copyPath})
+	u.checkOnTree(u.snapshot())
+	decodeCheck(t, u.must("unitCheck", "A", ex, map[string]any{"round": 1}))
+	var commit CommitOutcome
+	_ = json.Unmarshal(u.must("commit", "A", ex, []string{"a.txt"}), &commit)
+	u.must("verify", "A", commit.Commit)
+	if _, err := u.op("unitCheck", "A", ex, map[string]any{"round": 1, "commit": commit.Commit, "base": commit.Parent, "sub": "one"}); err == nil {
+		t.Errorf("a committed check of a sub-task was run")
+	}
+	u.checkOnTree(u.snapshot())
+	u.checker.replies[0].res.PromptSent = true
+	out := decodeCheck(t, u.must("unitCheck", "A", ex, map[string]any{"round": 1, "final": true, "commit": commit.Commit, "base": commit.Parent}))
+	if out.State != reviewadapter.StateOK || out.Hold != "" || out.Call != ex.CallID {
+		t.Fatalf("answer %+v", out)
+	}
+	prompt := u.checker.got[len(u.checker.got)-1].Prompt
+	if !strings.HasPrefix(prompt, "Review the changes between "+commit.Parent+" and "+commit.Commit) || !strings.Contains(prompt, "EXECUTOR RECEIPT") || !strings.Contains(prompt, body) {
+		t.Errorf("the committed check's prompt:\n%s", prompt)
+	}
+	row := u.lastCheck()
+	if rc := checkReceiptOf(row); str(rc, "state") != "accepted" || str(rc, "sha256") != digest || rc["handed"] != true || dataStr(row, "call") != ex.CallID ||
+		dataStr(row, "commit") != commit.Commit || dataStr(row, "base") != commit.Parent {
+		t.Errorf("the committed check's row %v", row.Data)
+	}
+	capture := &acceptCapture{stubRelay: u.relay}
+	u.lane.d.Relay = capture
+	if _, err := u.op("accept", "A", commit.Commit); err != nil {
+		t.Fatalf("crw.accept on the committed check: %v", err)
+	}
+	if len(capture.got) != 1 || capture.got[0].ReviewerCall != row.CallID {
+		t.Fatalf("accept requests %+v, want one on %s", capture.got, row.CallID)
+	}
+	rec, err := premerge.Decode(capture.got[0].Premerge)
+	if err != nil {
+		t.Fatalf("premerge: %v", err)
+	}
+	for id, c := range rec.Criteria {
+		if !strings.Contains(c.Evidence, "executor receipt "+digest) {
+			t.Errorf("criterion %s evidence %q does not name the executor receipt", id, c.Evidence)
+		}
 	}
 }
 

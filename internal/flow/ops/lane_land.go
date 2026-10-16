@@ -73,6 +73,8 @@ func (o *acceptOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResu
 	// The basis of the premerge record is the newer, in journal order, of the last verified review of the head and the last unit
 	// check on the head that gave a judgment (CRW-1456): a check that gave none (no answer, quota, a failed tool, a changed
 	// worktree, an invalid answer) is no basis. A later verdict of either kind that withdraws a verified one is the relay's to read.
+	// The check of one sub-task of a split node (its row names the sub) is no basis either: it judged that sub-task and not the node's
+	// criteria, and the node's acceptance rests on the check of its whole change, base..head, after the last sub-task (CRW-1459).
 	revAt := -1
 	for i := len(r) - 1; i >= 0; i-- {
 		if ev := r[i]; ev.Kind == engine.KindCall && ev.Op == OpReview && ev.Event == engine.EvCompleted && dataStr(ev, "node") == node && dataStr(ev, "head") == head.Commit &&
@@ -109,7 +111,8 @@ func (o *acceptOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResu
 	var uc reviewadapter.Result
 	for i := len(r) - 1; i > revAt; i-- {
 		ev := r[i]
-		if ev.Kind != engine.KindCall || ev.Op != OpUnitCheck || ev.Event != engine.EvCompleted || dataStr(ev, "node") != node || dataStr(ev, "role") != execution.AgentUnitCheck {
+		if ev.Kind != engine.KindCall || ev.Op != OpUnitCheck || ev.Event != engine.EvCompleted || dataStr(ev, "node") != node || dataStr(ev, "role") != execution.AgentUnitCheck ||
+			dataStr(ev, "sub") != "" {
 			continue
 		}
 		var res reviewadapter.Result
