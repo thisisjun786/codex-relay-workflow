@@ -7,6 +7,11 @@ set -euo pipefail
 # agent/context instructions. crw-dev-backend links to this script for the same audit.
 
 DIR="${1:-.}"
+TMPBASE="${TMPDIR:-/tmp}"
+case "$TMPBASE" in
+  /*) ;;
+  *) printf 'tmpdir_not_absolute: TMPDIR=%s; set TMPDIR to an absolute directory\n' "$TMPBASE" >&2; exit 2 ;;
+esac
 PASS=0
 FAIL=0
 WARN=0
@@ -126,7 +131,7 @@ env_ignored() {
   [ -f "$DIR/.gitignore" ] || return 1
   if command -v git >/dev/null 2>&1; then
     local scratch result=1
-    scratch=$(mktemp -d "${TMPDIR:-/tmp}/scaffold-audit.XXXXXX") || return 1
+    scratch=$(mktemp -d "$TMPBASE/scaffold-audit.XXXXXX") || return 1
     if cp "$DIR/.gitignore" "$scratch/.gitignore" \
       && git -C "$scratch" init -q >/dev/null 2>&1 \
       && git -C "$scratch" -c core.excludesFile=/dev/null check-ignore -q --no-index .env >/dev/null 2>&1; then

@@ -494,12 +494,16 @@ One package decides every temporary location: `internal/tmploc` (CRW-1566). It h
   before any step ([The local run](#the-local-run)).
 - A test takes `t.TempDir()`, or `tmploctest.SocketDir`, `tmploctest.SocketPath` and
   `tmploctest.CheckSocket` for a socket.
-- A shell script or a document writes the default as `${TMPDIR:-/tmp}`, the same rule.
+- A shell script of the plugin or of `scripts/` that makes a temporary directory writes the same rule in one
+  form: `TMPBASE="${TMPDIR:-/tmp}"`, then a `case` that stops a relative value with
+  `tmpdir_not_absolute: TMPDIR=<value>; set TMPDIR to an absolute directory` on stderr and exit status 2, before
+  any directory is made (`diagram-to-html.sh`, `scaffold-audit.sh`; their behaviour is pinned by
+  `tmp_shell_sites_test.go`). A document writes the default as `${TMPDIR:-/tmp}`.
 
 `internal/dev/ci/tmp_decisions_test.go` (dev tag) enforces this. It greps every tracked file for the
 direct deciders (`os.TempDir`, a quoted `/tmp`, `/var/tmp` or `/dev/shm` literal, `MkdirTemp` or
 `CreateTemp` with an empty parent, and a direct read of `TMPDIR`), and every hit must be one of these
-exceptions or a pending site:
+exceptions:
 
 - E1 `internal/tmploc` (non-test files): the one place. It holds `DefaultDir`, `SocketRoot` and the
   read of `TMPDIR`, matched by file and exact line text.
@@ -510,15 +514,16 @@ exceptions or a pending site:
   same text as `contract/fixtures/hook`, matched by exact line text.
 - E5 the recorded scratch parent of the cxc replay's 9 `path_length_dependent` fixtures
   (`cxccorpus.RecordedScratch`), the recorded oracle condition; it is added with that constant.
-- E6 port history prose under `docs/port-cxc` and `docs/port` that quotes code or Python literals,
+- E6 port history prose under `docs/port-cxc` and `docs/port` that quotes code or Python literals, and
+  the visualizer's port record, which quotes the original output-directory line its recorded edit replaces,
   listed by file.
 
-The pending list names each site still to move with the unit that moves it; it shrinks to nothing
-within CRW-1579. A second rule judges every non-test `os.MkdirTemp` and `os.CreateTemp` whose parent is
-a variable: unless the parent is `filepath.Dir(...)` or a literal, the call is listed with the reason
-its parent is never empty or relative, or it is pending until it moves to `tmploc.MkdirTempIn`. An
-exception, a pending entry or a listed call that no longer matches a line fails the check, so the
-lists cannot go stale.
+A second rule judges every non-test `os.MkdirTemp` and `os.CreateTemp` whose parent is a variable: unless the
+parent is `filepath.Dir(...)` or a literal, the call is listed with the reason its parent is never empty or
+relative, or it moves to `tmploc.MkdirTempIn`. A third judges the shell: a `${TMPDIR` or `$TMPDIR` read in a
+`.sh` file under `plugins/` or `scripts/` must be the one `TMPBASE` line, and its file must hold the whole form
+verbatim. An exception or a listed call that no longer matches a line fails the check, so the lists cannot go
+stale. There is no list of sites still to move: `TestNoPendingTempDecisions` fails if one returns.
 
 ## Leftover isolation trees
 
@@ -542,20 +547,18 @@ find -H "${TMPDIR:-/tmp}" -mindepth 1 -maxdepth 1 -type d -name 'crw-relay-test-
 ## Leftover verify trees
 
 A `crw-dev ci local` run removes its trees in a deferred cleanup, so a run killed by SIGKILL or by a timeout
-leaves them, and `--keep` keeps them on purpose (it prints each path). Three kinds can remain:
+leaves them, and `--keep` keeps them on purpose (it prints each path). Two kinds can remain:
 
 - `crw-ci-local-*`, the run's worktree and home, directly in the work root (default `~/.local/state/crw-ci-local`, or the
   `--work-root` you passed);
-- `t<8 hex>`, the steps' `TMPDIR`, directly in the work root, when the caller's `TMPDIR` did not fit;
-- `ci<8 hex>`, the steps' `TMPDIR`, directly in the caller's `TMPDIR` (`/tmp` when it is unset), when that fit. This is
-  the usual one.
+- `ci<8 hex>`, the steps' `TMPDIR`, directly in the caller's `TMPDIR` (`/tmp` when it is unset).
 
-Nothing removes them. In the default work root only this command works, so a `crw-ci-local-*` or `t<8 hex>` name there is
-a run's own. A `--work-root` can name a directory other tools share, and there a name that only looks like these is not
+Nothing removes them. In the default work root only this command works, so a `crw-ci-local-*` name there is a
+run's own. A `--work-root` can name a directory other tools share, and there a name that only looks like these is not
 safe to assume. The `ci<8 hex>` name is short and generic, and the caller's `TMPDIR` is often shared (`/tmp`), so the code
-never deletes by that name: another tool's directory could match. Read the list before you remove anything. The patterns
-match the step trees by their exact names, `t` followed by eight lowercase hex digits, never `t` and any eight characters,
-so a directory such as `toolcache` is not listed. The patterns spell out the eight hex digits as character classes, which
+never deletes by that name: another tool's directory could match. Read the list before you remove anything. The `ci` pattern
+matches the step tree by its exact name, `ci` followed by eight lowercase hex digits, never `ci` and any eight characters,
+so a directory such as `cinema` is not listed. The pattern spells out the eight hex digits as character classes, which
 `find` reads the same everywhere.
 
 Set `root` to the `--work-root` you passed, if any. To see the ones more than a day old (a younger one may belong to a run in
@@ -563,7 +566,7 @@ progress), which removes nothing:
 
 ```sh
 root="${XDG_STATE_HOME:-$HOME/.local/state}/crw-ci-local"  # or the --work-root you passed
-find -H "$root" -mindepth 1 -maxdepth 1 -type d \( -name 'crw-ci-local-*' -o -name 't[0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef]' \) -mtime +0
+find -H "$root" -mindepth 1 -maxdepth 1 -type d -name 'crw-ci-local-*' -mtime +0
 find -H "${TMPDIR:-/tmp}" -mindepth 1 -maxdepth 1 -type d -name 'ci[0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef]' -mtime +0
 ```
 
@@ -575,7 +578,7 @@ repairing permissions first, once you have checked them and no run of yours is s
 
 ```sh
 root="${XDG_STATE_HOME:-$HOME/.local/state}/crw-ci-local"
-find -H "$root" -mindepth 1 -maxdepth 1 -type d \( -name 'crw-ci-local-*' -o -name 't[0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef]' \) -mtime +0 \
+find -H "$root" -mindepth 1 -maxdepth 1 -type d -name 'crw-ci-local-*' -mtime +0 \
   -exec sh -c 'chmod -R u+rwX -- "$@" && rm -rf -- "$@"' sh {} +
 find -H "${TMPDIR:-/tmp}" -mindepth 1 -maxdepth 1 -type d -name 'ci[0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef]' -mtime +0 \
   -exec sh -c 'chmod -R u+rwX -- "$@" && rm -rf -- "$@"' sh {} +
