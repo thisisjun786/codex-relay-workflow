@@ -363,7 +363,7 @@ func (r *SchedRelay) Release(ctx context.Context, req ops.ReleaseRequest) (ops.R
 	var declared, warning string
 	if len(req.Regions) == 0 {
 		if _, found, err := r.Sched.NodeRegions(ctx, req.Plan, req.Node); err != nil {
-			declared, warning = regionsFailed, "the node's declaration in force cannot be read: " + err.Error()
+			declared, warning = regionsFailed, "the node's declaration in force cannot be read: "+err.Error()
 		} else if found {
 			declared = regionsKept
 		} else {
