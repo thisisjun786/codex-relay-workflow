@@ -397,3 +397,34 @@ func TestInRegionsReadsASymbolRegionAsItsFile(t *testing.T) {
 		}
 	}
 }
+
+// The snapshot's private index lives below the one temp function's directory (CRW-1570 U5): with TMPDIR a directory that is not
+// there, Snapshot refuses with tmploc's reason, naming the directory, and no other place is chosen in its stead.
+func TestSnapshotRefusesAMissingTMPDIRWithTheTempFunctionsReason(t *testing.T) {
+	repo, _ := newRepo(t)
+	missing := filepath.Join(t.TempDir(), "missing")
+	t.Setenv("TMPDIR", missing)
+	_, err := Snapshot(ctx, ExecGit("git"), repo)
+	if err == nil || !strings.Contains(err.Error(), "temp_dir_unusable") || !strings.Contains(err.Error(), missing) {
+		t.Fatalf("Snapshot with TMPDIR=%s: %v, want tmploc's temp_dir_unusable naming the directory", missing, err)
+	}
+}
+
+// The restore's temporary index lives below the one temp function's directory too: a pending tree restored with TMPDIR a directory
+// that is not there is refused with tmploc's reason.
+func TestRestoreRefusesAMissingTMPDIRWithTheTempFunctionsReason(t *testing.T) {
+	repo, c := newRepo(t)
+	src := addWorktree(t, repo, "src", c)
+	write(t, src, "a.txt", "alpha two\n", 0o644)
+	p, err := Snapshot(ctx, ExecGit("git"), src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(t.TempDir(), "wt", "n1", "a2-l1")
+	missing := filepath.Join(t.TempDir(), "missing")
+	t.Setenv("TMPDIR", missing)
+	_, err = Restore(ctx, ExecGit("git"), repo, dest, c, p)
+	if err == nil || !strings.Contains(err.Error(), "temp_dir_unusable") || !strings.Contains(err.Error(), missing) {
+		t.Fatalf("Restore with TMPDIR=%s: %v, want tmploc's temp_dir_unusable naming the directory", missing, err)
+	}
+}

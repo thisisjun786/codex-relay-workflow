@@ -2,6 +2,7 @@ package report
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -40,5 +41,24 @@ func TestManageSenderNamesTheSelectedRelayOnASupervisorNotice(t *testing.T) {
 	}
 	if strings.Contains(strings.Join(argv[0], " "), "--state") || strings.Contains(strings.Join(argv[0], " "), "--socket") {
 		t.Errorf("argv %v", argv[0])
+	}
+}
+
+// Without a Dir the message file is made below the one temp function's directory (CRW-1570 U5): with TMPDIR a directory that is not
+// there, the send refuses with tmploc's reason, naming the directory, and starts no command.
+func TestManageSenderRefusesAMissingTMPDIRWithTheTempFunctionsReason(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing")
+	t.Setenv("TMPDIR", missing)
+	ran := false
+	m := ManageSender{Program: "crw", Run: func(context.Context, string, ...string) ([]byte, int, error) {
+		ran = true
+		return []byte(`{"class":"accepted","requestId":"r1"}`), 0, nil
+	}}
+	_, err := m.SendParent(context.Background(), ParentSend{Thread: "orch", LogicalID: "esc-1", Text: "t", Queue: true})
+	if err == nil || !strings.Contains(err.Error(), "temp_dir_unusable") || !strings.Contains(err.Error(), missing) {
+		t.Fatalf("SendParent with TMPDIR=%s: %v, want tmploc's temp_dir_unusable naming the directory", missing, err)
+	}
+	if ran {
+		t.Error("the command was started without a message file")
 	}
 }
