@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // The named roots. Each is a directory the product uses, and a configuration file
@@ -154,10 +156,10 @@ func resolve(getenv func(string) string, overrides map[string]string, strict boo
 	data, dataEnv := baseDir(getenv, "XDG_DATA_HOME", ".local/share")
 	cache, cacheEnv := baseDir(getenv, "XDG_CACHE_HOME", ".cache")
 	state, stateEnv := baseDir(getenv, "XDG_STATE_HOME", ".local/state")
-	temp, tempEnv := "/tmp", false
-	if value := getenv("TMPDIR"); value != "" {
-		temp, tempEnv = value, true
-	}
+	// temp_root's base is tmploc's one read of TMPDIR: the raw text when it is set and not empty, else
+	// tmploc.DefaultDir (source default). It is not validated there, so this function keeps its own
+	// order (env, override, the strict check below) and its own error text (CRW-1579).
+	temp, tempEnv := tmploc.Lookup(getenv)
 	roots := map[string]Root{}
 	for _, row := range []struct {
 		name    string

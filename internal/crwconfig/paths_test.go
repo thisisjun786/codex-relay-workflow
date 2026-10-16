@@ -332,3 +332,45 @@ func TestAnEmptyOverrideValueIsRefused(t *testing.T) {
 		}
 	}
 }
+
+// CRW-1579 (R1-6, D7): temp_root keeps its order of answers and its error texts now that the read
+// of TMPDIR and its default live in tmploc: (1) the raw TMPDIR text, unvalidated, joined with
+// "crw" (source env), or the default when TMPDIR is unset or empty (G-D1 = A: /tmp/crw, source
+// default); (2) an override replaces it (source config); (3) only the strict resolve requires a
+// root no override names to be absolute, with the same message as before.
+func TestResolveTempRoot_keepsItsOrderAndTexts(t *testing.T) {
+	home := t.TempDir()
+	for _, test := range []struct {
+		name      string
+		env       func(string) string
+		overrides map[string]string
+		strict    bool
+		wantPath  string
+		source    Source
+		wantErr   string
+	}{
+		{"a relative TMPDIR alone, strict", rootsEnv("HOME", home, "TMPDIR", "x"), nil, true, "", "", `temp_root "x/crw": not an absolute path`},
+		{"a relative TMPDIR alone, non-strict", rootsEnv("HOME", home, "TMPDIR", "x"), nil, false, "x/crw", SourceEnv, ""},
+		{"a relative TMPDIR with an absolute override", rootsEnv("HOME", home, "TMPDIR", "x"), map[string]string{RootTemp: "/abs/temp"}, true, "/abs/temp", SourceConfig, ""},
+		{"a relative override, strict", rootsEnv("HOME", home, "TMPDIR", "/t"), map[string]string{RootTemp: "rel/temp"}, true, "", "", `temp_root "rel/temp": not an absolute path`},
+		{"a relative override, non-strict", rootsEnv("HOME", home), map[string]string{RootTemp: "rel/temp"}, false, "", "", `temp_root "rel/temp": not an absolute path`},
+		{"TMPDIR as written", rootsEnv("HOME", home, "TMPDIR", "/a/b/"), nil, true, "/a/b/crw", SourceEnv, ""},
+		{"TMPDIR unset", rootsEnv("HOME", home), nil, true, "/tmp/crw", SourceDefault, ""},
+		{"TMPDIR empty", rootsEnv("HOME", home, "TMPDIR", ""), nil, true, "/tmp/crw", SourceDefault, ""},
+	} {
+		roots, err := resolve(test.env, test.overrides, test.strict)
+		if test.wantErr != "" {
+			if err == nil || err.Error() != test.wantErr {
+				t.Errorf("%s: error %v, want %q", test.name, err, test.wantErr)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("%s: %v", test.name, err)
+			continue
+		}
+		if got := roots[RootTemp]; got.Path != test.wantPath || got.Source != test.source {
+			t.Errorf("%s: temp_root = %+v, want %q from %s", test.name, got, test.wantPath, test.source)
+		}
+	}
+}

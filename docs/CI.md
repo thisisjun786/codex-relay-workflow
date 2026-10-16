@@ -470,6 +470,56 @@ memory root at load5 18.6 to 16.8. `strace -f -c -e trace=fsync,fdatasync` on th
 production code still syncs; the calls go to memory), with 7.00 s spent in them on the disk and 0.68 s in memory. A stalled disk
 (229 s for one test, 591 s for the package) is the cost the memory root takes out, as the fsyncs no longer wait for it.
 
+## Temporary locations
+
+One package decides every temporary location: `internal/tmploc` (CRW-1566). It holds the one read of
+`TMPDIR` and its default, and nothing else in the program chooses a temporary place.
+
+- The temporary directory is `TMPDIR` as written, or `/tmp` (`tmploc.DefaultDir`, source `default`)
+  when `TMPDIR` is unset or empty. A `TMPDIR` that is not absolute stops with
+  `tmpdir_not_absolute`, and one that cannot be used stops with `temp_dir_unusable`, naming the
+  directory, its source and why. Nothing moves to a second place: no site picks `/var/tmp`,
+  `/dev/shm` or the work root because the first place is long, unusable or below a `.git`. The default
+  `/tmp` is a location only, never a ground for a safety judgement.
+- Code that needs a temporary directory or file takes `tmploc.Dir`, `tmploc.MkdirTemp`,
+  `tmploc.CreateTemp`, or `tmploc.MkdirTempIn(parent, pattern)` when the parent is a variable;
+  `MkdirTempIn` refuses an empty or relative parent (`temp_parent_not_absolute`), so an empty parent
+  never means "`TMPDIR`, decided inside `os`". crwconfig's `temp_root` takes the raw value from
+  `tmploc.Lookup` and keeps its own order (the environment, then `paths.temp_root`, then the strict
+  absolute check) and its own error text.
+- Sockets never lie under `TMPDIR`. A test socket lies below a socket folder made under
+  `tmploc.SocketRoot` (`/tmp`), a fixed root for every run, and its path is measured against
+  `tmploc.SocketTailMax` within the 103-byte bound (`tmploc.SocketBound`); `tmploc.SocketFits` is the
+  one budget calculation. `crw-dev ci local` checks the temporary directory and the socket folder
+  before any step ([The local run](#the-local-run)).
+- A test takes `t.TempDir()`, or `tmploctest.SocketDir`, `tmploctest.SocketPath` and
+  `tmploctest.CheckSocket` for a socket.
+- A shell script or a document writes the default as `${TMPDIR:-/tmp}`, the same rule.
+
+`internal/dev/ci/tmp_decisions_test.go` (dev tag) enforces this. It greps every tracked file for the
+direct deciders (`os.TempDir`, a quoted `/tmp`, `/var/tmp` or `/dev/shm` literal, `MkdirTemp` or
+`CreateTemp` with an empty parent, and a direct read of `TMPDIR`), and every hit must be one of these
+exceptions or a pending site:
+
+- E1 `internal/tmploc` (non-test files): the one place. It holds `DefaultDir`, `SocketRoot` and the
+  read of `TMPDIR`, matched by file and exact line text.
+- E2 `*_test.go` and `web/test`: test code, pending CRW-1580, which removes this entry.
+- E3 `testdata` and `contract/fixtures`: recorded data and the oracle's own programs, not locations
+  this program chooses.
+- E4 the recorded hook payload line in `internal/contracttest/hook.go` (`cwd`, `transcript_path`), the
+  same text as `contract/fixtures/hook`, matched by exact line text.
+- E5 the recorded scratch parent of the cxc replay's 9 `path_length_dependent` fixtures
+  (`cxccorpus.RecordedScratch`), the recorded oracle condition; it is added with that constant.
+- E6 port history prose under `docs/port-cxc` and `docs/port` that quotes code or Python literals,
+  listed by file.
+
+The pending list names each site still to move with the unit that moves it; it shrinks to nothing
+within CRW-1579. A second rule judges every non-test `os.MkdirTemp` and `os.CreateTemp` whose parent is
+a variable: unless the parent is `filepath.Dir(...)` or a literal, the call is listed with the reason
+its parent is never empty or relative, or it is pending until it moves to `tmploc.MkdirTempIn`. An
+exception, a pending entry or a listed call that no longer matches a line fails the check, so the
+lists cannot go stale.
+
 ## Leftover isolation trees
 
 Nothing removes a `crw-relay-test-*` directory a run leaves: a test binary killed by `go test -timeout` or by
