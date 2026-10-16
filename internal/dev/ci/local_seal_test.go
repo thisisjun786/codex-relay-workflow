@@ -143,12 +143,10 @@ func TestLocalPins_a_job_whose_node_pin_differs_is_a_mismatch_and_re_runs(t *tes
 
 // Parent ruling 3 and 2: changing any one key of answer 4 (or a tool version) re-runs the table; the
 // engine's own step runs, observed through a marker file, not only the boolean.
-func TestLocalReuse_each_key_changed_alone_re_runs_the_table(t *testing.T) {
+func TestLocalReuse_each_tree_rule_key_changed_alone_re_runs_the_table(t *testing.T) {
 	keys := map[string]func(*verificationRecord){
 		"tree":        func(r *verificationRecord) { r.TreeHash = "sha1:other" },
 		"ci.yml":      func(r *verificationRecord) { r.CiDigest = "sha256:other" },
-		"base":        func(r *verificationRecord) { r.BaseCommit = "0000000000000000000000000000000000000000" },
-		"range":       func(r *verificationRecord) { r.Range = "sha256:other" },
 		"os":          func(r *verificationRecord) { r.OS = "plan9" },
 		"arch":        func(r *verificationRecord) { r.Arch = "mips" },
 		"go tool":     func(r *verificationRecord) { r.Tools["go"] = "0.0.1" },

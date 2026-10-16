@@ -45,8 +45,20 @@ func fakeCrwDevMain() int {
 			tmpPhysical, tmpMode = p, fi.Mode().Perm().String()
 		}
 	}
+	var reuse json.RawMessage
+	reuseError := ""
+	if hint := os.Getenv("CRW_VERIFY_REUSE"); hint != "" {
+		raw, err := os.ReadFile(hint)
+		if err != nil {
+			reuseError = err.Error()
+		} else if !json.Valid(raw) {
+			reuseError = "reuse hint is not JSON"
+		} else {
+			reuse = raw
+		}
+	}
 	line, _ := json.Marshal(map[string]any{"args": args, "dir": dir, "head": strings.TrimSpace(string(at)), "files": files, "env": os.Environ(),
-		"tmp_physical": tmpPhysical, "tmp_mode": tmpMode})
+		"tmp_physical": tmpPhysical, "tmp_mode": tmpMode, "reuse": reuse, "reuse_error": reuseError})
 	if f, err := os.OpenFile(os.Getenv(labFakeCrwDevLog), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600); err == nil {
 		_, _ = f.Write(append(line, '\n'))
 		_ = f.Close()
@@ -118,13 +130,33 @@ func TestCILocalIntegrationVerifiesTheMergedTree(t *testing.T) {
 	if len(calls) != 2 {
 		t.Fatalf("%d verifications of merged trees, want one per node: %s", len(calls), raw)
 	}
+	hints := 0
 	for i, c := range calls {
 		a := c.Args
-		if len(a) != 10 || a[0] != "ci" || a[1] != "local" || a[2] != "--commit" || a[4] != "--base" || a[6] != "--record" || a[8] != "--runner" || a[9] != "local" {
+		hint, _ := envValue(c.Env, "CRW_VERIFY_REUSE")
+		wantArgs := 10
+		if hint != "" {
+			wantArgs = 12
+		}
+		if len(a) != wantArgs || a[0] != "ci" || a[1] != "local" || a[2] != "--commit" || a[4] != "--base" || a[6] != "--record" || a[8] != "--runner" || a[9] != "local" {
 			t.Errorf("call %d: crw-dev %q", i, a)
 			continue
 		}
 		head := a[3]
+		if hint != "" {
+			hints++
+			if a[10] != "--reuse" || a[11] != hint || c.ReuseError != "" {
+				t.Errorf("call %d did not forward its hint: %v %s", i, a, c.ReuseError)
+			}
+			var source dagsched.VerificationRecord
+			if err := json.Unmarshal(c.Reuse, &source); err != nil {
+				t.Fatalf("call %d hint: %v", i, err)
+			}
+			tree, err := exec.Command("git", "-C", l.repo, "rev-parse", head+"^{tree}").Output()
+			if err != nil || source.TreeHash != strings.TrimSpace(string(tree)) {
+				t.Errorf("call %d source tree %s differs from merged tree %s (%v)", i, source.TreeHash, tree, err)
+			}
+		}
 		if out, err := exec.Command("git", "-C", l.repo, "merge-base", "--is-ancestor", head, "integration").CombinedOutput(); err != nil {
 			t.Errorf("call %d verified %s, which did not land: %s", i, head, out)
 		}
@@ -137,6 +169,9 @@ func TestCILocalIntegrationVerifiesTheMergedTree(t *testing.T) {
 				t.Errorf("call %d: the merged tree %s has no work of %s: %v", i, c.Dir, key, c.Files)
 			}
 		}
+	}
+	if hints == 0 {
+		t.Error("the real lane never supplied a matching node record")
 	}
 	if calls[1].Args[3] != v.Tip {
 		t.Errorf("the last verified head %s is not the tip %s the milestone closed over", calls[1].Args[3], v.Tip)
@@ -161,11 +196,13 @@ func TestCILocalIntegrationVerifiesTheMergedTree(t *testing.T) {
 
 // fakeCrwDevCall is one line of the fake crw-dev's log.
 type fakeCrwDevCall struct {
-	Args  []string `json:"args"`
-	Dir   string   `json:"dir"`
-	Head  string   `json:"head"`
-	Files []string `json:"files"`
-	Env   []string `json:"env"`
+	Args       []string        `json:"args"`
+	Dir        string          `json:"dir"`
+	Head       string          `json:"head"`
+	Files      []string        `json:"files"`
+	Env        []string        `json:"env"`
+	Reuse      json.RawMessage `json:"reuse"`
+	ReuseError string          `json:"reuse_error"`
 	// TmpPhysical and TmpMode are the physical path and permission bits of the TMPDIR crw-dev was given
 	TmpPhysical string `json:"tmp_physical"`
 	TmpMode     string `json:"tmp_mode"`
