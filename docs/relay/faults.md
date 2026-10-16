@@ -990,7 +990,7 @@ deliverer is the seam between them and owns no rule. Each tick it:
   (its budget unit given back); a send that may have landed stays uncertain and is never
   repeated - only a verified `supervisor-read` settles it;
 - reads, without writing, a page of pending notifications (rotating across ticks) and asks
-  whether any can go now, measuring a child whose contact eligibility could not read (the host
+  whether any can go now, measuring a child whose contact eligibility could not be read (the host
   observation delivery itself records; a child the host cannot answer about is its own
   notifications' reason to wait, and the pass goes on) and keeping on a notification why it
   waits, only when that changes;

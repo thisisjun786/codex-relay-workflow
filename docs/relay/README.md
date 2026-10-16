@@ -452,7 +452,7 @@ lets go when it returns: `linkage-bind --role parent`, `linkage-handover --role 
 `linkage-supervise`. Such a writer waits for every start inside that span, and a start waits for it
 before it asks about the binding, so the binding cannot change between the last scope check, the
 creation and the registration (which would refuse a `child` session whose thread already exists). Writers of
-other scopes (the scope of an issue, the scope of an initiative) take no lock, and a writer or
+other scopes (issue or initiative scopes) take no lock, and a writer or
 a start of another project waits only for that project's own lock. The lock file is named after the
 store's real path, so two spellings of one store (a linked file or directory) share it. The wait is
 bounded at 30 seconds: a start or a writer that waits that
@@ -647,7 +647,7 @@ Global options come BEFORE the subcommand:
 | `relationship-status` / `relationship-resume` | pause, cancel, archive; resume only by restating generation and scope |
 | `relationship-close-merged` | archive the live assignments that are merged with nothing owed; a dry run without `--apply` |
 | `child-cleanup` | after the merge and the integration observation, archive the finished `child` session and its loaded sub-threads on the App Server so their MCP helpers stop; refuses unless a merged mark counts and nothing can still be sent to the `child` session; needs `--socket`, `--dry-run` plans |
-| `linkage-supervise` | bind an initiative's scope over a project's session, by execution or by reference |
+| `linkage-supervise` | bind an initiative's scope over a project session, by execution or by reference |
 | `linkage-bind` | claim one scope for one task at one level |
 | `linkage-attach` | bind an existing assignment's issue to its project |
 | `linkage-peer` | join two project sessions, symmetrically and outside the hierarchy |
@@ -944,7 +944,7 @@ The rule is fixed by the kind. `answer` and `stop` change nothing the `child` se
 | Cause | Reason |
 | --- | --- |
 | no such event | `not_claimable` |
-| the receipt is neither a final `child` session `blocked_needs_input` nor a final receipt the relay itself observed ending `interrupted` or `failed`, or it is an observed end and the kind is not `answer` (a receipt with an artifact is ruled with a verdict), another decision or any verdict is on record | `disposition_conflict` |
+| the receipt is neither a final `child` session `blocked_needs_input` nor a final receipt the relay itself observed ending `interrupted` or `failed`, or it is an observed end and the kind is not `answer` (a receipt with an artifact is ruled with a verdict), or another decision or any verdict is on record | `disposition_conflict` |
 | the relationship is not active | `relationship_not_active` |
 | the receipt is not of the current generation | `stale_generation` |
 | the `child` session has reported again in this generation | `superseded_revision` |
@@ -955,7 +955,7 @@ The rule is fixed by the kind. `answer` and `stop` change nothing the `child` se
 
 No refusal reason is added, and a refusal writes nothing. The command line is checked first: an unknown `--decision` or a missing required option ends with the parser's own exit 2 and a message on stderr before the writer runs, an unreadable `--note @path` is a host problem (exit 3, as for `verdict --criteria`), and `malformed_receipt` is what the writer answers to a direct call or to a blank note, turn or digest. `decision-show` reads the decisions of a relationship back, oldest first, each with the state of its delivery.
 
-Limits that are part of the contract. The relay records the decision and its delivery; it does not read the `child` session's thread, so `dispatched` says the message was accepted, not that the `child` session acted. A decision that opened g+1 is recorded against a DAG plan node by `dag-correct` ([the third way to open a generation](dag-scheduler.md#three-ways-to-open-the-generation)), which refuses until the decision was dispatched into the turn the generation is bound to; until it is recorded, `dag-accept` finds no execution for g+1 and refuses `stale_generation`. A message sent to the `child` session outside this route leaves a record only when the registered project session admits its turn ([Direct interventions by the project session](#direct-interventions-by-the-project-session)). The crw-run skill's need-input procedure follows this route. After an answer or a stop, the relationship still reads as blocked (`dispositions-show`) until the `child` session reports again. `registry`'s `generation-open --reason` still accepts only the reasons that command writes: `decision_reply` is written by this command alone. An installed relay older than this change has no `decision-reply` and answers the command as an unknown subcommand.
+Limits that are part of the contract. The relay records the decision and its delivery; it does not read the `child` session's thread, so `dispatched` says the message was accepted, not that the `child` session acted. A decision that opened g+1 is recorded against a DAG plan node by `dag-correct` ([the third way to open a generation](dag-scheduler.md#three-ways-to-open-the-generation)), which refuses until the decision has been dispatched into the turn the generation is bound to; until it is recorded, `dag-accept` finds no execution for g+1 and refuses `stale_generation`. A message sent to the `child` session outside this route leaves a record only when the registered project session admits its turn ([Direct interventions by the project session](#direct-interventions-by-the-project-session)). The crw-run skill's need-input procedure follows this route. After an answer or a stop, the relationship still reads as blocked (`dispositions-show`) until the `child` session reports again. `registry`'s `generation-open --reason` still accepts only the reasons that command writes: `decision_reply` is written by this command alone. An installed relay older than this change has no `decision-reply` and answers the command as an unknown subcommand.
 
 
 ## The coordination summary

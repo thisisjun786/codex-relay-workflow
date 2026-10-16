@@ -776,7 +776,7 @@ isolated either.
 
 A parent relationship binds the stable initiative identity, the project identities under it,
 and the real task and host identifiers of the parent and of each child. A message between two
-children binds its own request id, both children' task identifiers, both milestone scopes and the base
+children binds its own request id, both children's task identifiers, both milestone scopes and the base
 revision it is about. Neither routes on anything else, for the reason OPS-7.2 gives, and neither is
 an assignment: a parent reads a child's assignments and never adopts one, and a peer message
 carries no receipt, acknowledgement or verdict and never enters another child's registered

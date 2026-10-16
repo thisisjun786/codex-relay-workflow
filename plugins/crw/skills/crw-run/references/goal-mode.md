@@ -24,12 +24,12 @@ Three rules follow, and every section below keeps them.
    goal-mode request, the `$crw-loop` handoff above, or the restoration of a goal the child already
    holds. Binding-only, status, explanation, quoted examples, automatic skill discovery and unsubmitted
    UI prompts authorize neither a goal nor an execution.
-2. **The child never follows the loop procedure.** While it acts as project session, the session does
+2. **The child never follows the loop procedure.** While acting as the project session, it does
    not follow the crw-loop or crw-pabcd procedure, with or without a goal: it creates no implementation goalplan or FSM, enters no
    PABCD phase, and runs no `crw pabcd orchestrate` or `crw pabcd loop init` for itself. The child's
    native goal tracks verified results and integrations for the agreed scope and needs no source diff in
    the child checkout. The one exception is a user's explicit request to implement a task in the
-   current session: for that task the session is its implementer and not acting as project session, runs
+   current session: for that task the session acts as its implementer rather than the project session, runs
    the loop with its own goalplan, creates no `child` session and starts no goal mode, and a session that holds an
    active child goal cannot take it up under that goal (see task creation in [crw-run](../SKILL.md)).
 3. **A `child` session's workflow is named `crw-loop`.** `child` sessions keep their own implementation workflow, the
@@ -51,7 +51,7 @@ another coordinator or recursively invoke skills.
 
 A submitted `$crw-run <milestone link>` execution request that asks for a goal, or the `$crw-loop`
 handoff above, establishes the project session's native goal and automatic execution of the agreed scope.
-That request is what opens the goal, since the child default opens none, and it is also the only
+That request is what opens the goal, since the child opens none by default, and it is also the only
 occasion for one. Designate or restore the fixed child using
 [Project parent binding](../../crw-plan/references/integrations.md#project-parent-binding), then follow
 [Parent goal lifecycle](#parent-goal-lifecycle) before dispatch. Run alone already advances through

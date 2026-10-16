@@ -720,7 +720,7 @@ goal, and the separation between reporting a needed action and having authority 
 
 ## S32 Two parents agree directly, and a conditional yes is not a change
 
-Observed: two children' projects both edit one shared surface. A proposes an edit split and a base
+Observed: two children's projects both edit one shared surface. A proposes an edit split and a base
 revision; B replies with a conditional acceptance whose condition is that A lands first. Later B's
 `child` session reports work that assumed the condition already held, and separately A asks that a third
 project adopt the same split.

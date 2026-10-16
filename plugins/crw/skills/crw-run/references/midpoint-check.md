@@ -409,7 +409,7 @@ between a healthy goal and a delivered item.
 
 Observed: the checkpoint establishes that a child cannot continue because of its goal state.
 Action: confirm first that this child is one a goal is expected of, which since CRW-165 is only a
-child goal mode was requested for, because a goal-free child
+child for which goal mode was requested, because a goal-free child
 is not stalled by lacking one. For a goal-mode child, report the block and route it as goal-mode
 lifecycle work to the task named by the child's stable coordinator binding, or to Jun where none
 is named. Do not create, activate or repair a goal from a status call. A checkpoint moves approved

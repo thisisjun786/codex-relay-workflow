@@ -58,7 +58,7 @@ hands them to the daemon, which records the report in its own store; the call an
 and the daemon's own output, or an error carrying the daemon's refusal. The state the daemon is found
 in is the bridge's own configuration (the App Server socket it was started with and the relay state
 variable of its own environment), never an argument: a `--state`, `--socket` or `--kind-module` is no
-option of a `child` session command and is refused, as is a path that is not absolute, and nothing is recorded. With no daemon the call
+option of a `child` session command and is refused along with any non-absolute path; nothing is recorded. With no daemon the call
 fails with an explicit error and records nothing; there is no local store. Create-time refusal
 (`create_thread`, `create_worktree_thread`) and `register --child-settings` still refuse a relay `child` session
 in such a sandbox; `report_child` is for the `child` session created outside them, and its MCP profile has to leave

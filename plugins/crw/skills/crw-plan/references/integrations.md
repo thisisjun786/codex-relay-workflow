@@ -254,7 +254,7 @@ The form is `Child pair: <the policy's pair name, Sonnet or SOL> (<axis>) - <the
 The axis is exactly one of `reference exists`, `answer must be found` and `half-half`. A Korean issue
 body may write the label as `자식 pair`; the pair name and the axis words stay as written here, so a
 reader or a check can match them. The line records the pair's name (its family), never a model or an effort. An issue with
-no line is routed by the table by the child that dispatches it: the child writes the answer as the
+no line is routed through the table by the child that dispatches it: the child writes the answer as the
 line on the issue and reads it back before it prepares the packet or creates the `child` session, so a later
 child reading the issue finds the selection there. A note in the child's own coordination record is
 only a pending proposal; where the issue cannot be written, the child reports that blocker and creates
