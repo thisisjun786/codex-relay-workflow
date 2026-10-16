@@ -12,6 +12,7 @@
 package layername
 
 import (
+	"sort"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -73,10 +74,12 @@ var roleWords = []string{"supervisors", "supervisor", "parents", "parent"}
 // or a '.' followed by a letter (a field path). A following '-' ends the word (parent-authored is a
 // hit) except in parent-class, a decision class, and parent-title, a skill command.
 //
-// A command name that 1.0 keeps is no layer (CRW-1477): the lower-case supervisor or parent that is
-// the command word right after "crw <family> " (crw manage supervisor register), where crw stands
-// alone and family is one of crwFamilies, is not counted. The running text around such a command is
-// (crw manage the supervisor, crw manage supervisor's seat, the supervisor section).
+// A command name that 1.0 keeps is no layer (CRW-1477): the supervisor or parent that begins the
+// command word right after "crw <family> " (crw manage supervisor register, crw relay supervisor-stage),
+// where crw stands alone, family is one of crwFamilies and the whole command token is one of the
+// family's commandNames (CRW-1546), is not counted. The running text around such a command is, and so
+// is a token that is no command of the family (crw manage the supervisor, crw manage supervisor's seat,
+// crw relay supervisor-authored, the supervisor section).
 //
 // Not counted: a typed role id (supervisor (부모), parent (자식)); a quoted role id followed by its
 // layer name ('parent' (자식), "parent" (자식)); a quoted role list followed by its ListGloss
@@ -196,7 +199,7 @@ func exempt(text string, i int, word string, end int) bool {
 	if flagValue(text[:i]) {
 		return true
 	}
-	if (word == "supervisor" || word == "parent") && commandWord(text[:i]) {
+	if family := commandWord(text[:i]); family != "" && commandNames[family][commandToken(text[i:])] {
 		return true
 	}
 	if lower == "parent" && (hasWordPrefix(rest, "-class") || hasWordPrefix(rest, "-title")) {
@@ -225,23 +228,59 @@ var crwFamilies = map[string]bool{
 	"pabcd": true, "role": true, "provider": true, "map": true, "flow": true,
 }
 
-// commandWord is whether before ends with "crw <family> ", crw standing alone (not after a letter,
-// digit, '_' or '-') and family one of crwFamilies, so the word that follows is the family's command.
-func commandWord(before string) bool {
+// commandNames are, per crw family, the command names 1.0 keeps that begin with supervisor or parent:
+// the only command tokens Find does not count after "crw <family> " (CRW-1546). The relay set is every
+// registered relay command so named (internal/relay/cli command_words_test.go keeps the two equal).
+var commandNames = map[string]map[string]bool{
+	"relay": {
+		"supervisor-standing": true, "supervisor-select": true, "supervisor-report-recorded": true,
+		"supervisor-stage": true, "supervisor-show": true, "supervisor-list": true,
+		"supervisor-acknowledge": true, "supervisor-send": true, "supervisor-read": true,
+	},
+	"manage": {"supervisor": true},
+	"skill":  {"parent-title": true},
+}
+
+// CommandNames is the family's command names that begin with supervisor or parent, sorted; nil for a
+// family that has none.
+func CommandNames(family string) []string {
+	var names []string
+	for name := range commandNames[family] {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// commandWord is the family when before ends with "crw <family> ", crw standing alone (not after a
+// letter, digit, '_' or '-') and family one of crwFamilies, so the word that follows is the family's
+// command; "" otherwise.
+func commandWord(before string) string {
 	if !strings.HasSuffix(before, " ") {
-		return false
+		return ""
 	}
 	name := before[:len(before)-1]
 	k := strings.LastIndexByte(name, ' ')
 	if k < 0 || !crwFamilies[name[k+1:]] || !strings.HasSuffix(name[:k], "crw") {
-		return false
+		return ""
 	}
 	rest := name[:k-len("crw")]
-	if rest == "" {
-		return true
+	if rest != "" {
+		if r := lastRune(rest); wordChar(r) || r == '-' {
+			return ""
+		}
 	}
-	r := lastRune(rest)
-	return !wordChar(r) && r != '-'
+	return name[k+1:]
+}
+
+// commandToken is the command token that starts text: up to the first rune that is neither a letter,
+// a digit, '_' nor '-'.
+func commandToken(text string) string {
+	end := strings.IndexFunc(text, func(r rune) bool { return !wordChar(r) && r != '-' })
+	if end < 0 {
+		return text
+	}
+	return text[:end]
 }
 
 // hasWordPrefix is whether rest starts with next (any ASCII case) and next ends a word there.
