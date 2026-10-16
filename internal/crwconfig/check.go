@@ -642,9 +642,9 @@ func Preflight(getenv func(string) string) (Report, error) {
 	}
 	report := Check(file, getenv, runProbe)
 	// The tracking section is judged for its spelling only, with no probe: this report is made on
-	// every doctor run and install, and a missing section is told by crw config check, not here. A
-	// section that is not usable is a warning and never part of the refusal.
-	status, findings := CheckTracking(file, nil, false)
+	// every doctor run and install, and a missing section is the warning that carries the repair
+	// command (CRW-1577), never a refusal. A section that is not usable is a warning too.
+	status, findings := CheckTracking(file, nil, true)
 	report.Tracking = status
 	report.Findings = append(report.Findings, findings...)
 	return report, file.Refusal(getenv)

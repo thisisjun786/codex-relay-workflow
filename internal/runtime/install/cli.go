@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pluginwiring"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/doctor"
@@ -272,6 +273,17 @@ func Main(ctx context.Context, args []string, env scope.Env, stdout, stderr io.W
 			JournalRoot: *journalRoot, Mode: *mode, Isolation: *isolation, GuardTimeout: *guardTimeout, Timeout: *timeout, DryRun: *dryRun})
 	case "register-service":
 		result, code = RegisterService(ctx, o, ServiceOptions{UnitName: *unitName, UnitDir: *unitDir, ScopeDir: *scopeDir, Remove: *removeUnit, DryRun: *dryRun})
+	}
+	// A missing tracking section is warned of once on stderr too: a user who reads the terminal and
+	// never the JSON still sees the repair command (CRW-1577).
+	if warnings, ok := record.Get(result, "warnings").([]any); ok {
+		for _, value := range warnings {
+			warning, ok := value.(Object)
+			if !ok || record.Get(warning, "check") != crwconfig.CheckTrackingMissing {
+				continue
+			}
+			fmt.Fprintf(stderr, "crw install %s: warning [%s]: %s\n", command, crwconfig.CheckTrackingMissing, record.Get(warning, "message"))
+		}
 	}
 	if err := contract.Emit(stdout, result); err != nil {
 		fmt.Fprintln(stderr, "crw install "+command+": "+err.Error())
