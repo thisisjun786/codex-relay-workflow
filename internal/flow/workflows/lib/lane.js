@@ -373,6 +373,9 @@ export async function dag(planId, lane, opts) {
         if (S && S.recordedPending && !S.allowed[n.id]) continue
         // a node held back for an edit overlap waits until another node has ended since it asked
         if (deferredAt[n.id] !== undefined && ended <= deferredAt[n.id]) continue
+        // a replayed re-admission (-1) comes after every pending node that overlaps it and does not wait for it: that node may be the one
+        // that made the signal the re-admitted node's claim waits for, and it cannot enter beside the node (CRW-1467)
+        if (deferredAt[n.id] === -1 && nodes.some((o) => o !== n && state[o.id] === 'pending' && deferredAt[o.id] === undefined && !waitsFor(o.id)[n.id] && overlaps(o.regions, n.regions))) continue
         // no node is admitted while a signal is decided: what it makes (a revision, the regions of its nodes) is what the admission reads
         if (S && S.holds()) continue
         const running = active()

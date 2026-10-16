@@ -1789,6 +1789,57 @@ func TestSelfCausedEditOverlapDeferReadmitsAfterTheOtherNodeLands(t *testing.T) 
 		}
 		resumeCompletedZeroLive(t, l)
 	})
+	// the node that makes the signal waits for a node that holds the cap: C follows A and overlaps B, so a resume that put B back to running
+	// before A ended would leave C no room to enter and B waiting in its claim for the signal C made (the replay must not hang)
+	t.Run("the node that made the signal follows the node that held B back", func(t *testing.T) {
+		l := NewLab(t,
+			NodeSpec{ID: "A", Issue: "CRW-A", Title: "issue A", Regions: []string{"a.go"}},
+			NodeSpec{ID: "B", Issue: "CRW-B", Title: "issue B", Regions: []string{"b.go"}},
+			NodeSpec{ID: "C", Issue: "CRW-C", Title: "issue C", After: []string{"A"}, Regions: []string{"b.go#C"}},
+		)
+		l.Cap = 2
+		mismatching(l, "C")
+		fixedOnce(l, "C")
+		l.Relay.HoldBackIf = deferWhileHeld("B", "A")
+		aReleased, bPending := make(chan struct{}), make(chan struct{})
+		var aOnce, bOnce sync.Once
+		l.OnRow(func(ev engine.Event) {
+			if releaseOf(ev, "A") && flagOf(ev.Data, "released") {
+				aOnce.Do(func() { close(aReleased) })
+			}
+		})
+		l.OnSettled(func(ev engine.Event) {
+			if heldBack(ev, "B") {
+				bOnce.Do(func() { close(bPending) })
+			}
+		})
+		var asks atomic.Int32
+		l.Relay.OnRelease = func(req ops.ReleaseRequest) {
+			if req.Node == "B" && asks.Add(1) == 1 {
+				waitFor(t, aReleased, "A's release")
+			}
+		}
+		l.Relay.OnIntegrate = func(node string) {
+			if node == "A" {
+				waitFor(t, bPending, "the lane to take B's held-back answer")
+			}
+		}
+		got := mustRun(t, l)
+		checkDeferredThenReleased(t, l, got)
+		if rev := releaseRevisions(l); rev["A"] != "r0" || rev["C"] != "r0" || rev["B"] != "r1" {
+			t.Fatalf("release revisions %v: B is released under the revision C's signal made", rev)
+		}
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			resumeCompletedZeroLive(t, l)
+		}()
+		select {
+		case <-done:
+		case <-time.After(time.Minute):
+			t.Fatal("the resume did not finish: B waits for the signal of C, which cannot enter beside B")
+		}
+	})
 	t.Run("no other node of the dag", func(t *testing.T) {
 		l := NewLab(t, NodeSpec{ID: "A", Issue: "CRW-A", Title: "issue A", Regions: []string{"a.go"}})
 		l.Relay.HoldBackIf = func(ops.ReleaseRequest, map[string][]ops.LaneRegion) string { return dagsched.DeferEditOverlap }
