@@ -57,7 +57,7 @@ func fromMapping(value any, digest string) (Policy, error) {
 		warnings = append(warnings, retiredKeyWarning(retired))
 	}
 	if agentRoles != nil && criticFilled {
-		// A file written before the critic (CRW-1434) loads; its critic runs the compiled default, which the warning names.
+		// A file written before the critic (CRW-1434) loads; its critic inherits the reviewer pair, which the warning says.
 		warnings = append(warnings, criticFilledWarning())
 	}
 	allowed, err := parseAllowed(data.Get("allowed"), len(roles) > 0 || agentDeclared)

@@ -10,7 +10,6 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/compile"
-	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/journal"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
 )
@@ -46,12 +45,9 @@ func (l *laneLab) buildLaneWith(run string, raw []byte, extra map[string]any, op
 		members[k] = v
 	}
 	args, _ := json.Marshal(members)
-	pair := func(model string) engine.RoleSpec {
-		return engine.RoleSpec{Pair: engine.Pair{Model: model, Effort: "high"}}
-	}
 	req := LaneRequest{WorldRequest: WorldRequest{Spec: Spec{Schema: SpecSchema, RunID: run, Workflow: "x", Script: script, Args: args, Thread: labOwner, CreatedAt: "2026-10-12T09:00:00Z"}, State: l.w.state},
 		Store: l.w.st, Journal: j, Identity: journal.Identity{PlanID: l.plan, PlanRevision: 1, ActorTaskID: labOwner, EpochNonce: run}, Repo: l.repo,
-		Policy: &engine.Policy{Roles: map[string]engine.RoleSpec{"executor": pair("claude-fake-haiku"), "reviewer": pair("gpt-fake-sol")}}}
+		Policy: unitCheckPolicy()}
 	var got *SchedRelay
 	opt.Relay = func(r *SchedRelay) ops.Relay { got = r; return &labRelay{SchedRelay: r, l: l} }
 	if opt.SkillsDigest == "" {

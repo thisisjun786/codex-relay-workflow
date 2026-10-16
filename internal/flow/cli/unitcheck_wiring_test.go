@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -10,28 +11,40 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/journal"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/reviewadapter"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/script"
+	"github.com/thisisjun786/codex-relay-workflow/internal/role"
 )
 
 // The wiring of crw.unitCheck (CRW-1463): the lane the shipped binary builds installs the op over the unit check LaneOptions names, and
 // over the shipped one (shippedUnitCheck: a Codex review through the review adapter, Bugbot on a Codex quota) when it names none.
 
+// unitCheckPolicy is the role table the wiring tests hand the lane: the placeholder pairs of two roles and the unit
+// check's tool pair at its compiled default (CRW-1589).
+func unitCheckPolicy() *engine.Policy {
+	pair := func(model string) engine.RoleSpec {
+		return engine.RoleSpec{Pair: engine.Pair{Model: model, Effort: "high"}}
+	}
+	return &engine.Policy{Roles: map[string]engine.RoleSpec{"executor": pair("claude-fake-haiku"), "reviewer": pair("gpt-fake-sol")},
+		UnitCheck: engine.Pair{Model: role.UnitCheckDefaultModel, Effort: role.UnitCheckDefaultEffort}}
+}
+
 // unitCheckLane builds the lane of a run whose script calls a crw.* operation, with the unit check uc (nil: the shipped one).
 func unitCheckLane(t *testing.T, w *world, run string, uc *ops.UnitCheck) LaneWorld {
 	t.Helper()
-	lw, err := buildUnitCheckLane(t, w, run, uc, func(string) (string, bool) { return "", false })
+	lw, err := buildUnitCheckLane(t, w, run, uc, func(string) (string, bool) { return "", false }, unitCheckPolicy())
 	if err != nil {
 		t.Fatal(err)
 	}
 	return lw
 }
 
-// buildUnitCheckLane is unitCheckLane with the environment getenv and BuildLane's error answered.
-func buildUnitCheckLane(t *testing.T, w *world, run string, uc *ops.UnitCheck, getenv func(string) (string, bool)) (LaneWorld, error) {
+// buildUnitCheckLane is unitCheckLane with the environment getenv, the role table and BuildLane's error answered.
+func buildUnitCheckLane(t *testing.T, w *world, run string, uc *ops.UnitCheck, getenv func(string) (string, bool), policy *engine.Policy) (LaneWorld, error) {
 	t.Helper()
 	j, err := journal.Open(context.Background(), w.st, run, journal.Identity{}, journal.Options{Immediate: true})
 	if err != nil {
@@ -41,11 +54,8 @@ func buildUnitCheckLane(t *testing.T, w *world, run string, uc *ops.UnitCheck, g
 	if err := os.WriteFile(laneful, []byte("export const meta = { name: 'laneful' }\nawait crw.unitCheck('A', null, {})\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	pair := func(model string) engine.RoleSpec {
-		return engine.RoleSpec{Pair: engine.Pair{Model: model, Effort: "high"}}
-	}
 	req := LaneRequest{WorldRequest: WorldRequest{Spec: Spec{Schema: SpecSchema, RunID: run, Workflow: "x", Script: laneful, Thread: labOwner}, State: w.state},
-		Store: w.st, Journal: j, Policy: &engine.Policy{Roles: map[string]engine.RoleSpec{"executor": pair("claude-fake-haiku"), "reviewer": pair("gpt-fake-sol")}}}
+		Store: w.st, Journal: j, Policy: policy}
 	return BuildLane(context.Background(), req, LaneOptions{Verifier: &labNoVerifier{}, IntegrationVerify: func(context.Context, string, []string) error { return nil },
 		SkillsDigest: "sha256:lab-skills", Getenv: getenv, UnitCheck: uc})
 }
@@ -166,8 +176,7 @@ func TestBuildLaneWiresTheUnitCheck(t *testing.T) {
 // model names) and neither Bugbot one, a setting codex cannot be given or whose family cannot be told is refused when the lane is built, and the call is limited to ten minutes.
 func TestShippedUnitCheckIsCodexInBothModes(t *testing.T) {
 	isolateGit(t)
-	none := func(string) (string, bool) { return "", false }
-	uc, err := shippedUnitCheck(none)
+	uc, err := shippedUnitCheck(unitCheckPolicy())
 	if err != nil || uc == nil || uc.Limit != shippedUnitCheckLimit || shippedUnitCheckLimit != 10*time.Minute {
 		t.Fatalf("shipped unit check %+v %v", uc, err)
 	}
@@ -212,52 +221,47 @@ func TestShippedUnitCheckIsCodexInBothModes(t *testing.T) {
 		t.Error("an unknown mode has a fallback")
 	}
 
-	// the settings change both Codex profiles and neither Bugbot one
-	env := map[string]string{"CRW_UNIT_CHECK_MODEL": "o9", "CRW_UNIT_CHECK_EFFORT": "medium"}
-	set := func(k string) (string, bool) { v, ok := env[k]; return v, ok }
-	tuned, err := shippedUnitCheck(set)
+	// the snapshot's unit-check pair decides both Codex profiles and neither Bugbot one (CRW-1589)
+	tuned, err := shippedUnitCheck(&engine.Policy{UnitCheck: engine.Pair{Model: "o9", Effort: "medium"}})
 	if err != nil || tuned == nil {
-		t.Fatalf("the shipped unit check with settings %+v %v", tuned, err)
+		t.Fatalf("the shipped unit check with a configured pair %+v %v", tuned, err)
 	}
 	codex(tuned, ops.UnitCheckUncommitted, "codex-review", "o9", "medium", "o9")
 	codex(tuned, ops.UnitCheckCommitted, "codex-review-committed", "o9", "medium", "o9")
 	bugbot(tuned, ops.UnitCheckUncommitted, reviewadapter.BugbotProfile())
 	bugbot(tuned, ops.UnitCheckCommitted, reviewadapter.BugbotCommittedProfile())
 
-	// a setting codex cannot be given is refused, naming the variable, and stops the lane when it is built
-	for k, v := range map[string]string{"CRW_UNIT_CHECK_MODEL": `a"b`, "CRW_UNIT_CHECK_EFFORT": "High!"} {
-		bad := func(key string) (string, bool) {
-			if key == k {
-				return v, true
-			}
-			return "", false
+	// a pair codex cannot be given is refused — naming the variable when the value is an environment override, the field
+	// otherwise — and stops the lane when it is built; a lane that names its own unit check does not read it
+	for i, tc := range []struct {
+		unit      engine.Pair
+		overrides map[string]string
+		want      string
+	}{
+		{engine.Pair{Model: `a"b`, Effort: "high"}, map[string]string{role.UnitCheckModelEnv: `a"b`}, role.UnitCheckModelEnv},
+		{engine.Pair{Model: "gpt-6-astra", Effort: "High!"}, map[string]string{role.UnitCheckEffortEnv: "High!"}, role.UnitCheckEffortEnv},
+		{engine.Pair{Model: "-astra", Effort: "high"}, nil, "unit-check model"},
+		{engine.Pair{Model: "gpt-6-astra"}, nil, "resolved model and effort"},
+	} {
+		policy := unitCheckPolicy()
+		policy.UnitCheck, policy.UnitCheckOverrides = tc.unit, tc.overrides
+		if uc, err := shippedUnitCheck(policy); err == nil || uc != nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%+v: shipped unit check %+v %v, want an error naming %q", tc.unit, uc, err, tc.want)
 		}
-		if uc, err := shippedUnitCheck(bad); err == nil || uc != nil || !strings.Contains(err.Error(), k) {
-			t.Errorf("%s=%q: shipped unit check %+v %v, want an error naming the variable", k, v, uc, err)
+		if _, err := buildUnitCheckLane(t, newWorld(t), "run-ucbadpol01", nil, func(string) (string, bool) { return "", false }, policy); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%+v: BuildLane %v, want the refused pair naming %q", tc.unit, err, tc.want)
 		}
-		if _, err := buildUnitCheckLane(t, newWorld(t), "run-ucbadenv01", nil, bad); err == nil || !strings.Contains(err.Error(), k) {
-			t.Errorf("%s=%q: BuildLane %v, want the refused setting", k, v, err)
-		}
-		// a lane that names its own unit check does not read the settings
-		if _, err := buildUnitCheckLane(t, newWorld(t), "run-ucbadenv02", newLabUnitChecker().seam(), bad); err != nil {
-			t.Errorf("%s=%q with a named unit check: BuildLane %v", k, v, err)
+		if _, err := buildUnitCheckLane(t, newWorld(t), fmt.Sprintf("run-ucbadpol0%d", i), newLabUnitChecker().seam(), func(string) (string, bool) { return "", false }, policy); err != nil {
+			t.Errorf("%+v with a named unit check: BuildLane %v", tc.unit, err)
 		}
 	}
-	// a Claude model records the claude family, and a model whose family cannot be told is refused, naming the variable
-	claude := func(k string) (string, bool) {
-		return map[string]string{"CRW_UNIT_CHECK_MODEL": "anthropic/claude-sonnet-5"}[k], k == "CRW_UNIT_CHECK_MODEL"
-	}
+	// a Claude model records the claude family
+	claude := &engine.Policy{UnitCheck: engine.Pair{Model: "anthropic/claude-sonnet-5", Effort: "high"}}
 	if c, err := shippedUnitCheck(claude); err != nil {
 		t.Errorf("a Claude model: %v", err)
 	} else {
 		codex(c, ops.UnitCheckUncommitted, "codex-review", "anthropic/claude-sonnet-5", "high", "claude")
 		codex(c, ops.UnitCheckCommitted, "codex-review-committed", "anthropic/claude-sonnet-5", "high", "claude")
-	}
-	nameless := func(k string) (string, bool) {
-		return map[string]string{"CRW_UNIT_CHECK_MODEL": "-astra"}[k], k == "CRW_UNIT_CHECK_MODEL"
-	}
-	if uc, err := shippedUnitCheck(nameless); err == nil || uc != nil || !strings.Contains(err.Error(), "CRW_UNIT_CHECK_MODEL") || !strings.Contains(err.Error(), "family") {
-		t.Errorf("a model with no family: shipped unit check %+v %v, want an error naming the variable and the family", uc, err)
 	}
 	repo := filepath.Join(t.TempDir(), "repo")
 	if err := os.MkdirAll(repo, 0o755); err != nil {
@@ -274,5 +278,65 @@ func TestShippedUnitCheckIsCodexInBothModes(t *testing.T) {
 	}
 	if got, err := a.Fingerprint(context.Background(), repo); err != nil || got != want {
 		t.Errorf("the shipped fingerprint %q %v, want ops.Snapshot %q", got, err, want)
+	}
+}
+
+// TestCRW1589_ShippedUnitCheckUsesTheRoleSnapshot (CRW-1589): the shipped unit check's Codex profiles run the pair of
+// the role store's unit-check entry — the snapshot the run's role table is built from — and never read the environment
+// for it at lane build.
+func TestCRW1589_ShippedUnitCheckUsesTheRoleSnapshot(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "crw")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, role.StoreFile), []byte(`{"roles": {"unit-check": {"mode": "model", "model": "gpt-7-sol", "effort": "medium"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CRW_HOME", dir)
+	t.Setenv(execution.EnvPolicy, "")
+	table, _, err := engine.LoadPolicy()
+	if err != nil {
+		t.Fatal(err)
+	}
+	uc, err := shippedUnitCheck(table)
+	if err != nil || uc == nil {
+		t.Fatalf("shipped unit check %+v %v", uc, err)
+	}
+	for _, mode := range []string{ops.UnitCheckUncommitted, ops.UnitCheckCommitted} {
+		p, err := uc.Profile(mode)
+		argv := strings.Join(p.Argv, " ")
+		if err != nil || p.Model != "gpt-7-sol" || p.Effort != "medium" ||
+			!strings.Contains(argv, `model="gpt-7-sol"`) || !strings.Contains(argv, `review_model="gpt-7-sol"`) || !strings.Contains(argv, `model_reasoning_effort="medium"`) {
+			t.Errorf("the %s profile %+v %v, want the store's gpt-7-sol at medium", mode, p, err)
+		}
+	}
+	// environment overrides apply per field through the snapshot; an override that codex cannot take is refused, naming the variable
+	t.Setenv("CRW_UNIT_CHECK_MODEL", "o9")
+	table, _, err = engine.LoadPolicy()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if table.UnitCheck != (engine.Pair{Model: "o9", Effort: "medium"}) || table.UnitCheckOverrides[role.UnitCheckModelEnv] != "o9" {
+		t.Fatalf("the overridden table %+v %+v", table.UnitCheck, table.UnitCheckOverrides)
+	}
+	tuned, err := shippedUnitCheck(table)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p, _ := tuned.Profile(ops.UnitCheckUncommitted); p.Model != "o9" || p.Effort != "medium" {
+		t.Errorf("the overridden profile %+v", p)
+	}
+	// the pair is snapshotted with the table: changing the environment afterwards changes nothing the tool runs
+	t.Setenv("CRW_UNIT_CHECK_MODEL", "changed-later")
+	if p, _ := tuned.Profile(ops.UnitCheckCommitted); p.Model != "o9" {
+		t.Errorf("the profile reread the environment: %+v", p)
+	}
+	t.Setenv("CRW_UNIT_CHECK_MODEL", `a"b`)
+	bad, _, err := engine.LoadPolicy()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if uc, err := shippedUnitCheck(bad); err == nil || uc != nil || !strings.Contains(err.Error(), "CRW_UNIT_CHECK_MODEL") {
+		t.Errorf("a bad override: %+v %v, want an error naming CRW_UNIT_CHECK_MODEL", uc, err)
 	}
 }
