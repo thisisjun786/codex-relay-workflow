@@ -382,6 +382,9 @@ func TestPlanSizeFieldsAndOrchestrationWording(t *testing.T) {
 		"`size_split`", "`region_order_missing`",
 		// a run starts no `child` session (CRW-1415): a node that reaches it as `child` is escalated, and the planner splits instead
 		"`child_retired`", `(?i)bundle split`, `(?i)starts? no \x60child\x60 session`,
+		// CRW-1435 (S-1): a `split` node is divided into sub-tasks on one executor thread, a `bundle_split` node asks the parent for a
+		// bundle split, and the compiler refuses `child`
+		"`bundle_split`", "`bundle_split_request`", `(?i)sub-tasks`, `(?i)one executor thread`, `(?i)compiler refuses the value`,
 		`(?i)no model name and no effort`,
 		fmt.Sprintf(`(?i)a name, at most %d issues`, compileMaxGroup(t)),
 	}); len(missing) > 0 {
@@ -401,9 +404,16 @@ func TestPlanSizeFieldsAndOrchestrationWording(t *testing.T) {
 	}
 	add := normalized(sectionOf(readRepoText(t, "plugins/crw/skills/crw-add-issue/SKILL.md"), "Set the size fields"))
 	if missing := wordingMissing(add, []string{
-		"`size_fit`", "`size_reason`", "`issue_size`", "`group`", "`crw skill size-fit`", `(?i)no count alone divides the issue or sends it to a child`,
+		"`size_fit`", "`size_reason`", "`issue_size`", "`group`", "`crw skill size-fit`", `(?i)no count alone divides the issue or makes it a \x60split\x60`,
 		`\(\.\./crw-plan/SKILL\.md#set-the-size-fields\)`,
 	}); len(missing) > 0 {
+		t.Errorf("crw-add-issue, Set the size fields, lacks: %s\n%s", strings.Join(missing, "\n  "), add)
+	}
+	// CRW-1435 (S-1): a size reason sends no issue to a child; it keeps the issue one node of sub-tasks
+	if m := regexp.MustCompile(`(?i)sends? it to a child|a split goes back to the caller`).FindString(add); m != "" {
+		t.Errorf("crw-add-issue, Set the size fields, still says %q", m)
+	}
+	if missing := wordingMissing(add, []string{"`size_fit` `split`", `(?i)sub-tasks`, `(?i)bundle split`}); len(missing) > 0 {
 		t.Errorf("crw-add-issue, Set the size fields, lacks: %s\n%s", strings.Join(missing, "\n  "), add)
 	}
 }

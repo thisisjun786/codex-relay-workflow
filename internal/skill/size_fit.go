@@ -17,9 +17,11 @@ import (
 // It makes no grade. The report answers ok, over_line or over_line_accepted and nothing else; size-fit
 // shows that answer and the report's exception record next to four counts (edit regions, packages whose
 // contract changes, ordered steps, minutes of verification) and an own-goal flag, and proposes the first
-// reason of the set whose count crosses its line, else fits_executor. No count alone forces a child or a
-// split: the proposal is read by the planner, who sets size_fit and size_reason (crw-plan), and a readable
-// input is always answered with exit 0. `crw flow compile` carries what the planner set unchanged.
+// reason of the set whose count crosses its line, else fits_executor. A reason other than fits_executor comes
+// with the size_fit split (sub-tasks on one executor thread), never bundle_split (dividing the issue into
+// issues is the parent's call). No count alone forces a split: the proposal is read by the planner, who sets
+// size_fit and size_reason (crw-plan), and a readable input is always answered with exit 0. `crw flow
+// compile` carries what the planner set unchanged.
 
 const sizeFitSchema = "crw-size-fit/1"
 
@@ -27,7 +29,7 @@ const sizeFitSchema = "crw-size-fit/1"
 // prefers: the counts first, then own_goal, then fits_executor.
 var (
 	SizeReasons      = []string{"regions_gt3", "packages_contract_gt2", "steps_gt5", "verify_gt20m", "own_goal", "fits_executor"}
-	SizeFits         = []string{"executor", "child", "split"}
+	SizeFits         = []string{"executor", "split", "bundle_split"}
 	IssueSizeAnswers = []string{"ok", "over_line", "over_line_accepted"}
 )
 
@@ -108,10 +110,10 @@ func SuggestSizeFit(in SizeFitInput) SizeFitProposal {
 		Schema: sizeFitSchema, Issue: in.Issue, Advisory: true, IssueSize: in.Answer, ReportReasons: append([]string{}, in.Reasons...),
 		Counts: in.Counts, OwnGoal: in.OwnGoal, Limits: sizeFitLimitsApplied, Triggers: triggers,
 		SizeReason: "fits_executor", SuggestedSizeFit: "executor", BundleReason: in.Bundle, Exception: in.Exception, ExceptionRecord: in.Record,
-		Note: "A proposal for the planner to read: no count alone forces a child or a split, and the report's answer is shown beside the counts, not graded.",
+		Note: "A proposal for the planner to read: no count alone forces a split, and the report's answer is shown beside the counts, not graded.",
 	}
 	if len(triggers) > 0 {
-		p.SizeReason, p.SuggestedSizeFit = triggers[0], "child"
+		p.SizeReason, p.SuggestedSizeFit = triggers[0], "split"
 	}
 	return p
 }
@@ -209,4 +211,4 @@ func runSizeFit(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 }
 
 const sizeFitSummary = "Read the report of `crw skill issue-size check` (report) or the issue it reads (issue), the counts the issue body states (counts: edit_regions, contract_packages, steps, verify_minutes) and own_goal, and propose a size_reason from the closed set (regions_gt3, packages_contract_gt2, steps_gt5, verify_gt20m, own_goal, fits_executor) beside the report's answer (ok, over_line, over_line_accepted) and its exception record.\n\n" +
-	"The proposal is advisory and makes no grade: no count alone forces a child or a split, and a readable input always exits 0. A count of 3 edit regions, 2 contract packages, 5 steps or 20 minutes fits one executor; edit_regions defaults to the report's own count. Exit 2: an input that cannot be read. Exit 3: a file that cannot be read."
+	"The proposal is advisory and makes no grade: no count alone forces a split, and a readable input always exits 0. A count of 3 edit regions, 2 contract packages, 5 steps or 20 minutes fits one executor; edit_regions defaults to the report's own count. Exit 2: an input that cannot be read. Exit 3: a file that cannot be read."
