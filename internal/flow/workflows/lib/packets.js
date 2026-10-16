@@ -288,7 +288,6 @@ export function reflectionPacket(ms, cur, closed) {
     at.head,
     section('DECISIONS OF THE DESIGN (map each to the files and criteria of the integrated range)', drivenDecisions(cur)),
     at.landed,
-    'REVIEWER-FINAL ALIGNMENT: ' + (closed.final ? closed.final.alignment : 'none'),
     'Answer with REFLECTION: ALIGNED, or MISALIGNED with each decision the range departs from, what you observed, the nodes it affects and the evidence.',
   ].join('\n\n')
 }
@@ -464,10 +463,6 @@ function decisionLines(decisions) {
   return list((decisions || []).map((d) => d.id + ' (' + ((d.nodes || []).length ? 'nodes ' + d.nodes.join(', ') : 'no node') + '): ' + d.change), 'none recorded')
 }
 
-function evidenceLines(g) {
-  return list((g.evidence || []).map((e) => e.kind + (e.command ? ' ' + e.command : '') + ': ' + e.state + (e.pass ? ' pass' : '') + (e.head ? ' at ' + e.head : '')))
-}
-
 // The QA capture call (SP-QA-1): drives the surface in a scratch worktree at the head the gate pinned and judges nothing.
 export function qaCapturePacket(ms, g) {
   return [
@@ -514,20 +509,6 @@ export function qaSelfReviewPacket(ms, g, view) {
     'Review your own captures of the final gate of milestone ' + ms.id + ' at ' + g.head + ' once, as a reviewer who did not make them, and give the QA receipt.',
     section('YOUR CAPTURES (open the paths given here directly: they are resolved against the worktree you captured in)', captureLines(view.captures)),
     'Answer with QA_RECEIPT: PASS, REVISE or FAIL, the findings with their severity, and a summary. A PASS stands over no P0 or P1 finding.',
-  ].join('\n\n')
-}
-
-// reviewer-final: the review of the integrated range, after the final gate passed. The gate is its input.
-export function finalPacket(ms, g) {
-  return [
-    'ROLE: reviewer-final. Review the integrated range ' + g.range + ' of milestone ' + ms.id + ' (' + ms.title + ') after its final gate passed. You review the range, not the issues one by one: those were reviewed before.',
-    'HEAD: ' + g.head + '\nRANGE: ' + g.range,
-    section('FINAL GATE (passed)', evidenceLines(g)),
-    section('CRITERIA OF THE MILESTONE', criteriaList(ms.criteria)),
-    // the approved DESIGN lives in the journal's ledger, not in the checkout this reviewer reads: its decisions are the comparison
-    // source of the alignment judgement
-    section('DESIGN DECISIONS (the approved DESIGN of this milestone; name a decision by its id in the drift)', decisionLines(g.decisions)),
-    'Answer with VERDICT_FINAL: the verdict, one entry of criteria for each criterion c1, c2, ... above, the defects, and the alignment of the integrated range with the DESIGN DECISIONS above (ALIGNED, MISALIGNED with the drift you saw, or NOT_ASSESSED). verified means every criterion is met and no defect blocks. The impact of each defect is one of core_function, safety_or_data, permission_boundary, criterion_unmet, regression_introduced, minor_separable: a defect of P0 to P2 blocks whatever its impact, and of the impacts only minor_separable does not block. A final verdict of verified over a defect that blocks is refused as no verdict.',
   ].join('\n\n')
 }
 

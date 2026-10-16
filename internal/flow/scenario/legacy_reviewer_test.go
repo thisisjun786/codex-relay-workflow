@@ -181,30 +181,79 @@ func TestOldJournalWithReviewerRowsStillReplaysOrIsRefusedWithAReason(t *testing
 
 // TestOldJournalWithAReviewerFinalRowIsRefusedWithAReason (CRW-1429): an old project-lane run whose close called reviewer-final (a
 // reviewer-final agent call and its crw.reviewerFinal row) is refused for a resume under the current lane, naming crw.reviewerFinal, its
-// call id, the milestone and CRW-1429, before any row is written; ReviewerFinalProof still reads the row.
+// call id, the milestone and CRW-1429, before any row is written; ReviewerFinalProof still reads the row. The current lane has no
+// reviewer-final path (CRW-1450), so the old rows are appended by hand over a closed run (appendOldReviewerFinal).
 func TestOldJournalWithAReviewerFinalRowIsRefusedWithAReason(t *testing.T) {
 	l := NewLab(t, oneNode()...)
-	// the close before CRW-1505 called reviewer-final over the passed gate; the crosscheck that follows it here leaves the close as it is
-	l.Lib = libWith(t, "close.js", "    const x = await crosscheckRound(ms, g, opts)\n", "    await finalReview(ms, g)\n    const x = await crosscheckRound(ms, g, opts)\n")
 	if got := mustRun(t, l); got.State != "closed" {
-		t.Fatalf("the old run: %q; calls %v", got.State, l.Labels())
+		t.Fatalf("the run: %q; calls %v", got.State, l.Labels())
 	}
-	rows := l.Rows(ops.OpReviewerFinal)
-	if len(rows) == 0 || len(l.CallsOf("reviewer-final")) == 0 {
-		t.Fatalf("the old run wrote %d crw.reviewerFinal rows and %d reviewer-final calls", len(rows), len(l.CallsOf("reviewer-final")))
+	old := appendOldReviewerFinal(t, l, "M1")
+	if rows := l.Rows(ops.OpReviewerFinal); len(rows) != 1 || len(l.CallsOf("reviewer-final")) != 1 {
+		t.Fatalf("the old run holds %d crw.reviewerFinal rows and %d reviewer-final calls", len(rows), len(l.CallsOf("reviewer-final")))
 	}
-	first := rows[0]
 	l.NewProcess("proc-2")
-	refusedUnchanged(t, l, nil, ops.OpReviewerFinal, first.CallID, "milestone M1", "the retired reviewer-final path")
-	var last engine.Event
-	for _, ev := range l.Rows(ops.OpReviewerFinal) {
-		if ev.Event == engine.EvCompleted {
-			last = ev
-		}
-	}
-	if v := ops.ReviewerFinalProof(l.Events(), str(last.Data, "range"), str(last.Data, "criteria_digest")); !v.Proven {
+	refusedUnchanged(t, l, nil, ops.OpReviewerFinal, old.CallID, "milestone M1", "the retired reviewer-final path")
+	if v := ops.ReviewerFinalProof(l.Events(), str(old.Data, "range"), str(old.Data, "criteria_digest")); !v.Proven {
 		t.Errorf("ReviewerFinalProof of the old final review: %+v", v)
 	}
+}
+
+// appendOldReviewerFinal appends to the lab's run what the close of a build before CRW-1505 wrote after its passed gate, in the shape
+// that build wrote it: the completed crw.spawnDecision of SP-REVF-1, the reviewer-final agent call (its prepared and completed rows,
+// a verified VERDICT_FINAL) and the completed crw.reviewerFinal row over the range and criteria digest of the milestone's last passed
+// gate. The rows take the positions after the last one of the run's root path. It returns the crw.reviewerFinal row.
+func appendOldReviewerFinal(t *testing.T, l *Lab, ms string) engine.Event {
+	t.Helper()
+	var gate, milestone engine.Event
+	last := -1
+	for _, ev := range l.Events() {
+		if ev.RunID != l.RunID || ev.Kind != engine.KindCall {
+			continue
+		}
+		if ev.Path == engine.RootPath && ev.Position > last {
+			last = ev.Position
+		}
+		if ev.Event != engine.EvCompleted || str(ev.Data, "milestone") != ms {
+			continue
+		}
+		switch {
+		case ev.Op == ops.OpGate && ev.Data["ok"] == true:
+			gate = ev
+		case ev.Op == ops.OpMilestone:
+			milestone = ev
+		}
+	}
+	var m struct {
+		CriteriaDigest string `json:"criteria_digest"`
+	}
+	if gate.CallID == "" || milestone.CallID == "" || json.Unmarshal([]byte(str(milestone.Data, "result")), &m) != nil || m.CriteriaDigest == "" {
+		t.Fatalf("the run holds no passed gate or no milestone row of %s to review: gate %+v, milestone %+v", ms, gate.Data, milestone.Data)
+	}
+	head, rng := str(gate.Data, "head"), str(gate.Data, "range")
+	answer := `{"verdict":"verified","criteria":[{"id":"c1","met":true,"evidence":"read the range"}],"defects":[],"alignment":{"verdict":"ALIGNED","drift":[]},"summary":"aligned"}`
+	call, model := "c_old_revf_call", "gpt-fake-sol"
+	label := "reviewer-final:" + ms
+	rows := []engine.Event{
+		{Kind: engine.KindCall, CallID: "c_old_revf_rule", Position: last + 1, Op: ops.OpSpawnDecision, Label: ops.OpSpawnDecision, Event: engine.EvCompleted,
+			Data: map[string]any{"rule": ops.RuleRevF1, "decision": "spawn", "node": "", "role": "reviewer-final", "tier": "", "decision_id": "dec-old-revf",
+				"result": `{"decision":"spawn","decision_id":"dec-old-revf","rule":"` + ops.RuleRevF1 + `"}`}},
+		{Kind: engine.KindCall, CallID: call, Position: last + 2, Op: "agent", Label: label, Event: engine.EvPrepared,
+			Data: map[string]any{"role": "reviewer-final", "node": "", "family": "reviewer", "head": head, "model": model, "configured_model": model, "effort": "xhigh", "configured_effort": "xhigh"}},
+		{Kind: engine.KindCall, CallID: call, Position: last + 2, Op: "agent", Label: label, Event: engine.EvCompleted,
+			Data: map[string]any{"reason": "", "result": answer}},
+		{Kind: engine.KindCall, CallID: "c_old_revf", Position: last + 3, Op: ops.OpReviewerFinal, Label: ops.OpReviewerFinal, Event: engine.EvCompleted,
+			Data: map[string]any{"milestone": ms, "head": head, "range": rng, "criteria_digest": m.CriteriaDigest, "state": ops.StateVerdict, "reason": "", "verdict": "verified",
+				"alignment": "ALIGNED", "call": call, "reviewer_model": model, "retried": false, "detail": "",
+				"result": `{"state":"verdict","reason":"","milestone":"` + ms + `","head":"` + head + `","range":"` + rng + `","verdict":` + answer + `,"alignment":"ALIGNED","drift":0,"call":{"callId":"` + call + `","handle":"","status":"completed","reason":"","role":"reviewer-final"},"retried":false}`}},
+	}
+	var out engine.Event
+	for _, ev := range rows {
+		ev.RunID, ev.Path = l.RunID, engine.RootPath
+		out = l.journal.Append(ev)
+	}
+	l.journal.flush()
+	return out
 }
 
 // TestRecoverAndTheRecordingAuditWriteNothingToALegacyReviewerRun (CRW-1429): Recover of a call of an old reviewer run is refused with the

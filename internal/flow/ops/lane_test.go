@@ -1490,14 +1490,9 @@ func impactVerdicts(verdict, severity, impact string) map[string][]byte {
 	for k, v := range fields {
 		block[k] = v
 	}
-	final := map[string]any{"alignment": map[string]any{"verdict": "ALIGNED", "drift": []any{}}}
-	for k, v := range fields {
-		final[k] = v
-	}
 	one, _ := json.Marshal(fields)
 	batch, _ := json.Marshal(map[string]any{"nodes": []any{block}})
-	fin, _ := json.Marshal(final)
-	return map[string][]byte{SchemaVerdict: one, SchemaVerdictBatch: batch, SchemaVerdictFinal: fin}
+	return map[string][]byte{SchemaVerdict: one, SchemaVerdictBatch: batch}
 }
 
 // CRW-1438: the impact of a defect is one closed set, held once in premerge.Impacts. Every verdict schema a reviewer answers with
