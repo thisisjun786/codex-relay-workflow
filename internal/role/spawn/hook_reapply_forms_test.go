@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 )
 
@@ -62,38 +61,24 @@ func TestEvidenceAssignmentEditedInputBeforeTheClaimGetsItsOwnAssignment(t *test
 }
 
 // --- CRW-1121 d2 and CRW-1124 d2: an event lock that cannot be had cannot let a later delivery overwrite a claimed record.
+//
+// Since parent decision R2-1 (CRW-1579) a delivery whose temporary root cannot hold the event's lock is denied with
+// temp_dir_unusable instead of going on unserialized, so it registers nothing and cannot overwrite the record. The case keeps its
+// claim: a record the first delivery wrote and its child claimed survives a later delivery of the same call that cannot lock.
 
 func TestEvidenceAssignmentWithoutAnEventLockDoesNotOverwriteAClaimedRecord(t *testing.T) {
 	r := newAssignedRig(t)
 	notDir := filepath.Join(t.TempDir(), "file")
 	spawnHookMust(t, os.WriteFile(notDir, nil, 0o600))
 	base := r.rig.env
+	unlockable := false
 	r.rig.env = func(key string) (string, bool) {
-		if key == "TMPDIR" {
+		if key == "TMPDIR" && unlockable {
 			return notDir, true
 		}
 		return base(key)
 	}
-	var mu sync.Mutex
-	calls := 0
-	reached, release := make(chan struct{}), make(chan struct{})
-	spawnHookBeforePersist = func() {
-		mu.Lock()
-		calls++
-		n := calls
-		mu.Unlock()
-		if n == 1 { // the delayed delivery: it looked the record up before the other one wrote it
-			close(reached)
-			<-release
-		}
-	}
-	t.Cleanup(func() { spawnHookBeforePersist = func() {} })
 	input := "TASK: first\nCRW-WORKTREE: " + r.wt
-	var delayed struct{ msg, out string }
-	var done sync.WaitGroup
-	done.Add(1)
-	go func() { defer done.Done(); delayed.msg, delayed.out = r.spawnCall(input, "same-call") }()
-	<-reached
 	first, firstOut := r.spawnCall(input, "same-call")
 	id := assignedID.FindStringSubmatch(first)
 	if id == nil {
@@ -113,14 +98,22 @@ func TestEvidenceAssignmentWithoutAnEventLockDoesNotOverwriteAClaimedRecord(t *t
 	if !strings.Contains(string(before), `"status":"claimed"`) {
 		t.Fatalf("the record is not claimed: %s", before)
 	}
-	close(release)
-	done.Wait()
+	unlockable = true // the later delivery's temporary root is a regular file: no event lock can be had
+	// The caller's input again needs the event's lock to look its record up, so it is denied with the reason.
+	if msg, out := r.spawnCall(input, "same-call"); msg != "" || !strings.Contains(out, `"deny"`) || !strings.Contains(out, "temp_dir_unusable: "+notDir+" (env): ") {
+		t.Fatalf("a delivery that cannot lock was not denied with temp_dir_unusable: %q", out)
+	}
+	// The answered input again is the hook's own output: it keeps the claimed record and registers nothing (CRW-1121).
+	msg, out := r.spawnCall(first, "same-call")
+	if m := assignedID.FindStringSubmatch(msg); msg != "" && (m == nil || m[1] != id[1]) {
+		t.Fatalf("the answered input again carries another assignment: %q", out)
+	}
 	after, err := os.ReadFile(records[0])
 	spawnHookMust(t, err)
 	if string(after) != string(before) {
-		t.Fatalf("the delayed delivery overwrote the claimed record:\n%s\n%s", before, after)
+		t.Fatalf("the unlockable delivery overwrote the claimed record:\n%s\n%s", before, after)
 	}
-	if !assignedID.MatchString(delayed.msg) || assignedID.FindStringSubmatch(delayed.msg)[1] != id[1] {
-		t.Fatalf("the delayed delivery answered with another assignment: %q", delayed.msg)
+	if all, _ := filepath.Glob(filepath.Join(r.cwd, ".crw", "evidence-assignments", "*", "*.json")); len(all) != 1 {
+		t.Fatalf("the unlockable delivery registered another record: %v", all)
 	}
 }

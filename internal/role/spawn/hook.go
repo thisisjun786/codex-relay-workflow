@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/base32"
 	"errors"
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/role"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // This file ports the first half of CXC v0.2.40's runSpawnAttachHook (subagent-config/src/spawn-attach-hook.ts:849-987: reading the
@@ -90,10 +92,16 @@ func spawnHookAssembleWith(obj map[string]any, env host.LookupEnv, commit *spawn
 		}
 		return spawnHookAssembly{}, deny, true
 	}
-	tmpRoot, now := spawnHookTmpDir(env), time.Now()
 	if event, _ := obj["hook_event_name"].(string); event != "PreToolUse" || !IsSpawnToolName(obj["tool_name"]) {
 		return stop("")
 	}
+	// Only a spawn event reads TMPDIR, so no other event or tool is refused for it (CRW-1579). A TMPDIR tmploc refuses denies the
+	// spawn with its reason before any grant is minted, spent or replayed; nothing is chosen in its place.
+	tmpRoot, tmpSource, err := spawnHookTmpDir(env)
+	if err != nil {
+		return stop(DenyEnvelope("crw: " + err.Error()))
+	}
+	now := time.Now()
 	toolInput, ok := spawnHookRecord(obj["tool_input"])
 	if !ok {
 		return stop("")
@@ -228,13 +236,20 @@ func spawnHookAssembleWith(obj map[string]any, env host.LookupEnv, commit *spawn
 	}
 	var minted string
 	if _, _, resolved := spawnGrantScope(obj); resolved && !spawnedBySubagent && strings.Contains(message, SubspawnToken) {
-		_ = os.MkdirAll(tmpRoot, 0o700)
+		// The temporary root, the event's lock and the grant are the root's to make; a failure of any of them denies the spawn with
+		// the directory and its source, where the oracle went on without a grant (parent decision R2-1, CRW-1579).
+		if err := os.MkdirAll(tmpRoot, 0o700); err != nil {
+			return stop(spawnHookTmpUnusable(tmpRoot, tmpSource, err))
+		}
 		// Deliveries of one event that passed the lookup together are serialized here: the lock is held until the answer is recorded, and
 		// the delivery that gets it second finds the first's record, so one event mints one grant (CRW-1121).
 		if a.inputText != "" {
 			release, err := spawnHookEventLock(obj, tmpRoot, *a.toolUseID, true)
 			if errors.Is(err, errSpawnHookEventBusy) {
 				return stop(DenyEnvelope(spawnHookBusyReason))
+			}
+			if err != nil {
+				return stop(spawnHookTmpUnusable(tmpRoot, tmpSource, fmt.Errorf("the event's lock could not be made in it: %w", err)))
 			}
 			if release != nil {
 				commit.unlock = release
@@ -243,7 +258,9 @@ func spawnHookAssembleWith(obj map[string]any, env host.LookupEnv, commit *spawn
 				}
 			}
 		}
-		minted, _ = MintRecursionGrant(obj, tmpRoot, now)
+		if minted, ok = MintRecursionGrant(obj, tmpRoot, now); !ok {
+			return stop(spawnHookTmpUnusable(tmpRoot, tmpSource, errors.New("the recursion grant could not be written in it")))
+		}
 	}
 	if minted != "" && a.inputText != "" {
 		a.replay = record
@@ -344,12 +361,20 @@ func spawnHookAssembleWith(obj map[string]any, env host.LookupEnv, commit *spawn
 		if commit.unlock != nil || a.inputText == "" {
 			return ""
 		}
-		if _, _, resolved := spawnGrantScope(obj); resolved {
-			_ = os.MkdirAll(tmpRoot, 0o700)
+		// A scope that does not resolve has no lock directory, and the event goes on unserialized as before; for one that resolves, a
+		// temporary root or lock that cannot be made denies with the directory and its source (parent decision R2-1, CRW-1579).
+		_, _, resolved := spawnGrantScope(obj)
+		if resolved {
+			if err := os.MkdirAll(tmpRoot, 0o700); err != nil {
+				return spawnHookTmpUnusable(tmpRoot, tmpSource, err)
+			}
 		}
 		release, err := spawnHookEventLock(obj, tmpRoot, *a.toolUseID, true)
 		if errors.Is(err, errSpawnHookEventBusy) {
 			return DenyEnvelope(spawnHookBusyReason)
+		}
+		if err != nil && resolved {
+			return spawnHookTmpUnusable(tmpRoot, tmpSource, fmt.Errorf("the event's lock could not be made in it: %w", err))
 		}
 		commit.unlock = release
 		return ""
@@ -615,16 +640,24 @@ func spawnHookSkillsDir(env host.LookupEnv) string {
 	return ""
 }
 
-// spawnHookTmpDir is Node's os.tmpdir() on POSIX: the first of TMPDIR, TMP and TEMP that is not empty, else /tmp, without one
-// trailing slash unless that is the whole path. (grant.go takes the root from its caller.)
-func spawnHookTmpDir(env host.LookupEnv) string {
-	for _, key := range []string{"TMPDIR", "TMP", "TEMP"} {
-		if dir, _ := env(key); dir != "" {
-			if len(dir) > 1 {
-				dir = strings.TrimSuffix(dir, "/")
-			}
-			return dir
-		}
+// spawnHookTmpDir is the spawn hook's temporary root and its source, from tmploc, the one place: TMPDIR as written, or
+// tmploc.DefaultDir (source default) when it is unset or empty, without one trailing slash unless that is the whole path. A TMPDIR that
+// is not absolute is tmploc's tmpdir_not_absolute. This differs from Node's os.tmpdir(), which the oracle used, on purpose: TMP and
+// TEMP are not read, and a relative value is refused instead of being used against the working directory (CRW-1579). The minting
+// and the consuming hook read the same one value. (grant.go takes the root from its caller.)
+func spawnHookTmpDir(env host.LookupEnv) (dir, source string, err error) {
+	dir, source, err = tmploc.DirFrom(func(key string) string { v, _ := env(key); return v })
+	if err != nil {
+		return "", source, err
 	}
-	return "/tmp"
+	if len(dir) > 1 {
+		dir = strings.TrimSuffix(dir, "/")
+	}
+	return dir, source, nil
+}
+
+// spawnHookTmpUnusable denies a spawn whose temporary root cannot be used, in tmploc's temp_dir_unusable form: the directory, its
+// source and why (parent decision R2-1, CRW-1579).
+func spawnHookTmpUnusable(dir, source string, why error) string {
+	return DenyEnvelope(fmt.Sprintf("crw: temp_dir_unusable: %s (%s): %v; set TMPDIR to a writable directory", dir, source, why))
 }

@@ -101,7 +101,6 @@ var tmpGlobs = []tmpGlob{
 
 // The units that move the pending sites (plan-r2 of bundle 1566-tmp-arch).
 const (
-	tmpU3 = "U-A5-3 spawn hook temp root from tmploc"
 	tmpU4 = "U-A5-4 agy, report sender, review bundle"
 	tmpU5 = "U-A5-5 laneparity, cxcfuzz, cxccorpus: the recorded scratch constant"
 	tmpU6 = "U-A5-6 testsupport and sandboxroottest: no fallbacks, no empty parent"
@@ -137,8 +136,6 @@ var tmpPending = []tmpEntry{
 	{"internal/review/agy/agy.go", `c.WorkRoot = os.TempDir()`, tmpU4},
 	{"internal/review/agy/lock.go", `home = os.TempDir()`, tmpU4},
 	{"internal/review/bundle/gitdiff.go", `dir, err := os.MkdirTemp("", "crw-bundle-")`, tmpU4},
-	{"internal/role/spawn/hook.go", `for _, key := range []string{"TMPDIR", "TMP", "TEMP"} {`, tmpU3},
-	{"internal/role/spawn/hook.go", `return "/tmp"`, tmpU3},
 	{"internal/runtime/doctor/hooktrust_retrust.go", `temp, err := os.MkdirTemp("", "crw-retrust-verify-")`, tmpU8},
 	{"internal/runtime/exercise/exercise.go", `scratch, err := os.MkdirTemp("", "crw-bridge-exercise-")`, tmpU8},
 	{"internal/runtime/install/archive.go", `scratch, err := os.MkdirTemp("", "crw-install-release-")`, tmpU8},
