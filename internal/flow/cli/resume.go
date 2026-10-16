@@ -117,6 +117,12 @@ func (c *command) resume(args []string) int {
 		if err != nil {
 			return c.fail("%v", err)
 		}
+		// the process starts with the run's recorded TMPDIR (DetachedCommand): one that cannot be used is refused before it starts,
+		// exit 1 as a start refuses it (CRW-1570)
+		if err := checkRunEnv(spec); err != nil {
+			fmt.Fprintf(c.stderr, "crw flow resume: the run is not resumed: %v\n", err)
+			return 1
+		}
 		dir, _ := os.Getwd()
 		spawned := c.now()
 		pid, err := c.Spawn(c.ctx, SpawnRequest{Spec: spec, State: sel.Path, Resume: true, Dir: dir})

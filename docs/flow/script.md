@@ -1345,6 +1345,15 @@ run's directory `<state>/flow/<run>/` and none writes the journal, which only th
   (exit 2); a run whose first process stored no started row goes on with its spec's. Every one of them holds a session run alike
   (the foreground command through `engine.ResumeHold`): at most `agents.max_threads - 1` calls in flight whatever `--pool` says,
   and the owner thread bound to the run while the resume runs and its line closed when the run ends.
+- Every detached launch of the run's process (the start, `crw flow answer`, `crw flow resume RUN --detach` and the resume `next`
+  starts) gives the process the caller's environment with the variables the spec records in place (`env`, today `TMPDIR`; exactly
+  one entry each), so a run relaunched from a shell with another TMPDIR, or none, runs below the TMPDIR its start recorded; a spec
+  written before the record leaves the environment the caller's, as before. A recorded TMPDIR that is missing, not a directory or not
+  writable is refused before anything of the run changes: `crw flow answer` (without `--no-resume`) refuses with `run_env_unusable`
+  (exit 1, nothing appended, nothing drained, no process started), and the same answer applies once and resumes the run once the
+  directory is made again; `crw flow resume RUN --detach` exits 1 naming the directory; `next` resumes nothing and warns "its resume
+  did not start" with the reason. `--no-resume` starts nothing and is not asked; the later relaunch refuses. The spec is never
+  rewritten: the directory is made again.
 - The owner thread is bound to a session run by the `orchestrator` line of its flow-bound file (`internal/flow/bound`
   `BindOrchestrator`: `kind: orchestrator`, `run_id`, the `policyDigest` of the role table and the `helperPairs` of the seven roles
   architect, executor, executor-t1, reviewer, reviewer-final, explorer, critic; `Line.Validate` takes no orchestrator line without
