@@ -1,8 +1,10 @@
 package ops
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -10,11 +12,7 @@ import (
 )
 
 func TestCrwCommitScrubsAndRetriesWithoutDuplicate(t *testing.T) {
-	for _, legacy := range []bool{false, true} {
-		name := "scrubbed marker"
-		if legacy {
-			name = "legacy request line"
-		}
+	for _, name := range []string{"current", "legacy request line", "first scrubbed format"} {
 		t.Run(name, func(t *testing.T) {
 			f := newFx(t)
 			f.events = nil
@@ -34,10 +32,17 @@ func TestCrwCommitScrubsAndRetriesWithoutDuplicate(t *testing.T) {
 			}
 			req := engine.OpRequest{RunID: "run-1", CallID: "commit-1", RequestID: requestID, Args: args, Journal: j}
 			prior := ""
-			if legacy {
+			callHash := sha256.Sum256([]byte(callID))
+			requestHash := sha256.Sum256([]byte(requestID))
+			wantMessage := fmt.Sprintf("crw n1 [call_id:%x]\n\nCRW-Request: %x", callHash[:6], requestHash[:])
+			if name != "current" {
 				// Simulate an old binary that committed, then crashed before recording its op row.
+				oldMessage := "crw n1 old-call\n\n" + requestID
+				if name == "first scrubbed format" {
+					oldMessage = fmt.Sprintf("crw n1 [call_id:%x]\n\n[run_id:%x]\nCRW-Request: %x", callHash[:6], requestHash[:6], requestHash[:])
+				}
 				prior = gitIn(t, f.wt, "-c", "user.name=test", "-c", "user.email=test@example.invalid",
-					"commit-tree", tree, "-p", f.start, "-m", "crw n1 old-call\n\n"+requestID)
+					"commit-tree", tree, "-p", f.start, "-m", oldMessage)
 				gitIn(t, f.wt, "update-ref", "HEAD", prior, f.start)
 				gitIn(t, f.wt, "reset", "-q", "--mixed", "HEAD", "--")
 			}
@@ -49,16 +54,14 @@ func TestCrwCommitScrubsAndRetriesWithoutDuplicate(t *testing.T) {
 			if first.Data["parent"] != f.start || first.Data["tree"] != tree {
 				t.Fatalf("wrong snapshot or parent: %+v", first.Data)
 			}
-			if legacy {
+			if name != "current" {
 				if commit != prior {
 					t.Fatalf("legacy retry created %s instead of reusing %s", commit, prior)
 				}
 			} else {
-				message := gitIn(t, f.wt, "log", "-1", "--format=%B")
-				if strings.Contains(message, requestID) || strings.Contains(message, callID) ||
-					!strings.Contains(message, "CRW-Request: ") ||
-					!strings.Contains(message, "[run_id:") || !strings.Contains(message, "[call_id:") {
-					t.Fatalf("generated message does not protect its identifiers: %q", message)
+				message := strings.TrimSuffix(gitIn(t, f.wt, "log", "-1", "--format=%B"), "\n")
+				if message != wantMessage {
+					t.Fatalf("generated message = %q, want %q", message, wantMessage)
 				}
 			}
 			count := gitIn(t, f.wt, "rev-list", "--count", "HEAD")
