@@ -1,11 +1,15 @@
 package workflows
 
 import (
+	"bytes"
+	"io/fs"
 	"regexp"
 	"slices"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/workflows/lib"
 )
 
 // Every built-in workflow loads: its header parses, its helpers resolve inside the embedded library and the strict-schema check of
@@ -60,5 +64,42 @@ func TestLegacyLaneWorkflowsAreTheLaneBuiltins(t *testing.T) {
 		if lane.Match(src) && !slices.Contains(engine.LegacyLaneWorkflows, name) {
 			t.Errorf("%s runs the lane library and is not in engine.LegacyLaneWorkflows %v", name, engine.LegacyLaneWorkflows)
 		}
+	}
+}
+
+// TestNoWorkflowCallsTheNodeReviewerAnyMore (CRW-1447): the node reviewer's write path is retired. No built-in workflow and no helper of
+// crw:lib calls the node reviewer (crw.review and its composites crw.reviewHalt and crw.exploreEvidence, an agent call of role reviewer,
+// the spawn decisions REV_1, REV_2 and EXPL_3), and the close archives no thread (crw.archive, crw.settleReviews): it audits the
+// acceptances and reports. The lane registers no review op; the rows old runs wrote stay readable under ops.OpReview.
+func TestNoWorkflowCallsTheNodeReviewerAnyMore(t *testing.T) {
+	retired := []string{"crw.review(", "crw.reviewHalt(", "crw.exploreEvidence(", "crw.settleReviews(", "crw.archive(", "agentType: 'reviewer'", "'REV_1'", "'REV_2'", "'EXPL_3'"}
+	sources := map[string][]byte{}
+	for _, name := range Names() {
+		src, err := Source(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sources[name+".js"] = src
+	}
+	helpers, err := fs.Glob(lib.FS, "*.js")
+	if err != nil || len(helpers) == 0 {
+		t.Fatalf("the helper library: %v %v", helpers, err)
+	}
+	for _, name := range helpers {
+		src, err := fs.ReadFile(lib.FS, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sources["lib/"+name] = src
+	}
+	for name, src := range sources {
+		for _, word := range retired {
+			if bytes.Contains(src, []byte(word)) {
+				t.Errorf("%s holds %q of the retired node reviewer path", name, word)
+			}
+		}
+	}
+	if _, ok := ops.NewLane(ops.Deps{}).Ops()["review"]; ok {
+		t.Errorf("the lane still registers crw.review")
 	}
 }

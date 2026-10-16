@@ -29,9 +29,8 @@ type closeResult struct {
 	// Crosscheck is the word of the crosscheck's verdict the milestone closed over (CRW-1473).
 	Crosscheck any `json:"crosscheck"`
 	// Ask is the question an escalated close asks (crosscheck_pending for a crosscheck that needs changes).
-	Ask      string `json:"ask"`
-	Archived int    `json:"archived"`
-	Audit    struct {
+	Ask   string `json:"ask"`
+	Audit struct {
 		OK         int `json:"ok"`
 		Mismatch   int `json:"mismatch"`
 		Unobserved int `json:"unobserved"`
@@ -125,8 +124,8 @@ func TestCloseWithOraclePassesAuditsAndArchives(t *testing.T) {
 		t.Errorf("rules %v", rules)
 	}
 	// the audit vouched for both acceptances on their unit-check rows; no reviewer thread was started, read or archived
-	if got.Audit.OK != 2 || got.Audit.Mismatch != 0 || got.Audit.Unobserved != 0 || got.Archived != 0 {
-		t.Fatalf("audit %+v, archived %d", got.Audit, got.Archived)
+	if got.Audit.OK != 2 || got.Audit.Mismatch != 0 || got.Audit.Unobserved != 0 {
+		t.Fatalf("audit %+v", got.Audit)
 	}
 	for _, c := range l.Calls() {
 		if c.Role == "reviewer" || strings.HasPrefix(c.Label, "review:") {
@@ -167,7 +166,7 @@ func TestCloseKeepsTheThreadOfAnAcceptanceItCouldNotObserve(t *testing.T) {
 		return ev
 	})
 	got := closeOf(t, l)
-	if got.State != "closed" || got.Audit.OK != 1 || got.Audit.Unobserved != 1 || got.Audit.Mismatch != 0 || got.Archived != 0 {
+	if got.State != "closed" || got.Audit.OK != 1 || got.Audit.Unobserved != 1 || got.Audit.Mismatch != 0 {
 		t.Fatalf("%+v", got)
 	}
 	if archived := l.Archived(); len(archived) != 0 {
@@ -195,12 +194,88 @@ func TestCloseEscalatesAnAuditMismatchAndKeepsTheThread(t *testing.T) {
 		return ev
 	})
 	got := closeOf(t, l)
-	if got.State != "closed" || got.Audit.Mismatch != 1 || got.Audit.OK != 0 || got.Archived != 0 || len(l.Archived()) != 0 {
+	if got.State != "closed" || got.Audit.Mismatch != 1 || got.Audit.OK != 0 || len(l.Archived()) != 0 {
 		t.Fatalf("%+v; archived %v", got, l.Archived())
 	}
 	if reasons := escalationReasons(l); !slices.Contains(reasons, "audit_mismatch") {
 		t.Errorf("escalations %v", reasons)
 	}
+}
+
+// TestCloseAuditsTheAcceptancesAndArchivesNothing (CRW-1447): the close audits the acceptances of the milestone and archives nothing. A
+// close of a unit-check run writes one crw.audit row before its report and no crw.archive row, and the milestone's result holds the
+// audit and no archive member; an audit mismatch still tells the orchestrator (audit_mismatch), and nothing is archived either.
+func TestCloseAuditsTheAcceptancesAndArchivesNothing(t *testing.T) {
+	audited := func(t *testing.T, l *Lab) map[string]any {
+		t.Helper()
+		res := l.Run()
+		if res.Status != engine.RunCompleted {
+			t.Fatalf("run %s: %s: %s\ncalls: %v", res.Status, res.ErrorKind, res.Error, l.Labels())
+		}
+		v := Value[map[string]any](t, res)
+		if v["state"] != "closed" {
+			t.Fatalf("the milestone %v", v)
+		}
+		if _, ok := v["archived"]; ok {
+			t.Errorf("the milestone's result has an archive member: %v", v)
+		}
+		if _, ok := v["audit"].(map[string]any); !ok {
+			t.Errorf("the milestone's result has no audit: %v", v)
+		}
+		if rows := l.Rows(audit.Op); len(rows) != 1 {
+			t.Errorf("%d crw.audit rows, want one", len(rows))
+		}
+		if rows := l.Rows(ops.OpArchive); len(rows) != 0 {
+			t.Errorf("%d crw.archive rows, want none: the close archives nothing", len(rows))
+		}
+		if archived := l.Archived(); len(archived) != 0 {
+			t.Errorf("archived %v, want nothing", archived)
+		}
+		var auditAt, reportAt int = -1, -1
+		for i, ev := range l.Events() {
+			if ev.Kind == engine.KindCall && ev.Event == engine.EvCompleted && ev.Op == audit.Op {
+				auditAt = i
+			}
+			if ev.Kind == engine.KindCall && ev.Event == engine.EvCompleted && ev.Op == ops.OpReportUp {
+				reportAt = i
+			}
+		}
+		if auditAt < 0 || reportAt < auditAt {
+			t.Errorf("the audit row at %d, the report row at %d: the audit comes before the report", auditAt, reportAt)
+		}
+		return v
+	}
+	t.Run("a close", func(t *testing.T) {
+		l := NewLab(t, twoNodes()...)
+		v := audited(t, l)
+		if a := v["audit"].(map[string]any); a["ok"] != float64(2) || a["mismatch"] != float64(0) {
+			t.Errorf("the audit %v", a)
+		}
+		if reasons := escalationReasons(l); slices.Contains(reasons, "audit_mismatch") {
+			t.Errorf("escalations %v", reasons)
+		}
+	})
+	t.Run("an audit mismatch", func(t *testing.T) {
+		l := NewLab(t, oneNode()...)
+		l.Rewrite(func(ev engine.Event) engine.Event {
+			if ev.Kind == engine.KindCall && ev.Op == ops.OpUnitCheck && ev.Event == engine.EvCompleted && str(ev.Data, "node") == "A" {
+				d := map[string]any{}
+				for k, v := range ev.Data {
+					d[k] = v
+				}
+				d["criteria_digest"] = strings.Repeat("0", 64)
+				ev.Data = d
+			}
+			return ev
+		})
+		v := audited(t, l)
+		if a := v["audit"].(map[string]any); a["mismatch"] != float64(1) {
+			t.Errorf("the audit %v", a)
+		}
+		if reasons := escalationReasons(l); !slices.Contains(reasons, "audit_mismatch") {
+			t.Errorf("escalations %v", reasons)
+		}
+	})
 }
 
 // A QA that did not reach a verdict stops the close: a pass that is held is INCONCLUSIVE, the gate does not pass, the milestone is
@@ -424,12 +499,12 @@ func jsonSame(t *testing.T, a, b any) bool {
 	return string(x) == string(y)
 }
 
-// A resume of a run that closed does nothing: the gate, the crosscheck, the close, the audit and the archive are all replayed
+// A resume of a run that closed does nothing: the gate, the crosscheck, the close, the audit and the report are all replayed
 // from the journal, and the host is asked for nothing - no call, no read of a thread, no archive.
 func TestResumeAfterAClosedMilestoneRunsNothing(t *testing.T) {
 	l := NewLab(t, oneNode()...)
 	l.Relay.Surfaces, l.Relay.Grade = []string{"web"}, "C2"
-	if got := closeOf(t, l); got.State != "closed" || got.Archived != 0 || got.Audit.OK != 1 {
+	if got := closeOf(t, l); got.State != "closed" || got.Audit.OK != 1 {
 		t.Fatalf("%+v", got)
 	}
 	archivedBefore := len(l.Archived())

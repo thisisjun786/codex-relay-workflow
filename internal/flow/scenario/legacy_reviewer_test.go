@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io/fs"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/audit"
 	flowcli "github.com/thisisjun786/codex-relay-workflow/internal/flow/cli"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
@@ -52,8 +54,9 @@ func runOver(l *Lab, prog, lane *script.Program, resume bool) (*engine.Result, e
 	cfg := l.Config(resume)
 	cfg.Args = l.Args()
 	if lane != nil {
-		cfg.Workflows = func(name, _ string) (*script.Program, error) {
-			if name == "project-lane" {
+		// the lane is what the wrapper nests, by its name or by a script path
+		cfg.Workflows = func(name, scriptPath string) (*script.Program, error) {
+			if name == "project-lane" || scriptPath != "" {
 				return lane, nil
 			}
 			return workflows.Load(name)
@@ -71,7 +74,7 @@ func runOver(l *Lab, prog, lane *script.Program, resume bool) (*engine.Result, e
 // with a reason naming every word of want, and that no row is written.
 func refusedUnchanged(t *testing.T, l *Lab, wrapper *script.Program, want ...string) {
 	t.Helper()
-	l.Source, l.Lib = nil, nil
+	l.Source, l.Lib, l.OldOps = nil, nil, nil
 	current := laneProgram(t, l)
 	prog, lane := current, (*script.Program)(nil)
 	if wrapper != nil {
@@ -215,10 +218,21 @@ func TestRecoverAndTheRecordingAuditWriteNothingToALegacyReviewerRun(t *testing.
 		t.Fatalf("the old run: %q; calls %v", got.State, l.Labels())
 	}
 	rev := reviewRow(t, l, "A")
+	recoverAndAuditRefused(t, l, str(rev.Data, "call"), true, ops.OpReview, rev.CallID)
+}
+
+// recoverAndAuditRefused asserts that Recover of a call of the lab's legacy run is refused with a reason naming every word of want and
+// appends nothing, and that the recording `crw flow audit` of the run records nothing: for a run with acceptances (results) it prints
+// their results and says why, while `--no-record` says what it said before; a run with none has nothing for the command to audit.
+func recoverAndAuditRefused(t *testing.T, l *Lab, callID string, results bool, want ...string) {
+	t.Helper()
+	want = append(want, "CRW-1429")
 	before := len(l.Events())
-	_, err := engine.Recover(context.Background(), l.journal, engine.ReconcileConfig{RunID: l.RunID, Host: l.backend}, engine.RecoverRequest{CallID: str(rev.Data, "call"), Absent: true})
-	if err == nil || !strings.Contains(err.Error(), ops.OpReview) || !strings.Contains(err.Error(), rev.CallID) || !strings.Contains(err.Error(), "CRW-1429") {
-		t.Errorf("Recover of the old reviewer run: %v", err)
+	_, err := engine.Recover(context.Background(), l.journal, engine.ReconcileConfig{RunID: l.RunID, Host: l.backend}, engine.RecoverRequest{CallID: callID, Absent: true})
+	for _, w := range want {
+		if err == nil || !strings.Contains(err.Error(), w) {
+			t.Errorf("Recover of the legacy run: %v, want a refusal naming %q", err, w)
+		}
 	}
 	for _, ev := range l.Events() {
 		if ev.Event == "recovery_cleared" {
@@ -250,16 +264,144 @@ func TestRecoverAndTheRecordingAuditWriteNothingToALegacyReviewerRun(t *testing.
 	}
 	rowsBefore := auditRows()
 	code, rep, errOut := auditRun()
+	if !results {
+		if got := auditRows(); got != rowsBefore || code == 0 {
+			t.Errorf("the audit of a legacy run with no acceptance: exit %d, %d crw.audit rows written, %s", code, got-rowsBefore, errOut)
+		}
+		return
+	}
 	why, _ := rep["not_recorded_because"].(string)
-	results, _ := rep["results"].([]any)
-	if rep["recorded"] != false || len(results) == 0 || !strings.Contains(why, flowcli.RefusedLegacyRun) || !strings.Contains(why, ops.OpReview) || !strings.Contains(why, "CRW-1429") {
-		t.Errorf("the recording audit of the old reviewer run: exit %d, %v, %s", code, rep, errOut)
+	printed, _ := rep["results"].([]any)
+	if rep["recorded"] != false || len(printed) == 0 || !strings.Contains(why, flowcli.RefusedLegacyRun) {
+		t.Errorf("the recording audit of the legacy run: exit %d, %v, %s", code, rep, errOut)
+	}
+	for _, w := range want {
+		if !strings.Contains(why, w) {
+			t.Errorf("the recording audit of the legacy run says %q, want it to name %q", why, w)
+		}
 	}
 	code, rep, errOut = auditRun("--no-record")
 	if why, _ := rep["not_recorded_because"].(string); rep["recorded"] != false || why != "--no-record" {
-		t.Errorf("the audit --no-record of the old reviewer run: exit %d, %v, %s", code, rep, errOut)
+		t.Errorf("the audit --no-record of the legacy run: exit %d, %v, %s", code, rep, errOut)
 	}
 	if got := auditRows(); got != rowsBefore {
-		t.Errorf("the audits of the old reviewer run wrote %d crw.audit rows", got-rowsBefore)
+		t.Errorf("the audits of the legacy run wrote %d crw.audit rows", got-rowsBefore)
 	}
+}
+
+// oldSettleLib is crw:lib as the close of the build before CRW-1447 ran it: the audit of the acceptances, its audit_mismatch escalation,
+// then crw.archive of the reviewer threads whose audit passed, before the report.
+func oldSettleLib(t *testing.T) fs.FS {
+	t.Helper()
+	return libWith(t, "close.js", "  return { audit: audited }\n", "  await crw.archive(ms.id)\n  return { audit: audited }\n")
+}
+
+// archiveRow is the completed crw.archive row of the lab's run.
+func archiveRow(t *testing.T, l *Lab) engine.Event {
+	t.Helper()
+	for _, ev := range l.Rows(ops.OpArchive) {
+		if ev.Event == engine.EvCompleted {
+			return ev
+		}
+	}
+	t.Fatalf("no completed crw.archive row; calls %v", l.Labels())
+	return engine.Event{}
+}
+
+// lastAgentCall is the id of the last agent call of the lab's run.
+func lastAgentCall(t *testing.T, l *Lab) string {
+	t.Helper()
+	id := ""
+	for _, ev := range l.Events() {
+		if ev.Kind == engine.KindCall && ev.Op == "agent" {
+			id = ev.CallID
+		}
+	}
+	if id == "" {
+		t.Fatal("no agent call")
+	}
+	return id
+}
+
+// TestOldSettleRunThatArchivedIsRefusedBeforeAnyWrite (CRW-1447): an old project-lane run whose close archived the reviewer threads after
+// its audit (the build of the unit check and the crosscheck: no reviewer row, completed crw.audit, crw.archive and crw.reportUp rows) is
+// refused for a resume under the current lane, which audits and reports and archives nothing, naming crw.archive, its call id and
+// CRW-1429; Recover and the recording audit write nothing to it. The row count is unchanged.
+func TestOldSettleRunThatArchivedIsRefusedBeforeAnyWrite(t *testing.T) {
+	l := NewLab(t, oneNode()...)
+	l.Lib = oldSettleLib(t)
+	if got := mustRun(t, l); got.State != "closed" {
+		t.Fatalf("the old run: %q; calls %v", got.State, l.Labels())
+	}
+	if len(l.Rows(ops.OpReview)) != 0 || len(l.CallsOf("reviewer")) != 0 || len(l.Rows(audit.Op)) == 0 || len(l.Rows(ops.OpReportUp)) == 0 {
+		t.Fatalf("the old run: %d crw.review rows, %d reviewer calls, %d crw.audit rows, %d crw.reportUp rows", len(l.Rows(ops.OpReview)), len(l.CallsOf("reviewer")), len(l.Rows(audit.Op)), len(l.Rows(ops.OpReportUp)))
+	}
+	arc := archiveRow(t, l)
+	l.NewProcess("proc-2")
+	refusedUnchanged(t, l, nil, ops.OpArchive, arc.CallID, "milestone M1", "the retired review-thread archive of the close")
+	recoverAndAuditRefused(t, l, lastAgentCall(t, l), true, ops.OpArchive, arc.CallID)
+}
+
+// TestOldLaneNestedInACustomWrapperIsRefusedBeforeAnyWrite (CRW-1447): a custom run that nested the old project lane - by its name, or by
+// a script path of another name, whose archive the lane scope does not reach and the settle shape does - or that called the old close's
+// settle step itself (crw.audit, its audit_mismatch escalation, crw.archive on its own path) is refused for a resume, for Recover and for
+// the recording audit before any write, naming crw.archive, its call id and CRW-1429 (and the nested label when the lane was nested by
+// name). The row count is unchanged.
+func TestOldLaneNestedInACustomWrapperIsRefusedBeforeAnyWrite(t *testing.T) {
+	nested := func(t *testing.T, wrapperText string, want ...string) {
+		t.Helper()
+		l := NewLab(t, oneNode()...)
+		l.Lib = oldSettleLib(t)
+		old := laneProgram(t, l)
+		wrapper, err := script.Load(script.Source{Name: "custom.js", Text: []byte(wrapperText)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		res, err := runOver(l, wrapper, old, false)
+		if err != nil || res.Status != engine.RunCompleted {
+			t.Fatalf("the old run: %v %+v; calls %v", err, res, l.Labels())
+		}
+		arc := archiveRow(t, l)
+		var opened engine.Event
+		for _, ev := range l.Events() {
+			if ev.Event == "workflow_opened" {
+				opened = ev
+			}
+		}
+		if opened.Event == "" || !strings.HasPrefix(arc.Path, engine.RootPath+"/") {
+			t.Fatalf("the old run: opened %+v, the archive on %q", opened, arc.Path)
+		}
+		l.NewProcess("proc-2")
+		want = append(want, ops.OpArchive, arc.CallID)
+		if strings.Contains(wrapperText, "workflow('project-lane'") {
+			want = append(want, str(opened.Data, "call_id"))
+		}
+		refusedUnchanged(t, l, wrapper, want...)
+		recoverAndAuditRefused(t, l, lastAgentCall(t, l), true, ops.OpArchive, arc.CallID)
+	}
+	t.Run("nested by its name", func(t *testing.T) {
+		nested(t, "export const meta = { name: 'custom' }\nreturn await workflow('project-lane', args)\n", "workflow:project-lane", "the retired review-thread archive of the close")
+	})
+	t.Run("nested by a script path of another name", func(t *testing.T) {
+		nested(t, "export const meta = { name: 'custom' }\nreturn await workflow({ scriptPath: 'lanes/my-lane.js' }, args)\n", "after its crw.audit")
+	})
+	t.Run("the settle step on the custom's own path", func(t *testing.T) {
+		l := NewLab(t, oneNode()...)
+		custom, err := script.Load(script.Source{Name: "custom.js", Text: []byte("export const meta = { name: 'custom' }\n" +
+			"const audited = await crw.audit('M1')\n" +
+			"await crw.escalate(null, { reason: 'audit_mismatch', detail: 'n: ' + audited.mismatch })\n" +
+			"await crw.archive('M1')\n" +
+			"return { audited: audited.ok }\n")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		res, err := runOver(l, custom, nil, false)
+		if err != nil || res.Status != engine.RunCompleted {
+			t.Fatalf("the custom run: %v %+v", err, res)
+		}
+		arc := archiveRow(t, l)
+		l.NewProcess("proc-2")
+		refusedUnchanged(t, l, custom, ops.OpArchive, arc.CallID, "after its crw.audit")
+		recoverAndAuditRefused(t, l, arc.CallID, false, ops.OpArchive, arc.CallID)
+	})
 }

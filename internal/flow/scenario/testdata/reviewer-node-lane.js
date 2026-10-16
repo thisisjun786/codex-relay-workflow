@@ -1,9 +1,10 @@
-// The node lane of the old reviewer path: the node lane of the project lane before CRW-1465 (dfc9d675), kept as test data. Every
-// executor head is committed and verified, a fresh reviewer thread judges it (crw.review), crw.reviewHalt takes a review that is no
-// verdict, crw.exploreEvidence answers an evidence question before the fix, and the fix goes on the executor's own thread. The project
-// lane calls none of that any more; crw:lib/lane and the host keep crw.review, crw.reviewHalt and crw.exploreEvidence for the journals
-// of old runs until they go (Z-1). The scenarios of that path (reviewer_path_test.go) run the project lane with this text in place of
-// its own node lane (reviewerLane), so the kept path still runs against today's operations and helpers.
+// The node lane of the old reviewer path: the node lane of the project lane before CRW-1465 (dfc9d675), kept as test data with the
+// composites of crw:lib/lane of the build before CRW-1447 that it called. Every executor head is committed and verified, a fresh
+// reviewer thread judges it (review: the reviewer call and its crw.review record), reviewHalt takes a review that is no verdict,
+// exploreEvidence answers an evidence question before the fix, and the fix goes on the executor's own thread. The project lane calls
+// none of that, and since CRW-1447 neither crw:lib/lane nor the lane has any of it: the scenarios of that path (reviewer_path_test.go)
+// and the legacy refusal of an old run (legacy_reviewer_test.go) run the project lane with this text in place of its own node lane and
+// with the old build's crw.review registered (reviewerLane), so an old run's journal is written as that build wrote it.
 const RESEARCH_PER_TIER = 2
 
 // The lane of one issue node. It reads no variable of the script that another lane may have changed: its facts are the plan of
@@ -96,8 +97,8 @@ async function nodeLane(n, rel, sig) {
       ev.verification(tier, head.commit, ci.pass, ci.digest)
       let verdict = null
       if (ci.pass) {
-        const rv = await crw.review(node, plan, head, ci, { round, notes })
-        if (rv.state !== 'verdict') return crw.reviewHalt(node, rv)
+        const rv = await review(node, plan, head, ci, { round, notes })
+        if (rv.state !== 'verdict') return reviewHalt(node, rv)
         verdict = rv.verdict
         if (verdict.verdict === 'verified') {
           const landed = await crw.land(node, { head, ci, review: rv })
@@ -107,7 +108,7 @@ async function nodeLane(n, rel, sig) {
           return { node, state: 'escalated', reason: landed.reason, escalation: esc.id }
         }
         ev.review(tier, rv.call.callId, verdict.verdict, rv.findings.map((f) => f.digest))
-        const found = await crw.exploreEvidence(node, verdict, { tier, regions: plan.regions, head: head.commit })
+        const found = await exploreEvidence(node, verdict, { tier, regions: plan.regions, head: head.commit })
         if (found.failed) {
           await crw.hold(node, { reason: found.failed.reason || found.failed.status, call: found.failed.callId, source: 'explorer' })
           return { node, state: 'held', reason: found.failed.reason, call: found.failed.callId }
@@ -131,4 +132,85 @@ async function nodeLane(n, rel, sig) {
     researched = 0
     ex = await start('build:' + node + ':' + tier, step.checkpoint)
   }
+}
+
+// ---- the composites of the old reviewer path (crw:lib/lane and crw:lib/packets before CRW-1447) ----
+
+// exploreEvidence is SP-EXPL-3: a verdict with a defect of kind evidence_missing sends its evidence_question to an explorer
+// before the node's next round; its FINDINGS go to the next fix packet and the next reviewer packet. A verdict with no such defect
+// records the skip. ctx.head is the committed head the reviewer judged: the explorer's read-only worktree is made at it.
+async function exploreEvidence(node, verdict, ctx) {
+  const questions = verdict.defects
+    .filter((d) => d.kind === 'evidence_missing' && d.evidence_question)
+    .map((d) => ({ id: d.ref, question: d.evidence_question.question, scope: d.file, files_needed: d.evidence_question.files_needed }))
+  return crw.explore('evidence', questions, Object.assign({ node }, ctx || {}))
+}
+
+// review is the reviewer call of a round and its record: a fresh reviewer thread reads the committed head (SP-REV-1) and answers
+// VERDICT, and crw.review's record decides the state of the answer. A reviewer whose answer is null_model is asked once more on a
+// fresh thread; the result of that second call is the result.
+async function review(node, plan, head, ci, opts) {
+  const round = opts.round || 1
+  const packet = reviewPacket(node, plan, head, ci, opts)
+  await crw.spawnDecision('REV_1', 'spawn', { node, role: 'reviewer', inputs: { round, head: head.commit } })
+  let call = await agent.call(packet, { agentType: 'reviewer', node, head: head.commit, schema: VERDICT, label: 'review:' + node + ':r' + round })
+  let rv = await crw.review(node, head, plan.criteria_digest, call, {})
+  if (rv.state === 'null_model') {
+    call = await agent.call(packet, { agentType: 'reviewer', node, head: head.commit, schema: VERDICT, label: 'review:' + node + ':r' + round + ':retry' })
+    rv = await crw.review(node, head, plan.criteria_digest, call, { retried: true })
+  }
+  return rv
+}
+
+// reviewHalt takes the review results that are not a verdict, which are never an executor fix and never tier evidence: held and
+// unknown hold the node, refused (independence_refused included) escalates as a configuration fault, null_model - asked twice
+// already - escalates, superseded stops.
+async function reviewHalt(node, rv) {
+  const call = rv.call.callId
+  switch (rv.state) {
+    case 'held':
+      await crw.hold(node, { reason: rv.reason || 'host_infra_unknown', call, source: 'review' })
+      return { node, state: 'held', reason: rv.reason, call }
+    case 'unknown':
+      await crw.hold(node, { reason: 'dispatch_unknown', call, source: 'review' })
+      return { node, state: 'held', reason: 'dispatch_unknown', call }
+    case 'refused': {
+      const esc = await crw.escalate(node, { reason: rv.reason || 'reviewer_refused', call, ask: 'configuration' })
+      return { node, state: 'escalated', reason: rv.reason || 'reviewer_refused', call, escalation: esc.id }
+    }
+    case 'null_model': {
+      const esc = await crw.escalate(node, { reason: 'reviewer_null_model', call, detail: rv.reason || '' })
+      return { node, state: 'escalated', reason: 'reviewer_null_model', call, escalation: esc.id }
+    }
+    default:
+      return { node, state: 'superseded', call }
+  }
+}
+
+function reviewList(items, empty) {
+  if (!items || items.length === 0) return ['- ' + (empty || 'none')]
+  return items.map((s) => '- ' + s)
+}
+
+function reviewSection(title, lines) {
+  return [title + ':'].concat(lines).join('\n')
+}
+
+// reviewPacket is the packet of a node reviewer's call.
+function reviewPacket(node, plan, head, ci, opts) {
+  const parts = [
+    'ROLE: reviewer. Review the head ' + head.commit + ' of node ' + node + ' (' + plan.issue + ') against its criteria; round ' + (opts.round || 1) + '.',
+    // the two lines `crw flow audit` reads back from the thread on the host: what the acceptance of this review stands on
+    'HEAD: ' + head.commit + '\nCRITERIA DIGEST: ' + plan.criteria_digest,
+    reviewSection('CRITERIA', reviewList((plan.criteria || []).map((c, i) => 'c' + (i + 1) + ': ' + c))),
+    reviewSection('DONE CONDITION', [plan.done_condition]),
+    reviewSection('EDIT REGIONS', reviewList(plan.regions, 'undeclared')),
+    reviewSection('CHANGED PATHS', reviewList(head.changed)),
+    reviewSection('OUT OF SCOPE', reviewList(head.out_of_scope, 'none')),
+    'VERIFICATION: ' + (ci.pass ? 'passed' : 'failed') + ' (' + ci.command + ') record ' + ci.digest,
+  ]
+  const notes = opts.notes || []
+  if (notes.length) parts.push(reviewSection('FINDINGS OF THE EXPLORER (use them; do not ask again)', notes.map((n) => '- ' + n.question + '\n  ' + n.answer)))
+  parts.push('Answer with VERDICT. verified means every criterion is met and no defect blocks. Answer one entry of criteria for each criterion c1, c2, ... above, each once, under its id. A defect you cannot judge from the head is of kind evidence_missing and carries an evidence_question. The impact of each defect is one of core_function, safety_or_data, permission_boundary, criterion_unmet, regression_introduced, minor_separable: a defect of P0 to P2 blocks whatever its impact, and of the impacts only minor_separable does not block. A verdict of verified over a defect that blocks is refused as no verdict.')
+  return parts.join('\n\n')
 }

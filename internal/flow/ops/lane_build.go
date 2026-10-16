@@ -9,7 +9,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -864,22 +863,20 @@ func (l *Lane) stableBase(ctx context.Context, plan, worktree, head string) (str
 	return strings.TrimSpace(base), nil
 }
 
-// ---- crw.review ----
+// ---- the record of an old node review ----
 
-// reviewOp is crw.review(node, head, criteriaDigest, call): the ReviewResult of a reviewer call. State verdict is the only state
-// that is a round, a fix or tier evidence, and it needs a completed call whose answer is a valid VERDICT by a reviewer whose model
-// family differs from every author of the node. The other states - held, unknown, refused (independence_refused included),
-// null_model, superseded - are the call's own status, and none of them is a verdict.
-type reviewOp struct{ l *Lane }
+// The node reviewer is retired (CRW-1447): the lane registers no crw.review, and the node lane is judged by its unit check. The rows
+// an old run wrote under OpReview stay readable (crw.accept, the audit, the proofs and the run readers read them), and these are the
+// shapes of their result.
 
-// FindingRef names one defect of a verdict by the digest that says two rounds found the same thing.
+// FindingRef names one defect of an old review's verdict by the digest that said two rounds found the same thing.
 type FindingRef struct {
 	Ref    string `json:"ref"`
 	Kind   string `json:"kind"`
 	Digest string `json:"digest"`
 }
 
-// ReviewResult is the answer of crw.review.
+// ReviewResult is the result an old crw.review row recorded.
 type ReviewResult struct {
 	State          string          `json:"state"`
 	Reason         string          `json:"reason"`
@@ -890,69 +887,6 @@ type ReviewResult struct {
 	Call           Brief           `json:"call"`
 	// Retried is set when the result is that of a second reviewer thread, asked after the first answered null_model.
 	Retried bool `json:"retried"`
-}
-
-var whitespace = regexp.MustCompile(`\s+`)
-
-// FindingDigest says whether two defects are the same finding: the kind, the place and the words, lower case and one space apart.
-func FindingDigest(d Defect) string {
-	return textDigest(strings.Join([]string{d.Kind, d.File, fmt.Sprint(d.Line), strings.ToLower(strings.TrimSpace(whitespace.ReplaceAllString(d.Finding, " ")))}, "\x00"))[:16]
-}
-
-func (o *reviewOp) Run(_ context.Context, req engine.OpRequest) (engine.OpResult, error) {
-	var node, criteria string
-	var head HeadRef
-	var call CallRef
-	var opts struct {
-		Retried bool `json:"retried"`
-	}
-	if err := args(req.Args, &node, &head, &criteria, &call, &opts); err != nil {
-		return engine.OpResult{}, fmt.Errorf("crw.review(node, head, criteriaDigest, call, opts): %w", err)
-	}
-	res := ReviewResult{Verdict: json.RawMessage(`null`), Findings: []FindingRef{}, Head: head.Commit, CriteriaDigest: criteria, Call: call.brief(), Retried: opts.Retried}
-	var v ReviewVerdict
-	detail := ""
-	switch call.Status {
-	case "completed":
-		var err error
-		if v, err = DecodeVerdict(call.Output); err != nil {
-			res.State, res.Reason = StateNullModel, "verdict_invalid"
-			detail = err.Error()
-			break
-		}
-		jr := rows(req.Journal.Events())
-		if why := independent(call.Meta.ConfiguredPair.Model, jr.authorModels(node)); why != "" {
-			res.State, res.Reason = StateRefused, why
-			break
-		}
-		// a verified verdict evaluated every criterion of the node's plan once: the criteria it names are the ones the premerge
-		// record will hold, and the digest the acceptance compares is that of the whole set
-		if v.Verdict == "verified" {
-			if err := CheckCoverage(v.Criteria, expectedCriteria(jr, node)); err != nil {
-				res.State, res.Reason = StateNullModel, "verdict_invalid"
-				detail = err.Error()
-				break
-			}
-		}
-		res.State, res.Verdict = StateVerdict, call.Output
-		for _, d := range v.Defects {
-			res.Findings = append(res.Findings, FindingRef{Ref: d.Ref, Kind: d.Kind, Digest: FindingDigest(d)})
-		}
-	case "null_model":
-		res.State, res.Reason = StateNullModel, call.Reason
-	case "held":
-		res.State, res.Reason = StateHeld, call.Reason
-	case "unknown":
-		res.State, res.Reason = StateUnknown, call.Reason
-	case "refused":
-		res.State, res.Reason = StateRefused, call.Reason
-	default:
-		res.State, res.Reason = StateSuperseded, call.Reason
-	}
-	return engine.OpResult{Result: result(res), Data: map[string]any{
-		"node": node, "head": head.Commit, "criteria_digest": criteria, "state": res.State, "reason": res.Reason, "verdict": v.Verdict,
-		"call": call.CallID, "reviewer_model": call.Meta.ConfiguredPair.Model, "defects": len(v.Defects), "retried": opts.Retried, "detail": detail,
-	}}, nil
 }
 
 // expectedCriteria are the ids of the criteria of a node's plan, as the milestone row of the journal recorded the node: c1 to cn in
@@ -970,8 +904,4 @@ func expectedCriteria(r rows, node string) []string {
 		return nil
 	}
 	return CriterionIDs(len(n.Criteria))
-}
-
-func (o *reviewOp) Proven(ctx context.Context, ev []engine.Event, row engine.Event) (bool, string, error) {
-	return provenAlways(ctx, ev, row)
 }

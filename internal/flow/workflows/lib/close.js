@@ -19,10 +19,11 @@
 // The close no longer calls reviewer-final: finalReview and its packet stay exported, so the reviewer-final op stays testable on a
 // direct harness, until the role and its op are deleted (CRW-1429).
 //
-// Then reportClose audits every acceptance of the milestone against the reviewer threads on the host (settleReviews), archives the
-// threads whose audit passed, and reports the close up with its gate, its crosscheck V and the reflection of the architect. A
-// composite takes no position of its own; every position it uses is that of a call or of an operation it makes, so a resume replays it
-// through the journal like any other code of the script. It reads no variable outside its arguments.
+// Then reportClose audits every acceptance of the milestone against the record it rests on (auditAcceptances: a unit check's row, or an
+// old review's thread on the host), and reports the close up with the audit, its gate, its crosscheck V and the reflection of the
+// architect. The close archives no thread (CRW-1447). A composite takes no position of its own; every position it uses is that of a
+// call or of an operation it makes, so a resume replays it through the journal like any other code of the script. It reads no variable
+// outside its arguments.
 //
 // A composite does not stop the milestone itself. It answers {state: 'stop', source, status, reason, call} (with ask, evidence and
 // fix when the stop has them), and the script halts the milestone as it does for any other call that did not complete.
@@ -166,24 +167,22 @@ export async function closeMilestone(ms, opts) {
   return stop('final_gate', 'unsettled', 'close_head_moved', null, {})
 }
 
-// settleReviews audits the acceptances of the milestone against the reviewer threads on the host, and archives the threads whose
-// audit passed. A mismatch is a fault of the record and goes to the orchestrator; an acceptance that could not be observed keeps
-// its thread and is not a pass.
-export async function settleReviews(ms) {
+// auditAcceptances audits the acceptances of the milestone against the records they rest on (crw.audit). A mismatch is a fault of the
+// record and goes to the orchestrator; an acceptance that could not be observed is not a pass. Nothing is archived.
+export async function auditAcceptances(ms) {
   const audited = await crw.audit(ms.id)
   if (audited.mismatch > 0) {
     const bad = audited.results.filter((r) => r.state === 'mismatch').map((r) => r.node + ': ' + r.reason)
     await crw.escalate(null, { reason: 'audit_mismatch', detail: bad.join(' | ') })
   }
-  const archived = await crw.archive(ms.id)
-  return { audit: audited, archive: archived }
+  return { audit: audited }
 }
 
-// reportClose is the end of a closed milestone, after the reflection and the re-plan signals and before any re-plan: settleReviews,
-// then the report up with the close's gate, its crosscheck V and the reflection's alignment (ALIGNED, MISALIGNED or NOT_ASSESSED from
-// the project lane). A milestone that is re-planned is audited, archived and reported first.
+// reportClose is the end of a closed milestone, after the reflection and the re-plan signals and before any re-plan: auditAcceptances,
+// then the report up with the audit, the close's gate, its crosscheck V and the reflection's alignment (ALIGNED, MISALIGNED or
+// NOT_ASSESSED from the project lane). A milestone that is re-planned is audited and reported first.
 export async function reportClose(ms, closed, reflection) {
-  const settled = await settleReviews(ms)
-  const report = await crw.reportUp(ms.id, Object.assign({}, closed.close, { audit: settled.audit, crosscheck: closed.crosscheck, reflection }))
-  return { audit: settled.audit, archive: settled.archive, report }
+  const audited = await auditAcceptances(ms)
+  const report = await crw.reportUp(ms.id, Object.assign({}, closed.close, { audit: audited.audit, crosscheck: closed.crosscheck, reflection }))
+  return { audit: audited.audit, report }
 }

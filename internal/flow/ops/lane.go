@@ -42,7 +42,6 @@ const (
 	NameExploreRecord  = "exploreRecord"
 	NameCommit         = "commit"
 	NameVerify         = "verify"
-	NameReview         = "review"
 	NameUnitCheck      = "unitCheck"
 	NameStepRecord     = "stepRecord"
 	NameAccept         = "accept"
@@ -156,7 +155,6 @@ func (l *Lane) Ops() map[string]engine.Op {
 		NameExploreRecord:    &exploreRecordOp{l},
 		NameCommit:           &commitOp{l},
 		NameVerify:           &verifyOp{l},
-		NameReview:           &reviewOp{l},
 		NameUnitCheck:        &unitCheckOp{l},
 		NameStepRecord:       &stepRecordOp{l},
 		NameAccept:           &acceptOp{l},
