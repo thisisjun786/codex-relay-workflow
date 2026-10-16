@@ -76,7 +76,7 @@ func TestTrackingDefaults(t *testing.T) {
 	if !errors.Is(err, ErrTrackingMissing) {
 		t.Fatalf("a file without the section: %v", err)
 	}
-	for _, want := range []string{file.path, `"tracking"`, `"kind": "github"`, `"repo": "OWNER/NAME"`, "manage.repository", "crw config check"} {
+	for _, want := range []string{file.path, "crw config tracking --repo OWNER/NAME --config ", "manage.repository", "crw config check --config "} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the missing message lacks %q: %s", want, err)
 		}
@@ -228,7 +228,112 @@ func TestMalformedTrackingNeverStopsAnotherReader(t *testing.T) {
 
 // A missing section is a warning in crw config check and not in the storage report of crw doctor and
 // crw install, which a host with no tracking setting yet runs on every start.
-func TestMissingTrackingWarnsInConfigCheckOnly(t *testing.T) {
+// CRW-1577: crw config tracking writes the section into the file it is pointed at (the default when
+// no --config is given, an explicit path, or through a symbolic link), preserving every other
+// section, and after it the preflight reports no missing tracking. It probes nothing: the repository
+// check stays crw config check's.
+func TestTrackingSetupCommandRepairsMissingConfiguration(t *testing.T) {
+	saved := runTrackingProbe
+	runTrackingProbe = func(string) (TrackingAccess, error) { t.Fatal("the setter must not probe"); return TrackingAccess{}, nil }
+	t.Cleanup(func() { runTrackingProbe = saved })
+	home, env := rootsHome(t)
+	path := configWriteAt(t, home+"/c/config.json", `{"manage":{"repository":"o/code"},"paths":{"build_cache":"`+home+`/b"},"custom":{"keep":"me"}}`)
+	envC := func(k string) string {
+		if k == "CRW_CONFIG" {
+			return path
+		}
+		return env(k)
+	}
+	pre, err := Preflight(envC)
+	if err != nil {
+		t.Fatal(err)
+	}
+	miss := mustFind(t, pre, CheckTrackingMissing, "tracking", LevelWarning)
+	if !strings.Contains(miss.Message, "crw config tracking --repo OWNER/NAME --config ") || !strings.Contains(miss.Message, path) {
+		t.Fatalf("the missing warning lacks the repair command: %s", miss.Message)
+	}
+	code, out, errOut := configRun(t, envC, "tracking", "--repo", "o/work", "--config", path)
+	if code != 0 {
+		t.Fatalf("crw config tracking: exit %d\n%s%s", code, out, errOut)
+	}
+	file, err := Load(envC, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := file.Tracking(); err != nil || got != (Tracking{Kind: TrackingGitHub, Repo: "o/work"}) {
+		t.Fatalf("tracking = %+v, %v", got, err)
+	}
+	if pre, err = Preflight(envC); err != nil || find(pre, CheckTrackingMissing, "tracking") != nil {
+		t.Errorf("after the repair: %v %+v", err, pre.Findings)
+	}
+	raw, _ := os.ReadFile(path)
+	for _, want := range []string{`"o/code"`, `"build_cache"`, `"keep"`, `"o/work"`, `"github"`} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("the file lost %q:\n%s", want, raw)
+		}
+	}
+
+	// the file the command writes: the default (none yet), a name the shell would quote, a symlink
+	decl, err := Load(env, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	weird := home + "/a b's $x.json"
+	configWriteAt(t, weird, `{}`)
+	real := configWriteAt(t, home+"/real.json", `{}`)
+	link := home + "/link.json"
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	for name, c := range map[string]struct {
+		args []string
+		read func() (*File, error)
+	}{
+		"the default file":        {[]string{"tracking", "--repo", "o/n"}, func() (*File, error) { return Load(env, "") }},
+		"a path that quotes oddly": {[]string{"tracking", "--repo", "o/n", "--config", weird}, func() (*File, error) { return Load(env, weird) }},
+		"a symbolic link":          {[]string{"tracking", "--repo", "o/n", "--config", link}, func() (*File, error) { return Load(env, real) }},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if code, out, errOut := configRun(t, env, c.args...); code != 0 {
+				t.Fatalf("exit %d\n%s%s", code, out, errOut)
+			}
+			f, err := c.read()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, err := f.Tracking(); err != nil || got.Repo != "o/n" || got.Kind != TrackingGitHub {
+				t.Fatalf("tracking = %+v, %v", got, err)
+			}
+			if name == "a symbolic link" {
+				if info, err := os.Lstat(link); err != nil || info.Mode()&os.ModeSymlink == 0 {
+					t.Errorf("the symlink was replaced")
+				}
+			}
+		})
+	}
+	_ = decl
+
+	// a bad request writes nothing
+	for name, args := range map[string][]string{
+		"no repo":       {"tracking", "--config", path},
+		"empty repo":    {"tracking", "--repo", "", "--config", path},
+		"not OWNER/NAME": {"tracking", "--repo", "not a repo", "--config", path},
+		"no slash":      {"tracking", "--repo", "work", "--config", path},
+		"extra arg":     {"tracking", "--repo", "o/n", "--config", path, "x"},
+		"unknown flag":  {"tracking", "--wat", "--config", path},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if code, _, _ := configRun(t, envC, args...); code == 0 {
+				t.Errorf("%v exited 0", args)
+			}
+			if after, _ := os.ReadFile(path); string(after) != string(raw) {
+				t.Errorf("%v rewrote the file", args)
+			}
+		})
+	}
+}
+
+func TestMissingTrackingWarnsInConfigCheckAndPreflight(t *testing.T) {
 	saved := runProbe
 	runProbe = roomy()
 	t.Cleanup(func() { runProbe = saved })
@@ -243,7 +348,7 @@ func TestMissingTrackingWarnsInConfigCheckOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	f := mustFind(t, report, CheckTrackingMissing, "tracking", LevelWarning)
-	for _, want := range []string{path, `"kind": "github"`, "OWNER/NAME"} {
+	for _, want := range []string{path, "crw config tracking --repo OWNER/NAME --config ", "OWNER/NAME"} {
 		if !strings.Contains(f.Message, want) {
 			t.Errorf("the warning lacks %q: %s", want, f.Message)
 		}
@@ -255,8 +360,11 @@ func TestMissingTrackingWarnsInConfigCheckOnly(t *testing.T) {
 		return env(k)
 	}
 	pre, err := Preflight(envC)
-	if err != nil || find(pre, CheckTrackingMissing, "tracking") != nil || pre.Tracking != nil {
-		t.Errorf("Preflight on a file without the section: %v, %+v", err, pre.Findings)
+	if err != nil || pre.Tracking == nil || pre.Tracking.Set {
+		t.Errorf("Preflight on a file without the section: %v, %+v", err, pre.Tracking)
+	}
+	if f := mustFind(t, pre, CheckTrackingMissing, "tracking", LevelWarning); !strings.Contains(f.Message, "crw config tracking") {
+		t.Errorf("the Preflight warning lacks the repair command: %s", f.Message)
 	}
 }
 

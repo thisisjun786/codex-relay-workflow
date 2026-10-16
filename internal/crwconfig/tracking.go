@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -12,6 +13,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 )
 
 // The tracking section names where work tracking lives, apart from the code repository
@@ -98,7 +101,7 @@ func (t Tracking) normalize() (Tracking, error) {
 func (f *File) Tracking() (Tracking, error) {
 	raw, ok := f.doc["tracking"]
 	if !ok {
-		return Tracking{}, fmt.Errorf(`%s: %w; add %s to the configuration file (OWNER/NAME is the repository that holds the work tracking, apart from manage.repository, the code repository), then run crw config check`, f.path, ErrTrackingMissing, trackingExample)
+		return Tracking{}, fmt.Errorf("%s: %w; fix: crw config tracking --repo OWNER/NAME --config %s (replace OWNER/NAME with the work-tracking repository, apart from manage.repository); then run crw config check --config %s", f.path, ErrTrackingMissing, quote.Shell(f.path), quote.Shell(f.path))
 	}
 	invalid := func(reason string) (Tracking, error) {
 		return Tracking{}, fmt.Errorf(`%s: tracking is not usable: %s; set %s (kind "linear" is a read-only archive setting and takes no repo), then run crw config check`, f.path, reason, trackingExample)
@@ -287,9 +290,10 @@ type TrackingStatus struct {
 var runTrackingProbe TrackingProbe = ghProbe
 
 // CheckTracking judges the tracking section of a loaded file. A section that is not usable is a
-// warning that says what to set; a missing one is the same warning when reportMissing is set (crw
-// config check) and no finding otherwise (the storage report that crw doctor and crw install make
-// on every start). A github section is judged through probe when there is one: gh signed in, the
+// warning that says what to set; a missing one is the same warning, with the repair command, when
+// reportMissing is set (crw config check, and the storage report that crw doctor and crw install
+// make on every start, CRW-1577) and no finding otherwise. A github section is judged through probe
+// when there is one: gh signed in, the
 // repository visible, Issues on, and issues readable and writable for the login; each way it is not
 // is an error. Nothing is written anywhere. The status is nil when the file has no section and the
 // caller did not ask for it to be reported.
@@ -340,6 +344,49 @@ func CheckTracking(file *File, probe TrackingProbe, reportMissing bool) (*Tracki
 		return status, finding(LevelError, CheckTrackingIssues, "this gh login can read issues of %s but has no permission to write them: ask for triage or write access", tracking.Repo)
 	}
 	return status, nil
+}
+
+// runTracking is crw config tracking: it writes the tracking section into the configuration file
+// through the file's own writer (writeSection), which preserves every other section, writes through
+// a symbolic link and creates a file that is not there yet. It probes nothing: the check of the
+// repository stays crw config check's (CRW-1577).
+func runTracking(getenv func(string) string, flagPath string, args []string, stdout, stderr io.Writer) int {
+	flags := flag.NewFlagSet("crw config tracking", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	repo := flags.String("repo", "", "the work-tracking repository, OWNER/NAME")
+	if err := flags.Parse(args); err != nil || flags.NArg() > 0 {
+		if err == nil {
+			err = fmt.Errorf("unexpected argument %q", flags.Arg(0))
+		}
+		fmt.Fprintf(stderr, "crw config tracking: error: %v\n", err)
+		return usageExit
+	}
+	tracking, err := (Tracking{Kind: TrackingGitHub, Repo: *repo}).normalize()
+	if err != nil {
+		fmt.Fprintf(stderr, "crw config tracking: error: %v\n", err)
+		return usageExit
+	}
+	file, err := Load(getenv, flagPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "crw config tracking: error: %v\n", err)
+		return usageExit
+	}
+	section := map[string]json.RawMessage{}
+	if raw, ok := file.doc["tracking"]; ok {
+		if json.Unmarshal(raw, &section) != nil || section == nil {
+			section = map[string]json.RawMessage{}
+		}
+	}
+	section["kind"], _ = json.Marshal(tracking.Kind)
+	section["repo"], _ = json.Marshal(tracking.Repo)
+	if err := file.writeSection("tracking", section); err != nil {
+		fmt.Fprintf(stderr, "crw config tracking: error: %v\n", err)
+		return 1
+	}
+	return writeJSON(stdout, stderr, struct {
+		Config   string   `json:"config"`
+		Tracking Tracking `json:"tracking"`
+	}{file.path, tracking})
 }
 
 // ghError is a failed gh run: its standard error.

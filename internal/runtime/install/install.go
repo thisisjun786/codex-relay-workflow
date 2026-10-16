@@ -169,7 +169,7 @@ func refusedResult(command, detail, note string, extra ...contract.Field) (Objec
 }
 
 // Install is `crw install install` and `crw install update`: one code path.
-func Install(ctx context.Context, o Options, command string, source Source) (Object, int) {
+func Install(ctx context.Context, o Options, command string, source Source) (result Object, code int) {
 	if !record.Stated(o.Issue) {
 		return refusedResult(command, "--issue is written into the host record as the evidence that this command placed the owned pointer, so it has to say something", "nothing was read, nothing was built and nothing was written.")
 	}
@@ -179,6 +179,17 @@ func Install(ctx context.Context, o Options, command string, source Source) (Obj
 	storage, storageErr := crwconfig.Preflight(o.Env.Get)
 	if storageErr != nil {
 		return refusedResult(command, "the storage check refused the configuration: "+storageErr.Error(), "nothing was read, nothing was built and nothing was written.", field("storage", storage.FindingsOrdered()))
+	}
+	// A missing tracking section is a warning of the run, never a refusal (CRW-1577): the findings of
+	// the storage check carry it to the top-level warnings of every answer this run makes.
+	trackingWarnings := crwconfig.Report{}
+	for _, finding := range storage.Findings {
+		if finding.Check == crwconfig.CheckTrackingMissing {
+			trackingWarnings.Findings = append(trackingWarnings.Findings, finding)
+		}
+	}
+	if len(trackingWarnings.Findings) > 0 {
+		defer func() { result = append(result, field("warnings", trackingWarnings.FindingsOrdered())) }()
 	}
 	archive, done, err := Resolve(ctx, source)
 	defer done()
