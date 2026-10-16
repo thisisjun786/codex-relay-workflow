@@ -1008,6 +1008,10 @@ record. An unchanged replay of an old row writes nothing.
 | send_by_id, recipient or sender moved | keep (answers `relation_owner_drift`: stage it again) | keep | keep | keep | keep |
 | send_by_id, same endpoints | keep | keep (its own path) | if owed | if owed | if owed |
 
+An attempt asks the rule only of a `superseded_by_report` hold, so the `none` and `other` cells of
+the send_by_id rows are `holdDecision`'s answers; what a send by id does with a message that has no
+hold or another word is the attempt's own path, which the send by id paragraph below states.
+
 Re-addressing an `other` hold differs by path, as it did before the rule: an event's or an
 omission's message re-addressed by `supervisor-stage` is released whatever its word, while a direct
 message re-addressed by its sender's staging is released from `hierarchy_unresolved` only and keeps a
@@ -1027,8 +1031,21 @@ flow delivery row and the attempt's journal row), not the one it asked for.
 A send by id is `supervisor-send --message <id>` or the fault deliverer's send of its notice; the
 daemon's own attempts are not, and take the `restage` rows. A send by id releases a park or a derived
 hold only when what the message is for is still owed, and sends it; otherwise it sends nothing and
-the hold stays. It never re-addresses a message: when the hierarchy names another sender or recipient
-it answers `relation_owner_drift` and writes nothing. Staging the message again where it came from
+the hold stays. It never re-addresses a message. When the hierarchy names another sender or recipient,
+what it does depends on the message's hold. A message held `superseded_by_report` (a park, a derived
+hold or a notice's park) keeps its hold and nothing is written: the send answers `relation_owner_drift`.
+A message with no hold that the attempt can claim (unsent, due, and not behind an older message to
+its recipient) reaches the attempt's resolution of its endpoints, which holds it
+`hierarchy_unresolved`, journals `supervisor_message_unaddressed` and answers `relation_owner_drift`;
+nothing is sent. A message held any other way, or one the attempt cannot claim now, is not sent and
+nothing is written; a `hierarchy_unresolved` hold is first checked against the hierarchy, which
+still names other endpoints, so it stays. When the hierarchy no longer resolves the message's
+relationship at all, a `superseded_by_report` or `hierarchy_unresolved` hold, and a message with no
+hold that the attempt can claim, answer the resolution's own refusal in place of
+`relation_owner_drift`, with the writes above. A `hierarchy_unresolved` hold is released, with a
+`supervisor_message_reopened` row, by the message's next attempt once the hierarchy names its
+endpoints again, or by staging it again.
+Staging the message again where it came from
 re-addresses it (the `readdress` rows) - `supervisor-stage --event <id>` or `--project <key>` for an
 event's or an omission's report, its sender's own report again (`report-up`, the flow's report) for a
 direct message, which `supervisor-stage` does not stage - and the next send goes. No hold word, column, journal kind or index is
