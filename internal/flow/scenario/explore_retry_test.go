@@ -170,7 +170,7 @@ func libSwap(t *testing.T, base fs.FS, file, start, end, with string) fs.FS {
 // b0Lib is the helper library with lib/lane.js#explore and lib/packets.js#architectPacket as they were before CRW-1571.
 func b0Lib(t *testing.T) fs.FS {
 	t.Helper()
-	l := libSwap(t, lib.FS, "lane.js", "export async function explore(", "// exploreEvidence is SP-EXPL-3", b0Explore)
+	l := libSwap(t, lib.FS, "lane.js", "export async function explore(", "// milestoneHalt takes a call of the design phase", b0Explore)
 	return libSwap(t, l, "packets.js", "export function architectPacket(", "// The executor contract", b0ArchitectPacket)
 }
 
