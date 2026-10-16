@@ -1153,13 +1153,6 @@ func TestDecodersHoldTheRulesOfTheSchemas(t *testing.T) {
 	if err := Validate(SchemaVerdict, []byte(`{"verdict":"verified"} {}`)); err == nil {
 		t.Errorf("two documents validated")
 	}
-	// two reviewers that find the same thing in other words and spacing find one finding
-	a := Defect{Kind: "correctness", File: "f.go", Line: 3, Finding: "The  guard is MISSING"}
-	b := Defect{Kind: "correctness", File: "f.go", Line: 3, Finding: " the guard is missing "}
-	c := Defect{Kind: "correctness", File: "f.go", Line: 4, Finding: "the guard is missing"}
-	if FindingDigest(a) != FindingDigest(b) || FindingDigest(a) == FindingDigest(c) {
-		t.Errorf("finding digests %s %s %s", FindingDigest(a), FindingDigest(b), FindingDigest(c))
-	}
 }
 
 // crw.verify records a passing or failing verification with the digest of its record, and a verification that could not run is
@@ -1564,39 +1557,22 @@ func TestVerifiedWithABlockingImpactIsVerdictInvalid(t *testing.T) {
 	}
 }
 
-// CRW-1438: the reviewer is told the closed impact set its verdict answers with: the packet of crw:lib/packets names every value of
-// premerge.Impacts, that only minor_separable does not block, and that verified over a blocking defect is refused; the reviewer
-// overlay says the same under Output.
-func TestReviewPacketNamesTheImpactVocabulary(t *testing.T) {
-	src := "import { reviewPacket } from 'crw:lib/packets'\nexport const meta = { name: 'review-packet' }\n" +
-		"return reviewPacket('A', { issue: 'CRW-1', criteria_digest: 'd', criteria: ['first'], done_condition: 'done', regions: ['a.go'] }, " +
-		"{ commit: 'h1', changed: ['a.go'], out_of_scope: [] }, { pass: true, command: 'go test ./...', digest: 'v1' }, { round: 1 })\n"
-	prog, err := script.Load(script.Source{Name: "review-packet.js", Text: []byte(src)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	res, err := engine.Run(context.Background(), prog, engine.Config{Backend: engine.NewFake(), Policy: engine.FakePolicy()})
-	if err != nil || res.Status != engine.RunCompleted {
-		t.Fatalf("%v %+v", err, res)
-	}
-	var packet string
-	if err := json.Unmarshal(res.Value, &packet); err != nil {
-		t.Fatalf("the review packet is not a string: %v (%s)", err, res.Value)
-	}
+// CRW-1438: the reviewer is told the closed impact set its verdict answers with: the reviewer overlay names every value of
+// premerge.Impacts, that only minor_separable does not block, and that verified over a blocking defect is refused, under Output. The
+// node reviewer's packet is retired with its path (CRW-1447); the overlay stays, as the critic is built on the reviewer's definition.
+func TestReviewerOverlayNamesTheImpactVocabulary(t *testing.T) {
 	overlay, err := roles.Overlay("reviewer", roles.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for name, text := range map[string]string{"the review packet": packet, "the reviewer overlay": overlay} {
-		for _, impact := range premerge.Impacts {
-			if !strings.Contains(text, impact) {
-				t.Errorf("%s does not name the impact %s:\n%s", name, impact, text)
-			}
+	for _, impact := range premerge.Impacts {
+		if !strings.Contains(overlay, impact) {
+			t.Errorf("the reviewer overlay does not name the impact %s:\n%s", impact, overlay)
 		}
-		for _, rule := range []string{"only " + premerge.MinorSeparable + " does not block", "verified over a defect that blocks is refused"} {
-			if !strings.Contains(text, rule) {
-				t.Errorf("%s does not say %q:\n%s", name, rule, text)
-			}
+	}
+	for _, rule := range []string{"only " + premerge.MinorSeparable + " does not block", "verified over a defect that blocks is refused"} {
+		if !strings.Contains(overlay, rule) {
+			t.Errorf("the reviewer overlay does not say %q:\n%s", rule, overlay)
 		}
 	}
 }

@@ -85,8 +85,10 @@ type Lab struct {
 	Lib    fs.FS
 	Prompt func(role string, qa bool) (string, error)
 	// Source, when set, is the text of the project lane the lab runs in place of the embedded one (reviewerLane: the project lane
-	// with the old reviewer path's node lane).
+	// with the old reviewer path's node lane), and OldOps the operations of an old build the lab registers next to the lane's
+	// (reviewerLane: the node reviewer's crw.review, which the lane no longer registers, CRW-1447): what an old run's process ran.
 	Source []byte
+	OldOps map[string]engine.Op
 	// Checker is the lab's unit checker, the tool behind crw.unitCheck (CRW-1465): a scenario scripts it with UnitChecks.
 	Checker *LabChecker
 	// LandRoot is the run's directory of the lab (Deps.LandRoot), absolute and under Root: the close's crosscheck writes its receipts
@@ -315,6 +317,9 @@ func (l *Lab) Config(resume bool) engine.Config {
 	laneOps := l.lane.Ops()
 	// the lab's checker is told the round of the check it answers (its rules key on it, as they keyed on a review's label)
 	laneOps[ops.NameUnitCheck] = labCheckOp{laneOps[ops.NameUnitCheck]}
+	for name, op := range l.OldOps {
+		laneOps[name] = op
+	}
 	// the crosscheck's authors are the run's role pairs, as the cli gives them from the run's role table (FakePolicy: claude)
 	l.crosscheck.Authors = map[string]string{}
 	for _, role := range []string{"architect", "executor", "executor-t1"} {

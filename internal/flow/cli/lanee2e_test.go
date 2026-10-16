@@ -966,18 +966,12 @@ func TestReportBodyCarriesTheCrosscheckAndReflectionOfTheClose(t *testing.T) {
 	}
 }
 
-// TestReplannedCloseRunsEveryFinalStepFirst (CRW-1473): a close whose reflection is MISALIGNED is due for a re-plan, and the closed
-// milestone is audited, archived and reported before the re-plan: the crw.audit, crw.archive and crw.reportUp rows come before the
-// replan:close call, and the report body says Reflection: MISALIGNED.
+// TestReplannedCloseRunsEveryFinalStepFirst (CRW-1473, CRW-1447): a close whose reflection is MISALIGNED is due for a re-plan, and the
+// closed milestone is audited and reported before the re-plan: the crw.audit and crw.reportUp rows come before the replan:close call,
+// and the report body says Reflection: MISALIGNED.
 func TestReplannedCloseRunsEveryFinalStepFirst(t *testing.T) {
 	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
-	l.turn = func(c labCall, r fakehost.TurnRequest) (fakehost.TurnPlan, bool) {
-		if c.Role == "architect" && strings.HasPrefix(c.Label, "reflection:") {
-			return labSay(map[string]any{"verdict": "MISALIGNED", "misaligned": []any{map[string]any{"decision_id": "D1", "observed": "the range departs from D1",
-				"affected_nodes": []string{l.nodeOf["A-1"]}, "evidence": []string{"README.md"}}}}), true
-		}
-		return fakehost.TurnPlan{}, false
-	}
+	misaligned(l)
 	_, v := unitCheckRun(t, l)
 	replanAt := -1
 	for i, e := range l.events() {
@@ -989,7 +983,7 @@ func TestReplannedCloseRunsEveryFinalStepFirst(t *testing.T) {
 	if replanAt < 0 {
 		t.Fatalf("no replan:close call; the run's value %v", v)
 	}
-	for _, op := range []string{ops.OpAudit, ops.OpArchive, ops.OpReportUp} {
+	for _, op := range []string{ops.OpAudit, ops.OpReportUp} {
 		_, at := labRows(l, op)
 		if len(at) != 1 || at[0] > replanAt {
 			t.Errorf("the %s rows at %v, want one before the replan:close call at %d", op, at, replanAt)
@@ -1000,6 +994,66 @@ func TestReplannedCloseRunsEveryFinalStepFirst(t *testing.T) {
 	l.mu.Unlock()
 	if len(bodies) != 1 || bodyLine(bodies[0], "Reflection: ") != "MISALIGNED" {
 		t.Errorf("the report bodies %q, want one that says Reflection: MISALIGNED", bodies)
+	}
+}
+
+// misaligned has the architect's reflection of the close answer MISALIGNED, so the close is due for a re-plan.
+func misaligned(l *laneLab) {
+	l.turn = func(c labCall, r fakehost.TurnRequest) (fakehost.TurnPlan, bool) {
+		if c.Role == "architect" && strings.HasPrefix(c.Label, "reflection:") {
+			return labSay(map[string]any{"verdict": "MISALIGNED", "misaligned": []any{map[string]any{"decision_id": "D1", "observed": "the range departs from D1",
+				"affected_nodes": []string{l.nodeOf["A-1"]}, "evidence": []string{"README.md"}}}}), true
+		}
+		return fakehost.TurnPlan{}, false
+	}
+}
+
+// TestEveryCloseAuditsAndReportsAndArchivesNothing (CRW-1447): every close of the project lane, one that closes and one that is due for a
+// re-plan, writes one crw.audit and one crw.reportUp row, in that order, and no crw.archive row; the report it sends up carries the
+// audit of the milestone, and the run's value of the closed milestone holds the audit and no archive member.
+func TestEveryCloseAuditsAndReportsAndArchivesNothing(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(*laneLab)
+		state string
+	}{
+		{"a close", func(*laneLab) {}, "closed"},
+		{"a close due for a re-plan", misaligned, "replanned"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+			tc.setup(l)
+			_, v := unitCheckRun(t, l)
+			if v["state"] != tc.state {
+				t.Fatalf("the run's value %v, want state %s", v, tc.state)
+			}
+			if _, ok := v["archived"]; ok {
+				t.Errorf("the run's value has an archive member: %v", v)
+			}
+			if a, ok := v["audit"].(map[string]any); tc.state == "closed" && (!ok || a["ok"] != float64(1)) {
+				t.Errorf("the run's value has no audit of the one acceptance: %v", v)
+			}
+			audits, auditAt := labRows(l, ops.OpAudit)
+			_, reportAt := labRows(l, ops.OpReportUp)
+			if len(auditAt) != 1 || len(reportAt) != 1 || auditAt[0] > reportAt[0] {
+				t.Errorf("the crw.audit rows at %v and the crw.reportUp rows at %v, want one of each, the audit first", auditAt, reportAt)
+			}
+			for _, e := range l.events() {
+				if e.Kind == engine.KindCall && e.Op == ops.OpArchive {
+					t.Errorf("a crw.archive row: %s %v", e.Event, e.Data)
+				}
+			}
+			l.mu.Lock()
+			bodies := append([]string(nil), l.reportBodies...)
+			l.mu.Unlock()
+			if len(bodies) != 1 {
+				t.Fatalf("%d report bodies", len(bodies))
+			}
+			var sent map[string]any
+			if err := json.Unmarshal([]byte(bodyLine(bodies[0], "Audit: ")), &sent); err != nil || len(audits) != 1 || sent["milestone"] != "M1" || sent["ok"] != float64(1) {
+				t.Errorf("the report's audit %v (%v), want the audit of M1 with its one acceptance\n%s", sent, err, bodies[0])
+			}
+		})
 	}
 }
 

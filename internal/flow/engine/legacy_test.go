@@ -103,7 +103,9 @@ func openedRow(run, path string, position int, label, callID string) Event {
 // is a legacy run, and the reason names the row (its op or role, its call id, its node or milestone), the retired path and CRW-1429.
 // A crw.review or crw.reviewerFinal row is one in any run; a reviewer or reviewer-final agent call and a spawn decision of a retired
 // rule are one only where an old lane wrote them: the whole run when it was started as a lane workflow, else the subtree of a lane it
-// nested with workflow() (by name or by {scriptPath}), whose reason also names the nested label and its workflow_opened call.
+// nested with workflow() (by name or by {scriptPath}), whose reason also names the nested label and its workflow_opened call. A crw.archive
+// row is one in the lane scope, and anywhere in the run when it follows a crw.audit on its path (CRW-1447: the old close's settle step,
+// with or without its audit_mismatch escalation between).
 func TestLegacyReviewerRunNamesTheRetiredRow(t *testing.T) {
 	const run = "run-1"
 	nested := nestedPathID(RootPath, 3)
@@ -133,6 +135,22 @@ func TestLegacyReviewerRunNamesTheRetiredRow(t *testing.T) {
 		"a decision of the retired evidence explorer under a nested night batch": {[]Event{startedRow(run, "custom"), openedRow(run, RootPath, 3, "workflow:night-batch", "c_wf"),
 			opRow(run, "c_sp", nested, 2, opSpawnDecision, map[string]any{"rule": "SP-EXPL-3", "node": "A"})},
 			[]string{"SP-EXPL-3", "c_sp", "workflow:night-batch"}},
+		"a crw.archive row of the project lane": {[]Event{startedRow(run, "project-lane"), opRow(run, "c_arc", RootPath, 21, OpLegacyArchive, map[string]any{"milestone": "M1"})},
+			[]string{OpLegacyArchive, "c_arc", "milestone M1", "the retired review-thread archive of the close (CRW-1429)", "which the current project lane does not replay", legacyReadOnly}},
+		"a crw.archive row under a nested project lane": {[]Event{startedRow(run, "custom"), openedRow(run, RootPath, 3, "workflow:project-lane", "c_wf"),
+			opRow(run, "c_arc", nested, 40, OpLegacyArchive, map[string]any{"milestone": "M1"})},
+			[]string{OpLegacyArchive, "c_arc", "milestone M1", "workflow:project-lane", "c_wf", "the retired review-thread archive of the close (CRW-1429)"}},
+		"the settle shape of a custom run: the audit, then the archive": {[]Event{startedRow(run, "custom"),
+			opRow(run, "c_aud", RootPath, 20, "crw.audit", map[string]any{"milestone": "M1"}), opRow(run, "c_arc", RootPath, 21, OpLegacyArchive, map[string]any{"milestone": "M1"})},
+			[]string{OpLegacyArchive, "c_arc", "milestone M1", "after its crw.audit", "the retired review-thread archive of the close (CRW-1429)"}},
+		"the settle shape with the audit_mismatch escalation between": {[]Event{startedRow(run, "custom"),
+			opRow(run, "c_aud", RootPath, 20, "crw.audit", map[string]any{"milestone": "M1"}), opRow(run, "c_esc", RootPath, 21, "crw.escalate", map[string]any{"reason": "audit_mismatch"}),
+			opRow(run, "c_arc", RootPath, 22, OpLegacyArchive, map[string]any{"milestone": "M1"})},
+			[]string{OpLegacyArchive, "c_arc", "after its crw.audit", "CRW-1429"}},
+		"the settle shape under a lane nested by a script path of another name": {[]Event{startedRow(run, "custom"), openedRow(run, RootPath, 3, "workflow:lanes/my-lane.js", "c_wf"),
+			opRow(run, "c_aud", nested, 30, "crw.audit", map[string]any{"milestone": "M1"}), opRow(run, "c_arc", nested, 31, OpLegacyArchive, map[string]any{"milestone": "M1"}),
+			opRow(run, "c_up", nested, 32, "crw.reportUp", map[string]any{"milestone": "M1"})},
+			[]string{OpLegacyArchive, "c_arc", "milestone M1", "after its crw.audit", "CRW-1429"}},
 	} {
 		got := LegacyReviewerRun(tc.events, run)
 		for _, w := range tc.want {
@@ -155,8 +173,9 @@ func TestLegacyReviewerRunNamesTheRetiredRow(t *testing.T) {
 }
 
 // TestCurrentLaneRunIsNotTakenForALegacyReviewerRun (CRW-1429): what the current lane writes is no legacy row (the unit check, the
-// critic, the close's audit, archive and report), and neither is a reviewer call or a crw.archive of a user workflow outside any
-// nested lane, a reviewer call under a nested workflow that is not a lane, or a row of another run.
+// critic, the close's audit, its audit_mismatch escalation and its report), and neither is a reviewer call or a crw.archive of a user
+// workflow outside any nested lane that does not follow a crw.audit on its path (right after it, or after it and an escalation), a
+// reviewer call under a nested workflow that is not a lane, or a row of another run.
 func TestCurrentLaneRunIsNotTakenForALegacyReviewerRun(t *testing.T) {
 	const run = "run-1"
 	for name, events := range map[string][]Event{
@@ -164,8 +183,18 @@ func TestCurrentLaneRunIsNotTakenForALegacyReviewerRun(t *testing.T) {
 			opRow(run, "c_sp", RootPath, 4, opSpawnDecision, map[string]any{"rule": "SP-AUD-1", "role": "critic"}),
 			opRow(run, "c_uc", RootPath+"/9:A", 5, "crw.unitCheck", map[string]any{"node": "A", "role": "unit-check"}),
 			opRow(run, "c_aud", RootPath, 20, "crw.audit", map[string]any{"milestone": "M1"}),
-			opRow(run, "c_arc", RootPath, 21, OpLegacyArchive, map[string]any{"milestone": "M1"}),
+			opRow(run, "c_esc", RootPath, 21, "crw.escalate", map[string]any{"reason": "audit_mismatch"}),
 			opRow(run, "c_up", RootPath, 22, "crw.reportUp", map[string]any{"milestone": "M1"})},
+		"a custom whose archive follows another op after its audit": {startedRow(run, "custom"),
+			opRow(run, "c_aud", RootPath, 20, "crw.audit", map[string]any{"milestone": "M1"}), opRow(run, "c_up", RootPath, 21, "crw.reportUp", map[string]any{"milestone": "M1"}),
+			opRow(run, "c_arc", RootPath, 22, OpLegacyArchive, map[string]any{"milestone": "M1"})},
+		"a custom whose archive follows an audit on another path": {startedRow(run, "custom"),
+			opRow(run, "c_aud", RootPath+"/2:a", 4, "crw.audit", map[string]any{"milestone": "M1"}), opRow(run, "c_arc", RootPath, 5, OpLegacyArchive, map[string]any{"milestone": "M1"})},
+		"a custom whose archive follows an escalation with no audit before it": {startedRow(run, "custom"),
+			opRow(run, "c_x", RootPath, 19, "crw.hold", map[string]any{"node": "A"}), opRow(run, "c_esc", RootPath, 20, "crw.escalate", map[string]any{"reason": "audit_mismatch"}),
+			opRow(run, "c_arc", RootPath, 21, OpLegacyArchive, map[string]any{"milestone": "M1"})},
+		"an archive after its audit in another run": {startedRow(run, "custom"), startedRow("run-2", "custom"),
+			opRow("run-2", "c_aud", RootPath, 20, "crw.audit", map[string]any{"milestone": "M1"}), opRow("run-2", "c_arc", RootPath, 21, OpLegacyArchive, map[string]any{"milestone": "M1"})},
 		"a custom with a direct archive and a reviewer call": {startedRow(run, "custom"), agentRow(run, "c_r", RootPath, 1, "reviewer", "A"),
 			opRow(run, "c_sp", RootPath, 2, opSpawnDecision, map[string]any{"rule": "SP-REV-1", "role": "reviewer"}),
 			opRow(run, "c_arc", RootPath, 3, OpLegacyArchive, map[string]any{"milestone": "M1"})},

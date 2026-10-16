@@ -452,24 +452,6 @@ export function fixPacket(node, verdict, ci, notes, receipt) {
   return parts.join('\n\n')
 }
 
-export function reviewPacket(node, plan, head, ci, opts) {
-  const parts = [
-    'ROLE: reviewer. Review the head ' + head.commit + ' of node ' + node + ' (' + plan.issue + ') against its criteria; round ' + (opts.round || 1) + '.',
-    // the two lines `crw flow audit` reads back from the thread on the host: what the acceptance of this review stands on
-    'HEAD: ' + head.commit + '\nCRITERIA DIGEST: ' + plan.criteria_digest,
-    section('CRITERIA', criteriaList(plan.criteria)),
-    section('DONE CONDITION', [plan.done_condition]),
-    section('EDIT REGIONS', list(plan.regions, 'undeclared')),
-    section('CHANGED PATHS', list(head.changed)),
-    section('OUT OF SCOPE', list(head.out_of_scope, 'none')),
-    'VERIFICATION: ' + (ci.pass ? 'passed' : 'failed') + ' (' + ci.command + ') record ' + ci.digest,
-  ]
-  const n = notesSection(opts.notes)
-  if (n) parts.push(n)
-  parts.push('Answer with VERDICT. verified means every criterion is met and no defect blocks. Answer one entry of criteria for each criterion c1, c2, ... above, each once, under its id. A defect you cannot judge from the head is of kind evidence_missing and carries an evidence_question. The impact of each defect is one of core_function, safety_or_data, permission_boundary, criterion_unmet, regression_introduced, minor_separable: a defect of P0 to P2 blocks whatever its impact, and of the impacts only minor_separable does not block. A verdict of verified over a defect that blocks is refused as no verdict.')
-  return parts.join('\n\n')
-}
-
 // ---- the milestone close (crw:lib/close) ----
 
 // The captures as the later calls read them: the path each can be opened at (crw.qaCapture resolved it against the directory the

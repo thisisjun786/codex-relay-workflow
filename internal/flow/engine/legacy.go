@@ -74,8 +74,13 @@ const (
 	// OpLegacyReviewerFinal is the record of the old close's reviewer-final VERDICT_FINAL (lib/close.js finalReview); no built-in script
 	// calls it.
 	OpLegacyReviewerFinal = "crw.reviewerFinal"
-	// OpLegacyArchive is the archive of the reviewer threads the old close made after its audit (lib/close.js settleReviews).
+	// OpLegacyArchive is the archive of the reviewer threads the old close made after its audit (settleReviews of crw:lib/close before
+	// CRW-1447); the current close audits the acceptances and archives nothing.
 	OpLegacyArchive = "crw.archive"
+	// opAudit and opEscalate are the ops of the old close's settle step before its archive: the audit, and the audit_mismatch
+	// escalation on a mismatch.
+	opAudit    = "crw.audit"
+	opEscalate = "crw.escalate"
 )
 
 // LegacyRetiredRules are the spawn rules of the retired paths: the node reviewer (SP-REV-1), the candidate batch review (SP-REV-2),
@@ -112,12 +117,19 @@ func nestedWorkflowName(label string) string {
 }
 
 // LegacyReviewerRun says why a run is a legacy run of the retired node reviewer or reviewer-final path (CRW-1429), "" when it is not.
-// The current project lane runs the unit check where the old lane called the node reviewer, and the crosscheck where the old close
-// called reviewer-final, so its script, run again over such a journal, would not replay those positions: it would run them live, and
-// every later position of their path after them. A run is one when, for its run id,
+// The current project lane runs the unit check where the old lane called the node reviewer, the crosscheck where the old close called
+// reviewer-final, and its report where the old close archived the reviewer threads, so its script, run again over such a journal, would
+// not replay those positions: it would run them live, and every later position of their path after them (the report would be sent
+// twice). A run is one when, for its run id,
 //   - its journal holds a row of OpLegacyReview or OpLegacyReviewerFinal (no built-in script calls them; only an old one wrote them);
 //   - inside the lane scope, its journal holds an agent call of role reviewer or reviewer-final, or a completed crw.spawnDecision row of a
-//     retired rule (LegacyRetiredRules): what an old lane wrote before the record of the review, when its process ended in between.
+//     retired rule (LegacyRetiredRules): what an old lane wrote before the record of the review, when its process ended in between;
+//   - inside the lane scope, its journal holds a row of OpLegacyArchive: the old close archived the reviewer threads after its audit,
+//     where the current close goes on to its report;
+//   - anywhere in the run, a row of OpLegacyArchive follows a crw.audit row on the same path, at the position right before it or, with a
+//     crw.escalate row between, the one before that: the settle step of the old close (its audit, the audit_mismatch escalation on a
+//     mismatch, the archive), whatever workflow ran it, so an old lane nested under another name and a script that settled the same way
+//     are refused too. An archive of a user workflow that does not follow an audit in that way stays allowed.
 //
 // The lane scope is the rows an old built-in lane wrote: the whole run when its started row names a workflow of LegacyLaneWorkflows,
 // and the subtree of every lane the run nested with workflow() (a workflow_opened row whose label names a workflow of the list, by name
@@ -151,13 +163,39 @@ func LegacyReviewerRun(events []Event, runID string) string {
 		}
 		return legacyLanePath{}, false
 	}
-	// a record row names the run first, then an agent call, then a decision: the first of each in the journal's order
-	var record, call, decision string
+	// the op of each call position of the run, by path: the settle step of the old close is read on it
+	at := map[string]map[int]string{}
+	for _, ev := range events {
+		if ev.RunID != runID || ev.Kind != KindCall {
+			continue
+		}
+		if at[ev.Path] == nil {
+			at[ev.Path] = map[int]string{}
+		}
+		at[ev.Path][ev.Position] = ev.Op
+	}
+	settled := func(ev Event) bool {
+		before := at[ev.Path]
+		return before[ev.Position-1] == opAudit || (before[ev.Position-1] == opEscalate && before[ev.Position-2] == opAudit)
+	}
+	// a record row names the run first, then an agent call, then a decision, then an archive: the first of each in the journal's order
+	var record, call, decision, archive string
 	for _, ev := range events {
 		if ev.RunID != runID || ev.Kind != KindCall {
 			continue
 		}
 		switch {
+		case archive == "" && ev.Op == OpLegacyArchive:
+			lane, in := scope(ev)
+			after := settled(ev)
+			if !in && !after {
+				break
+			}
+			how := ""
+			if after {
+				how = " after its crw.audit"
+			}
+			archive = fmt.Sprintf("its journal holds%s a %s row%s (call %s, milestone %s) of the retired review-thread archive of the close (CRW-1429)", lane.under(), ev.Op, how, ev.CallID, nodeOr(rowStr(ev.Data, "milestone")))
 		case record == "" && ev.Op == OpLegacyReview:
 			record = fmt.Sprintf("its journal holds a %s row (call %s, node %s) of the retired node reviewer path (CRW-1429)", ev.Op, ev.CallID, nodeOr(rowStr(ev.Data, "node")))
 		case record == "" && ev.Op == OpLegacyReviewerFinal:
@@ -177,7 +215,7 @@ func LegacyReviewerRun(events []Event, runID string) string {
 			}
 		}
 	}
-	for _, why := range []string{record, call, decision} {
+	for _, why := range []string{record, call, decision, archive} {
 		if why != "" {
 			return fmt.Sprintf("run %s is a legacy run: %s, which the current project lane does not replay; %s", runID, why, legacyReadOnly)
 		}
