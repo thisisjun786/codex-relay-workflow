@@ -264,6 +264,8 @@ func TestIntegrationBatchSuppliesSameTreeRecordHint(t *testing.T) {
 				k.repo.git("add", "existing.txt")
 				k.repo.git("commit", "-q", "-m", "existing work")
 			}
+			// The integration target must not be checked out while the batch moves it (CRW-1595).
+			k.repo.git("checkout", "-q", "--detach")
 			calls := 0
 			verify := stubVerifier(writeStubVerifier(t))
 			check := func(ctx context.Context, dir string, env []string) error {
