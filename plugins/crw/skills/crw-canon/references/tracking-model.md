@@ -255,4 +255,29 @@ Read with `gh`, scoped to the repository: `gh issue view N --repo OWNER/NAME --j
 
 Give the checks of a release the issue as a GitHub issue gives it: `gh issue view N --repo OWNER/NAME --json url,title,body,labels --jq '{id: .url, title: .title, description: .body, labels: [.labels[].name]}'` is the JSON `crw skill issue-ready check` and `crw skill issue-size check` read on stdin.
 
-For authorized writes, use `gh` and preserve unrelated fields: `gh issue comment N --repo OWNER/NAME --body-file FILE` with the [comment header](#tracking-operating-model) as the first line, `gh issue edit N --repo OWNER/NAME --add-label LABEL` (it keeps the other labels), and `gh issue close N --repo OWNER/NAME --reason completed` or `--reason "not planned"`. Read back the resulting number, body and labels, and after an ambiguous result query the existing state before repeating a create. An unavailable token or repository permits a local draft or partial audit, not invented tracking facts or a claim that the repository was updated.
+For authorized writes, preserve unrelated fields. Use `crw publish comment --issue OWNER/NAME#N --header "[layer · session]" --body-file FILE` for an issue or PR comment, with the [comment header](#tracking-operating-model). Label and state operations remain `gh issue edit N --repo OWNER/NAME --add-label LABEL` (it keeps the other labels) and `gh issue close N --repo OWNER/NAME --reason completed` or `--reason "not planned"`. Text writes follow the procedure below. Read back the resulting number, body and labels, and after an ambiguous result query the existing state before repeating a create. An unavailable token or repository permits a local draft or partial audit, not invented tracking facts or a claim that the repository was updated.
+
+### Public text before a write
+
+Every GitHub issue or milestone description, issue or PR comment, PR title and body, and commit message passes `publishpolicy.Scrub`. The default replaces user home, state, work and temporary paths, the local hostname, internal IP addresses, thread/call/run/session identifiers, and email addresses. Ordinary relative source paths, issue references and commit hashes stay intact. Replacement records contain the category and count, never the matched value. A token or secret pattern stops publication before any write; remove the secret from the draft and repeat the preparation. Do not post the diagnostic text returned for a blocked draft.
+
+`crw publish issue`, `crw publish milestone`, `crw publish comment`, `crw flow pr open`, the review summary publisher and the run's generated commits apply this function themselves. Keep their JSON replacement records with the operation's local output. Read back the published text; changed text is the record to inspect.
+
+For edits or another publication path, including migrating existing descriptions, run `crw publish prepare --repo OWNER/NAME --kind KIND --input DRAFT --output SAFE` on each text field. `KIND` is `issue`, `milestone`, `comment`, `pr` or `commit`. Proceed only on exit 0 and use that output file without appending the original draft. For example, `crw publish prepare --repo OWNER/NAME --kind commit --input MESSAGE --output SAFE && git commit -F SAFE` prepares a manual commit message. Prepare a separately supplied title too; a clean body does not make an unfiltered title safe. Preparation writes no remote record and supplies no additional publication authority.
+
+Repository settings live in the CRW configuration's `publication.repositories` map, keyed by `OWNER/NAME` without regard to case. A policy can add `paths`, `hostnames` and `identifiers` as literal lists. Its optional `redact` list chooses among `path`, `hostname`, `ip`, `thread_id`, `call_id`, `run_id`, `session_id` and `email`; omission means all categories, and an explicit empty list disables these privacy replacements. `disabled: true` also disables privacy replacements for a repository that intentionally keeps internal text, such as a private repository. Secret blocking remains active. An unlisted repository uses the defaults. Example:
+
+```json
+{
+  "publication": {
+    "repositories": {
+      "OWNER/NAME": {
+        "paths": ["/work/private"],
+        "hostnames": ["build-box"],
+        "identifiers": ["session-local"]
+      },
+      "OWNER/PRIVATE": {"disabled": true}
+    }
+  }
+}
+```

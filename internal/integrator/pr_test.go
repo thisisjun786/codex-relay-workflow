@@ -160,10 +160,39 @@ func TestPassLandsAPullRequestAfterVerificationAndReview(t *testing.T) {
 	if len(comments) != 1 || !strings.HasPrefix(comments[0], "[dev queue · "+rep.Summary.Tag+"]\n\n") {
 		t.Fatalf("comments %q", comments)
 	}
-	for _, want := range []string{"result: pushed", "head: " + pr.HeadSHA, "dev: " + base + " -> " + dev, "verification-record: " + record + " sha256:" + l.Verification.SHA256,
-		"review: accept (" + verdict + ")", "issues: o/r#10, o/r#11"} {
+	for _, want := range []string{"result: pushed", "head: " + pr.HeadSHA, "dev: " + base + " -> " + dev,
+		"review: accept ([path])", "issues: o/r#10, o/r#11"} {
 		if !strings.Contains(comments[0], want) {
 			t.Errorf("the comment does not say %q:\n%s", want, comments[0])
+		}
+	}
+	// the public text names the record and the verdict file as [path]; its digest is the sha256 of the record file on disk
+	requirePublicDigest(t, comments[0], record)
+	requireNoLocalPaths(t, comments[0], record, verdict, w.cfg.RunsDir)
+}
+
+// requirePublicDigest checks the verification line of a public comment: the record is named as [path], and the digest is the sha256
+// of the record file on disk, with the verification's status.
+func requirePublicDigest(t *testing.T, comment, record string) {
+	t.Helper()
+	data, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatalf("the verification record: %v", err)
+	}
+	sum := sha256.Sum256(data)
+	want := "verification-record: [path] sha256:" + hex.EncodeToString(sum[:]) + " (status 0)"
+	if !strings.Contains(comment, want) {
+		t.Errorf("the comment does not say %q:\n%s", want, comment)
+	}
+}
+
+// requireNoLocalPaths checks that a public comment names none of the local paths: the verification record, the review verdict, and the
+// runs directory that holds them.
+func requireNoLocalPaths(t *testing.T, comment string, paths ...string) {
+	t.Helper()
+	for _, p := range paths {
+		if strings.Contains(comment, p) {
+			t.Errorf("the comment names the local path %s:\n%s", p, comment)
 		}
 	}
 }
@@ -188,9 +217,16 @@ func TestPassRefusesAPullRequestTheReviewSaysNeedsChanges(t *testing.T) {
 	if l.Result != "review-needs-changes" || l.DevAfter != "" || l.DevBefore != base || l.Review.Verdict != "needs_changes" || l.Review.VerdictFile != verdict {
 		t.Errorf("the landing record %+v", l)
 	}
-	if c := w.fake.Comments(1); len(c) != 1 || !strings.Contains(c[0], "review: needs_changes ("+verdict+")") || !strings.Contains(c[0], "dev: "+base+" (not moved)") {
+	record := rep.Summary.Record
+	c := w.fake.Comments(1)
+	if len(c) != 1 {
+		t.Fatalf("comments %q", c)
+	}
+	if !strings.Contains(c[0], "review: needs_changes ([path])") || !strings.Contains(c[0], "dev: "+base+" (not moved)") {
 		t.Errorf("comments %q", c)
 	}
+	requirePublicDigest(t, c[0], record)
+	requireNoLocalPaths(t, c[0], record, verdict, w.cfg.RunsDir)
 }
 
 func TestPassWithoutAReviewCommandWarnsRecordsAndLands(t *testing.T) {

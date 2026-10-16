@@ -815,14 +815,8 @@ func treeMatch(a Assignment) (bool, error) {
 	if a.Head == "" {
 		return true, nil
 	}
-	_, err = probeGit(a.Root, gitProbeOptions, "merge-base", "--is-ancestor", a.Head, "HEAD")
-	if err == nil {
-		return true, nil
-	}
-	if gitExitCode(err) == 1 {
-		return false, nil // not an ancestor
-	}
-	// merge-base also fails when a name it was given resolves to no commit: HEAD now, or the recorded Head in this history
+	// An ancestry fast path can answer without validating either object's contents.
+	// Check both commits first, and use the HEAD we read for the ancestry query.
 	head, herr := gitHeadOf(a.Root)
 	if herr != nil {
 		return false, herr
@@ -830,9 +824,11 @@ func treeMatch(a Assignment) (bool, error) {
 	if head == "" {
 		return false, nil
 	}
-	if _, oerr := probeGit(a.Root, gitProbeOptions, "rev-parse", "--verify", "-q", a.Head+"^{commit}"); gitExitCode(oerr) == 1 {
-		// no commit by that name: the recorded Head is absent from this history, or its object is there and cannot be read as a
-		// commit (CRW-1561), which is no answer
+	if _, oerr := probeGit(a.Root, gitProbeOptions, "rev-parse", "--verify", "-q", a.Head+"^{commit}"); oerr != nil {
+		if gitExitCode(oerr) != 1 {
+			return false, fmt.Errorf("git rev-parse %s in %s: %w", a.Head, a.Root, oerr)
+		}
+		// Distinguish a missing historical commit from an existing unreadable object.
 		_, eerr := probeGit(a.Root, gitProbeOptions, "cat-file", "-e", a.Head)
 		switch {
 		case eerr == nil:
@@ -842,7 +838,14 @@ func treeMatch(a Assignment) (bool, error) {
 		}
 		return false, fmt.Errorf("git cat-file -e %s in %s: %w", a.Head, a.Root, eerr)
 	}
-	return false, fmt.Errorf("git merge-base --is-ancestor %s HEAD in %s: %w", a.Head, a.Root, err)
+	_, err = probeGit(a.Root, gitProbeOptions, "merge-base", "--is-ancestor", a.Head, head)
+	if err == nil {
+		return true, nil
+	}
+	if gitExitCode(err) == 1 {
+		return false, nil
+	}
+	return false, fmt.Errorf("git merge-base --is-ancestor %s %s in %s: %w", a.Head, head, a.Root, err)
 }
 
 // treeStillMatches is treeMatch for a check that refuses on no answer: the claim's (assignedReceiptValid).

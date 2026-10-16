@@ -331,13 +331,3 @@ func refKey(r tracking.Ref) tracking.Ref {
 	r.Repo = strings.ToLower(r.Repo)
 	return r
 }
-
-// leakMessage is the one-line refusal of a title and body that leak: the kinds and a 12-character prefix of each match, never a whole
-// match.
-func leakMessage(leaks []Leak) string {
-	var parts []string
-	for _, l := range leaks {
-		parts = append(parts, l.Short())
-	}
-	return "the title or the body would publish what must not reach a public repository: " + strings.Join(parts, "; ")
-}

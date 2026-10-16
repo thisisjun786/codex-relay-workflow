@@ -74,7 +74,7 @@ func TestCRW1105PostOnlyRefusesFinalSecretBytes(t *testing.T) {
 					b, _ := json.Marshal([]prComment{{ID: 1, Body: markerPrefix + "old", URL: "u"}})
 					get = string(b)
 				}
-				script := "#!/bin/sh\ncase \"$*\" in *'--method GET'*) printf '%s\\n' '" + get + "';; *) printf '%s\\n' \"$*\" >> '" + calls + "'; cat >/dev/null; printf '%s\\n' '{\"id\":1,\"html_url\":\"u\"}';; esac\n"
+				script := "#!/bin/sh\ncase \"$*\" in 'repo view'*) printf 'o/r\\n';; *'--method GET'*) printf '%s\\n' '" + get + "';; *) printf '%s\\n' \"$*\" >> '" + calls + "'; cat >/dev/null; printf '%s\\n' '{\"id\":1,\"html_url\":\"u\"}';; esac\n"
 				if err := testsupport.WriteProgram(gh, []byte(script), 0700); err != nil {
 					t.Fatal(err)
 				}
@@ -97,7 +97,7 @@ func TestCRW1105SameBodyAtBothPublishPaths(t *testing.T) {
 	dir := t.TempDir()
 	gh := filepath.Join(dir, "gh")
 	stdin := filepath.Join(dir, "stdin")
-	script := "#!/bin/sh\ncat > '" + stdin + "'\nprintf '%s\\n' '{\"id\":1,\"html_url\":\"u\"}'\n"
+	script := "#!/bin/sh\ncase \"$*\" in 'repo view'*) printf 'o/r\\n'; exit 0;; esac\ncat > '" + stdin + "'\nprintf '%s\\n' '{\"id\":1,\"html_url\":\"u\"}'\n"
 	if err := testsupport.WriteProgram(gh, []byte(script), 0700); err != nil {
 		t.Fatal(err)
 	}

@@ -284,3 +284,29 @@ func TestLinkedWorktreeRequiresAValidGitfile(t *testing.T) {
 		t.Fatal("valid gitfile did not identify linked worktree")
 	}
 }
+
+// The user-state default is a dedicated descendant of home; home itself is still protected.
+func TestDefaultSandboxRootUnderHomeIsDedicated(t *testing.T) {
+	home, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	work := filepath.Join(home, ".local", "state", "crw", "sandbox", "work")
+	if err := os.MkdirAll(work, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	getenv := func(key string) string {
+		if key == "HOME" {
+			return home
+		}
+		return ""
+	}
+	t.Cleanup(Inject(getenv, home))
+	if err := Check(work, "workspace-write"); err != nil {
+		t.Fatalf("the default sandbox directory was not dedicated: %v", err)
+	}
+	var refusal *Refusal
+	if err := Check(home, "workspace-write"); !errors.As(err, &refusal) || refusal.Rule != RuleAccountHome {
+		t.Fatalf("the account home lost its protection: %v", err)
+	}
+}

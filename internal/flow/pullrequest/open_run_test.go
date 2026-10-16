@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
+	"github.com/thisisjun786/codex-relay-workflow/internal/publishpolicy"
 	"github.com/thisisjun786/codex-relay-workflow/internal/tracking/trackingfake"
 )
 
@@ -99,15 +100,6 @@ func TestOpenFromARunRefusesAnUnclosedMilestoneOrAMissingCrosscheck(t *testing.T
 		{"a Linear key without --issue", func(w *runWorld) { w.spec.Issues = []string{"CRW-1440"} }, nil, "issues_unknown"},
 		{"--issue that disagrees with the nodes", nil, []string{"--issue", "o/r#10,o/r#99"}, "issues_not_the_milestones"},
 		{"an issue of another repository", func(w *runWorld) { w.spec.Issues = []string{"x:y:10"} }, nil, "issue_other_repo"},
-		{"a follow-up that holds a home path", func(w *runWorld) {
-			w.spec.Crosscheck = []engine.Event{crosscheckRow("M1", w.tip, "verdict", "verified", "f1 see /home/jun/notes.md")}
-		}, nil, "body_leak"},
-		{"a follow-up that holds a thread id", func(w *runWorld) {
-			w.spec.Crosscheck = []engine.Event{crosscheckRow("M1", w.tip, "verdict", "verified", "f1 thread 019a2b3c-4d5e-7f60-8a9b-0c1d2e3f4a5b")}
-		}, nil, "body_leak"},
-		{"a follow-up that names the host", func(w *runWorld) {
-			w.spec.Crosscheck = []engine.Event{crosscheckRow("M1", w.tip, "verdict", "verified", "f1 reproduced on testhost only")}
-		}, nil, "body_leak"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			w := newRunWorld(t)
@@ -120,9 +112,6 @@ func TestOpenFromARunRefusesAnUnclosedMilestoneOrAMissingCrosscheck(t *testing.T
 			}
 			if lines := strings.Split(strings.TrimSpace(errOut), "\n"); len(lines) != 1 {
 				t.Errorf("a refusal is one line, got %d: %q", len(lines), errOut)
-			}
-			if c.reason == "body_leak" && (strings.Contains(errOut, "notes.md") || strings.Contains(errOut, "0c1d2e3f4a5b")) {
-				t.Errorf("the refusal echoes the whole match: %q", errOut)
 			}
 			w.nothingSent()
 		})
@@ -293,20 +282,168 @@ func TestOpenFromARunPushesTheCrosscheckedTipOnly(t *testing.T) {
 	})
 }
 
-// TestOpenRefusesALeakOnTheManualPathToo (CRW-1451): the same public repository, the same check: a --body or a title that holds a
-// home path or the host's name is refused with exit 2 before anything is pushed.
-func TestOpenRefusesALeakOnTheManualPathToo(t *testing.T) {
-	for name, args := range map[string][]string{
-		"body":  {"--body", "see /state/crw/notes for the details", "--title", "t"},
-		"title": {"--body", "clean", "--title", "fix on testhost"},
+// TestOpenScrubsPrivateTextOnTheManualPath (CRW-1549): a --body or a title that holds a private
+// detail is no longer refused — the pull request opens with the sanitized text, the answer records
+// the redactions and the forge never sees the original. A token is still stopped before the push.
+func TestOpenScrubsPrivateTextOnTheManualPath(t *testing.T) {
+	t.Run("privacy text is masked", func(t *testing.T) {
+		w := newRunWorld(t)
+		code, out, errOut := run(t, w.d, "open", "--repo", "o/r", "--head", "crw/m1", "--issue", "o/r#1", "--push", w.g.checkout,
+			"--body", "see /state/crw/notes for the details", "--title", "fix on testhost")
+		if code != 0 {
+			t.Fatalf("exit %d %q", code, errOut)
+		}
+		var ans Answer
+		if err := json.Unmarshal([]byte(out), &ans); err != nil {
+			t.Fatalf("answer: %v", err)
+		}
+		if len(ans.Redactions) == 0 {
+			t.Errorf("no redactions recorded: %+v", ans)
+		}
+		for _, ev := range ans.Redactions {
+			if ev.Blocked || len(ev.Changes) == 0 {
+				t.Errorf("event %+v", ev)
+			}
+			if raw, _ := json.Marshal(ev); strings.Contains(string(raw), "/state/crw") || strings.Contains(string(raw), "testhost") {
+				t.Errorf("the event echoes the private text: %s", raw)
+			}
+		}
+		pulls := w.fake.Pulls()
+		if len(pulls) != 1 {
+			t.Fatalf("%d pull requests opened", len(pulls))
+		}
+		for _, sent := range pulls {
+			if strings.Contains(sent.Title, "testhost") || !strings.Contains(sent.Title, "[hostname]") ||
+				strings.Contains(sent.Body, "/state/crw") || !strings.Contains(sent.Body, "[path]") {
+				t.Errorf("the forge got %q / %q", sent.Title, sent.Body)
+			}
+		}
+	})
+
+	t.Run("a token is still stopped before the push", func(t *testing.T) {
+		w := newRunWorld(t)
+		token := "ghp_" + strings.Repeat("A", 24)
+		code, out, errOut := run(t, w.d, "open", "--repo", "o/r", "--head", "crw/m1", "--issue", "o/r#1", "--push", w.g.checkout,
+			"--body", "key "+token, "--title", "t")
+		if code != 2 || out != "" || !strings.Contains(errOut, "body_leak") {
+			t.Fatalf("exit %d, stdout %q, stderr %q", code, out, errOut)
+		}
+		if strings.Contains(errOut, token) {
+			t.Errorf("the refusal echoes the token: %q", errOut)
+		}
+		w.nothingSent()
+	})
+
+	t.Run("a private repository's own details pass when it says so", func(t *testing.T) {
+		w := newRunWorld(t)
+		w.d.PublicationPolicy = func(string) (publishpolicy.Policy, error) {
+			return publishpolicy.Policy{Disabled: true}, nil
+		}
+		code, _, errOut := run(t, w.d, "open", "--repo", "o/r", "--head", "crw/m1", "--issue", "o/r#1", "--push", w.g.checkout,
+			"--body", "see /state/crw/notes", "--title", "fix on testhost")
+		if code != 0 {
+			t.Fatalf("exit %d %q", code, errOut)
+		}
+		if len(w.fake.Pulls()) != 1 {
+			t.Fatalf("%d pull requests opened", len(w.fake.Pulls()))
+		}
+		for _, sent := range w.fake.Pulls() {
+			if !strings.Contains(sent.Title, "testhost") {
+				t.Errorf("a private repo's own name was masked anyway: %q", sent.Title)
+			}
+		}
+		// a token still stops it
+		w2 := newRunWorld(t)
+		w2.d.PublicationPolicy = func(string) (publishpolicy.Policy, error) {
+			return publishpolicy.Policy{Disabled: true}, nil
+		}
+		code, _, errOut = run(t, w2.d, "open", "--repo", "o/r", "--head", "crw/m1", "--issue", "o/r#1", "--push", w2.g.checkout,
+			"--body", "k "+"ghp_"+strings.Repeat("B", 24), "--title", "t")
+		if code != 2 {
+			t.Fatalf("a disabled policy published a secret: exit %d %q", code, errOut)
+		}
+		w2.nothingSent()
+	})
+}
+
+// TestRunSecretIsCheckedBeforeBodyTruncation (CRW-1549): a token shape inside the run's gate
+// evidence is judged before the body renders, where the digest field is cut to 12 characters and a
+// 24-character token would no longer match its pattern. The whole open refuses: nothing is pushed,
+// nothing is posted, and the refusal never echoes it.
+func TestRunSecretIsCheckedBeforeBodyTruncation(t *testing.T) {
+	w := newRunWorld(t)
+	w.spec.Gate = strings.Replace(w.spec.Gate, `"digest":"0123456789abcdef0123"`, `"digest":"ghp_`+strings.Repeat("A", 20)+`"`, 1)
+	code, out, errOut := w.open()
+	if code != 2 || out != "" || !strings.Contains(errOut, "body_leak") {
+		t.Fatalf("exit %d, stdout %q, stderr %q", code, out, errOut)
+	}
+	if strings.Contains(errOut, "ghp_") || strings.Contains(errOut, strings.Repeat("A", 20)) {
+		t.Errorf("the refusal echoes the secret: %q", errOut)
+	}
+	w.nothingSent()
+}
+
+// TestOpenFromRunRecordsOnlyPublishedRedactions (CRW-1549): a private detail in a generated body is
+// replaced and recorded once — the answer's redactions and the stderr events name the field and the
+// kinds, and the raw fact check counts nothing it never rendered.
+func TestOpenFromRunRecordsOnlyPublishedRedactions(t *testing.T) {
+	for name, followUp := range map[string]string{
+		"home path": "f1 see /home/tester/notes.md",
+		"hostname":  "f1 reproduced on testhost only",
+		"uuid":      "f1 thread 019a2b3c-4d5e-7f60-8a9b-0c1d2e3f4a5b",
 	} {
 		t.Run(name, func(t *testing.T) {
 			w := newRunWorld(t)
-			code, _, errOut := run(t, w.d, append([]string{"open", "--repo", "o/r", "--head", "crw/m1", "--issue", "o/r#1", "--push", w.g.checkout}, args...)...)
-			if code != 2 || !strings.Contains(errOut, "body_leak") {
-				t.Errorf("exit %d %q", code, errOut)
+			w.spec.Crosscheck = []engine.Event{crosscheckRow("M1", w.tip, "verdict", "verified", followUp)}
+			code, out, errOut := w.open()
+			if code != 0 {
+				t.Fatalf("exit %d: %s", code, errOut)
 			}
-			w.nothingSent()
+			var ans Answer
+			if err := json.Unmarshal([]byte(out), &ans); err != nil {
+				t.Fatal(err)
+			}
+			if len(ans.Redactions) == 0 {
+				t.Fatalf("no redactions recorded: %q", out)
+			}
+			for _, ev := range ans.Redactions {
+				if ev.Blocked || ev.Field == "" || len(ev.Changes) == 0 {
+					t.Errorf("event %+v", ev)
+				}
+				if raw, _ := json.Marshal(ev); strings.Contains(string(raw), "/home/tester") || strings.Contains(string(raw), "testhost") || strings.Contains(string(raw), "0c1d2e3f4a5b") {
+					t.Errorf("the event echoes the private text: %s", raw)
+				}
+			}
+			for _, sent := range w.fake.Pulls() {
+				if strings.Contains(sent.Body, "/home/tester") || strings.Contains(sent.Body, "testhost") || strings.Contains(sent.Body, "019a2b3c") {
+					t.Errorf("the forge got the private text: %q", sent.Body)
+				}
+			}
 		})
+	}
+	// exactly one body event for one private value, not double-counted
+	w := newRunWorld(t)
+	w.spec.Crosscheck = []engine.Event{crosscheckRow("M1", w.tip, "verdict", "verified", "f1 see /home/tester/notes.md")}
+	code, out, errOut := w.open()
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, errOut)
+	}
+	var ans Answer
+	if err := json.Unmarshal([]byte(out), &ans); err != nil {
+		t.Fatal(err)
+	}
+	pathCount := 0
+	for _, ev := range ans.Redactions {
+		if ev.Field != "body" {
+			continue
+		}
+		for _, ch := range ev.Changes {
+			if ch.Kind == "path" {
+				pathCount += ch.Count
+			}
+		}
+	}
+	if pathCount != 1 {
+		t.Errorf("path redactions %d, want exactly 1 (the rendered body only)", pathCount)
 	}
 }

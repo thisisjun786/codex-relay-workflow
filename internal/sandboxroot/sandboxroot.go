@@ -3,7 +3,7 @@
 // makes and removes an empty .git mount target in a working root that has no .git of its own, so a
 // sandbox whose working root (or writable root) is the account home, or a directory above other
 // projects, makes <home>/.git appear and vanish. The rule names the roots where that cannot happen: the
-// crwconfig sandbox_root (its default is crwconfig.DefaultSandboxRoot), a known project root or a
+// crwconfig sandbox_root (by default below the user's XDG state directory), a known project root or a
 // linked worktree, never the account home, a directory above it, or a directory above a known project
 // root.
 //
@@ -297,7 +297,7 @@ func containsString(list []string, s string) bool {
 
 // unusableBase judges the configured sandbox base by rules 1 to 4.
 func unusableBase(configured, base string, baseErr error, homes []string) *Refusal {
-	hint := "set paths.sandbox_root in the crw configuration (crw config show) to an existing dedicated directory outside the account home"
+	hint := "set paths.sandbox_root in the crw configuration (crw config show) to an existing dedicated directory, not the account home or an ancestor of it"
 	refuse := func(why string) *Refusal {
 		return &Refusal{Path: configured, Resolved: base, Rule: RuleSandboxRootUnusable, Hint: why + "; " + hint}
 	}
