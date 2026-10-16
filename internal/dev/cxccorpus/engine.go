@@ -31,6 +31,14 @@ import (
 // process here, and every given file's mtime is set to it.
 func Epoch() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
 
+// RecordedScratch is the parent of every case root the corpus was recorded in, and so of the
+// path_length_dependent fixtures' replay (contract/schema/cxc/coverage.json): a case root
+// RecordedScratch/cxc-rec-<16 hex> is the recorded 33 bytes (contract/notes/cxc/README.md). It is the
+// recorded oracle condition, not a temporary location this program chooses (CRW-1579, E5): the
+// recorder's default and the long cases' replay both use it, and a replay that cannot use it fails
+// with the reason rather than going elsewhere.
+const RecordedScratch = "/var/tmp"
+
 // umask022 is the script that runs a command under the modes the corpus was recorded with.
 const umask022 = `umask 022 && exec "$0" "$@"`
 

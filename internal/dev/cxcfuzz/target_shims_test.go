@@ -391,3 +391,65 @@ func checkStartupLoaderFailsBeforeAnswering(t *testing.T, root, name, oracleRoot
 		t.Fatalf("the failed start wrote under the working directory: %v", names)
 	}
 }
+
+// CRW-1579 (D7, explorer Q5): the harness sets ORACLE_ROOT from the target's Oracle.Root, and only when
+// that is not empty. A shim started without it stops with the reason instead of reading a second,
+// built-in place (the old /var/tmp/cxc-v0.2.40 default): it exits non-zero, answers nothing and writes
+// nothing under its working directory.
+func TestShimsRequireOracleRoot(t *testing.T) {
+	requireNode(t)
+	root, err := repositoryRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"echo", "memorygate", "shellwrite"} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			envDir := t.TempDir()
+			var env []string
+			for _, kv := range os.Environ() {
+				if !strings.HasPrefix(kv, "ORACLE_ROOT=") {
+					env = append(env, kv)
+				}
+			}
+			env = append(env,
+				"HOME="+filepath.Join(envDir, "home"),
+				"CODEX_HOME="+filepath.Join(envDir, "codex-home"),
+				"CRW_HOME="+filepath.Join(envDir, "crw-home"),
+				"TMPDIR="+filepath.Join(envDir, "tmp"),
+			)
+			cmd := exec.Command("node", filepath.Join(root, "internal", "dev", "cxcfuzz", "testdata", name, "shim.mjs"))
+			cmd.Dir = dir
+			cmd.Env = env
+			cmd.Stdin = strings.NewReader("{\"id\":1,\"input\":null,\"root\":\"\"}\n")
+			var stdout, stderr bytes.Buffer
+			cmd.Stdout = &stdout
+			cmd.Stderr = &stderr
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			waited := make(chan error, 1)
+			go func() { waited <- cmd.Wait() }()
+			var waitErr error
+			select {
+			case waitErr = <-waited:
+			case <-time.After(30 * time.Second):
+				_ = cmd.Process.Kill()
+				<-waited
+				t.Fatal("the shim neither answered nor exited without ORACLE_ROOT")
+			}
+			if _, isExit := waitErr.(*exec.ExitError); !isExit {
+				t.Fatalf("the shim did not exit non-zero without ORACLE_ROOT: %v; stdout %q", waitErr, stdout.String())
+			}
+			if stdout.Len() != 0 {
+				t.Errorf("the shim answered %q without ORACLE_ROOT", stdout.String())
+			}
+			if !strings.Contains(stderr.String(), "ORACLE_ROOT is unset") {
+				t.Errorf("the shim failed, but not with the ORACLE_ROOT reason: %s", stderr.String())
+			}
+			if names := dirEntryNames(t, dir); len(names) > 0 {
+				t.Errorf("the failed start wrote under the working directory: %v", names)
+			}
+		})
+	}
+}
