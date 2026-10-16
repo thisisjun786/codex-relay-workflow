@@ -19,7 +19,7 @@ func TestAnUnknownCheckIsNamed(t *testing.T) {
 // A check's usage error exits 2 and its help, which lists every flag, exits 0.
 func TestACheckListsItsFlags(t *testing.T) {
 	got := runCommand(t, repoRoot(), nil, crwDev, "ci", "plugin", "--help")
-	for _, flag := range []string{"-json", "-payload", "-record-version", "-revision"} {
+	for _, flag := range []string{"-json", "-payload", "-record-version", "-revision", "-stage"} {
 		if got.code != 0 || !strings.Contains(got.stdout, flag) {
 			t.Errorf("plugin --help lacks %s: %+v", flag, got)
 		}

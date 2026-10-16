@@ -1,9 +1,11 @@
 // Package pluginversion holds the rules that name a plugin payload's version: which files a package
-// ships, how they are digested, and how the manifest records that digest as the version's suffix.
+// ships, how they are digested, and the derived version a stamped artifact records.
 //
-// crw-dev ci plugin (internal/dev/ci) and crw skill base-refresh mechanical (internal/skill) read the
-// same rules from here, so a version recorded in the manifest and a version recomputed from a commit
-// cannot drift apart.
+// The manifest a commit carries names a fixed release; the version an installation knows is the
+// release plus the payload's digest, stamped into the artifacts the package check materializes
+// (CRW-1582). crw-dev ci plugin (internal/dev/ci) and crw skill base-refresh mechanical
+// (internal/skill) read the same rules from here, so a version stamped in an artifact and a
+// version recomputed from a commit cannot drift apart.
 package pluginversion
 
 import (
@@ -104,6 +106,30 @@ func PayloadVersion(p Payload, version string) (string, error) {
 		return "", err
 	}
 	return release + "+" + Digest(elided)[:PayloadSuffixLength], nil
+}
+
+// StampedPayload returns a copy whose manifest names the derived installation version.
+// It leaves the source payload unchanged and preserves every other manifest byte.
+func StampedPayload(p Payload) (Payload, string, error) {
+	recorded, err := ManifestVersion(p)
+	if err != nil {
+		return nil, "", err
+	}
+	version, err := PayloadVersion(p, recorded)
+	if err != nil {
+		return nil, "", err
+	}
+	out := maps.Clone(p)
+	if recorded == version {
+		return out, version, nil
+	}
+	manifest := p[ManifestPath]
+	from := []byte(show(recorded))
+	if n := bytes.Count(manifest.Data, from); n != 1 {
+		return nil, "", fmt.Errorf("%s spells %q %d times; exactly one version can be stamped", ManifestPath, recorded, n)
+	}
+	out[ManifestPath] = Entry{Mode: manifest.Mode, Data: bytes.Replace(manifest.Data, from, []byte(show(version)), 1)}
+	return out, version, nil
 }
 
 // ManifestVersion is the version the payload's manifest records.
