@@ -30,7 +30,9 @@ const (
 // Linear connector. Deduplication of the entry (the relay's Replayed) and the telling of the thread are separate things: whether the
 // thread is told is decided by the rows below, not by Replayed.
 //
-//	summary_notice (summary id, plan, document, logical id summary-<id>): the intent to tell, once for each summary id
+//	summary_notice (summary id, plan, document, logical id summary-<id>, text): the intent to tell, once for each summary id; text is the
+//	  notice the writer composed, and every send of the id carries the text of its earliest row (the words of the earlier builds when that
+//	  row holds none), because the manage outbox keys summary-<id> to the sha256 of the first text it carried
 //	summary_notice_settled (summary id, result, request id): accepted or queued, obsolete (the entry was confirmed or superseded first), or
 //	  refused (and the run escalates); a delivery whose outcome is unknown or that got no answer writes none and is made again with the
 //	  same logical id
@@ -56,8 +58,18 @@ type SummaryOutcome struct {
 	Intents, Sent, Settled int
 }
 
-// SummaryNoticeText is the notice that an entry is owed.
+// SummaryNoticeText is the notice that an entry is owed, in the words this build writes into a new summary_notice row. A row keeps the
+// text it was written with, so changing these words never changes what an existing row sends.
 func SummaryNoticeText(id, plan, document string) string {
+	return fmt.Sprintf("[crw flow] summary_owed summary=%s plan=%s document=%s\nThe plan summary is owed to the document. You are the 자식 (project session) of the project: take the newest entry (`crw relay dag-summary-status --plan %s`), claim it (`dag-summary-claim`), write the document with your Linear connector, read it back and complete it (`dag-summary-complete`). The run and the manager do not claim.",
+		id, plan, document, plan)
+}
+
+// summaryNoticeTextV0 is the notice in the words every build wrote before the summary_notice row carried its text (CRW-1548), byte
+// for byte: a row without a text is sent in these words, so a send an earlier build left undetermined is retried under the sha256 the
+// manage outbox keyed its logical id to. The words are frozen; the one bare role word in them is the summary.go line of
+// testdata/role_words_baseline.txt.
+func summaryNoticeTextV0(id, plan, document string) string {
 	return fmt.Sprintf("[crw flow] summary_owed summary=%s plan=%s document=%s\nThe plan summary is owed to the document. You are the parent of the project: take the newest entry (`crw relay dag-summary-status --plan %s`), claim it (`dag-summary-claim`), write the document with your Linear connector, read it back and complete it (`dag-summary-complete`). The run and the manager do not claim.",
 		id, plan, document, plan)
 }
@@ -90,26 +102,38 @@ func ReconcileSummary(ctx context.Context, env SummaryEnv) (SummaryOutcome, erro
 	for _, e := range stream.History {
 		state[e.SummaryID] = e.State
 	}
-	notices, settled, err := noticeRows(ctx, env)
+	notices, settled, err := noticeRows(ctx, env, "", nil)
 	if err != nil {
 		return out, err
 	}
-	// (a) the intent: the newest entry is owed and has none
-	if owed(newest.State) && !slices.Contains(notices, newest.SummaryID) {
+	// (a) the intent: the newest entry is owed and has none. The rows are read again after the write: another writer may have stored the
+	// intent between the read above and this write (AppendOnce then writes nothing), and the notice goes in the text of the row that holds it.
+	if owed(newest.State) && !hasNotice(notices, newest.SummaryID) {
+		text := SummaryNoticeText(newest.SummaryID, env.Plan, env.Document)
 		wrote, _, err := env.Rows.AppendOnce(ctx, NewRow{Kind: KindSummaryNotice, Payload: map[string]any{
 			"summary_id": newest.SummaryID, "plan": env.Plan, "document": env.Document, "logical_id": "summary-" + newest.SummaryID, "run": env.Run,
+			"text": text,
 		}}, "summary_id")
 		if err != nil {
 			return out, err
 		}
+		written := map[string]string{}
 		if wrote {
 			out.Intents++
+			written[newest.SummaryID] = text
 		}
-		notices = append(notices, newest.SummaryID)
+		if notices, settled, err = noticeRows(ctx, env, newest.SummaryID, written); err != nil {
+			return out, err
+		}
 	}
-	// (b), (c) every intent without a settlement: obsolete, or sent under its recorded logical id
-	for _, id := range notices {
+	// (b), (c) every intent without a settlement: obsolete, or sent under its recorded logical id in the text its earliest row holds
+	for _, notice := range notices {
+		id := notice.id
 		if slices.Contains(settled, id) {
+			continue
+		}
+		if !notice.found {
+			// no row holds the id, which AppendOnce rules out: nothing is sent or settled, and the next reconcile reads the rows again
 			continue
 		}
 		if !owed(state[id]) {
@@ -135,7 +159,7 @@ func ReconcileSummary(ctx context.Context, env SummaryEnv) (SummaryOutcome, erro
 				continue
 			}
 		}
-		sent, err := env.send(ctx, id)
+		sent, err := env.send(ctx, notice)
 		out.Sent++
 		if err != nil {
 			// no answer: no settlement; the next reconcile sends it again under the same logical id
@@ -178,23 +202,38 @@ func streamOf(ctx context.Context, env SummaryEnv) (dagsched.SummaryStream, bool
 	return dagsched.SummaryStream{}, false, nil
 }
 
+// summaryNotice is one summary id with an intent, and the text every send of it carries.
+type summaryNotice struct {
+	id, text string
+	// found is false when no row holds the id (the text is then empty and nothing is sent)
+	found bool
+}
+
+func hasNotice(notices []summaryNotice, id string) bool {
+	return slices.ContainsFunc(notices, func(n summaryNotice) bool { return n.id == id })
+}
+
 // noticeRows are the summary ids of the stream that have an intent and those that have a settlement, from the rows of every run, each id
 // once: two writers can both have written the intent of one summary id (the journal's check and its later flush are not one transaction;
 // before CRW-1416 a live run and a concurrent `crw flow apply` did, and their rows stay on record), and a duplicate row must neither send
-// twice nor settle twice.
-func noticeRows(ctx context.Context, env SummaryEnv) (notices, settled []string, err error) {
+// twice nor settle twice. Each notice carries its text (noticeOf), so every reader of the rows sends one id in one text whichever
+// duplicate it meets first. Only a second writer that sends before the earliest row is on record can still send other words. own is the
+// summary id this reconcile just asked to write an intent for (or ""): it is a notice even when the row that holds it is not on disk yet,
+// and written is the text this reconcile wrote for it.
+func noticeRows(ctx context.Context, env SummaryEnv, own string, written map[string]string) (notices []summaryNotice, settled []string, err error) {
 	rows, err := ReadRows(ctx, env.Store.DB, "", KindSummaryNotice, KindSummarySettled)
 	if err != nil {
 		return nil, nil, err
 	}
+	var ids []string
 	for _, r := range rows {
 		if r.Str("plan") != env.Plan || r.Str("document") != env.Document {
 			continue
 		}
 		switch r.Kind {
 		case KindSummaryNotice:
-			if id := r.Str("summary_id"); !slices.Contains(notices, id) {
-				notices = append(notices, id)
+			if id := r.Str("summary_id"); !slices.Contains(ids, id) {
+				ids = append(ids, id)
 			}
 		case KindSummarySettled:
 			if id := r.Str("summary_id"); !slices.Contains(settled, id) {
@@ -202,10 +241,57 @@ func noticeRows(ctx context.Context, env SummaryEnv) (notices, settled []string,
 			}
 		}
 	}
+	if own != "" && !slices.Contains(ids, own) {
+		ids = append(ids, own)
+	}
+	for _, id := range ids {
+		notices = append(notices, noticeOf(env, rows, id, written))
+	}
 	return notices, settled, nil
 }
 
-func (env SummaryEnv) send(ctx context.Context, id string) (SendResult, error) {
+// noticeOf is the text the notice of id is sent in, from the row that holds it, in this order: the lowest-rowid summary_notice row on disk
+// with that summary id (matched by the summary id alone, the key AppendOnce writes once by), else the first such row in the run's journal
+// when the rows go to one, else the row this reconcile wrote (written). A row without a text, or with an empty one, was written by a build
+// before CRW-1548 and is sent in the words those builds composed (summaryNoticeTextV0), filled from the row's own summary id, plan and
+// document, so a retry carries the bytes the manage outbox keyed the logical id to.
+func noticeOf(env SummaryEnv, rows []Row, id string, written map[string]string) summaryNotice {
+	for _, r := range rows {
+		if r.Kind == KindSummaryNotice && r.Str("summary_id") == id {
+			return summaryNotice{id: id, text: storedNoticeText(env, id, r.Str("text"), r.Str("plan"), r.Str("document")), found: true}
+		}
+	}
+	if j, ok := env.Rows.(JournalAppender); ok && j.Journal != nil {
+		for _, ev := range j.Journal.Events() {
+			if ev.Kind == engine.KindFlow && ev.Event == KindSummaryNotice && fmt.Sprint(ev.Data["summary_id"]) == id {
+				text, _ := ev.Data["text"].(string)
+				plan, _ := ev.Data["plan"].(string)
+				document, _ := ev.Data["document"].(string)
+				return summaryNotice{id: id, text: storedNoticeText(env, id, text, plan, document), found: true}
+			}
+		}
+	}
+	if text, ok := written[id]; ok {
+		return summaryNotice{id: id, text: text, found: true}
+	}
+	return summaryNotice{id: id}
+}
+
+// storedNoticeText is the text a summary_notice row is sent in: its own, or the earlier builds' words for a row that holds none.
+func storedNoticeText(env SummaryEnv, id, text, plan, document string) string {
+	if text != "" {
+		return text
+	}
+	if plan == "" {
+		plan = env.Plan
+	}
+	if document == "" {
+		document = env.Document
+	}
+	return summaryNoticeTextV0(id, plan, document)
+}
+
+func (env SummaryEnv) send(ctx context.Context, notice summaryNotice) (SendResult, error) {
 	if env.Sender == nil {
 		return SendResult{}, errors.New("report: a sender is required to tell the orchestrator thread")
 	}
@@ -213,7 +299,7 @@ func (env SummaryEnv) send(ctx context.Context, id string) (SendResult, error) {
 	if env.Wake != nil && env.Wake(ctx, env.Actor) {
 		queue = false
 	}
-	return env.Sender.SendParent(ctx, ParentSend{Thread: env.Actor, LogicalID: "summary-" + id, Text: SummaryNoticeText(id, env.Plan, env.Document), Queue: queue})
+	return env.Sender.SendParent(ctx, ParentSend{Thread: env.Actor, LogicalID: "summary-" + notice.id, Text: notice.text, Queue: queue})
 }
 
 func settle(ctx context.Context, env SummaryEnv, id, result, request string, out *SummaryOutcome) error {
