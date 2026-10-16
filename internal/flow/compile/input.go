@@ -96,10 +96,13 @@ type Milestone struct {
 var Surfaces = []string{"logic", "web", "tui", "desktop"}
 
 // Target is where the project's issues integrate: the repository, the absolute path of the local checkout a run integrates on, and
-// the base ref, the short name of the branch (a refs/heads/ prefix is read as the short name, with a warning).
+// the base ref, the short name of the branch (a refs/heads/ prefix is read as the short name, with a warning). PRBase is the branch a
+// bundle's pull request is opened against (CRW-1440); a project without it integrates and lands on the base ref as before. It is read
+// by the start check and the pull-request commands only: it enters no edge and no plan digest.
 type Target struct {
 	Repository string `json:"repository"`
 	BaseRef    string `json:"base_ref"`
+	PRBase     string `json:"pr_base,omitempty"`
 }
 
 // branchPrefix is the prefix a full branch ref carries; the integration path adds it to the short name itself.

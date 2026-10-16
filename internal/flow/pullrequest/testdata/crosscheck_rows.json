@@ -1,0 +1,234 @@
+[
+ {
+  "op": "crw.crosscheck",
+  "event": "completed",
+  "data": {
+   "milestone": "M1",
+   "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "round": 1,
+   "evidence_round": 0,
+   "state": "verdict",
+   "reason": "",
+   "verdict": {
+    "verdict": "verified",
+    "findings": [],
+    "carried": [],
+    "follow_ups": [
+     "f3 [P3/minor_separable] a.go:1 rename the helper"
+    ],
+    "guide_rev": "crw-crosscheck/1",
+    "engine_family": "gpt",
+    "engine_families": [
+     "gpt"
+    ],
+    "model": "gpt-6-astra",
+    "round": 1,
+    "evidence_round": 0,
+    "milestone": "M1",
+    "plan": "plan-1",
+    "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "base": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "run": "run-fixture"
+   }
+  }
+ },
+ {
+  "op": "crw.crosscheck",
+  "event": "completed",
+  "data": {
+   "milestone": "M2",
+   "head": "dddddddddddddddddddddddddddddddddddddddd",
+   "round": 1,
+   "evidence_round": 0,
+   "state": "verdict",
+   "reason": "",
+   "verdict": {
+    "verdict": "needs_changes",
+    "findings": [],
+    "carried": [],
+    "follow_ups": [],
+    "guide_rev": "crw-crosscheck/1",
+    "engine_family": "gpt",
+    "engine_families": [
+     "gpt"
+    ],
+    "model": "gpt-6-astra",
+    "round": 1,
+    "evidence_round": 0,
+    "milestone": "M2",
+    "plan": "plan-1",
+    "head": "dddddddddddddddddddddddddddddddddddddddd",
+    "base": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "run": "run-fixture"
+   }
+  }
+ },
+ {
+  "op": "crw.crosscheck",
+  "event": "completed",
+  "data": {
+   "milestone": "M2",
+   "head": "dddddddddddddddddddddddddddddddddddddddd",
+   "round": 1,
+   "evidence_round": 1,
+   "state": "evidence",
+   "reason": "",
+   "verdict": {
+    "verdict": "needs_changes",
+    "findings": [],
+    "carried": [],
+    "follow_ups": [],
+    "guide_rev": "crw-crosscheck/1",
+    "engine_family": "gpt",
+    "engine_families": [
+     "gpt"
+    ],
+    "model": "gpt-6-astra",
+    "round": 1,
+    "evidence_round": 1,
+    "milestone": "M2",
+    "plan": "plan-1",
+    "head": "dddddddddddddddddddddddddddddddddddddddd",
+    "base": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "run": "run-fixture"
+   }
+  }
+ },
+ {
+  "op": "crw.crosscheck",
+  "event": "completed",
+  "data": {
+   "milestone": "M3",
+   "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+   "round": 1,
+   "evidence_round": 0,
+   "state": "verdict",
+   "reason": "",
+   "verdict": {
+    "verdict": "verified",
+    "findings": [],
+    "carried": [],
+    "follow_ups": [],
+    "guide_rev": "crw-crosscheck/1",
+    "engine_family": "gpt",
+    "engine_families": [
+     "gpt"
+    ],
+    "model": "gpt-6-astra",
+    "round": 1,
+    "evidence_round": 0,
+    "milestone": "M3",
+    "plan": "plan-1",
+    "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "base": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "run": "run-fixture"
+   }
+  }
+ },
+ {
+  "op": "crw.crosscheck",
+  "event": "completed",
+  "data": {
+   "milestone": "M4",
+   "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "round": 1,
+   "evidence_round": 0,
+   "state": "verdict",
+   "reason": "",
+   "verdict": {
+    "verdict": "verified",
+    "findings": [],
+    "carried": [],
+    "follow_ups": [],
+    "guide_rev": "crw-crosscheck/1",
+    "engine_family": "gpt",
+    "engine_families": [
+     "gpt"
+    ],
+    "model": "gpt-6-astra",
+    "round": 1,
+    "evidence_round": 0,
+    "milestone": "M4",
+    "plan": "plan-1",
+    "head": "cccccccccccccccccccccccccccccccccccccccc",
+    "base": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "run": "run-fixture"
+   }
+  }
+ },
+ {
+  "op": "crw.crosscheck",
+  "event": "completed",
+  "data": {
+   "milestone": "M5",
+   "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "round": 1,
+   "evidence_round": 0,
+   "state": "held",
+   "reason": "",
+   "hold": "no independent engine"
+  }
+ },
+ {
+  "op": "crw.crosscheck",
+  "event": "completed",
+  "data": {
+   "milestone": "M6",
+   "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "round": 1,
+   "evidence_round": 1,
+   "state": "evidence",
+   "reason": "",
+   "verdict": {
+    "verdict": "needs_changes",
+    "findings": [],
+    "carried": [],
+    "follow_ups": [],
+    "guide_rev": "crw-crosscheck/1",
+    "engine_family": "gpt",
+    "engine_families": [
+     "gpt"
+    ],
+    "model": "gpt-6-astra",
+    "round": 1,
+    "evidence_round": 1,
+    "milestone": "M6",
+    "plan": "plan-1",
+    "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "base": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "run": "run-fixture"
+   }
+  }
+ },
+ {
+  "op": "crw.crosscheck",
+  "event": "completed",
+  "data": {
+   "milestone": "M6",
+   "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "round": 2,
+   "evidence_round": 0,
+   "state": "verdict",
+   "reason": "",
+   "verdict": {
+    "verdict": "verified",
+    "findings": [],
+    "carried": [],
+    "follow_ups": [],
+    "guide_rev": "crw-crosscheck/1",
+    "engine_family": "gpt",
+    "engine_families": [
+     "gpt"
+    ],
+    "model": "gpt-6-astra",
+    "round": 2,
+    "evidence_round": 0,
+    "milestone": "M6",
+    "plan": "plan-1",
+    "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "base": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "run": "run-fixture"
+   }
+  }
+ }
+]

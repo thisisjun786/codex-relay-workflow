@@ -394,3 +394,66 @@ func TestFlowCanonDocsHaveNoRetiredReviewWords(t *testing.T) {
 		}
 	})
 }
+
+// TestDocsNameTheBundlePullRequestSurface (CRW-1440, CRW-1451, CRW-1457): the docs that tell how a milestone lands through one pull
+// request (script.md and flow.md) name the surface a bundle uses: the command that makes the integration branch, the `pr_base` that
+// marks a handoff as a bundle, the command that opens the pull request from a run, the op that asks the parent to merge it and the rule
+// that it asks once per head. The run skill names the command that makes the branch.
+func TestDocsNameTheBundlePullRequestSurface(t *testing.T) {
+	for _, path := range []string{
+		"../../../docs/flow/script.md",
+		flowRef,
+	} {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(raw)
+		for _, want := range []string{
+			"crw flow pr branch",
+			"pr_base",
+			"crw flow pr open --run",
+			"crw.mergeRequest",
+			"once per head",
+		} {
+			if !strings.Contains(text, want) {
+				t.Errorf("%s does not name the bundle pull request surface: no %q", path, want)
+			}
+		}
+	}
+	raw, err := os.ReadFile("../../../plugins/crw/skills/crw-run/SKILL.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "crw flow pr branch") {
+		t.Error("crw-run/SKILL.md does not name crw flow pr branch")
+	}
+}
+
+// TestReportingDocNamesTheMergeRequestReport (CRW-1457): reporting.md names the merge request report the `crw.mergeRequest` op hands to
+// the reporter: its kind (`merge_request`), the kind it goes through the supervisor channel under (`flow_merge_request`), the op, the
+// rule that it asks once per head, and that the built-in `project-lane` does not send one. The milestone reports section says it, and the
+// section of the supervisor channel lists the kind among the kinds of a report.
+func TestReportingDocNamesTheMergeRequestReport(t *testing.T) {
+	raw, err := os.ReadFile("../../../docs/flow/reporting.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	reports := docSection(t, text, "## Milestone reports and project-level reports")
+	for _, want := range []string{
+		"`merge_request`",
+		"`flow_merge_request`",
+		"`crw.mergeRequest`",
+		"once per head",
+		"built-in `project-lane`",
+	} {
+		if !strings.Contains(reports, want) {
+			t.Errorf("the milestone reports section of reporting.md does not name the merge request report: no %q", want)
+		}
+	}
+	channel := docSection(t, text, "## Through the supervisor channel")
+	if !strings.Contains(channel, "`flow_merge_request`") {
+		t.Error("the supervisor channel section of reporting.md does not list `flow_merge_request` among the kinds of a report")
+	}
+}

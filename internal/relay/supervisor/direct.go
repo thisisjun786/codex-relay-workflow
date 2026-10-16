@@ -36,6 +36,7 @@ const (
 	KindFlowCompletion             = "flow_completion"
 	KindFlowNoNodeStarted          = "flow_no_node_started"
 	KindFlowJunDecisionRequest     = "flow_jun_decision_request"
+	KindFlowMergeRequest           = "flow_merge_request"
 	KindJunDecisionRequest         = "jun_decision_request"
 	KindSessionStepWaiting         = "session_step_waiting"
 )
@@ -66,6 +67,7 @@ var directKinds = map[string]directKind{
 	KindFlowMilestoneReport:        {prefixProject, "orchestrator_to_management", "management", "orchestrator", "management", false, ""},
 	KindFlowProjectBlocked:         {prefixProject, "orchestrator_to_management", "management", "orchestrator", "management", false, ""},
 	KindFlowProjectDecisionRequest: {prefixProject, "orchestrator_to_management", "management", "orchestrator", "management", true, "recipient"},
+	KindFlowMergeRequest:           {prefixProject, "orchestrator_to_management", "management", "orchestrator", "management", false, ""},
 	KindFlowEscalation:             {prefixProject, "orchestrator_to_management", "management", "orchestrator", "management", false, ""},
 	KindFlowCompletion:             {prefixProject, "orchestrator_to_management", "management", "orchestrator", "management", false, ""},
 	KindFlowNoNodeStarted:          {prefixProject, "orchestrator_to_management", "management", "orchestrator", "management", false, ""},
