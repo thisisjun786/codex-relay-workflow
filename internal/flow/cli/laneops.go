@@ -172,6 +172,9 @@ func BuildLane(ctx context.Context, req LaneRequest, opt LaneOptions) (LaneWorld
 	}
 	lane := ops.NewLane(ops.Deps{RunID: spec.RunID, Repo: req.Repo, Journal: journal, Relay: seam, Verifier: verifier, Decisions: ops.StoreDecisions{DB: req.Store.DB},
 		Threads: req.Threads, Reporter: reporter, Actor: spec.Thread, LandRoot: RunDir(req.State, spec.RunID), UnitCheck: unitCheck,
+		DesignHistory: func(ctx context.Context, plan string) ([]ops.DesignRun, error) {
+			return designHistory(ctx, req.Store, req.State, req.Repo, spec.RunID, plan)
+		},
 		Crosscheck: laneCrosscheck(opt.Crosscheck, req.Policy)})
 	out := LaneWorld{Ops: lane.Ops(), Prover: ops.NewProver(), InputSnapshot: lane.InputSnapshot, Journal: journal}
 	if plan := planOf(spec.Args); plan != "" && ref.Path != "" {

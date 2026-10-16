@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"path"
 	"strings"
 
@@ -215,6 +216,9 @@ type LedgerEntry struct {
 	// revision records its slices, so that a plan revision made while the delta was architected or audited is a change against the
 	// revision, counted by the next signal, and not part of its baseline. Without it the revision records the plan as it is now.
 	Plan *PlanSnapshot `json:"plan"`
+	// Reuse marks the first revision an import of another run's approved DESIGN (CRW-1329): the design, answers and base of the
+	// recorded crw.designReuse decision fill the entry, the architect handle is empty, and the decision is the revision's approval.
+	Reuse bool `json:"reuse,omitempty"`
 }
 
 // Ledger is the answer of crw.designLedger and the shape of the revision a release reads back.
@@ -248,6 +252,22 @@ func (o *designLedgerOp) Run(ctx context.Context, req engine.OpRequest) (engine.
 	if e.Revision != FirstRevision && !hasPrev {
 		return engine.OpResult{}, fmt.Errorf("crw.designLedger: revision %s: milestone %s has no revision it could follow", e.Revision, ms)
 	}
+	// An imported first revision (CRW-1329) takes its design, answers and base from the run's own reuse decision: the decision is
+	// the approval, and nothing the caller hands can smuggle another DESIGN under it. Every other revision needs its own audit.
+	var reuse *engine.Event
+	var decision DesignReuseResult
+	if e.Reuse {
+		if hasPrev || e.Revision != FirstRevision {
+			return engine.OpResult{}, fmt.Errorf("crw.designLedger: a reused DESIGN is only the first revision of milestone %s", ms)
+		}
+		row, d, ok := reusedDesign(r, ms)
+		if !ok {
+			return engine.OpResult{}, fmt.Errorf("crw.designLedger: milestone %s has no recorded reuse decision to import", ms)
+		}
+		reuse = &row
+		decision = d
+		e.Design, e.Answers, e.Architect = decision.Design, decision.Answers, CallRef{}
+	}
 	design, err := DecodeDesign(e.Design)
 	if err != nil {
 		return engine.OpResult{}, fmt.Errorf("crw.designLedger: %w", err)
@@ -260,8 +280,10 @@ func (o *designLedgerOp) Run(ctx context.Context, req engine.OpRequest) (engine.
 	if hasPrev {
 		after = prev.Seq
 	}
-	if _, ok := approvedAuditAfter(r, ms, digest, after); !ok {
-		return engine.OpResult{}, fmt.Errorf("crw.designLedger: the DESIGN of milestone %s (%s) has no approved audit: executors start only on an audited revision", ms, short(digest))
+	if reuse == nil {
+		if _, ok := approvedAuditAfter(r, ms, digest, after); !ok {
+			return engine.OpResult{}, fmt.Errorf("crw.designLedger: the DESIGN of milestone %s (%s) has no approved audit: executors start only on an audited revision", ms, short(digest))
+		}
 	}
 	plan := planOf(r, ms)
 	// the slices are those of the plan the architect saw: the milestone as the run read it for the first revision, the plan the
@@ -295,11 +317,18 @@ func (o *designLedgerOp) Run(ctx context.Context, req engine.OpRequest) (engine.
 			return engine.OpResult{}, fmt.Errorf("crw.designLedger: revision %s: %w", e.Revision, err)
 		}
 	}
+	// an import is bound to the decision it imports: the same milestone digest and slice map the decision verified, and the
+	// candidate's digest
+	if reuse != nil && (digest != decision.Digest || mileDigest != decision.MilestoneDigest || !maps.Equal(sl, decision.Slices)) {
+		return engine.OpResult{}, fmt.Errorf("crw.designLedger: the reuse decision of milestone %s is of a different design or plan", ms)
+	}
 	// the head the DESIGN ran at: for a revision after the first the head H the re-plan pinned, for the first the commit the
 	// architect's checkout was made at, as its prepared row records it - never the integration target sampled now, after the audit,
-	// which a lane that landed while the DESIGN was audited has moved past it
+	// which a lane that landed while the DESIGN was audited has moved past it. An import keeps the source revision's base.
 	base := ""
 	switch {
+	case reuse != nil:
+		base = decision.BaseTip
 	case hasPrev && e.Head != "":
 		base = e.Head
 	case hasPrev:
@@ -319,10 +348,15 @@ func (o *designLedgerOp) Run(ctx context.Context, req engine.OpRequest) (engine.
 	}
 	var designAny any
 	_ = json.Unmarshal(e.Design, &designAny)
-	return engine.OpResult{Result: result(led), Data: map[string]any{
+	data := map[string]any{
 		"milestone": ms, "revision": e.Revision, "digest": digest, "architect_call": e.Architect.CallID, "architect_handle": e.Architect.Handle,
 		"base_tip": base, "design": designAny, "answers": answers, "signal": e.Signal, "slices": sl, "milestone_digest": mileDigest,
-	}}, nil
+	}
+	if reuse != nil {
+		data["reuse_call"], data["source_run"], data["source_revision"], data["source_audit_call"] = reuse.CallID, decision.SourceRun, decision.SourceRevision, decision.SourceAuditCall
+		data["architect_model"], data["critic_model"] = decision.ArchitectModel, decision.CriticModel
+	}
+	return engine.OpResult{Result: result(led), Data: data}, nil
 }
 
 func (o *designLedgerOp) Proven(ctx context.Context, ev []engine.Event, row engine.Event) (bool, string, error) {
@@ -532,7 +566,9 @@ func (o *releaseOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpRes
 		return finish()
 	}
 	out.Revision, out.DesignDigest = dataStr(led, "revision"), dataStr(led, "digest")
-	if _, audited := approvedAudit(r, ms, out.DesignDigest); !audited {
+	// an imported first revision is approved by the reuse decision the journal recorded, a local audit's equal
+	imported := reusedLedgerApproved(r, ms, led)
+	if _, audited := approvedAudit(r, ms, out.DesignDigest); !audited && !imported {
 		out.Reason = "design_not_audited"
 		return finish()
 	}
@@ -580,6 +616,10 @@ func (o *releaseOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpRes
 		return engine.OpResult{}, &Refusal{"accepted_node_changed", fmt.Sprintf("node %s was accepted under revision %s, which a resume superseded, and its slice of the plan is not the one revision %s was made against: record a plan revision with update_node (the acceptance becomes stale) and run again, or correct an oversized child with dag-correct", node, dataStr(old, "revision"), out.Revision)}
 	}
 	data["revision"], data["design_digest"] = out.Revision, out.DesignDigest
+	if imported {
+		// the release of an imported revision names the run and revision the DESIGN was approved in
+		data["source_run"], data["source_revision"], data["reuse_call"] = dataStr(led, "source_run"), dataStr(led, "source_revision"), dataStr(led, "reuse_call")
+	}
 	// A split with sub-tasks takes the executor path below and its row is an ordinary executor release (CRW-1459). The sized nodes that
 	// no executor takes share one unreleased row (CRW-1464): kind is the size, and no slice is recorded, since nothing is released and no
 	// relay compares one. A bundle split is the parent's to make (CRW-1437), and the lane escalates it with bundle_split_request; a split a

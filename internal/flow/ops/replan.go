@@ -1167,6 +1167,10 @@ type CurrentDesign struct {
 	Answers   json.RawMessage   `json:"answers"`
 	Slices    map[string]string `json:"slices"`
 	Landed    []Landed          `json:"landed"`
+	// SourceRun and SourceRevision name the run and revision an imported DESIGN was approved in ("" for a design of this run,
+	// CRW-1329); the script reads them to make a fresh local architect on the reused design's context when there is no handle.
+	SourceRun      string `json:"source_run,omitempty"`
+	SourceRevision string `json:"source_revision,omitempty"`
 }
 
 func (o *currentDesignOp) Run(_ context.Context, req engine.OpRequest) (engine.OpResult, error) {
@@ -1179,7 +1183,8 @@ func (o *currentDesignOp) Run(_ context.Context, req engine.OpRequest) (engine.O
 	if !ok {
 		return engine.OpResult{}, fmt.Errorf("crw.currentDesign: milestone %s has no design revision", ms)
 	}
-	cd := CurrentDesign{Milestone: ms, Revision: dataStr(led, "revision"), Digest: dataStr(led, "digest"), BaseTip: dataStr(led, "base_tip"), Slices: ledgerSlices(led), Landed: landedHeads(r)}
+	cd := CurrentDesign{Milestone: ms, Revision: dataStr(led, "revision"), Digest: dataStr(led, "digest"), BaseTip: dataStr(led, "base_tip"), Slices: ledgerSlices(led), Landed: landedHeads(r),
+		SourceRun: dataStr(led, "source_run"), SourceRevision: dataStr(led, "source_revision")}
 	cd.Handle, cd.Call = architectHandle(r, ms)
 	cd.Design, _ = json.Marshal(led.Data["design"])
 	cd.Answers, _ = json.Marshal(led.Data["answers"])
