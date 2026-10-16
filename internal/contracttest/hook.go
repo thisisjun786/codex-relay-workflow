@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc/tmploctest"
 )
 
@@ -519,7 +520,7 @@ const pythonStandIn = "#!/bin/sh\n" +
 	"exit 2\n"
 
 func hookStandIns(t *testing.T) (hookStandInsFor, error) {
-	dir, err := os.MkdirTemp("", "crw-hc-standin-")
+	dir, err := tmploc.MkdirTemp("crw-hc-standin-")
 	if err != nil {
 		return hookStandInsFor{}, err
 	}
