@@ -102,6 +102,9 @@ func TestSupervisorTextNamesTheLayers(t *testing.T) {
 			t.Fatal(err)
 		}
 		requireNoRoleWords(t, "standing's limits", standing["limits"].(string))
+		if !strings.Contains(standing["limits"].(string), "crw relay supervisor-standing") {
+			t.Errorf("standing's limits omit the runnable command: %s", standing["limits"])
+		}
 		staged, err := f.c.StageStanding(f.ctx, "PRJ-1", f.at)
 		if err != nil {
 			t.Fatal(err)

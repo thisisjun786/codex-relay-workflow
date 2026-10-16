@@ -306,7 +306,7 @@ var supervisorStageCommand = dispatch.Command{
 			readings = append(readings, reading)
 		}
 		if !hasEvent && !hasProject && !hasObservation {
-			return nil, &dispatch.UsageError{Detail: "a staging needs a subject: --event for one event's obligation, --project for everything a project owes, or one --observation for the obligation a turn left by ending without reporting", Code: contract.ExitUsage}
+			return nil, &dispatch.UsageError{Detail: "crw relay supervisor-stage needs a subject: --event for one event's obligation, --project for everything a project owes, or one --observation for the obligation a turn left by ending without reporting", Code: contract.ExitUsage}
 		}
 		c, close, err := supervisorChannel(ctx, services)
 		if err != nil {
