@@ -174,9 +174,9 @@ func (o *finalGateOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpR
 	if head == "" {
 		return engine.OpResult{}, fmt.Errorf("crw.finalGate: the integration target of plan %s has no tip", plan)
 	}
-	base := ""
-	if led, ok := firstLedger(r, ms); ok {
-		base = dataStr(led, "base_tip")
+	base, err := o.l.milestoneReviewBase(ctx, r, ms, head)
+	if err != nil {
+		return engine.OpResult{}, err
 	}
 	id := source.CommitIdentity(head, o.l.d.Now)
 	out := GateOutcome{Milestone: ms, Plan: plan, Head: head, Base: base, Range: head, Identity: id, Grade: m.Grade, Surfaces: nonNil(m.Surfaces),

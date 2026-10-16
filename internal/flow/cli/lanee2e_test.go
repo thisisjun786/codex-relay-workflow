@@ -1959,3 +1959,570 @@ func TestDesignHistoryFiltersRunAndRepository(t *testing.T) {
 		t.Errorf("another plan's history %+v %v, want empty", hist, err)
 	}
 }
+
+// ---- the close rerun over integrated nodes (CRW-1597) ----
+
+// reuseIntegratedRows are the completed crw.reuseIntegrated rows of the current process's journal, their results decoded.
+func reuseIntegratedRows(t *testing.T, l *laneLab) []map[string]any {
+	t.Helper()
+	var out []map[string]any
+	rows, _ := labRows(l, "crw.reuseIntegrated")
+	for _, row := range rows {
+		var res map[string]any
+		if err := json.Unmarshal([]byte(str(row.Data, "result")), &res); err != nil {
+			t.Fatalf("the reuseIntegrated row's result: %v", err)
+		}
+		out = append(out, res)
+	}
+	return out
+}
+
+// journalBytes is the run's stored journal marshaled, for a byte equality check after another run.
+func journalBytes(t *testing.T, l *laneLab, run string) []byte {
+	t.Helper()
+	ev, has, err := journal.Load(context.Background(), l.w.st, run)
+	if err != nil || !has {
+		t.Fatalf("the journal of run %s: %v %v", run, has, err)
+	}
+	b, err := json.Marshal(ev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+// gateFailed asserts the run ended completed with the milestone escalated on the final gate's failed test evidence.
+func gateFailed(t *testing.T, l *laneLab, res Result) {
+	t.Helper()
+	var v map[string]any
+	if res.Status != engine.RunCompleted || json.Unmarshal(res.Value, &v) != nil {
+		t.Fatalf("the run: %s %s %s\n%s", res.Status, res.ErrorKind, res.Error, res.Value)
+	}
+	if v["state"] != "escalated" || v["source"] != "final_gate" || v["reason"] != "test_failed" {
+		t.Fatalf("the run's value %v, want escalated on the final gate's failed test evidence", v)
+	}
+	esc := false
+	for _, e := range l.events() {
+		if e.Kind == engine.KindFlow && e.Event == engine.EvEscalation && str(e.Data, "reason") == "final_gate_test_failed" {
+			esc = true
+		}
+	}
+	if !esc {
+		t.Errorf("no escalation recorded with reason final_gate_test_failed")
+	}
+}
+
+// sourceLandings reads the completed crw.accept and crw.integrate rows of a run's stored journal, by node.
+func sourceLandings(t *testing.T, l *laneLab, run string) (accepted, integrated map[string]engine.Event) {
+	t.Helper()
+	ev, has, err := journal.Load(context.Background(), l.w.st, run)
+	if err != nil || !has {
+		t.Fatalf("the journal of run %s: %v %v", run, has, err)
+	}
+	accepted, integrated = map[string]engine.Event{}, map[string]engine.Event{}
+	for _, e := range ev {
+		if e.Kind != engine.KindCall || e.Event != engine.EvCompleted {
+			continue
+		}
+		switch e.Op {
+		case ops.OpAccept:
+			accepted[str(e.Data, "node")] = e
+		case ops.OpIntegrate:
+			integrated[str(e.Data, "node")] = e
+		}
+	}
+	return accepted, integrated
+}
+
+// TestProjectLaneRerunsCloseWithoutRebuildingIntegratedNodes (CRW-1597): a milestone whose close failed its final gate is retried
+// by a new run of the same plan: the nodes the relay still reads as integrated are not built again, the run goes straight to the
+// close and makes its own gate evidence - which passes, or fails again as the first run's did. Neither run touches the target
+// outside its own integrations, and the original journal is left as it was.
+func TestProjectLaneRerunsCloseWithoutRebuildingIntegratedNodes(t *testing.T) {
+	for _, mode := range []string{"passes", "fails_again"} {
+		t.Run(mode, func(t *testing.T) {
+			l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"}, labIssue{Key: "A-2", Milestone: "M1", After: []string{"A-1"}})
+			nodes := []string{l.nodeOf["A-1"], l.nodeOf["A-2"]}
+			// the final gate's verifications (node "") fail; the nodes' own verifications pass
+			l.verifyFail = func(req ops.VerifyRequest) bool { return req.Node == "" }
+			spec := l.start("start", "project-lane", "--args", fmt.Sprintf(`{"plan":%q,"milestone":"M1"}`, l.plan), "--handoff", l.file)
+			gateFailed(t, l, l.runToEnd(spec.RunID))
+
+			// the source journal: exactly two integrations, a failing node-empty crw.verify, no milestone close or report
+			srcJSON := journalBytes(t, l, spec.RunID)
+			accepted, integrated := sourceLandings(t, l, spec.RunID)
+			if len(integrated) != 2 {
+				t.Fatalf("the source run made %d integrations, want 2", len(integrated))
+			}
+			failedVerify, closes := false, 0
+			srcEvents, has, lerr := journal.Load(context.Background(), l.w.st, spec.RunID)
+			if lerr != nil || !has {
+				t.Fatalf("the source run's journal: %v %v", has, lerr)
+			}
+			for _, e := range srcEvents {
+				if e.Kind != engine.KindCall || e.Event != engine.EvCompleted {
+					continue
+				}
+				switch e.Op {
+				case ops.OpVerify:
+					failedVerify = failedVerify || (str(e.Data, "node") == "" && !func() bool { b, _ := e.Data["ok"].(bool); return b }())
+				case ops.OpMilestoneClose, ops.OpReportUp:
+					closes++
+				}
+			}
+			if !failedVerify || closes != 0 {
+				t.Fatalf("the source journal: failing gate verification %v, closes %d, want a failed gate and no close", failedVerify, closes)
+			}
+			savedVerifications, savedTip := l.verifications, l.git(l.repo, "rev-parse", l.target)
+			if mode == "passes" {
+				l.verifyFail = nil
+			}
+
+			// the second run of the same plan: every node the relay reads as integrated is inherited, none is built
+			spec2 := l.start("start", "project-lane", "--args", fmt.Sprintf(`{"plan":%q,"milestone":"M1"}`, l.plan), "--handoff", l.file)
+			res2 := l.runToEnd(spec2.RunID)
+			if mode == "passes" {
+				l.closed(res2)
+			} else {
+				gateFailed(t, l, res2)
+				if n := len(mustRows(l, ops.OpCrosscheck)) + len(mustRows(l, ops.OpMilestoneClose)) + len(mustRows(l, ops.OpReportUp)); n != 0 {
+					t.Errorf("the failed rerun made %d crosscheck/close/report rows", n)
+				}
+			}
+			if tip := l.git(l.repo, "rev-parse", l.target); tip != savedTip {
+				t.Errorf("the integration tip moved to %s, want %s", tip, savedTip)
+			}
+			if l.verifications != savedVerifications {
+				t.Errorf("%d merged-tree verifications, want %d (no integration batch ran)", l.verifications, savedVerifications)
+			}
+			for _, c := range labCalls(l) {
+				if c.Role == "executor" || c.Role == "executor-t1" {
+					t.Errorf("the rerun started the executor call %s (%s)", c.Label, c.Role)
+				}
+				if strings.HasPrefix(c.Label, "build:") || strings.HasPrefix(c.Label, "rebuild:") {
+					t.Errorf("the rerun made the build call %s", c.Label)
+				}
+			}
+			for _, e := range l.events() {
+				if e.Kind != engine.KindCall || e.Event != engine.EvCompleted {
+					continue
+				}
+				switch e.Op {
+				case ops.OpRelease, ops.OpCommit, ops.OpAccept, ops.OpIntegrate:
+					t.Errorf("the rerun wrote a %s row: %v", e.Op, e.Data)
+				case ops.OpVerify:
+					if str(e.Data, "node") != "" {
+						t.Errorf("the rerun verified a node's head: %v", e.Data)
+					}
+				}
+			}
+			reuses := reuseIntegratedRows(t, l)
+			if len(reuses) != 2 {
+				t.Fatalf("the reuseIntegrated rows %+v, want two", reuses)
+			}
+			for _, ru := range reuses {
+				node := str(ru, "node")
+				acc, ing := accepted[node], integrated[node]
+				if ru["reused"] != true || ru["source_run"] != spec.RunID ||
+					ru["acceptance_id"] != str(acc.Data, "acceptance_id") || ru["head"] != str(acc.Data, "head") ||
+					str(ru, "source_accept_call") == "" || str(ru, "source_integrate_call") == "" || str(ru, "batch_commit") == "" ||
+					ru["batch_commit"] != str(ing.Data, "batch_commit") {
+					t.Errorf("the reuse of %s %+v does not carry the source run %s, its acceptance %s and integration %s",
+						node, ru, spec.RunID, acc.Data, ing.Data)
+				}
+			}
+			if b := journalBytes(t, l, spec.RunID); !slices.Equal(b, srcJSON) {
+				t.Errorf("the source run's journal changed during the rerun")
+			}
+			if mode != "passes" {
+				return
+			}
+			// the close audits every acceptance the milestone rests on, the inherited ones read from the original journal
+			audits, _ := labRows(l, "crw.audit")
+			if len(audits) != 1 {
+				t.Fatalf("the audit rows %+v, want the one", audits)
+			}
+			var outcome ops.AuditOutcome
+			if err := json.Unmarshal([]byte(str(audits[0].Data, "result")), &outcome); err != nil {
+				t.Fatalf("the audit's result: %v", err)
+			}
+			if len(outcome.Results) != 2 {
+				t.Fatalf("the audit judged %d acceptances, want the two of the milestone", len(outcome.Results))
+			}
+			got := map[string]bool{}
+			for _, res := range outcome.Results {
+				acc := accepted[res.Node]
+				if res.AcceptanceID != str(acc.Data, "acceptance_id") || got[res.AcceptanceID] {
+					t.Errorf("the audit result of %s names acceptance %s, want each original once", res.Node, res.AcceptanceID)
+				}
+				got[res.AcceptanceID] = true
+			}
+			for _, node := range nodes {
+				if !got[str(accepted[node].Data, "acceptance_id")] {
+					t.Errorf("the audit results %v miss the original acceptance of %s", got, node)
+				}
+			}
+			// the reflection's currentDesign and the close's re-plan numbers read the inherited landings: both nodes' heads
+			designs, _ := labRows(l, "crw.currentDesign")
+			if len(designs) == 0 {
+				t.Fatalf("no crw.currentDesign row")
+			}
+			var cd ops.CurrentDesign
+			if err := json.Unmarshal([]byte(str(designs[len(designs)-1].Data, "result")), &cd); err != nil {
+				t.Fatalf("the currentDesign result: %v", err)
+			}
+			for _, node := range nodes {
+				found := false
+				for _, ld := range cd.Landed {
+					if ld.Node == node && ld.Head == str(accepted[node].Data, "head") {
+						found = true
+					}
+				}
+				if !found {
+					t.Errorf("the currentDesign landed %+v names no landing of %s at %s", cd.Landed, node, str(accepted[node].Data, "head"))
+				}
+			}
+			// a resume of the closed rerun replays the recorded reuse: no new verification, build or reuse rows, target unchanged
+			beforeVerifications := l.verifications
+			if code, killed := l.process(spec2.RunID, true); code != 0 || killed {
+				t.Fatalf("the resume of the closed rerun: exit %d killed %v", code, killed)
+			}
+			l.closed(mustResult(t, l, spec2.RunID))
+			loaded, has, err := journal.Load(context.Background(), l.w.st, spec2.RunID)
+			if err != nil || !has {
+				t.Fatalf("the resumed journal: %v %v", has, err)
+			}
+			counts := map[string]int{}
+			for _, e := range loaded {
+				if e.Kind == engine.KindCall && e.Event == engine.EvCompleted {
+					counts[e.Op]++
+				}
+			}
+			if counts["crw.reuseIntegrated"] != 2 || counts[ops.OpVerify] != 1 || counts[ops.OpRelease] != 0 {
+				t.Errorf("the resumed journal's rows %v, want the two reuse decisions and the one gate verification", counts)
+			}
+			if l.verifications != beforeVerifications {
+				t.Errorf("the resume ran %d merged-tree verifications", l.verifications-beforeVerifications)
+			}
+			if tip := l.git(l.repo, "rev-parse", l.target); tip != savedTip {
+				t.Errorf("the resume moved the integration tip to %s", tip)
+			}
+		})
+	}
+}
+
+// mustRows is labRows' row list alone.
+func mustRows(l *laneLab, op string) []engine.Event {
+	rows, _ := labRows(l, op)
+	return rows
+}
+
+// mustResult is the stored result of a run.
+func mustResult(t *testing.T, l *laneLab, run string) Result {
+	t.Helper()
+	res, ok := ReadResult(l.w.state, run)
+	if !ok {
+		t.Fatalf("run %s left no result", run)
+	}
+	return res
+}
+
+// TestProjectLaneReusesIntegratedPredecessorOnly (CRW-1597): a run killed after the integration of A-1 but before A-2 started is
+// continued by a new run of the same plan: A-1 is inherited landed and only A-2 is released and built - a pending successor builds
+// after its inherited predecessor without releasing it.
+func TestProjectLaneReusesIntegratedPredecessorOnly(t *testing.T) {
+	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"}, labIssue{Key: "A-2", Milestone: "M1", After: []string{"A-1"}})
+	node1, node2 := l.nodeOf["A-1"], l.nodeOf["A-2"]
+	spec := l.start("start", "project-lane", "--args", fmt.Sprintf(`{"plan":%q,"milestone":"M1"}`, l.plan), "--handoff", l.file)
+	l.afterRow = func(e engine.Event) {
+		if e.Kind != engine.KindCall || e.Op != ops.OpIntegrate || e.Event != engine.EvCompleted || str(e.Data, "node") != node1 {
+			return
+		}
+		l.mu.Lock()
+		cur := l.cur
+		l.mu.Unlock()
+		if f, ok := cur.Journal.(interface{ Flush() error }); ok {
+			if err := f.Flush(); err != nil {
+				l.t.Fatal(err)
+			}
+		}
+		l.kill()
+	}
+	if _, killed := l.process(spec.RunID, false); !killed {
+		t.Fatalf("the source run was not killed after the integration of %s", node1)
+	}
+	l.afterRow = nil
+	accepted, integrated := sourceLandings(t, l, spec.RunID)
+	if len(integrated) != 1 || integrated[node1].CallID == "" || len(accepted) != 1 || accepted[node1].CallID == "" {
+		t.Fatalf("the source journal: %d acceptances, %d integrations, want the one of %s", len(accepted), len(integrated), node1)
+	}
+	srcJSON := journalBytes(t, l, spec.RunID)
+
+	spec2 := l.start("start", "project-lane", "--args", fmt.Sprintf(`{"plan":%q,"milestone":"M1"}`, l.plan), "--handoff", l.file)
+	v2 := l.closed(l.runToEnd(spec2.RunID))
+	for _, ln := range v2.Lanes {
+		if ln.State != "landed" {
+			t.Fatalf("the lane of %s: %+v, want landed", ln.Node, ln)
+		}
+	}
+	// A-1 was inherited: no release, no build, no calls of it at all - only its reuse decision row; A-2 got its one release and its executor build
+	for _, e := range l.events() {
+		if e.Kind == engine.KindCall && e.Event == engine.EvCompleted && str(e.Data, "node") == node1 && e.Op != "crw.reuseIntegrated" {
+			t.Errorf("the rerun wrote a %s row of %s: %v", e.Op, node1, e.Data)
+		}
+		if e.Kind == engine.KindCall && e.Event == engine.EvPrepared && str(e.Data, "node") == node1 {
+			t.Errorf("the rerun made the call %s of %s", e.Label, node1)
+		}
+	}
+	builds, releases, integrations := 0, 0, 0
+	for _, c := range labCalls(l) {
+		if c.Label == "build:"+node2+":executor" {
+			builds++
+		}
+	}
+	for _, e := range l.events() {
+		if e.Kind != engine.KindCall || e.Event != engine.EvCompleted {
+			continue
+		}
+		switch e.Op {
+		case ops.OpRelease:
+			if str(e.Data, "node") == node2 {
+				releases++
+			}
+		case ops.OpIntegrate:
+			if str(e.Data, "node") == node2 {
+				integrations++
+			}
+		}
+	}
+	if builds != 1 || releases != 1 || integrations != 1 {
+		t.Errorf("%s: %d builds, %d releases, %d integrations, want one of each", node2, builds, releases, integrations)
+	}
+	reuses := reuseIntegratedRows(t, l)
+	if len(reuses) != 2 {
+		t.Fatalf("the reuseIntegrated rows %+v, want two", reuses)
+	}
+	seen := map[string]bool{}
+	for _, ru := range reuses {
+		node := str(ru, "node")
+		seen[node] = true
+		want := node == node1
+		if r, _ := ru["reused"].(bool); r != want {
+			t.Errorf("the reuse of %s: %+v, want reused %v", node, ru, want)
+		}
+		if node == node1 && (ru["source_run"] != spec.RunID || ru["acceptance_id"] != str(accepted[node1].Data, "acceptance_id") || ru["head"] != str(accepted[node1].Data, "head")) {
+			t.Errorf("the reuse of %s %+v does not carry the source run's landing", node1, ru)
+		}
+	}
+	if !seen[node1] || !seen[node2] {
+		t.Errorf("the reuse rows %v name both nodes", seen)
+	}
+	// the close's audit covers the inherited acceptance of the source run and the fresh one of this run
+	freshAccept := ""
+	for _, e := range l.events() {
+		if e.Kind == engine.KindCall && e.Op == ops.OpAccept && e.Event == engine.EvCompleted && str(e.Data, "node") == node2 {
+			freshAccept = str(e.Data, "acceptance_id")
+		}
+	}
+	audits, _ := labRows(l, "crw.audit")
+	if len(audits) != 1 {
+		t.Fatalf("the audit rows %+v, want the one", audits)
+	}
+	var outcome ops.AuditOutcome
+	if err := json.Unmarshal([]byte(str(audits[0].Data, "result")), &outcome); err != nil {
+		t.Fatalf("the audit's result: %v", err)
+	}
+	got := map[string]bool{}
+	for _, res := range outcome.Results {
+		got[res.AcceptanceID] = true
+	}
+	if len(outcome.Results) != 2 || !got[str(accepted[node1].Data, "acceptance_id")] || !got[freshAccept] {
+		t.Errorf("the audit judged %+v, want the inherited acceptance %s and the fresh %s", got, str(accepted[node1].Data, "acceptance_id"), freshAccept)
+	}
+	if b := journalBytes(t, l, spec.RunID); !slices.Equal(b, srcJSON) {
+		t.Errorf("the source run's journal changed during the rerun")
+	}
+}
+
+// TestProjectLaneRefusesReuseWhenIntegratedHeadIsLost (CRW-1597): when the target no longer holds the head the source run
+// integrated, a new run of the same plan does not rebuild the node: the reuse is refused integration_reuse_unproven and the run
+// ends on the refusal without a release, an acceptance or an integration of its own.
+func TestProjectLaneRefusesReuseWhenIntegratedHeadIsLost(t *testing.T) {
+	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+	l.verifyFail = func(req ops.VerifyRequest) bool { return req.Node == "" }
+	spec := l.start("start", "project-lane", "--args", fmt.Sprintf(`{"plan":%q,"milestone":"M1"}`, l.plan), "--handoff", l.file)
+	gateFailed(t, l, l.runToEnd(spec.RunID))
+	base := ""
+	srcEvents, has, err := journal.Load(context.Background(), l.w.st, spec.RunID)
+	if err != nil || !has {
+		t.Fatalf("the source run's journal: %v %v", has, err)
+	}
+	for _, e := range srcEvents {
+		if e.Kind == engine.KindCall && e.Op == ops.OpDesignLedger && e.Event == engine.EvCompleted {
+			base = str(e.Data, "base_tip")
+		}
+	}
+	if base == "" || base == l.git(l.repo, "rev-parse", l.target) {
+		t.Fatalf("the pre-integration base %q, want the commit the target held before the run", base)
+	}
+	// the target loses the integrated head
+	l.git(l.repo, "update-ref", "refs/heads/"+l.target, base)
+
+	spec2 := l.start("start", "project-lane", "--args", fmt.Sprintf(`{"plan":%q,"milestone":"M1"}`, l.plan), "--handoff", l.file)
+	res := l.runToEnd(spec2.RunID)
+	if res.Status == engine.RunCompleted || !strings.Contains(res.Error, "integration_reuse_unproven") {
+		t.Fatalf("the rerun's result %s %s %q, want the integration_reuse_unproven refusal", res.Status, res.ErrorKind, res.Error)
+	}
+	for _, e := range l.events() {
+		if e.Kind != engine.KindCall || e.Event != engine.EvCompleted {
+			continue
+		}
+		switch e.Op {
+		case ops.OpRelease, ops.OpAccept, ops.OpIntegrate:
+			t.Errorf("the refused rerun wrote a %s row: %v", e.Op, e.Data)
+		}
+	}
+	for _, c := range labCalls(l) {
+		if c.Role == "executor" || c.Role == "executor-t1" || strings.HasPrefix(c.Label, "build:") {
+			t.Errorf("the refused rerun started the executor call %s (%s)", c.Label, c.Role)
+		}
+	}
+}
+
+// TestProjectLaneCloseRerunKeepsMilestoneReviewBase (CRW-1597): the source run integrates C-1, re-plans after A-1's unit check,
+// and closes stopped at the final gate: its latest ledger's base_tip sits after C-1. The rerun inherits every landing; its own
+// gate, crosscheck and close must still judge the milestone's whole original range (from the first ledger's base_tip), not the
+// narrowed range of the newest design revision.
+func TestProjectLaneCloseRerunKeepsMilestoneReviewBase(t *testing.T) {
+	l := newLaneLab(t,
+		labIssue{Key: "C-1", Milestone: "M1"},
+		labIssue{Key: "A-1", Milestone: "M1", After: []string{"C-1"}},
+		labIssue{Key: "B-1", Milestone: "M1", After: []string{"A-1"}})
+	nodeA := l.nodeOf["A-1"]
+	l.UnitChecks("A-1", ops.UnitCheckUncommitted, labCheck{Verdict: reviewadapter.VerdictNeedsChanges,
+		Findings: []reviewadapter.Finding{{Severity: "P2", Impact: "core_function", File: "node-A-1.txt", Line: 1, Text: "fix this"}}})
+	l.turn = func(c labCall, r fakehost.TurnRequest) (fakehost.TurnPlan, bool) {
+		if strings.HasPrefix(c.Label, "build:"+nodeA+":") || strings.HasPrefix(c.Label, "fix:"+nodeA+":") {
+			return l.executorTurn(c, map[string]any{"plan_mismatch": "the plan assumed something else: " + c.Label}), true
+		}
+		return fakehost.TurnPlan{}, false
+	}
+	l.verifyFail = func(req ops.VerifyRequest) bool { return req.Node == "" }
+	spec := l.start("start", "project-lane", "--args", fmt.Sprintf(`{"plan":%q,"milestone":"M1"}`, l.plan), "--handoff", l.file)
+	gateFailed(t, l, l.runToEnd(spec.RunID))
+	leds, _ := labRows(l, ops.OpDesignLedger)
+	if len(leds) < 2 {
+		t.Fatalf("the source run made %d design ledger rows, want the original and the re-plan's", len(leds))
+	}
+	originalBase, latestBase := str(leds[0].Data, "base_tip"), str(leds[len(leds)-1].Data, "base_tip")
+	if originalBase == "" || originalBase == latestBase {
+		t.Fatalf("the source run's ledger bases %q then %q, want the re-plan's base different from the original", originalBase, latestBase)
+	}
+	srcJSON := journalBytes(t, l, spec.RunID)
+	savedTip := l.git(l.repo, "rev-parse", l.target)
+
+	l.verifyFail = nil
+	spec2 := l.start("start", "project-lane", "--args", fmt.Sprintf(`{"plan":%q,"milestone":"M1"}`, l.plan), "--handoff", l.file)
+	l.closed(l.runToEnd(spec2.RunID))
+	if tip := l.git(l.repo, "rev-parse", l.target); tip != savedTip {
+		t.Fatalf("the integration tip moved to %s, want %s", tip, savedTip)
+	}
+	for _, c := range labCalls(l) {
+		if c.Role == "executor" || c.Role == "executor-t1" || strings.HasPrefix(c.Label, "build:") || strings.HasPrefix(c.Label, "rebuild:") {
+			t.Errorf("the rerun started the executor call %s (%s)", c.Label, c.Role)
+		}
+	}
+	for _, e := range l.events() {
+		if e.Kind == engine.KindCall && e.Event == engine.EvCompleted {
+			switch e.Op {
+			case ops.OpRelease, ops.OpCommit, ops.OpAccept, ops.OpIntegrate:
+				t.Errorf("the rerun wrote a %s row: %v", e.Op, e.Data)
+			}
+		}
+	}
+	// every gate row of the rerun judges the milestone's original range
+	gates, _ := labRows(l, ops.OpGate)
+	if len(gates) == 0 {
+		t.Fatalf("the rerun made no final gate")
+	}
+	for _, g := range gates {
+		if str(g.Data, "base") != originalBase || str(g.Data, "range") != originalBase+".."+savedTip {
+			t.Errorf("the gate judged base %s range %s, want %s .. %s", str(g.Data, "base"), str(g.Data, "range"), originalBase, savedTip)
+		}
+	}
+	checks, _ := labRows(l, ops.OpCrosscheck)
+	if len(checks) != 1 {
+		t.Fatalf("the crosscheck rows %+v, want the one", checks)
+	}
+	var cc ops.CrosscheckOutcome
+	if err := json.Unmarshal([]byte(str(checks[0].Data, "result")), &cc); err != nil {
+		t.Fatalf("the crosscheck's result: %v", err)
+	}
+	if cc.Verdict == nil || cc.Verdict.Base != originalBase || cc.Verdict.Head != savedTip {
+		t.Errorf("the crosscheck's verdict %+v, want the original base %s at %s", cc.Verdict, originalBase, savedTip)
+	}
+	closes, _ := labRows(l, ops.OpMilestoneClose)
+	if len(closes) != 1 {
+		t.Fatalf("the milestone close rows %+v, want the one", closes)
+	}
+	var closeOut ops.CloseResultOutcome
+	if err := json.Unmarshal([]byte(str(closes[0].Data, "result")), &closeOut); err != nil {
+		t.Fatalf("the close's result: %v", err)
+	}
+	if closeOut.Base != originalBase || closeOut.Tip != savedTip {
+		t.Errorf("the close recorded base %s tip %s, want %s .. %s", closeOut.Base, closeOut.Tip, originalBase, savedTip)
+	}
+	for _, ru := range reuseIntegratedRows(t, l) {
+		if ru["reused"] != true || str(ru, "review_base") != originalBase {
+			t.Errorf("the reuse %+v, want reused with the original review base %s", ru, originalBase)
+		}
+	}
+	if b := journalBytes(t, l, spec.RunID); !slices.Equal(b, srcJSON) {
+		t.Errorf("the source run's journal changed during the rerun")
+	}
+}
+
+// TestProjectLaneRefusesReuseOfChangedDecision (CRW-1597): a rerun whose own DESIGN kept a decision's id but changed its content
+// does not reuse the earlier landing: the referenced decision the source integrated under is not the one the rerun stands on, so
+// the node is refused integration_reuse_unproven - never rebuilt.
+func TestProjectLaneRefusesReuseOfChangedDecision(t *testing.T) {
+	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+	l.verifyFail = func(req ops.VerifyRequest) bool { return req.Node == "" }
+	spec := l.start("start", "project-lane", "--args", fmt.Sprintf(`{"plan":%q,"milestone":"M1"}`, l.plan), "--handoff", l.file)
+	gateFailed(t, l, l.runToEnd(spec.RunID))
+	savedTip := l.git(l.repo, "rev-parse", l.target)
+
+	l.verifyFail = nil
+	raw := l.handoffBytes(func(in *compile.Input) { in.Projects[0].Milestones[0].Title = "renamed M1" })
+	handoff2 := filepath.Join(t.TempDir(), "handoff.json")
+	if err := os.WriteFile(handoff2, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	l.designEdit = func(d *ops.Design) { d.Decisions[0].Change = "Use a different storage format" }
+	spec2 := l.start("start", "project-lane", "--args", fmt.Sprintf(`{"plan":%q,"milestone":"M1"}`, l.plan), "--handoff", handoff2)
+	res := l.runToEnd(spec2.RunID)
+	if res.Status == engine.RunCompleted || !strings.Contains(res.Error, "integration_reuse_unproven") {
+		t.Fatalf("the rerun's result %s %s %q, want the integration_reuse_unproven refusal", res.Status, res.ErrorKind, res.Error)
+	}
+	for _, ru := range reuseIntegratedRows(t, l) {
+		if ru["reused"] == true {
+			t.Errorf("the changed-decision rerun reused a landing: %+v", ru)
+		}
+	}
+	for _, e := range l.events() {
+		if e.Kind == engine.KindCall && e.Event == engine.EvCompleted {
+			switch e.Op {
+			case ops.OpRelease, ops.OpAccept, ops.OpIntegrate, ops.OpMilestoneClose:
+				t.Errorf("the refused rerun wrote a %s row: %v", e.Op, e.Data)
+			}
+		}
+	}
+	for _, c := range labCalls(l) {
+		if c.Role == "executor" || c.Role == "executor-t1" || strings.HasPrefix(c.Label, "build:") {
+			t.Errorf("the refused rerun started the executor call %s (%s)", c.Label, c.Role)
+		}
+	}
+	if tip := l.git(l.repo, "rev-parse", l.target); tip != savedTip {
+		t.Errorf("the integration tip moved to %s, want %s", tip, savedTip)
+	}
+}
