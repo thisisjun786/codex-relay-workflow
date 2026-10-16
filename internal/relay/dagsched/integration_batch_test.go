@@ -11,6 +11,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -450,5 +451,291 @@ func TestIntegrationBatchReRunsAfterAnUnmovedBatch(t *testing.T) {
 	}
 	if len(second.Merged) != 1 || second.Merged[0].NodeID != "a" {
 		t.Fatalf("re-run merged %+v; want a", second.Merged)
+	}
+}
+
+// ---- CRW-1595 ----
+
+// gitAt is git in dir, as a test reader.
+func gitAt(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git -C %s %v: %v\n%s", dir, args, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// gitFile is the content of a file of a checkout, and whether it exists.
+func gitFile(t *testing.T, dir, name string) (string, bool) {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(dir, name))
+	if os.IsNotExist(err) {
+		return "", false
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw), true
+}
+
+// journalRows is the detail of the journal rows of one kind, in order.
+func (k *batchKit) journalRows(kind string) []string {
+	k.t.Helper()
+	rows, err := k.s.DB.QueryContext(context.Background(), "SELECT detail FROM journal WHERE kind = ? ORDER BY seq", kind)
+	if err != nil {
+		k.t.Fatal(err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var d string
+		if err := rows.Scan(&d); err != nil {
+			k.t.Fatal(err)
+		}
+		out = append(out, d)
+	}
+	return out
+}
+
+// CRW-1595 (finding 1): a batch never moves the integration branch under a worktree that has it checked out — the
+// worktree's files and index would stay on the old head while its branch moved. The refusal comes before the
+// verification runs (no verifier call, no ref_moved or merged mark), and the checkout is left exactly as it was:
+// the batch never resets or detaches a worktree for the user.
+func TestCRW1595IntegrationRefusesACheckedOutBranch(t *testing.T) {
+	t.Parallel()
+	for _, place := range []string{"primary", "linked"} {
+		t.Run(place, func(t *testing.T) {
+			k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}})
+			k.acceptByCommit("a")
+			k.repo.git("branch", "dev-int", k.base)
+			checked := k.repo.path
+			if place == "linked" {
+				// a path with a space and a newline proves the worktree list is read with -z
+				checked = filepath.Join(t.TempDir(), "linked wt\nint")
+				k.repo.git("worktree", "add", checked, "dev-int")
+				t.Cleanup(func() {
+					_, _ = runGit(context.Background(), k.repo.path, nil, "worktree", "remove", "--force", checked)
+				})
+			} else {
+				k.repo.git("checkout", "-q", "dev-int")
+			}
+			tip, _ := k.branchTip("dev-int")
+			status := gitAt(t, checked, "status", "--porcelain")
+			staged := gitAt(t, checked, "diff", "--cached")
+			baseTxt, hasBase := gitFile(t, checked, "base.txt")
+			calls := 0
+			deps := IntegrationBatchDeps{Update: updateIntegrationRef, Verify: func(ctx context.Context, dir string, env []string) error {
+				calls++
+				return stubVerifier(writeStubVerifier(t))(ctx, dir, env)
+			}}
+			_, err := k.sched.IntegrateBatch(context.Background(), k.batchIn(), deps)
+			if err == nil || !strings.Contains(err.Error(), "checked out") {
+				t.Fatalf("a batch whose branch is checked out: %v", err)
+			}
+			if calls != 0 {
+				t.Fatalf("the verifier ran %d time(s) for a branch that is checked out", calls)
+			}
+			if now, _ := k.branchTip("dev-int"); now != tip {
+				t.Fatalf("the branch moved to %s under its worktree", now)
+			}
+			if got := gitAt(t, checked, "status", "--porcelain"); got != status {
+				t.Fatalf("the checkout's status changed: %q -> %q", status, got)
+			}
+			if got := gitAt(t, checked, "diff", "--cached"); got != staged {
+				t.Fatalf("the checkout's index changed: %q -> %q", staged, got)
+			}
+			if got, has := gitFile(t, checked, "base.txt"); has != hasBase || got != baseTxt {
+				t.Fatalf("the checkout's base.txt changed")
+			}
+			if n := countStage(k.stageRows(), "ref_moved") + countStage(k.stageRows(), "marked"); n != 0 {
+				t.Fatalf("a refused batch wrote %d ref_moved/marked rows", n)
+			}
+		})
+	}
+}
+
+// The same commit on a detached HEAD is no checkout of the branch, and a worktree that holds another branch is none of
+// the batch's business: the batch integrates.
+func TestCRW1595IntegrationAllowsADetachedWorktreeAndAnotherBranch(t *testing.T) {
+	t.Parallel()
+	k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}})
+	k.acceptByCommit("a")
+	k.repo.git("branch", "dev-int", k.base)
+	detached := filepath.Join(t.TempDir(), "detached")
+	k.repo.git("worktree", "add", "--detach", detached, "dev-int")
+	other := filepath.Join(t.TempDir(), "other branch")
+	k.repo.git("worktree", "add", other, "feature-a")
+	t.Cleanup(func() {
+		for _, wt := range []string{detached, other} {
+			_, _ = runGit(context.Background(), k.repo.path, nil, "worktree", "remove", "--force", wt)
+		}
+	})
+	res, err := k.sched.IntegrateBatch(context.Background(), k.batchIn(), IntegrationBatchDeps{Verify: stubVerifier(writeStubVerifier(t)), Update: updateIntegrationRef})
+	if err != nil {
+		t.Fatalf("batch: %v", err)
+	}
+	if len(res.Merged) != 1 || res.Merged[0].NodeID != "a" {
+		t.Fatalf("merged %+v; want a", res.Merged)
+	}
+}
+
+// The branch is checked again inside the move's fenced transaction: a worktree that takes dev-int while the merged
+// tree is being verified still stops the move — a late refusal, after a verification that passed.
+func TestCRW1595IntegrationRechecksCheckoutInsideTheMove(t *testing.T) {
+	t.Parallel()
+	k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}})
+	k.acceptByCommit("a")
+	k.repo.git("branch", "dev-int", k.base)
+	linked := filepath.Join(t.TempDir(), "linked during verify")
+	linkedAdded := false
+	deps := IntegrationBatchDeps{Update: updateIntegrationRef, Verify: func(ctx context.Context, dir string, env []string) error {
+		if !linkedAdded {
+			linkedAdded = true
+			k.repo.git("worktree", "add", linked, "dev-int")
+			t.Cleanup(func() {
+				_, _ = runGit(context.Background(), k.repo.path, nil, "worktree", "remove", "--force", linked)
+			})
+		}
+		return stubVerifier(writeStubVerifier(t))(ctx, dir, env)
+	}}
+	_, err := k.sched.IntegrateBatch(context.Background(), k.batchIn(), deps)
+	if err == nil || !strings.Contains(err.Error(), "checked out") {
+		t.Fatalf("a branch taken between verification and move: %v", err)
+	}
+	if refusalReasonOf(err) != "disposition_conflict" {
+		t.Fatalf("reason %q (err %v), want disposition_conflict", refusalReasonOf(err), err)
+	}
+	if tip, _ := k.branchTip("dev-int"); tip != k.base {
+		t.Fatalf("the branch moved to %s under its worktree", tip)
+	}
+	if n := countStage(k.stageRows(), "ref_moved") + countStage(k.stageRows(), "marked"); n != 0 {
+		t.Fatalf("%d ref_moved/marked rows after the refused move", n)
+	}
+}
+
+// CRW-1595 (finding 2): a failed verification leaves bounded evidence — a generic journal row per failed attempt naming
+// the batch, the verified head and the diagnostic (the command's output tail and the record's failed jobs and steps) —
+// and the split carries the same detail to the caller, so a real failure and a flake can be told apart after the
+// temporary worktree and its record are gone.
+func TestCRW1595IntegrationFailureKeepsEvidence(t *testing.T) {
+	k := newBatchKit(t, batchNode{name: "bad", files: map[string]string{"bad.txt": "bad\n"}})
+	k.acceptByCommit("bad")
+	marker := filepath.Join(t.TempDir(), "record-path")
+	script := filepath.Join(t.TempDir(), "verify.sh")
+	writeExecutable(t, script, "#!/bin/sh\n"+
+		"echo \"$CRW_VERIFY_RECORD\" > '"+marker+"'\n"+
+		"cat > \"$CRW_VERIFY_RECORD\" <<'EOF'\n"+
+		`{"schema":"verification-record/1","result":"fail","jobs":[{"name":"build","result":"fail","steps":[{"name":"go test ./pkg","result":"failed","reason":"--- FAIL: TestCRW1595Verifier (0.01s)"},{"name":"vet","result":"passed"},{"name":"docs","result":"skipped","reason":"no runner"},{"name":"na","result":"not_applicable"}]}]}`+"\n"+
+		"EOF\n"+
+		"echo 'verify stdout: --- FAIL: TestCRW1595Verifier'\n"+
+		"echo 'verify stderr: the suite failed' >&2\n"+
+		"exit 1\n")
+	res, err := k.sched.IntegrateBatch(context.Background(), k.batchIn(),
+		IntegrationBatchDeps{Verify: CommandVerifierEnv([]string{script}, func() []string { return nil }), Update: updateIntegrationRef})
+	if err != nil {
+		t.Fatalf("batch: %v", err)
+	}
+	if len(res.Split) != 1 || res.Split[0].NodeID != "bad" || res.Split[0].Reason != "verification_failed" {
+		t.Fatalf("split %+v; want bad verification_failed", res.Split)
+	}
+	detail := res.Split[0].Detail
+	for _, want := range []string{"--- FAIL: TestCRW1595Verifier", "the suite failed", "no runner"} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("the split detail lacks %q: %q", want, detail)
+		}
+	}
+	if !utf8.ValidString(detail) {
+		t.Errorf("the split detail is not valid UTF-8")
+	}
+	// the journal holds one row per failed verification attempt, naming the batch and the verified head
+	rows := k.journalRows("dag_integration_verification_failed")
+	if len(rows) == 0 {
+		t.Fatal("no verification failure was journaled")
+	}
+	for _, raw := range rows {
+		var d map[string]any
+		if err := json.Unmarshal([]byte(raw), &d); err != nil {
+			t.Fatalf("the journal detail is not JSON: %v (%s)", err, raw)
+		}
+		if d["batch_id"] != res.BatchID || d["plan"] != "g" || d["integration_ref"] != "dev-int" {
+			t.Errorf("the journal row names %+v, want batch %s of plan g on dev-int", d, res.BatchID)
+		}
+		if d["verified_head"] == "" || d["attempt"] == nil {
+			t.Errorf("the journal row names no verified head or attempt: %v", d)
+		}
+		if text, _ := d["detail"].(string); !strings.Contains(text, "TestCRW1595Verifier") {
+			t.Errorf("the journal row's detail lacks the failure: %q", text)
+		}
+	}
+	// the branch never moved and no mark was written
+	if _, found := k.branchTip("dev-int"); found {
+		t.Fatal("the branch was created over a failing verification")
+	}
+	if n := countStage(k.stageRows(), "marked") + countStage(k.stageRows(), "ref_moved"); n != 0 {
+		t.Fatalf("%d marked/ref_moved rows for a batch that moved nothing", n)
+	}
+	// the temporary worktree and the verification files are gone on this path as on every path
+	raw, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatalf("the verifier never wrote its record path: %v", err)
+	}
+	recordPath := strings.TrimSpace(string(raw))
+	if _, err := os.Stat(recordPath); !os.IsNotExist(err) {
+		t.Errorf("the verification record %s still exists", recordPath)
+	}
+	if _, err := os.Stat(filepath.Dir(filepath.Dir(recordPath))); !os.IsNotExist(err) {
+		t.Errorf("the temporary tree root of the verification still exists")
+	}
+}
+
+// A record the judge refuses is diagnosed with the judge's reason: a record of another tree is no passing evidence and
+// its refusal text lands in the split detail.
+func TestCRW1595IntegrationJudgeRefusalKeepsEvidence(t *testing.T) {
+	k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}})
+	k.acceptByCommit("a")
+	t.Setenv("CRW_TEST_WRONG_TREE", "1")
+	res, err := k.sched.IntegrateBatch(context.Background(), k.batchIn(),
+		IntegrationBatchDeps{Verify: stubVerifier(writeStubVerifier(t)), Update: updateIntegrationRef})
+	if err != nil {
+		t.Fatalf("batch: %v", err)
+	}
+	if len(res.Split) != 1 || res.Split[0].Reason != "verification_failed" {
+		t.Fatalf("split %+v; want verification_failed", res.Split)
+	}
+	if !strings.Contains(res.Split[0].Detail, "names tree") {
+		t.Fatalf("the split detail lacks the judge's reason: %q", res.Split[0].Detail)
+	}
+	if _, found := k.branchTip("dev-int"); found {
+		t.Fatal("the branch was created for a tree the verifier did not verify")
+	}
+}
+
+// An apparent PASS record cannot land a command that exited nonzero: the exit is the failure, and its text is the detail.
+func TestCRW1595IntegrationNonzeroExitKeepsTheExitDetail(t *testing.T) {
+	k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}})
+	k.acceptByCommit("a")
+	bin, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(t.TempDir(), "verify.sh")
+	writeExecutable(t, script, "#!/bin/sh\nCRW_TEST_RECORD_HELPER=1\nCRW_TEST_HELPER_BIN='"+strings.ReplaceAll(bin, "'", `'\''`)+"'\nexport CRW_TEST_RECORD_HELPER CRW_TEST_HELPER_BIN\n"+
+		"\"$CRW_TEST_HELPER_BIN\" -test.run='^TestVerifyRecordHelper$' -test.count=1\n"+
+		"echo 'the verifier wrote its record then failed' >&2\nexit 1\n")
+	res, err := k.sched.IntegrateBatch(context.Background(), k.batchIn(),
+		IntegrationBatchDeps{Verify: CommandVerifierEnv([]string{script}, func() []string { return nil }), Update: updateIntegrationRef})
+	if err != nil {
+		t.Fatalf("batch: %v", err)
+	}
+	if len(res.Split) != 1 || res.Split[0].Reason != "verification_failed" {
+		t.Fatalf("split %+v; want verification_failed", res.Split)
+	}
+	if !strings.Contains(res.Split[0].Detail, "the verification command failed") || !strings.Contains(res.Split[0].Detail, "wrote its record then failed") {
+		t.Fatalf("the split detail lacks the exit failure: %q", res.Split[0].Detail)
+	}
+	if _, found := k.branchTip("dev-int"); found {
+		t.Fatal("the branch was created over a nonzero exit")
 	}
 }

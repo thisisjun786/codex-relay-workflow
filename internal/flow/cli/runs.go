@@ -129,6 +129,10 @@ type Question struct {
 	Seq      int    `json:"seq"`
 	// Current is true for the latest question of its node and ask: an answer to an earlier revision is stale.
 	Current bool `json:"current"`
+	// Superseded is true when the call that raised the question was ended superseded (a resume replaced it): the
+	// question is history, never something the run waits on. A completed crw.escalate of the same escalation id after
+	// the supersession raises it again (a replayed op writes no second flow row).
+	Superseded bool `json:"superseded,omitempty"`
 	// Applied is the decision that answered it, "" while it waits.
 	Applied string `json:"applied,omitempty"`
 	// Questions are the digests of the questions a design ask joins (its evidence, CRW-1366): an answer can give each its part
@@ -198,6 +202,9 @@ type RunDetail struct {
 	Phases           []PhaseNode `json:"phases"`
 	Nodes            []NodeInfo  `json:"nodes"`
 	Questions        []Question  `json:"questions"`
+	// Escalations are the run's escalation rows that ask nothing (an empty ask): notices, and the escalation a
+	// finished escalated run ended on. Nothing answers them, so they are not questions; they are listed beside them.
+	Escalations []Question `json:"escalations,omitempty"`
 }
 
 func str(m map[string]any, key string) string {
@@ -333,10 +340,35 @@ func (q Question) SendsUp() bool { return q.Current && q.Applied == "" && q.Repo
 // node and ask, and the decision_applied row that answered it. The latest question of a node and ask is the current one. A question
 // whose ask is a request to send up (reportUpAsks) is marked ReportUp.
 func Questions(events []engine.Event) []Question {
+	return escalationRows(events, false)
+}
+
+// escalationRows reads the escalation rows of a run (kind flow, event escalation) as questions: each row is one
+// revision of the (node, ask) it asks — or, for a row that asks nothing and is included only when includeEmpty, of the
+// (node, reason) notice it records (unrelated notices of a node do not collapse into one another). A row's CallID is
+// the call of the crw.escalate op that wrote it; when that call is superseded at a seq past the row's latest raising
+// (the row's own seq, or the seq a completed crw.escalate of the same escalation id stands at — a replayed op writes
+// no second flow row), the row is superseded: kept as history, never current, never waiting. The row's data.call_id
+// is the causal agent call, not the escalation's own call; its supersession says nothing of the question.
+func escalationRows(events []engine.Event, includeEmpty bool) []Question {
 	attempts := map[string]int{}
+	superseded := map[string]int{}
+	completed := map[string]int{}
 	for _, e := range events {
-		if e.Kind == engine.KindCall && e.Event == engine.EvPrepared {
+		if e.Kind != engine.KindCall {
+			continue
+		}
+		switch {
+		case e.Event == engine.EvPrepared:
 			attempts[e.CallID] = num(e.Data, "attempt")
+		case e.Event == engine.EvSuperseded && e.CallID != "":
+			if e.Seq > superseded[e.CallID] {
+				superseded[e.CallID] = e.Seq
+			}
+		case e.Event == engine.EvCompleted && e.Op == ops.OpEscalate:
+			if id := str(e.Data, "escalation_id"); id != "" && e.Seq > completed[id] {
+				completed[id] = e.Seq
+			}
 		}
 	}
 	applied := map[string]string{}
@@ -357,15 +389,23 @@ func Questions(events []engine.Event) []Question {
 			continue
 		}
 		ask := str(e.Data, "ask")
-		if ask == "" {
-			continue
-		}
 		key := str(e.Data, "node") + "\x00" + ask
+		if ask == "" {
+			if !includeEmpty {
+				continue
+			}
+			key += "\x00" + str(e.Data, "reason")
+		}
 		count[key]++
 		q := Question{ID: str(e.Data, "escalation_id"), Revision: count[key], Node: str(e.Data, "node"), Reason: str(e.Data, "reason"), Ask: ask, Call: str(e.Data, "call_id"), Seq: e.Seq,
 			ReportUp: reportUpAsks[ask]}
 		q.Attempt = attempts[q.Call]
 		q.Applied = applied[q.ID]
+		effective := e.Seq
+		if completed[q.ID] > effective {
+			effective = completed[q.ID]
+		}
+		q.Superseded = e.CallID != "" && superseded[e.CallID] > effective
 		if evidence, ok := e.Data["evidence"].(map[string]any); ok {
 			list, _ := evidence["questions"].([]any)
 			for _, d := range list {
@@ -378,7 +418,8 @@ func Questions(events []engine.Event) []Question {
 		out = append(out, q)
 	}
 	for _, i := range last {
-		out[i].Current = true
+		// the latest revision is current unless it was superseded; a superseded latest never revives an older one
+		out[i].Current = !out[i].Superseded
 	}
 	return out
 }
@@ -491,7 +532,7 @@ func Summarize(rec RunRecord, events []engine.Event, live bool, pid int) RunInfo
 	case lastFinish > lastStart && info.Status == engine.RunCompleted:
 		info.State = StateCompleted
 		switch {
-		case info.Unsettled > 0 || info.Holds > 0 || info.Waiting > 0:
+		case info.Unsettled > 0 || info.Holds > 0 || info.Waiting > 0 || (outcome != nil && outcome.State == "escalated"):
 			info.State = StateHeld
 		case len(info.ItemErrors) > 0 && !heldBack && !nodeStarted(events) && StartsNodes(rec, events):
 			info.State = StateBlocked
@@ -616,6 +657,12 @@ func recordedPolicy(events []engine.Event) (path, digest, repinnedFrom string, u
 // questions it asked.
 func Detail(rec RunRecord, events []engine.Event, live bool, pid int) RunDetail {
 	d := RunDetail{RunInfo: Summarize(rec, events, live, pid), Phases: []PhaseNode{}, Nodes: []NodeInfo{}, Questions: Questions(events)}
+	// the rows that ask nothing are listed beside the questions: notices, and the escalation an escalated end names
+	for _, q := range escalationRows(events, true) {
+		if q.Ask == "" {
+			d.Escalations = append(d.Escalations, q)
+		}
+	}
 	d.PolicyPath, d.PolicyDigest, d.PolicyRepinnedFrom, d.PolicyUnrecorded = recordedPolicy(events)
 	order, rows := callRows(events)
 	// the phase a call was made in is the last phase row before its first row

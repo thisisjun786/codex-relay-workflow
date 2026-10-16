@@ -1034,7 +1034,7 @@ process finished `completed` with nothing left to go on with is `blocked` when n
 in its last process (`item_error` rows: a lane of `crw.dag` whose `crw.release` failed is one). The engine's status of the run stays
 `completed`. A node the scheduler held back unreleased in the last process (capacity, a region in use: a wait a resume asks again) keeps the
 run `completed`, and so does a node that started. Another script run (a judge panel, a scout) that names no plan never meant to start a
-node: an item of it that threw is shown, and the run stays `completed`.
+node: an item of it that threw is shown, and the run stays `completed`. The run views keep superseded questions as history and do not count them as waiting. Escalations with no ask appear separately from answerable questions; a finished escalated outcome keeps the run held without adding a waiting question. A later completion of the same escalation operation can make its recorded question current again.
 
 The intent rows say what a later process needs to find the request again. `thread_requested` and `fork_requested` carry the
 `cwd` the thread is to run in, the `send` ordinal of the request (1, then one more each time reconcile proved the previous

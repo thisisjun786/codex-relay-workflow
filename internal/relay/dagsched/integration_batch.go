@@ -73,6 +73,10 @@ type IntegrationBatchMerged struct {
 // IntegrationBatchSplit is one candidate the batch left out, with the reason it is returned to its parent.
 type IntegrationBatchSplit struct {
 	NodeID, AcceptanceID, HeadSHA, Reason string
+	// Detail is the bounded diagnostic of the candidate's own failing verification (the command's output tail and the
+	// record's failed jobs and steps), set only for a candidate left out verification_failed: a depends_on_*,
+	// conflict or not_proven_failing split claims no failure of its own (CRW-1595).
+	Detail string `json:"detail,omitempty"`
 }
 
 // IntegrationBatchResult is the answer of one batch.
@@ -110,6 +114,11 @@ func (s *Scheduler) IntegrateBatch(ctx context.Context, in IntegrationBatchInput
 	}
 	// the coordinator-epoch fence is checked before anything is read or written
 	if err := s.IntegrationWrite(ctx, in.Plan, in.Actor, func(context.Context) error { return nil }); err != nil {
+		return out, err
+	}
+	// a branch a worktree has checked out is refused before the verification runs; it is checked again inside the
+	// fenced move transaction below (CRW-1595)
+	if err := checkIntegrationCheckout(ctx, in.Checkout, in.IntegrationRef); err != nil {
 		return out, err
 	}
 	baseTip, err := resolveIntegrationCommit(ctx, in.Checkout, in.BaseRef)
@@ -184,7 +193,7 @@ func (s *Scheduler) IntegrateBatch(ctx context.Context, in IntegrationBatchInput
 		// a candidate that no stored verification covers (its keys changed, or its criteria set is not the one verified) makes the
 		// head verified again, with no merge; only that PASS covers the candidates (CRW-965, parent decisions D2 and D1)
 		if rowFound && !allNodesCovered(contained, coveredNodes) {
-			_, dig, pass, err := s.verifyHead(ctx, in, deps, start, baseTip)
+			_, dig, pass, err := s.verifyHead(ctx, in, deps, batch, start, baseTip)
 			if err != nil {
 				return out, err
 			}
@@ -205,7 +214,7 @@ func (s *Scheduler) IntegrateBatch(ctx context.Context, in IntegrationBatchInput
 	}
 	var settled settledIntegration
 	if len(fresh) > 0 {
-		if settled, err = s.settleCandidates(ctx, in, deps, start, baseTip, fresh); err != nil {
+		if settled, err = s.settleCandidates(ctx, in, deps, start, baseTip, batch, fresh); err != nil {
 			return out, err
 		}
 	}
@@ -253,7 +262,17 @@ func (s *Scheduler) IntegrateBatch(ctx context.Context, in IntegrationBatchInput
 					}
 				}
 			}
+			// the branch is checked again right before it moves: a worktree that took it while the merged tree was being
+			// verified stops the move (CRW-1595)
+			if err := checkIntegrationCheckout(txCtx, in.Checkout, in.IntegrationRef); err != nil {
+				return err
+			}
 			if err := deps.Update(txCtx, in.Checkout, in.IntegrationRef, settled.head, old); err != nil {
+				// a refusal of the update (a branch checked out meanwhile) is its own answer, not a stale read
+				var refused *store.RefusedError
+				if errors.As(err, &refused) {
+					return err
+				}
 				return refuse(contract.RefusalStaleMarkContext, "%s moved while the merged tree was being verified (the batch read %s): read it again and run the batch again", in.IntegrationRef, old)
 			}
 			return s.recordMovedIn(txCtx, in, batch, out)
@@ -536,7 +555,7 @@ type stageView struct {
 }
 
 // settleCandidates merges, verifies and settles the candidates in a temporary worktree, removed on every path.
-func (s *Scheduler) settleCandidates(ctx context.Context, in IntegrationBatchInput, deps IntegrationBatchDeps, start, baseTip string, candidates []Candidate) (settledIntegration, error) {
+func (s *Scheduler) settleCandidates(ctx context.Context, in IntegrationBatchInput, deps IntegrationBatchDeps, start, baseTip, batch string, candidates []Candidate) (settledIntegration, error) {
 	tmp, err := tmploc.MkdirTemp("crw-965-integrate-")
 	if err != nil {
 		return settledIntegration{}, err
@@ -550,7 +569,7 @@ func (s *Scheduler) settleCandidates(ctx context.Context, in IntegrationBatchInp
 	if _, err := runGit(ctx, in.Checkout, nil, "worktree", "add", "--detach", wt, start); err != nil {
 		return settledIntegration{}, refuse(contract.RefusalMergeTargetUnreadable, "git could not create a worktree at %s: %v", start, err)
 	}
-	w := &integrationWorktree{s: s, in: in, deps: deps, dir: wt, tmp: tmp, start: start, baseTip: baseTip, retryNotProven: in.RetryNotProven}
+	w := &integrationWorktree{s: s, in: in, deps: deps, dir: wt, tmp: tmp, start: start, baseTip: baseTip, batch: batch, retryNotProven: in.RetryNotProven}
 	return w.settle(ctx, candidates)
 }
 
@@ -564,6 +583,10 @@ type integrationWorktree struct {
 	start   string
 	baseTip string
 	records int
+	// batch is the batch the worktree works for, lastFailure the bounded diagnostic of its last failed verification
+	// (CRW-1595).
+	batch       string
+	lastFailure string
 	// retryNotProven is the batch's setting: the not_proven_failing candidates are retried once on the survivors (CRW-1026, d3)
 	retryNotProven bool
 }
@@ -628,6 +651,7 @@ func (w *integrationWorktree) build(ctx context.Context, set []Candidate) ([]str
 // against that merged tree. A non-zero exit is a failure whatever the record says; a record that does not pass is a
 // failure with the judge's reason. Only a host failure is an error.
 func (w *integrationWorktree) verify(ctx context.Context) (VerificationRecord, string, bool, error) {
+	w.lastFailure = ""
 	commit, err := w.head(ctx)
 	if err != nil {
 		return VerificationRecord{}, "", false, err
@@ -644,17 +668,18 @@ func (w *integrationWorktree) verify(ctx context.Context) (VerificationRecord, s
 		if errors.As(err, &host) {
 			return VerificationRecord{}, "", false, err
 		}
-		return VerificationRecord{}, "", false, nil
+		// a failing run journals its bounded diagnostic, so the failure survives the temporary worktree (CRW-1595)
+		return VerificationRecord{}, "", false, w.verificationFailed(ctx, commit, recordPath, err.Error())
 	}
 	// the verify command may move HEAD; what it verified must still be the commit that would land (CRW-965 review)
 	if moved, err := w.head(ctx); err != nil {
 		return VerificationRecord{}, "", false, err
 	} else if moved != commit {
-		return VerificationRecord{}, "", false, nil
+		return VerificationRecord{}, "", false, w.verificationFailed(ctx, commit, recordPath, fmt.Sprintf("the verification command moved HEAD from %s to %s", commit, moved))
 	}
 	raw, err := os.ReadFile(recordPath)
 	if err != nil {
-		return VerificationRecord{}, "", false, nil
+		return VerificationRecord{}, "", false, w.verificationFailed(ctx, commit, recordPath, err.Error())
 	}
 	keys, err := CommitVerificationKeys(ctx, w.in.Checkout, commit)
 	if err != nil {
@@ -670,7 +695,7 @@ func (w *integrationWorktree) verify(ctx context.Context) (VerificationRecord, s
 	if err != nil {
 		var refused *store.RefusedError
 		if errors.As(err, &refused) {
-			return record, "", false, nil
+			return record, "", false, w.verificationFailed(ctx, commit, recordPath, err.Error())
 		}
 		return record, "", false, err
 	}
@@ -737,7 +762,12 @@ func (w *integrationWorktree) settle(ctx context.Context, candidates []Candidate
 		if err != nil {
 			return out, err
 		}
-		if !alone {
+		failureDetail := ""
+		if alone {
+			// the candidate's own failing verification's bounded diagnostic travels with its split (CRW-1595); a
+			// not_proven_failing split claims no failure of its own
+			failureDetail = w.lastFailure
+		} else {
 			reason = "not_proven_failing"
 		}
 		left := map[string]string{failing.NodeID: reason}
@@ -754,7 +784,11 @@ func (w *integrationWorktree) settle(ctx context.Context, candidates []Candidate
 		var next []Candidate
 		for _, c := range kept {
 			if reason, gone := left[c.NodeID]; gone {
-				out.split = append(out.split, IntegrationBatchSplit{NodeID: c.NodeID, AcceptanceID: c.AcceptanceID, HeadSHA: c.HeadSHA, Reason: reason})
+				sp := IntegrationBatchSplit{NodeID: c.NodeID, AcceptanceID: c.AcceptanceID, HeadSHA: c.HeadSHA, Reason: reason}
+				if reason == "verification_failed" {
+					sp.Detail = failureDetail
+				}
+				out.split = append(out.split, sp)
 				removed = append(removed, removedCandidate{Candidate: c, reason: reason})
 				continue
 			}
@@ -839,10 +873,11 @@ func (w *integrationWorktree) settle(ctx context.Context, candidates []Candidate
 			return out, err
 		}
 		if !pass {
+			failed := w.lastFailure
 			if err := w.reset(ctx, before); err != nil {
 				return out, err
 			}
-			out.split = append(out.split, IntegrationBatchSplit{NodeID: d.NodeID, AcceptanceID: d.AcceptanceID, HeadSHA: d.HeadSHA, Reason: "verification_failed"})
+			out.split = append(out.split, IntegrationBatchSplit{NodeID: d.NodeID, AcceptanceID: d.AcceptanceID, HeadSHA: d.HeadSHA, Reason: "verification_failed", Detail: failed})
 			continue
 		}
 		kept = append(kept, d)
@@ -1388,7 +1423,7 @@ func (s *Scheduler) recordVerifiedHead(ctx context.Context, in IntegrationBatchI
 
 // verifyHead verifies the tree of a branch head in a temporary worktree, with no merge: the record is judged by the same
 // judge a merged tree is (CRW-965, parent decision D2). The worktree is removed on every path.
-func (s *Scheduler) verifyHead(ctx context.Context, in IntegrationBatchInput, deps IntegrationBatchDeps, head, baseTip string) (VerificationRecord, string, bool, error) {
+func (s *Scheduler) verifyHead(ctx context.Context, in IntegrationBatchInput, deps IntegrationBatchDeps, batch, head, baseTip string) (VerificationRecord, string, bool, error) {
 	tmp, err := tmploc.MkdirTemp("crw-965-verify-")
 	if err != nil {
 		return VerificationRecord{}, "", false, err
@@ -1402,7 +1437,7 @@ func (s *Scheduler) verifyHead(ctx context.Context, in IntegrationBatchInput, de
 	if _, err := runGit(ctx, in.Checkout, nil, "worktree", "add", "--detach", wt, head); err != nil {
 		return VerificationRecord{}, "", false, refuse(contract.RefusalMergeTargetUnreadable, "git could not create a worktree at %s: %v", head, err)
 	}
-	w := &integrationWorktree{s: s, in: in, deps: deps, dir: wt, tmp: tmp, start: head, baseTip: baseTip}
+	w := &integrationWorktree{s: s, in: in, deps: deps, dir: wt, tmp: tmp, start: head, baseTip: baseTip, batch: batch}
 	return w.verify(ctx)
 }
 
