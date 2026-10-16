@@ -208,11 +208,11 @@ var (
 var laneCall = regexp.MustCompile(`\bcrw\.([A-Za-z]+)\s*\(`)
 
 // engineCrw are the functions the engine puts on the crw object itself (engine/scriptvm.go); they need no operation of the lane.
-var engineCrw = map[string]bool{"callFacts": true, "classify": true, "clock": true, "priorRelease": true, "recordedSignal": true, "tierStep": true}
+var engineCrw = map[string]bool{"callFacts": true, "classify": true, "clock": true, "deferredAsks": true, "priorRelease": true, "recordedSignal": true, "tierStep": true}
 
 // LaneOperations reads the `crw.*` operations a workflow calls, in the workflows it nests too: the names a build has to install
 // (OpsFor) for the workflow to run. The functions the engine itself provides (crw.clock, crw.classify, crw.tierStep and the reads of the signal
-// path crw.callFacts, crw.recordedSignal, crw.priorRelease) are not among them.
+// path crw.callFacts, crw.recordedSignal, crw.priorRelease, crw.deferredAsks) are not among them.
 func LaneOperations(src Source) []string {
 	seen := map[string]bool{}
 	var out []string

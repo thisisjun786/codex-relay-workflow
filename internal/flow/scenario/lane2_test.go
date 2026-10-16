@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/reviewadapter"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/script"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/workflows"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
 )
 
 // A node the architect sized for a child goes up as a size split (CRW-1415): the `child` session path is retired, so the lane escalates it
@@ -1547,5 +1549,646 @@ func TestABrokenSubTaskRuleGoesBackToTheArchitect(t *testing.T) {
 	}
 	if fix := textOfCall(l, callNamed(t, l, "design-fix:r1").ID); !strings.Contains(fix, "b/two.txt") {
 		t.Errorf("the design-fix packet does not name the broken rule:\n%s", fix)
+	}
+}
+
+// releaseOf says whether ev is a completed crw.release row of node.
+func releaseOf(ev engine.Event, node string) bool {
+	return ev.Kind == engine.KindCall && ev.Op == ops.OpRelease && ev.Event == engine.EvCompleted && str(ev.Data, "node") == node
+}
+
+// heldBack says whether ev is a completed crw.release row of node that the relay held back for an edit overlap.
+func heldBack(ev engine.Event, node string) bool {
+	return releaseOf(ev, node) && !flagOf(ev.Data, "released") && str(ev.Data, "reason") == dagsched.DeferEditOverlap
+}
+
+// releasesOf are the completed crw.release rows of node, in the order of the journal.
+func releasesOf(l *Lab, node string) []engine.Event {
+	var out []engine.Event
+	for _, ev := range l.Events() {
+		if releaseOf(ev, node) {
+			out = append(out, ev)
+		}
+	}
+	return out
+}
+
+// deferWhileHeld is a relay that holds node back defer:edit_overlap while holder holds its regions (released, not yet integrated or
+// closed): the relay's judgment of two nodes the lane admitted together, which the lane cannot see.
+func deferWhileHeld(node, holder string) func(ops.ReleaseRequest, map[string][]ops.LaneRegion) string {
+	return func(req ops.ReleaseRequest, holding map[string][]ops.LaneRegion) string {
+		if _, held := holding[holder]; req.Node == node && held {
+			return dagsched.DeferEditOverlap
+		}
+		return ""
+	}
+}
+
+// waitFor waits until ch is closed, failing the test when it is not within two minutes.
+func waitFor(t *testing.T, ch <-chan struct{}, what string) {
+	select {
+	case <-ch:
+	case <-time.After(2 * time.Minute):
+		t.Errorf("timed out waiting for %s", what)
+	}
+}
+
+// firstRowSeq is the Seq of the first completed row of op for node.
+func firstRowSeq(t *testing.T, l *Lab, op, node string) int {
+	t.Helper()
+	for _, ev := range l.Rows(op) {
+		if str(ev.Data, "node") == node {
+			return ev.Seq
+		}
+	}
+	t.Fatalf("no completed %s row of %s", op, node)
+	return 0
+}
+
+// resumeCompletedZeroLive resumes the completed run of l in a new process: the milestone closes at the same tip, no call runs live,
+// no operation but crw.classify runs live and nothing is superseded.
+func resumeCompletedZeroLive(t *testing.T, l *Lab) {
+	t.Helper()
+	tip := l.Tip()
+	before := l.LastSeq()
+	l.NewProcess("proc-2")
+	got := Value[laneResult](t, l.Resume())
+	if got.State != "closed" || got.Tip != tip {
+		t.Fatalf("resume: %+v, want closed at %s", got, tip)
+	}
+	if live := l.LiveCalls(before); len(live) != 0 {
+		t.Errorf("the resume made %d live calls: %+v", len(live), live)
+	}
+	for _, ev := range rowsAfter(l, before) {
+		if ev.Kind == engine.KindCall && ev.Event == engine.EvCompleted && strings.HasPrefix(ev.Op, "crw.") && ev.Op != "crw.classify" {
+			t.Errorf("an operation ran live: %s at %s", ev.Op, ev.Path)
+		}
+		if ev.Event == engine.EvSuperseded {
+			t.Errorf("a call was superseded: %s %s", ev.Label, ev.Path)
+		}
+	}
+}
+
+// checkDeferredThenReleased says that B was held back once, then released, and landed beside A in a milestone that closed.
+func checkDeferredThenReleased(t *testing.T, l *Lab, got laneResult) {
+	t.Helper()
+	if got.State != "closed" {
+		t.Fatalf("state %q, lanes %+v; calls %v", got.State, got.Lanes, l.Labels())
+	}
+	for _, n := range []string{"A", "B"} {
+		if state, reason := laneOf(t, got, n); state != "landed" {
+			t.Errorf("lane %s: %s %s, want landed", n, state, reason)
+		}
+	}
+	rows := releasesOf(l, "B")
+	if len(rows) != 2 || !heldBack(rows[0], "B") || !flagOf(rows[1].Data, "released") {
+		t.Fatalf("B's release rows %+v, want one held back defer:edit_overlap and then one released", rows)
+	}
+}
+
+// A release the relay held back defer:edit_overlap while another node of the same dag held its regions is the run's own doing: the node
+// is put back to pending, it holds no slot of the lane's cap and no regions while it waits, and it is admitted again once another node of
+// the dag has ended, so it is asked for again after the node that held it back landed (CRW-1467). The order is fixed: B is first asked
+// for after A was released, and A integrates only after the lane script has taken B's held-back answer (B is pending then). A resume of the
+// completed run replays it all: the held-back answer is one the lane asked again after (crw.deferredAsks). A node the relay holds back
+// while no other node of its dag runs, or has ended since it asked, is held back by something else: it ends unreleased, as before.
+func TestSelfCausedEditOverlapDeferReadmitsAfterTheOtherNodeLands(t *testing.T) {
+	t.Run("another node of the dag holds", func(t *testing.T) {
+		l := NewLab(t,
+			NodeSpec{ID: "A", Issue: "CRW-A", Title: "issue A", Regions: []string{"a.go"}},
+			NodeSpec{ID: "B", Issue: "CRW-B", Title: "issue B", Regions: []string{"b.go"}},
+		)
+		l.Cap = 2
+		l.Relay.HoldBackIf = deferWhileHeld("B", "A")
+		aReleased, bPending := make(chan struct{}), make(chan struct{})
+		var aOnce, bOnce sync.Once
+		l.OnRow(func(ev engine.Event) {
+			if releaseOf(ev, "A") && flagOf(ev.Data, "released") {
+				aOnce.Do(func() { close(aReleased) })
+			}
+		})
+		l.OnSettled(func(ev engine.Event) {
+			if heldBack(ev, "B") {
+				bOnce.Do(func() { close(bPending) })
+			}
+		})
+		var mu sync.Mutex
+		startSeq := map[string][]int{}
+		l.Relay.OnRelease = func(req ops.ReleaseRequest) {
+			seq := l.LastSeq()
+			mu.Lock()
+			startSeq[req.Node] = append(startSeq[req.Node], seq)
+			first := len(startSeq[req.Node]) == 1
+			mu.Unlock()
+			if req.Node == "B" && first {
+				waitFor(t, aReleased, "A's release")
+			}
+		}
+		l.Relay.OnIntegrate = func(node string) {
+			if node == "A" {
+				waitFor(t, bPending, "the lane to take B's held-back answer")
+			}
+		}
+		got := mustRunIncomplete(t, l)
+		checkDeferredThenReleased(t, l, got)
+		rows := releasesOf(l, "B")
+		integratedA := firstRowSeq(t, l, ops.OpIntegrate, "A")
+		mu.Lock()
+		asksB := append([]int(nil), startSeq["B"]...)
+		mu.Unlock()
+		if len(asksB) != 2 {
+			t.Fatalf("B was asked for %d times (%v), want twice", len(asksB), asksB)
+		}
+		if !(rows[0].Seq < integratedA && integratedA <= asksB[1]) {
+			t.Errorf("B held back at seq %d, A integrated at %d, B asked again at %d: want B asked again after A landed", rows[0].Seq, integratedA, asksB[1])
+		}
+		resumeCompletedZeroLive(t, l)
+	})
+	// the plan changes while B waits: its next read of the plan is a trigger, and it is released under the revision the signal made. A
+	// resume replays B's held-back answer before its claim waits for that signal (the signal waits for the read after the answer)
+	t.Run("a plan revision between the asks", func(t *testing.T) {
+		l := NewLab(t,
+			NodeSpec{ID: "A", Issue: "CRW-A", Title: "issue A", Regions: []string{"a.go"}},
+			NodeSpec{ID: "B", Issue: "CRW-B", Title: "issue B", Regions: []string{"b.go"}},
+		)
+		l.Cap = 2
+		l.Relay.HoldBackIf = deferWhileHeld("B", "A")
+		aReleased, bPending := make(chan struct{}), make(chan struct{})
+		var aOnce, bOnce sync.Once
+		l.OnRow(func(ev engine.Event) {
+			if releaseOf(ev, "A") && flagOf(ev.Data, "released") {
+				aOnce.Do(func() { close(aReleased) })
+			}
+		})
+		l.OnSettled(func(ev engine.Event) {
+			if heldBack(ev, "B") {
+				bOnce.Do(func() { close(bPending) })
+			}
+		})
+		var asks atomic.Int32
+		l.Relay.OnRelease = func(req ops.ReleaseRequest) {
+			if req.Node == "B" && asks.Add(1) == 1 {
+				waitFor(t, aReleased, "A's release")
+			}
+		}
+		l.Relay.OnIntegrate = func(node string) {
+			if node == "A" {
+				waitFor(t, bPending, "the lane to take B's held-back answer")
+				l.Relay.ChangeNode("B", func(n *NodeSpec) { n.Regions = append(slices.Clone(n.Regions), "b-more/") })
+			}
+		}
+		got := mustRun(t, l)
+		checkDeferredThenReleased(t, l, got)
+		if rev := releaseRevisions(l); rev["B"] != "r1" {
+			t.Fatalf("release revisions %v: B is released under the revision the plan change made", rev)
+		}
+		resumeCompletedZeroLive(t, l)
+	})
+	// C overlaps B, so it is admitted only while B is pending; its RECEIPTs make a re-plan, and B is released under that revision after C
+	// landed. A resume replays B's held-back answer and puts B back to pending, so C runs (and its signal replays) before B claims again
+	t.Run("the node that ran in its place made a revision", func(t *testing.T) {
+		l := NewLab(t,
+			NodeSpec{ID: "A", Issue: "CRW-A", Title: "issue A", Regions: []string{"a.go"}},
+			NodeSpec{ID: "B", Issue: "CRW-B", Title: "issue B", Regions: []string{"b.go"}},
+			NodeSpec{ID: "C", Issue: "CRW-C", Title: "issue C", Regions: []string{"b.go#C"}},
+		)
+		l.Cap = 2
+		mismatching(l, "C")
+		fixedOnce(l, "C")
+		l.Relay.HoldBackIf = deferWhileHeld("B", "A")
+		aReleased, bPending := make(chan struct{}), make(chan struct{})
+		var aOnce, bOnce sync.Once
+		l.OnRow(func(ev engine.Event) {
+			if releaseOf(ev, "A") && flagOf(ev.Data, "released") {
+				aOnce.Do(func() { close(aReleased) })
+			}
+		})
+		l.OnSettled(func(ev engine.Event) {
+			if heldBack(ev, "B") {
+				bOnce.Do(func() { close(bPending) })
+			}
+		})
+		var asks atomic.Int32
+		l.Relay.OnRelease = func(req ops.ReleaseRequest) {
+			if req.Node == "B" && asks.Add(1) == 1 {
+				waitFor(t, aReleased, "A's release")
+			}
+		}
+		l.Relay.OnIntegrate = func(node string) {
+			if node == "A" {
+				waitFor(t, bPending, "the lane to take B's held-back answer")
+			}
+		}
+		got := mustRun(t, l)
+		checkDeferredThenReleased(t, l, got)
+		if rev := releaseRevisions(l); rev["A"] != "r0" || rev["C"] != "r0" || rev["B"] != "r1" {
+			t.Fatalf("release revisions %v: B is released under the revision C's signal made", rev)
+		}
+		if i := slices.Index(l.Relay.Landed, "B"); i < 0 || i < slices.Index(l.Relay.Landed, "C") {
+			t.Errorf("landed %v: B, which overlaps C, lands after it", l.Relay.Landed)
+		}
+		resumeCompletedZeroLive(t, l)
+	})
+	// the node that makes the signal waits for a node that holds the cap: C follows A and overlaps B, so a resume that put B back to running
+	// before A ended would leave C no room to enter and B waiting in its claim for the signal C made (the replay must not hang)
+	t.Run("the node that made the signal follows the node that held B back", func(t *testing.T) {
+		l := NewLab(t,
+			NodeSpec{ID: "A", Issue: "CRW-A", Title: "issue A", Regions: []string{"a.go"}},
+			NodeSpec{ID: "B", Issue: "CRW-B", Title: "issue B", Regions: []string{"b.go"}},
+			NodeSpec{ID: "C", Issue: "CRW-C", Title: "issue C", After: []string{"A"}, Regions: []string{"b.go#C"}},
+		)
+		l.Cap = 2
+		mismatching(l, "C")
+		fixedOnce(l, "C")
+		l.Relay.HoldBackIf = deferWhileHeld("B", "A")
+		aReleased, bPending := make(chan struct{}), make(chan struct{})
+		var aOnce, bOnce sync.Once
+		l.OnRow(func(ev engine.Event) {
+			if releaseOf(ev, "A") && flagOf(ev.Data, "released") {
+				aOnce.Do(func() { close(aReleased) })
+			}
+		})
+		l.OnSettled(func(ev engine.Event) {
+			if heldBack(ev, "B") {
+				bOnce.Do(func() { close(bPending) })
+			}
+		})
+		var asks atomic.Int32
+		l.Relay.OnRelease = func(req ops.ReleaseRequest) {
+			if req.Node == "B" && asks.Add(1) == 1 {
+				waitFor(t, aReleased, "A's release")
+			}
+		}
+		l.Relay.OnIntegrate = func(node string) {
+			if node == "A" {
+				waitFor(t, bPending, "the lane to take B's held-back answer")
+			}
+		}
+		got := mustRun(t, l)
+		checkDeferredThenReleased(t, l, got)
+		if rev := releaseRevisions(l); rev["A"] != "r0" || rev["C"] != "r0" || rev["B"] != "r1" {
+			t.Fatalf("release revisions %v: B is released under the revision C's signal made", rev)
+		}
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			resumeCompletedZeroLive(t, l)
+		}()
+		select {
+		case <-done:
+		case <-time.After(time.Minute):
+			t.Fatal("the resume did not finish: B waits for the signal of C, which cannot enter beside B")
+		}
+	})
+	t.Run("no other node of the dag", func(t *testing.T) {
+		l := NewLab(t, NodeSpec{ID: "A", Issue: "CRW-A", Title: "issue A", Regions: []string{"a.go"}})
+		l.Relay.HoldBackIf = func(ops.ReleaseRequest, map[string][]ops.LaneRegion) string { return dagsched.DeferEditOverlap }
+		got := mustRunIncomplete(t, l)
+		if got.State != "incomplete" {
+			t.Fatalf("state %q, lanes %+v", got.State, got.Lanes)
+		}
+		if state, reason := laneOf(t, got, "A"); state != "unreleased" || reason != dagsched.DeferEditOverlap {
+			t.Errorf("lane A: %s %s, want unreleased %s", state, reason, dagsched.DeferEditOverlap)
+		}
+		if rows := releasesOf(l, "A"); len(rows) != 1 {
+			t.Errorf("A's release rows %+v, want the one held back", rows)
+		}
+	})
+}
+
+// The node the relay held back is re-admitted when another node of the dag ends after the answer, also when that node ended before the
+// lane script took the answer: the count of ended nodes the node compares with is the one of its ask, not of the moment it reads the
+// answer. Here the row of B's held-back answer is written, and the lane takes it only after A's lane has run to its end (A integrated,
+// and the script went on from that answer): no other node runs when B reads its answer, and B is asked for again all the same.
+func TestSelfCausedDeferReadmitsWhenTheOtherNodeEndsBeforeTheAnswerIsProcessed(t *testing.T) {
+	l := NewLab(t,
+		NodeSpec{ID: "A", Issue: "CRW-A", Title: "issue A", Regions: []string{"a.go"}},
+		NodeSpec{ID: "B", Issue: "CRW-B", Title: "issue B", Regions: []string{"b.go"}},
+	)
+	l.Cap = 2
+	l.Relay.HoldBackIf = deferWhileHeld("B", "A")
+	aReleased, bWritten, aEnded := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	var aOnce, bOnce, endOnce sync.Once
+	var mu sync.Mutex
+	var order []string
+	l.OnRow(func(ev engine.Event) {
+		if releaseOf(ev, "A") && flagOf(ev.Data, "released") {
+			aOnce.Do(func() { close(aReleased) })
+		}
+		// the answer is written; the lane gets it only once A's lane has ended
+		if heldBack(ev, "B") {
+			first := false
+			bOnce.Do(func() { first = true; close(bWritten) })
+			if first {
+				waitFor(t, aEnded, "A's lane to end")
+			}
+		}
+	})
+	l.OnSettled(func(ev engine.Event) {
+		switch {
+		case ev.Op == ops.OpIntegrate && str(ev.Data, "node") == "A":
+			mu.Lock()
+			order = append(order, "A integrated")
+			mu.Unlock()
+			endOnce.Do(func() { close(aEnded) })
+		case heldBack(ev, "B"):
+			mu.Lock()
+			order = append(order, "B held back")
+			mu.Unlock()
+		}
+	})
+	asks := 0
+	l.Relay.OnRelease = func(req ops.ReleaseRequest) {
+		if req.Node != "B" {
+			return
+		}
+		mu.Lock()
+		asks++
+		first := asks == 1
+		mu.Unlock()
+		if first {
+			waitFor(t, aReleased, "A's release")
+		}
+	}
+	l.Relay.OnIntegrate = func(node string) {
+		if node == "A" {
+			waitFor(t, bWritten, "B's held-back answer")
+		}
+	}
+	got := mustRunIncomplete(t, l)
+	checkDeferredThenReleased(t, l, got)
+	mu.Lock()
+	seen := append([]string(nil), order...)
+	mu.Unlock()
+	if len(seen) < 2 || seen[0] != "A integrated" || seen[1] != "B held back" {
+		t.Errorf("the script went on from %v, want A's integration before B's held-back answer", seen)
+	}
+	resumeCompletedZeroLive(t, l)
+}
+
+// A node that waits in its claim for the regions of a node that the relay then holds back is woken: B is running and has not claimed
+// when a signal's refresh gives it regions that overlap A's, which A holds as it asks for its release, so B waits in its claim. The relay
+// holds A back; A gives up its claim and goes pending, and B, woken, claims and runs. A is admitted again after B ended. Both land.
+func TestSelfCausedDeferWakesTheNodeWaitingInClaim(t *testing.T) {
+	l := NewLab(t,
+		NodeSpec{ID: "A", Issue: "CRW-A", Title: "issue A", Regions: []string{"a/"}},
+		NodeSpec{ID: "B", Issue: "CRW-B", Title: "issue B", Regions: []string{"b/"}},
+	)
+	l.Cap = 2
+	// the re-plan of the plan revision gives B A's directory
+	l.On("^replan:", func(*Call) *fakehostPlan {
+		d := l.designFor()
+		for i := range d.Issues {
+			if d.Issues[i].Node == "B" {
+				d.Issues[i].EditRegions = []string{"a/"}
+			}
+		}
+		p := Say(d)
+		return &p
+	})
+	var aAsks atomic.Int32
+	changed, bWaits := make(chan struct{}), make(chan struct{})
+	var waitOnce sync.Once
+	var doneSeq atomic.Int64
+	l.OnRow(func(ev engine.Event) {
+		if ev.Kind == engine.KindCall && ev.Op == "crw.signalDone" && ev.Event == engine.EvCompleted && doneSeq.Load() == 0 {
+			doneSeq.Store(int64(ev.Seq))
+		}
+	})
+	// the judgment of B's new regions comes after the signal's done row; when the script went on from it, the refresh gave B its regions,
+	// the signal is decided and B, which overlaps A now, waits in its claim
+	l.OnSettled(func(ev engine.Event) {
+		if ev.Op == "crw.regionsOverlap" && ev.Event == engine.EvCompleted && doneSeq.Load() > 0 && int64(ev.Seq) > doneSeq.Load() {
+			waitOnce.Do(func() { close(bWaits) })
+		}
+	})
+	l.Relay.OnRelease = func(req ops.ReleaseRequest) {
+		switch req.Node {
+		case "A":
+			if aAsks.Add(1) == 1 {
+				// A claimed and is asking: the plan changes B's slice, so B is not released and reads the plan again (a trigger)
+				l.Relay.ChangeNode("B", func(n *NodeSpec) { n.Regions = append(slices.Clone(n.Regions), "b-more/") })
+				close(changed)
+				waitFor(t, bWaits, "B to wait in its claim")
+			}
+		case "B":
+			waitFor(t, changed, "the plan change")
+		}
+	}
+	l.Relay.HoldBackIf = func(req ops.ReleaseRequest, _ map[string][]ops.LaneRegion) string {
+		if req.Node == "A" && aAsks.Load() == 1 {
+			return dagsched.DeferEditOverlap
+		}
+		return ""
+	}
+	got := mustRun(t, l)
+	if got.State != "closed" {
+		t.Fatalf("state %q, lanes %+v; calls %v; escalations %v", got.State, got.Lanes, l.Labels(), escalationReasons(l))
+	}
+	for _, n := range []string{"A", "B"} {
+		if state, reason := laneOf(t, got, n); state != "landed" {
+			t.Errorf("lane %s: %s %s, want landed", n, state, reason)
+		}
+	}
+	rows := releasesOf(l, "A")
+	if len(rows) != 2 || !heldBack(rows[0], "A") || !flagOf(rows[1].Data, "released") {
+		t.Fatalf("A's release rows %+v, want one held back and then one released", rows)
+	}
+	if !slices.Equal(l.Relay.Landed, []string{"B", "A"}) {
+		t.Errorf("landed %v, want B, then A", l.Relay.Landed)
+	}
+}
+
+// A release held back twice and asked again after each answer is proven up to the last ask: a resume replays both held-back answers
+// in the order the record has them (crw.deferredAsks), whatever the order the other lanes replay in, and asks the relay once more, live.
+// First process: A, C and B run at once (cap 3); the relay holds B back while A holds. B's first answer comes while A and C run (B goes
+// pending), C lands (B is asked again), the second answer comes while A still holds (B goes pending again), A lands (B is asked a third
+// time), and the process dies inside that third relay call, which leaves no row. Second process: the replays of C's and A's integrations
+// and of B's first plan read are held, then settled in that order, so both other lanes have ended before B asks for its first release:
+// no other node runs and none ended since the ask, and only the record says that B was asked again after that answer.
+func TestTwiceDeferredReleaseIsAskedAgainOnResume(t *testing.T) {
+	l := NewLab(t,
+		NodeSpec{ID: "A", Issue: "CRW-A", Title: "issue A", Regions: []string{"a.go"}},
+		NodeSpec{ID: "C", Issue: "CRW-C", Title: "issue C", Regions: []string{"c.go"}},
+		NodeSpec{ID: "B", Issue: "CRW-B", Title: "issue B", Regions: []string{"b.go"}},
+	)
+	l.Cap = 3
+	l.Relay.HoldBackIf = deferWhileHeld("B", "A")
+	aReleased := make(chan struct{})
+	pending := []chan struct{}{make(chan struct{}), make(chan struct{})}
+	var aOnce sync.Once
+	var mu sync.Mutex
+	taken := 0
+	l.OnRow(func(ev engine.Event) {
+		if releaseOf(ev, "A") && flagOf(ev.Data, "released") {
+			aOnce.Do(func() { close(aReleased) })
+		}
+	})
+	l.OnSettled(func(ev engine.Event) {
+		if !heldBack(ev, "B") {
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if taken < len(pending) {
+			close(pending[taken])
+		}
+		taken++
+	})
+	asks := 0
+	killed := false
+	l.Relay.OnRelease = func(req ops.ReleaseRequest) {
+		if req.Node != "B" {
+			return
+		}
+		mu.Lock()
+		asks++
+		first := asks == 1
+		mu.Unlock()
+		if first {
+			waitFor(t, aReleased, "A's release")
+		}
+	}
+	l.Relay.ReleaseErr = func(node string) error {
+		mu.Lock()
+		third := node == "B" && asks == 3 && !killed
+		if third {
+			killed = true
+		}
+		mu.Unlock()
+		if !third {
+			return nil
+		}
+		l.Kill()
+		return fmt.Errorf("the process died inside the relay call")
+	}
+	l.Relay.OnIntegrate = func(node string) {
+		switch node {
+		case "C":
+			waitFor(t, pending[0], "the lane to take B's first held-back answer")
+		case "A":
+			waitFor(t, pending[1], "the lane to take B's second held-back answer")
+		}
+	}
+	l.Run()
+	mu.Lock()
+	wasKilled, asked := killed, asks
+	mu.Unlock()
+	if !wasKilled {
+		t.Fatalf("the process was not killed in B's third relay call; B asked %d times; calls %v", asked, l.Labels())
+	}
+	// what the first process left
+	pathOf := map[string]string{}
+	posOf := map[string]int{}
+	for _, n := range []string{"A", "C"} {
+		for _, ev := range l.Rows(ops.OpIntegrate) {
+			if str(ev.Data, "node") == n {
+				pathOf[n], posOf[n] = ev.Path, ev.Position
+			}
+		}
+		if pathOf[n] == "" {
+			t.Fatalf("%s has no crw.integrate row", n)
+		}
+	}
+	rows := releasesOf(l, "B")
+	if len(rows) != 2 || !heldBack(rows[0], "B") || !heldBack(rows[1], "B") {
+		t.Fatalf("B's release rows %+v, want two held back defer:edit_overlap", rows)
+	}
+	for _, ev := range l.Events() {
+		if ev.Kind == engine.KindCall && ev.Op == ops.OpRelease && ev.Path == rows[1].Path && ev.Position > rows[1].Position {
+			t.Errorf("a crw.release row of B after its second: %+v", ev)
+		}
+		for _, n := range []string{"A", "C"} {
+			if ev.Path == pathOf[n] && ev.Position > posOf[n] {
+				t.Errorf("a row of %s's path after its integration: %s %s at %d", n, ev.Op, ev.Event, ev.Position)
+			}
+		}
+	}
+	firstB := rows[0].CallID
+
+	// the second process: the other lanes end before B asks for its first release
+	before := l.LastSeq()
+	l.Relay.mu.Lock()
+	mark := len(l.Relay.Releases)
+	l.Relay.mu.Unlock()
+	l.NewProcess("proc-2")
+	var hmu sync.Mutex
+	held := map[string]func(){}
+	allHeld := make(chan struct{})
+	l.ReplayHold = func(row engine.Event, settle func()) bool {
+		key := ""
+		switch {
+		case row.Op == ops.OpIntegrate && (str(row.Data, "node") == "A" || str(row.Data, "node") == "C"):
+			key = str(row.Data, "node")
+		case row.Op == "crw.planRead" && str(row.Data, "node") == "B":
+			key = "B"
+		}
+		hmu.Lock()
+		defer hmu.Unlock()
+		if key == "" || held[key] != nil {
+			return false
+		}
+		held[key] = settle
+		if len(held) == 3 {
+			close(allHeld)
+		}
+		return true
+	}
+	go func() {
+		select {
+		case <-allHeld:
+		case <-time.After(2 * time.Minute):
+			t.Errorf("the replays of C's and A's integrations and of B's plan read were not all held")
+			return
+		}
+		hmu.Lock()
+		defer hmu.Unlock()
+		for _, k := range []string{"C", "A", "B"} {
+			held[k]()
+		}
+	}()
+	res := l.Resume()
+	final := Value[laneResult](t, res)
+	if final.State != "closed" {
+		t.Fatalf("resume: %+v; calls %v", final, l.Labels())
+	}
+	if state, reason := laneOf(t, final, "B"); state != "landed" {
+		t.Errorf("lane B: %s %s, want landed", state, reason)
+	}
+	l.Relay.mu.Lock()
+	var live []ops.ReleaseRequest
+	for _, r := range l.Relay.Releases[mark:] {
+		if r.Node == "B" {
+			live = append(live, r)
+		}
+	}
+	l.Relay.mu.Unlock()
+	if len(live) != 1 {
+		t.Errorf("B's release was asked of the relay %d times in the resume, want once", len(live))
+	}
+	if after := releasesOf(l, "B"); len(after) == 0 || !flagOf(after[len(after)-1].Data, "released") {
+		t.Errorf("B's last release row %+v is no release", after)
+	}
+	superseded := supersededCalls(l, before)
+	if superseded[firstB] {
+		t.Errorf("B's first held-back release was superseded")
+	}
+	for _, ev := range rowsAfter(l, before) {
+		for _, n := range []string{"A", "C"} {
+			if ev.Path != pathOf[n] {
+				continue
+			}
+			if ev.Event == engine.EvSuperseded {
+				t.Errorf("a row of %s's path was superseded: %s %s", n, ev.Op, ev.Label)
+			}
+			if ev.Kind == engine.KindCall && ev.Event == engine.EvCompleted && strings.HasPrefix(ev.Op, "crw.") && ev.Op != "crw.classify" {
+				t.Errorf("an operation of %s ran live: %s", n, ev.Op)
+			}
+		}
+	}
+	for _, c := range l.LiveCalls(before) {
+		if strings.Contains(c.Label, ":A:") || strings.Contains(c.Label, ":C:") {
+			t.Errorf("the resume ran %q live", c.Label)
+		}
 	}
 }

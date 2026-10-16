@@ -113,6 +113,9 @@ const noSignals = { receipt() {}, plan() {} }
 // before Relay.Release, whose release commit compares the node's slice of that plan again (CRW-1288)
 const PINNED = { pinned: true }
 
+// the reason of a release the relay held back because its edit regions overlap regions a node it holds released has (dagsched)
+const DEFER_EDIT_OVERLAP = 'defer:edit_overlap'
+
 // admit holds a lane back from its release while a signal is being decided, for a lane that an earlier process released under a
 // revision a signal made until that signal is decided, and for a lane whose plan read was a trigger until the signal that took the
 // trigger is decided, or until the signal in flight that read the very plan it read is decided. ask counts the lane's asks for its
@@ -229,7 +232,8 @@ async function signalPath(S, ms, onSignal) {
 // reads them without an operation of its own, and a pair it has no answer for overlaps. Every judgment is an operation on the path of
 // dag's caller or of the signal path, made in an order and with arguments that only the plan, the DESIGN and the signals' results
 // decide, never the order the lanes ran in.
-// A node whose predecessor did not land is not started: its result is blocked. The result is the list of the lanes' results in
+// A node the relay held back for an edit overlap that a node of the dag may hold is pending again until another node has ended
+// (CRW-1467, in the lane below). A node whose predecessor did not land is not started: its result is blocked. The result is the list of the lanes' results in
 // the order of opts.nodes. The lane function is called with the node, its release and an object whose receipt(result) reports the
 // RECEIPT of an executor call to the signal path (opts.onSignal; a dag without one has none). A node reads the plan (crw.planRead) before
 // its release when there is a signal path, and every release compares the plan with the one the audited DESIGN stands on.
@@ -242,13 +246,21 @@ export async function dag(planId, lane, opts) {
   const state = {}
   const gates = {}
   const blockedBy = {}
+  const newGate = () => {
+    const gate = {}
+    gate.promise = new Promise((resolve) => { gate.open = resolve })
+    return gate
+  }
   for (const n of nodes) {
     byId[n.id] = n
     state[n.id] = 'pending'
-    const gate = {}
-    gate.promise = new Promise((resolve) => { gate.open = resolve })
-    gates[n.id] = gate
+    gates[n.id] = newGate()
   }
+  // ended counts the lanes that ended after they ran; deferredAt is, for a node the relay held back for an edit overlap that another
+  // node of the dag may hold (it is pending again), the count of the node's ask: it is admitted again once a node ended after that ask
+  // (-1 for an answer the record asked again after: it waits for no end)
+  let ended = 0
+  const deferredAt = {}
   // a node waits for nodes that wait for it would never start: the plan is a DAG, and a script that is given another shape says so
   const visiting = {}
   const visit = (id, trail) => {
@@ -318,9 +330,13 @@ export async function dag(planId, lane, opts) {
   // after the scheduler admitted the node, so the node is checked against the nodes that hold theirs once more.
   const claimed = {}
   const clashes = (n) => nodes.some((o) => o !== n && claimed[o.id] && state[o.id] === 'running' && overlaps(o.regions, n.regions))
-  async function claim(n, ask) {
+  // seen is the node's held-back answers (defer:edit_overlap) so far: the recorded release is the answer of the ask after the recorded ones
+  // too (crw.deferredAsks), so an ask before them, which replays one of them, does not wait for the signal of the recorded release's
+  // revision (that signal may wait for the plan read after a held-back answer)
+  async function claim(n, ask, seen) {
+    const recordedAsk = seen >= crw.deferredAsks(n.id) ? ask : -1
     while (true) {
-      if (!(await admit(S, n.id, ask)) || S.halted) return false
+      if (!(await admit(S, n.id, recordedAsk)) || S.halted) return false
       if (S.holds()) continue
       if (!clashes(n)) {
         claimed[n.id] = true
@@ -329,11 +345,13 @@ export async function dag(planId, lane, opts) {
       await S.wait()
     }
   }
+  // the order the pump offers the nodes in: the scheduler's, a node that is pending again after a held-back release last
+  const offered = () => nodes.filter((n) => deferredAt[n.id] === undefined).concat(nodes.filter((n) => deferredAt[n.id] !== undefined))
   function pump() {
     let again = true
     while (again) {
       again = false
-      for (const n of nodes) {
+      for (const n of offered()) {
         if (state[n.id] !== 'pending') continue
         if (S && S.halted) {
           // a milestone that was halted starts no more nodes
@@ -353,12 +371,18 @@ export async function dag(planId, lane, opts) {
           continue
         }
         if (S && S.recordedPending && !S.allowed[n.id]) continue
+        // a node held back for an edit overlap waits until another node has ended since it asked
+        if (deferredAt[n.id] !== undefined && ended <= deferredAt[n.id]) continue
+        // a replayed re-admission (-1) comes after every pending node that overlaps it and does not wait for it: that node may be the one
+        // that made the signal the re-admitted node's claim waits for, and it cannot enter beside the node (CRW-1467)
+        if (deferredAt[n.id] === -1 && nodes.some((o) => o !== n && state[o.id] === 'pending' && deferredAt[o.id] === undefined && !waitsFor(o.id)[n.id] && overlaps(o.regions, n.regions))) continue
         // no node is admitted while a signal is decided: what it makes (a revision, the regions of its nodes) is what the admission reads
         if (S && S.holds()) continue
         const running = active()
         if (running.length >= cap) continue
         if (running.some((r) => overlaps(r.regions, n.regions))) continue
         state[n.id] = 'running'
+        delete deferredAt[n.id]
         gates[n.id].open(true)
       }
     }
@@ -377,17 +401,51 @@ export async function dag(planId, lane, opts) {
       // and the release waits for the signal that comes of it, which re-plans and audits a delta for that plan or keeps the revision -
       // and asks again; without one the node is not released. A relay refusal while the plan the flow reads again is still the pinned
       // one (relay_plan_changed) raises the run-level hold plan_superseded (CRW-1291): the run does not follow the relay's new revision.
+      //
+      // A release the relay held back for an edit overlap (defer:edit_overlap) while another node of this dag held the regions is the
+      // dag's own doing (CRW-1467): the relay judges by the same rule as the dag, but it sees the nodes it holds released, which the dag
+      // admitted beside this one. The node gives up its claim and asks again: at once when another node ended since it asked (that node may
+      // be the one that held it back, whether it ended before or after the answer came and before the lane read it), otherwise pending
+      // again - it holds no slot of the cap and no regions - until another node has ended. A resume reads, from the record, the held-back
+      // answers the lane asked again after (crw.deferredAsks) and asks again after each of them as the record did, whatever the order the
+      // other lanes replay in: the node is pending again, and the pump takes it after the other pending nodes as soon as the cap and the
+      // regions let it, waiting for no end. A node held back while no other node runs and none ended since it asked is held back by something outside
+      // the dag: it is not released (unreleased), as before. Each re-ask after the record's needs another node to have ended, so a node
+      // asks again at most once for each other node.
       let rel = null
-      for (let ask = 0; ; ask++) {
+      let seen = 0
+      for (let ask = 0; ; ) {
         if (S) {
           S.forLane(n.id).plan(await crw.planRead(opts.milestone, n.id))
-          if (!(await claim(n, ask))) break
+          if (!(await claim(n, ask, seen))) break
         }
+        const askedAt = ended
         rel = await crw.release(planId, n.id, opts.milestone, PINNED)
+        if (!rel.released && rel.reason === DEFER_EDIT_OVERLAP && !rel.hold && rel.kind === 'executor') {
+          const recorded = seen < crw.deferredAsks(n.id)
+          const others = nodes.some((o) => o !== n && state[o.id] === 'running')
+          if (!recorded && !others && ended === askedAt) break
+          seen++
+          claimed[n.id] = false
+          rel = null
+          if (S) S.notify()
+          if (recorded || ended === askedAt) {
+            // pending again: the node holds no slot of the cap and no regions, and the pump takes it after the other pending nodes - a
+            // replayed answer as soon as the cap and the regions let it (a node that ran in its place, and the signal it made, replay
+            // first), a live one once another node has ended since its ask
+            deferredAt[n.id] = recorded ? -1 : askedAt
+            gates[n.id] = newGate()
+            state[n.id] = 'pending'
+            pump()
+            if (!(await gates[n.id].promise)) break
+          }
+          continue
+        }
         if (!S || rel.released || rel.reason !== 'plan_changed') break
         // the node holds no regions while it waits: the revision a re-plan makes may give it others
         claimed[n.id] = false
         rel = null
+        ask++
       }
       if (!rel) {
         out = { node: n.id, state: 'halted', reason: 'signal_halt' }
@@ -400,11 +458,13 @@ export async function dag(planId, lane, opts) {
       }
     } catch (e) {
       state[n.id] = 'ended'
+      ended++
       if (S) S.laneFinished(n.id)
       pump()
       throw e
     }
     state[n.id] = out && out.state === 'landed' ? 'landed' : 'ended'
+    ended++
     if (S) S.laneFinished(n.id)
     pump()
     return out

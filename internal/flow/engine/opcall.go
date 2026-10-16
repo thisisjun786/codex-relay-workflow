@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/dop251/goja"
 )
@@ -57,6 +58,15 @@ type OpResult struct {
 	Data   map[string]any
 }
 
+// SettleObserver is a test seam that production ops do not implement: an Op that implements it is told of every position of it the
+// script went on from, after the promise was settled and the script ran on to its next await (goja runs the promise jobs before the
+// resolve returns), on the loop's goroutine. row is the row the position settled on: the replayed row, or the row this process wrote
+// (a process whose journal took no row hands the row it tried to write). A test orders the lanes by what the script did with an
+// answer, not by when its row was written. Settled must not block.
+type SettleObserver interface {
+	Settled(row Event)
+}
+
 // RequestID is the idempotent request id a recording call sends with: the same for the same call of the same run, so a call
 // sent again after a crash is recognised by whoever recorded it the first time (internal/flow/ops.RequestID is this).
 func RequestID(runID, callID string) string {
@@ -93,7 +103,7 @@ func (e *Engine) opRequestID(callID, op, digest string) string {
 }
 
 // builtinOps are the crw members the engine defines itself.
-var builtinOps = map[string]bool{"classify": true, "clock": true, "tierStep": true, "callFacts": true, "recordedSignal": true, "priorRelease": true}
+var builtinOps = map[string]bool{"classify": true, "clock": true, "tierStep": true, "callFacts": true, "recordedSignal": true, "priorRelease": true, "deferredAsks": true}
 
 // opPrefix is the op name of a registered op's rows.
 const opPrefix = "crw."
@@ -134,12 +144,24 @@ func (s *scriptVM) opCall(name string, call goja.FunctionCall) goja.Value {
 	if prior, ok := e.replayableOp(path, id, label, digest); ok {
 		if proven, _, err := op.Proven(e.ctx, e.j.Events(), prior); err == nil && proven {
 			e.noteReplayed(prior)
-			complete(func() {
-				path.settle(position)
-				if err := resolve(s.fromJSON([]byte(rowStr(prior.Data, "result")))); err != nil {
-					e.failResolve(err)
+			settle := func() {
+				complete(func() {
+					path.settle(position)
+					if err := resolve(s.fromJSON([]byte(rowStr(prior.Data, "result")))); err != nil {
+						e.failResolve(err)
+					}
+					observeSettled(op, prior)
+				})
+			}
+			// a test that orders replays holds this one and settles it later, from any goroutine (Config.ReplayHold); complete is
+			// called at most once (Loop.Begin), and the loop stays alive until then
+			if hold := e.cfg.ReplayHold; hold != nil {
+				var once sync.Once
+				if hold(prior, func() { once.Do(settle) }) {
+					return s.vm.ToValue(promise)
 				}
-			})
+			}
+			settle()
 			return s.vm.ToValue(promise)
 		}
 	}
@@ -156,13 +178,15 @@ func (s *scriptVM) opCall(name string, call goja.FunctionCall) goja.Value {
 		for k, v := range res.Data {
 			data[k] = v
 		}
+		var row Event
 		if err != nil {
 			data["reason"], data["detail"] = "op_failed", err.Error()
-			e.j.Append(Event{RunID: e.runID, Kind: KindCall, CallID: id, Path: path.id, Position: position, Op: label, Label: label, Event: EvRefused, Data: data})
+			row = e.j.Append(Event{RunID: e.runID, Kind: KindCall, CallID: id, Path: path.id, Position: position, Op: label, Label: label, Event: EvRefused, Data: data})
 		} else {
 			data["result"] = string(res.Result)
 			// a commit this process made moves the boundary of its node as a replayed one does
-			e.noteOp(e.j.Append(Event{RunID: e.runID, Kind: KindCall, CallID: id, Path: path.id, Position: position, Op: label, Label: label, Event: EvCompleted, Data: data}))
+			row = e.j.Append(Event{RunID: e.runID, Kind: KindCall, CallID: id, Path: path.id, Position: position, Op: label, Label: label, Event: EvCompleted, Data: data})
+			e.noteOp(row)
 		}
 		if jerr := journalErr(e.j); jerr != nil {
 			e.journalFailed(jerr)
@@ -178,9 +202,17 @@ func (s *scriptVM) opCall(name string, call goja.FunctionCall) goja.Value {
 			if rerr != nil {
 				e.failResolve(rerr)
 			}
+			observeSettled(op, row)
 		})
 	}()
 	return s.vm.ToValue(promise)
+}
+
+// observeSettled tells an op that observes its settled positions (SettleObserver, a test seam) of one.
+func observeSettled(op Op, row Event) {
+	if o, ok := op.(SettleObserver); ok {
+		o.Settled(row)
+	}
 }
 
 // replayableOp is the completed row a resumed run may replay at a position of an op: the path replayed up to it, and the

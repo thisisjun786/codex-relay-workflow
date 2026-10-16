@@ -4097,3 +4097,70 @@ func TestUnitCheckHoldsWithoutAnAcceptedReceipt(t *testing.T) {
 		}
 	})
 }
+
+// CRW-1467: a release the scheduler held back for an edit overlap is proven once the lane asked again after it on its path (a later
+// completed or refused crw.release of the same node): the lane went on from that answer, and a resume replays it. The last held-back
+// answer, with no ask after it, is not proven and asks the relay again; the other not-released rules keep their answers.
+func TestHeldBackReleaseAskedAgainOnItsPathStaysProven(t *testing.T) {
+	w := newWorld(t)
+	op := w.lane.Ops()[NameRelease]
+	row := engine.Event{RunID: "r", Kind: engine.KindCall, CallID: "c_b1", Path: "root/9:B", Position: 1, Op: OpRelease, Event: engine.EvCompleted, Seq: 1,
+		Data: map[string]any{"node": "B", "plan": "p", "released": false, "kind": "executor", "reason": "defer:edit_overlap"}}
+	later := func(mut func(*engine.Event)) engine.Event {
+		ev := engine.Event{RunID: "r", Kind: engine.KindCall, CallID: "c_b3", Path: "root/9:B", Position: 3, Op: OpRelease, Event: engine.EvCompleted, Seq: 5,
+			Data: map[string]any{"node": "B", "plan": "p", "released": true, "kind": "executor"}}
+		if mut != nil {
+			mut(&ev)
+		}
+		return ev
+	}
+	superseded := engine.Event{RunID: "r", Kind: engine.KindCall, CallID: "c_b3", Path: "root/9:B", Position: 3, Op: OpRelease, Event: engine.EvSuperseded, Seq: 6}
+	for _, tc := range []struct {
+		name string
+		ev   []engine.Event
+		want bool
+	}{
+		{"a later completed release of the node", []engine.Event{row, later(nil)}, true},
+		{"a later refused release without node data", []engine.Event{row, later(func(ev *engine.Event) {
+			ev.Event, ev.Data = engine.EvRefused, map[string]any{"reason": "op_failed", "detail": "relay down"}
+		})}, true},
+		{"no later row", []engine.Event{row}, false},
+		{"only a later plan read", []engine.Event{row, later(func(ev *engine.Event) { ev.Op = OpPlanRead })}, false},
+		{"a later release on another path", []engine.Event{row, later(func(ev *engine.Event) { ev.Path = "root/9:C" })}, false},
+		{"a later release of another node", []engine.Event{row, later(func(ev *engine.Event) { ev.Data["node"] = "C" })}, false},
+		{"a later release of another run", []engine.Event{row, later(func(ev *engine.Event) { ev.RunID = "r2" })}, false},
+		{"an earlier release on the path", []engine.Event{later(func(ev *engine.Event) { ev.Position, ev.Seq = 0, 0 }), row}, false},
+		// an earlier process refused the ask at position 3 and a resume ran position 1 again: a resume supersedes no refused row, and
+		// that refusal is no ask after the new answer
+		{"a refused release at a later position written before the answer", []engine.Event{later(func(ev *engine.Event) {
+			ev.Event, ev.Data, ev.Seq = engine.EvRefused, map[string]any{"reason": "op_failed"}, 0
+		}), row}, false},
+		{"a later release that was superseded", []engine.Event{row, later(nil), superseded}, false},
+	} {
+		ok, why, err := op.Proven(context.Background(), tc.ev, row)
+		if err != nil || ok != tc.want {
+			t.Errorf("%s: proven %v (%s) %v, want %v", tc.name, ok, why, err, tc.want)
+		}
+	}
+	// the other not-released rules keep their answers, with a later ask on the path or without one
+	asked := []engine.Event{row, later(nil)}
+	for _, tc := range []struct {
+		reason, kind string
+		want         bool
+	}{
+		{"x", "executor", false},
+		{"defer:no_capacity", "executor", false},
+		{ReasonPlanChanged, "executor", true},
+		{"x", "child", true},
+		{"x", "split", true},
+	} {
+		other := row
+		other.Data = map[string]any{"node": "B", "plan": "p", "released": false, "kind": tc.kind, "reason": tc.reason}
+		for _, ev := range [][]engine.Event{nil, asked} {
+			ok, why, err := op.Proven(context.Background(), ev, other)
+			if err != nil || ok != tc.want {
+				t.Errorf("reason %s kind %s (%d rows): proven %v (%s) %v, want %v", tc.reason, tc.kind, len(ev), ok, why, err, tc.want)
+			}
+		}
+	}
+}

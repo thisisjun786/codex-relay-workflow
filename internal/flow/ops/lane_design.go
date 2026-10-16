@@ -755,6 +755,11 @@ func (o *releaseOp) Proven(ctx context.Context, ev []engine.Event, row engine.Ev
 			}
 			return false, "the hold plan_superseded was lifted", nil
 		}
+		// a node the scheduler held back for an edit overlap that the lane asked for again on its path: the lane went on from this
+		// answer, and the positions after it are what a resume replays (CRW-1467); the last such answer, with no ask after it, asks again
+		if dataStr(row, "reason") == engine.ReleaseDeferEditOverlap && engine.AskedAgain(ev, row) {
+			return true, "the lane asked again after this answer", nil
+		}
 		// a node the scheduler held back may be releasable now: the position asks again
 		return false, "the release did not happen", nil
 	}
