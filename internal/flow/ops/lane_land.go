@@ -70,17 +70,6 @@ func (o *acceptOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResu
 	if !ok {
 		return engine.OpResult{}, &Refusal{"verification_missing", "no passing verification of " + head.Commit + " is recorded for node " + node}
 	}
-	// The basis of the premerge record is the newer, in journal order, of the last verified review of the head and the last unit
-	// check on the head that gave a judgment (CRW-1456): a check that gave none (no answer, quota, a failed tool, a changed
-	// worktree, an invalid answer) is no basis. A later verdict of either kind that withdraws a verified one is the relay's to read.
-	revAt := -1
-	for i := len(r) - 1; i >= 0; i-- {
-		if ev := r[i]; ev.Kind == engine.KindCall && ev.Op == OpReview && ev.Event == engine.EvCompleted && dataStr(ev, "node") == node && dataStr(ev, "head") == head.Commit &&
-			dataStr(ev, "state") == StateVerdict && dataStr(ev, "verdict") == "verified" {
-			revAt = i
-			break
-		}
-	}
 	// The tree of the head, which a check run before the commit names in place of a commit, is read from the journal first: the
 	// commit row of the head, else the land release of the head, else git in the node's worktree. With none of them the tree is
 	// unknown and such a check is on no head; it is resolved once, and only for such a check.
@@ -105,40 +94,54 @@ func (o *acceptOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResu
 		}
 		return tree, nil
 	}
-	ucAt := -1
+	// The basis of the premerge record is the newest judgment of the head in journal order (CRW-1456, CRW-1480): a review of the head
+	// with a verdict of either value, or a unit check on the head that gave a judgment. A check that gave none (no answer, quota, a
+	// failed tool, a changed worktree, an invalid answer) is no judgment, and an older judgment is withdrawn by a newer one: a newest
+	// review that needs changes refuses the acceptance here, before the relay is asked. A sha names the same object in either case,
+	// as the relay's acceptance reads it, so the head and tree of a judgment are compared with strings.EqualFold.
+	judgedAt := -1
 	var uc reviewadapter.Result
-	for i := len(r) - 1; i > revAt; i-- {
+	for i := len(r) - 1; i >= 0 && judgedAt < 0; i-- {
 		ev := r[i]
-		if ev.Kind != engine.KindCall || ev.Op != OpUnitCheck || ev.Event != engine.EvCompleted || dataStr(ev, "node") != node || dataStr(ev, "role") != execution.AgentUnitCheck {
+		if ev.Kind != engine.KindCall || ev.Event != engine.EvCompleted || dataStr(ev, "node") != node {
 			continue
 		}
-		var res reviewadapter.Result
-		if json.Unmarshal(resultOf(ev), &res) != nil || res.State != reviewadapter.StateOK {
-			continue
-		}
-		commit := dataStr(ev, "commit")
-		if commit == "" {
-			commit = dataStr(ev, "head")
-		}
-		onHead := commit == head.Commit
-		if commit == "" && head.Commit != "" {
-			t, err := headTree()
-			if err != nil {
-				return engine.OpResult{}, err
+		switch ev.Op {
+		case OpReview:
+			if dataStr(ev, "state") == StateVerdict && strings.EqualFold(dataStr(ev, "head"), head.Commit) {
+				judgedAt = i
 			}
-			onHead = t != "" && dataStr(ev, "tree") == t
-		}
-		if onHead {
-			ucAt, uc = i, res
-			break
+		case OpUnitCheck:
+			if dataStr(ev, "role") != execution.AgentUnitCheck {
+				continue
+			}
+			var res reviewadapter.Result
+			if json.Unmarshal(resultOf(ev), &res) != nil || res.State != reviewadapter.StateOK {
+				continue
+			}
+			commit := dataStr(ev, "commit")
+			if commit == "" {
+				commit = dataStr(ev, "head")
+			}
+			onHead := strings.EqualFold(commit, head.Commit)
+			if commit == "" && head.Commit != "" {
+				t, err := headTree()
+				if err != nil {
+					return engine.OpResult{}, err
+				}
+				onHead = t != "" && strings.EqualFold(dataStr(ev, "tree"), t)
+			}
+			if onHead {
+				judgedAt, uc = i, res
+			}
 		}
 	}
 	var verdict ReviewVerdict
 	var grader premerge.Grader
 	var criteriaDigest, reviewerCall, basis string
 	switch {
-	case ucAt >= 0:
-		row := r[ucAt]
+	case judgedAt >= 0 && r[judgedAt].Op == OpUnitCheck:
+		row := r[judgedAt]
 		// the receipt the check read, and whether the tool that judged was given it (CRW-1517); a row with no handed is from before
 		// it was recorded, when every unit check took the prompt
 		var receipt UnitCheckReceipt
@@ -158,9 +161,14 @@ func (o *acceptOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResu
 		}
 		verdict, grader = v, premerge.Grader{Model: uc.Model, Effort: uc.Effort, PromptDigest: uc.PromptDigest}
 		criteriaDigest, reviewerCall, basis = dataStr(row, "criteria_digest"), row.CallID, audit.BasisUnitCheck
-	case revAt >= 0:
+	case judgedAt >= 0:
+		row := r[judgedAt]
+		if v := dataStr(row, "verdict"); v != "verified" {
+			return engine.OpResult{}, &Refusal{"reviewer_not_verified", fmt.Sprintf("the newest judgment of %s for node %s is review %s (reviewer call %s), which ruled %q, not verified",
+				head.Commit, node, row.CallID, dataStr(row, "call"), v)}
+		}
 		var rr ReviewResult
-		if err := json.Unmarshal(resultOf(r[revAt]), &rr); err != nil {
+		if err := json.Unmarshal(resultOf(row), &rr); err != nil {
 			return engine.OpResult{}, err
 		}
 		v, err := DecodeVerdict(rr.Verdict)

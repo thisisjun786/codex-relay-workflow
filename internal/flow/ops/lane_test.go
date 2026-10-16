@@ -1833,6 +1833,142 @@ func TestAcceptAssemblesPremergeFromAUnitCheckRecord(t *testing.T) {
 	}
 }
 
+// acceptRows is a lane world for crw.accept read from hand-written rows: node A released with two criteria, a relay that keeps what
+// it is asked to accept, and no git. Its rows are on head (base base) unless a test names another commit.
+type acceptRows struct {
+	*world
+	relay      *acceptCapture
+	head, base string
+}
+
+func newAcceptRows(t *testing.T) *acceptRows {
+	t.Helper()
+	w := newWorld(t)
+	w.relay.plan = planOfNodes(map[string]string{"A": "a1"}, "A")
+	w.relay.plan.Nodes[0].Criteria = []string{"first", "second"}
+	w.ledgered(true, designOf("A"))
+	w.must("release", "plan-1", "A", "M")
+	capture := &acceptCapture{stubRelay: w.relay}
+	w.lane.d.Relay = capture
+	w.lane.d.Git = func(context.Context, string, []string, ...string) (string, error) {
+		return "", errors.New("this test runs no git")
+	}
+	return &acceptRows{world: w, relay: capture, head: strings.Repeat("a", 40), base: strings.Repeat("b", 40)}
+}
+
+func (a *acceptRows) row(op, callID string, data map[string]any) {
+	b, _ := json.Marshal(data)
+	var round map[string]any
+	_ = json.Unmarshal(b, &round)
+	a.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: callID, Op: op, Event: engine.EvCompleted, Data: round})
+}
+
+// committed writes the commit row of the head (tree tree) and its passing verification.
+func (a *acceptRows) committed(tree string) {
+	a.row(OpCommit, "c_commit", map[string]any{"node": "A", "commit": a.head, "parent": a.base, "tree": tree, "result": "{}"})
+	a.row(OpVerify, "c_verify", map[string]any{"node": "A", "head": a.head, "ok": true, "base": a.base, "digest": strings.Repeat("d", 64), "result": "{}"})
+}
+
+// unitCheck writes a completed unit check of verdict verified with no finding; extra names its commit or tree.
+func (a *acceptRows) unitCheck(callID string, extra map[string]any) {
+	res, _ := json.Marshal(map[string]any{"state": "ok", "detail": "", "verdict": "verified", "findings": []any{}, "engine_family": "grok", "model": "grok-4.7-medium",
+		"effort": "medium", "guide_rev": "g1", "prompt_digest": "pd-unit", "fingerprint_before": "t-head", "fingerprint_after": "t-head", "elapsed_ms": 1})
+	data := map[string]any{"role": "unit-check", "node": "A", "execution_id": "exec-A", "criteria_digest": strings.Repeat("c", 64), "result": string(res)}
+	for k, v := range extra {
+		data[k] = v
+	}
+	a.row(OpUnitCheck, callID, data)
+}
+
+// review writes a completed crw.review of the head with a verdict, its reviewer call reviewer.
+func (a *acceptRows) review(callID, reviewer, verdict string) {
+	defects := []any{}
+	if verdict != "verified" {
+		defects = []any{map[string]any{"ref": "f1", "kind": "bug", "severity": "P1", "introduced": true, "file": "x.go", "line": 3, "finding": "it breaks"}}
+	}
+	v, _ := json.Marshal(map[string]any{"verdict": verdict, "criteria": []any{map[string]any{"id": "c1", "met": true, "evidence": "e1"}, map[string]any{"id": "c2", "met": true, "evidence": "e2"}},
+		"defects": defects, "summary": "s"})
+	a.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: reviewer, Op: "agent", Event: engine.EvPrepared,
+		Data: map[string]any{"role": "reviewer", "node": "A", "model": "gpt-x", "effort": "high", "prompt_digest": "pd-" + reviewer}})
+	rr, _ := json.Marshal(ReviewResult{State: StateVerdict, Verdict: v, Findings: []FindingRef{}, Head: a.head, CriteriaDigest: strings.Repeat("e", 64), Call: Brief{CallID: reviewer}})
+	a.row(OpReview, callID, map[string]any{"node": "A", "head": a.head, "criteria_digest": strings.Repeat("e", 64), "state": StateVerdict, "verdict": verdict, "call": reviewer, "result": string(rr)})
+}
+
+// TestAcceptRefusesWhenANewerReviewOnTheHeadNeedsChanges (CRW-1480 item 1): the basis of an acceptance is the newest judgment of the
+// head in journal order, a review with a verdict of either value or a unit check that judged. A review of the head that needs changes,
+// newer than a verified unit check or a verified review of the same head, withdraws them: crw.accept refuses reviewer_not_verified
+// naming that review, and the relay is never asked. In the other order the newer verified judgment is the basis.
+func TestAcceptRefusesWhenANewerReviewOnTheHeadNeedsChanges(t *testing.T) {
+	refused := func(a *acceptRows, what string) {
+		t.Helper()
+		_, err := a.op("accept", "A", a.head)
+		if err == nil || ReasonOf(err.Error()) != "reviewer_not_verified" || !strings.Contains(err.Error(), "c_review2") {
+			t.Errorf("%s: crw.accept %v, want refused reviewer_not_verified naming c_review2", what, err)
+		}
+		if len(a.relay.got) != 0 {
+			t.Errorf("%s: the relay was asked to accept: %+v", what, a.relay.got)
+		}
+	}
+	accepted := func(a *acceptRows, what, basis string) {
+		t.Helper()
+		if _, err := a.op("accept", "A", a.head); err != nil || len(a.relay.got) != 1 || a.relay.got[0].ReviewerCall != basis {
+			t.Errorf("%s: crw.accept %v %+v, want accepted on %s", what, err, a.relay.got, basis)
+		}
+	}
+
+	a := newAcceptRows(t)
+	a.committed("t-head")
+	a.unitCheck("c_uc", map[string]any{"tree": "t-head"})
+	a.review("c_review2", "c_rev2", "needs_changes")
+	refused(a, "a verified unit check, then a review that needs changes")
+
+	a = newAcceptRows(t)
+	a.committed("t-head")
+	a.review("c_review", "c_rev", "verified")
+	a.review("c_review2", "c_rev2", "needs_changes")
+	refused(a, "a verified review, then a review that needs changes")
+
+	a = newAcceptRows(t)
+	a.committed("t-head")
+	a.review("c_review", "c_rev", "verified")
+	a.unitCheck("c_uc", map[string]any{"commit": a.head})
+	a.review("c_review2", "c_rev2", "needs_changes")
+	refused(a, "a review, a unit check, then a review that needs changes")
+
+	a = newAcceptRows(t)
+	a.committed("t-head")
+	a.review("c_review2", "c_rev2", "needs_changes")
+	a.unitCheck("c_uc", map[string]any{"tree": "t-head"})
+	accepted(a, "a review that needs changes, then a verified unit check", "c_uc")
+
+	a = newAcceptRows(t)
+	a.committed("t-head")
+	a.review("c_review2", "c_rev2", "needs_changes")
+	a.review("c_review", "c_rev", "verified")
+	accepted(a, "a review that needs changes, then a verified review", "c_rev")
+}
+
+// TestAcceptTakesAUnitCheckWhoseShaIsUpperCase (CRW-1480 item 4): a unit check names the head by its commit, or before the commit by
+// its tree, and a sha is the same object in either case, as the relay's acceptance reads it (strings.EqualFold): a check that names the
+// head or its tree in upper case is a check of the head.
+func TestAcceptTakesAUnitCheckWhoseShaIsUpperCase(t *testing.T) {
+	tree := strings.Repeat("e", 40)
+	for _, c := range []struct {
+		what  string
+		extra map[string]any
+	}{
+		{"the commit in upper case", map[string]any{"commit": strings.ToUpper(strings.Repeat("a", 40))}},
+		{"the tree in upper case", map[string]any{"tree": strings.ToUpper(tree)}},
+	} {
+		a := newAcceptRows(t)
+		a.committed(tree)
+		a.unitCheck("c_uc", c.extra)
+		if _, err := a.op("accept", "A", a.head); err != nil || len(a.relay.got) != 1 || a.relay.got[0].ReviewerCall != "c_uc" {
+			t.Errorf("a unit check that names %s: crw.accept %v %+v, want accepted on c_uc", c.what, err, a.relay.got)
+		}
+	}
+}
+
 // ---- crw.unitCheck (CRW-1463) ----
 
 // checkReply is one answer of a scripted unit checker: the record it gives, or the Go error it fails with.
