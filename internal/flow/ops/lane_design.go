@@ -89,14 +89,14 @@ func (c Candidate) digest() string {
 	return digestOf(map[string]any{"design": design, "answers": answers})
 }
 
-// independent reports why a call of the family of reviewer is not an independent second opinion of the models: "" when its
+// independent reports why a call of the family of critic is not an independent second opinion of the models: "" when its
 // model family differs from every one of theirs, else the closed reason. A pair that was never read back proves nothing.
-func independent(reviewer string, authors []string) string {
-	if reviewer == "" || len(authors) == 0 {
+func independent(critic string, authors []string) string {
+	if critic == "" || len(authors) == 0 {
 		return "independence_unproven"
 	}
 	for _, a := range authors {
-		if a == "" || execution.ModelFamily(a) == execution.ModelFamily(reviewer) {
+		if a == "" || execution.ModelFamily(a) == execution.ModelFamily(critic) {
 			return engine.ReasonIndependenceRefused
 		}
 	}
@@ -104,12 +104,13 @@ func independent(reviewer string, authors []string) string {
 }
 
 // designAuditOp is crw.designAudit(milestone, round, candidate, architectCall, auditCall): the record of the independent audit of
-// a DESIGN. The auditor is a reviewer of another model family than the architect; only an approved audit lets the DESIGN into the
+// a DESIGN. The auditor is the critic, of another model family than the architect; only an approved audit lets the DESIGN into the
 // ledger, and the executors start only on a ledger revision. A call that did not complete is not an audit: held and unknown hold
 // the milestone, refused escalates, null_model asks the auditor again once, superseded stops.
 type designAuditOp struct{ l *Lane }
 
-// AuditResult is the answer of crw.designAudit.
+// AuditResult is the answer of crw.designAudit. Critic is the auditor's call; an answer an earlier binary journaled named it
+// reviewer, and no reader reads that member.
 type AuditResult struct {
 	State           string         `json:"state"`
 	Reason          string         `json:"reason"`
@@ -117,7 +118,7 @@ type AuditResult struct {
 	CandidateDigest string         `json:"candidate_digest"`
 	Findings        []AuditFinding `json:"findings"`
 	Summary         string         `json:"summary"`
-	Reviewer        Brief          `json:"reviewer"`
+	Critic          Brief          `json:"critic"`
 	Architect       Brief          `json:"architect"`
 }
 
@@ -135,7 +136,7 @@ func (o *designAuditOp) Run(_ context.Context, req engine.OpRequest) (engine.OpR
 	if _, err := DecodeDesign(cand.Design); err != nil && !errors.As(err, &broken) {
 		return engine.OpResult{}, fmt.Errorf("crw.designAudit: the candidate is no DESIGN: %w", err)
 	}
-	res := AuditResult{Round: round, CandidateDigest: cand.digest(), Findings: []AuditFinding{}, Reviewer: call.brief(), Architect: arch.brief()}
+	res := AuditResult{Round: round, CandidateDigest: cand.digest(), Findings: []AuditFinding{}, Critic: call.brief(), Architect: arch.brief()}
 	switch call.Status {
 	case "completed":
 		audit, err := DecodeDesignAudit(call.Output)
@@ -165,7 +166,7 @@ func (o *designAuditOp) Run(_ context.Context, req engine.OpRequest) (engine.OpR
 	}
 	data := map[string]any{
 		"milestone": ms, "round": round, "candidate_digest": res.CandidateDigest, "state": res.State, "reason": res.Reason,
-		"reviewer_call": call.CallID, "architect_call": arch.CallID, "reviewer_model": call.Meta.ConfiguredPair.Model, "architect_model": arch.Meta.ConfiguredPair.Model,
+		"critic_call": call.CallID, "architect_call": arch.CallID, "critic_model": call.Meta.ConfiguredPair.Model, "architect_model": arch.Meta.ConfiguredPair.Model,
 	}
 	if broken != nil && (res.State == AuditApproved || res.State == AuditNeedsChanges) {
 		res.State = AuditNeedsChanges

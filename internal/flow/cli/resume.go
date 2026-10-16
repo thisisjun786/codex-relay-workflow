@@ -222,9 +222,10 @@ type legacyRunError struct{ why string }
 
 func (e *legacyRunError) Error() string { return e.why }
 
-// legacyRun is why a run is a legacy `child` session run ("" when it is not): its rows (engine.LegacyIssueChild: a crw.releaseChild row, a
-// child release whose spawn the old lane decided, a started row of the retired issue lane), or the workflow its spec or its record names
-// (LegacyIssueLaneWorkflow), CRW-1415 (engine.LegacyRun). Its records stay read only: nothing is written to it and it is not resumed.
+// legacyRun is why a run is a legacy run ("" when it is not), engine.LegacyRun: its rows (engine.LegacyJournal: a crw.releaseChild row, a
+// child release whose spawn the old lane decided, a started row of the retired issue lane, CRW-1415; a row of the retired node reviewer or
+// reviewer-final path, CRW-1429), or the workflow its spec or its record names (LegacyIssueLaneWorkflow). Its records stay read only:
+// nothing is written to it and it is not resumed.
 func legacyRun(events []engine.Event, runID, workflow string) string {
 	return engine.LegacyRun(events, runID, workflow)
 }

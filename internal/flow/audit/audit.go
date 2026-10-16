@@ -227,8 +227,8 @@ func Audit(ctx context.Context, reader Reader, events []engine.Event, s Subject)
 // unitCheckRow says why the crw.unitCheck row an acceptance on a unit check names is no basis for it, or "" when it is one: a
 // completed row of the node with role unit-check, row and result state ok, a verified verdict over no blocking finding (the judgment
 // crw.accept takes, UnitCheckVerdict), on the head (its commit, or with no commit its tree equal
-// to the tree the journal records for the head: the commit row of the head, else a land release of it), under the criteria digest
-// of the subject.
+// to the tree the journal records for the head: the commit row of the head, else a land release of it; a sha compared without regard
+// to case), under the criteria digest of the subject.
 func unitCheckRow(events []engine.Event, s Subject) string {
 	if s.ReviewerCall == "" {
 		return "the acceptance names no unit-check call it rests on"
@@ -271,8 +271,10 @@ func unitCheckRow(events []engine.Event, s Subject) string {
 			return fmt.Sprintf("the unit check %s is verified over finding %s (%s %s), which blocks", s.ReviewerCall, f.ID, f.Severity, f.Impact)
 		}
 	}
+	// a sha names the same object in either case, and crw.accept compares the check's commit and tree with strings.EqualFold, so the audit
+	// does too: an acceptance it took is no mismatch for the case of a sha (CRW-1480)
 	if commit := str(row.Data, "commit"); commit != "" {
-		if commit != s.Head {
+		if !strings.EqualFold(commit, s.Head) {
 			return fmt.Sprintf("the unit check %s is of commit %s, the acceptance stands on %s", s.ReviewerCall, commit, s.Head)
 		}
 		return ""
@@ -281,7 +283,7 @@ func unitCheckRow(events []engine.Event, s Subject) string {
 	switch {
 	case tree == "":
 		return fmt.Sprintf("the journal records no tree of the head %s to compare the unit check %s with", s.Head, s.ReviewerCall)
-	case str(row.Data, "tree") != tree:
+	case !strings.EqualFold(str(row.Data, "tree"), tree):
 		return fmt.Sprintf("the unit check %s saw tree %q, the head %s has tree %s", s.ReviewerCall, str(row.Data, "tree"), s.Head, tree)
 	}
 	return ""

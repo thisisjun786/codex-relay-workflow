@@ -81,6 +81,11 @@ func helperCLIProjectArgs(args []string) HelperArgs {
 			parsed.Role = role
 		}
 	case "get", "set":
+		if retiredRole(role) {
+			// the retired key has no settings to show or change; a reset removes an entry an old store still holds (CRW-1450)
+			parsed.Err = fmt.Sprintf("%s: %s (crw role helper reset %s removes an entry the store still holds)", sub, RetiredKeyNotice, role)
+			return parsed
+		}
 		if !storeRole(role) {
 			parsed.Err = fmt.Sprintf("unknown role '%s' (expected %s)", role, helperCLIRoles("|"))
 			return parsed
@@ -229,7 +234,7 @@ func RunHelper(parsed HelperArgs, env host.LookupEnv, nativeHome ...string) Help
 	if parsed.Action == "register" {
 		return helperCLIRegister(parsed.Role, env, nativeHome)
 	}
-	if flowOnlyRole(parsed.Role) {
+	if flowOnlyRole(parsed.Role) || retiredRole(parsed.Role) {
 		return helperCLIFlowRole(parsed, env)
 	}
 	var cfg Config
@@ -265,7 +270,8 @@ func RunHelper(parsed HelperArgs, env host.LookupEnv, nativeHome ...string) Help
 }
 
 // helperCLIFlowRole is get, set and reset of a flow-only key (CRW-1330): the store's write path, and an answer that shows the
-// role as the flow reads it (the stored settings, or the compiled default the flow uses when the store holds none).
+// role as the flow reads it (the stored settings, or the compiled default the flow uses when the store holds none). For the retired
+// key (CRW-1450) it is the reset alone, which removes the entry and answers the notice.
 func helperCLIFlowRole(parsed HelperArgs, env host.LookupEnv) HelperResult {
 	var err error
 	switch parsed.Action {
@@ -276,6 +282,13 @@ func helperCLIFlowRole(parsed HelperArgs, env host.LookupEnv) HelperResult {
 	}
 	if err != nil {
 		return helperCLIFailure(err.Error())
+	}
+	if retiredRole(parsed.Role) {
+		encoded, err := jsnode.Stringify(object{{"role", string(parsed.Role)}, {"retired", true}, {"notice", RetiredKeyNotice}}, "  ")
+		if err != nil {
+			return helperCLIFailure(err.Error())
+		}
+		return HelperResult{Output: string(encoded)}
 	}
 	view, err := flowRoleView(env, parsed.Role)
 	if err != nil {

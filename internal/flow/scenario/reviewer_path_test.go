@@ -2,26 +2,36 @@ package scenario
 
 import (
 	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
 	"os"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/workflows"
 )
 
-// ---- the old reviewer path (kept until Z-1) ----
+// ---- the old reviewer path (the journals of old runs) ----
 
-// The project lane judges a node by its unit check (CRW-1465) and calls no reviewer, but the old reviewer path stays: crw:lib/lane keeps
-// crw.review (the reviewer thread and its record), crw.reviewHalt and crw.exploreEvidence, and crw.accept, the audit and the fix packet
-// keep reading a reviewer's VERDICT, for the journals of old runs. The scenarios of that path that the node lane's tests ran before
-// CRW-1465 run here against it, unchanged but for reviewerLane: the project lane with the node lane of dfc9d675 in place of its own
-// (testdata/reviewer-node-lane.js). Fix round x1436 item 2 (criterion c6: no test is deleted).
+// The project lane judges a node by its unit check (CRW-1465) and calls no reviewer, and the node reviewer's write path is retired
+// (CRW-1447): the lane registers no crw.review, and crw:lib/lane has no crw.review, crw.reviewHalt or crw.exploreEvidence. What reads the
+// rows of that path stays - crw.accept, the audit, the proofs, the tier evidence of old reviews, the explorer of an evidence question and
+// the packets that carry its answers - for the journals of old runs, and so does the legacy refusal of their resume
+// (legacy_reviewer_test.go). The scenarios of that path that the node lane's tests ran before CRW-1465 run here against the old build's
+// node lane (testdata/reviewer-node-lane.js: the node lane of dfc9d675 with the composites of crw:lib/lane of that build) and its
+// crw.review (oldReviewOp): reviewerLane, so an old run's journal is written as the old build wrote it and is read by today's operations
+// and helpers. Fix round x1436 item 2 (criterion c6: no test is deleted).
 
-// reviewerLane has the lab run the project lane with the old reviewer path's node lane: the embedded project lane's text with its node
-// lane (from the comment that opens it to the build phase) replaced by testdata/reviewer-node-lane.js.
+// reviewerLane has the lab run the project lane as the old reviewer path's build did: the embedded project lane's text with its node
+// lane (from the comment that opens it to the build phase) replaced by testdata/reviewer-node-lane.js, VERDICT imported for it, and the
+// old build's crw.review registered.
 func reviewerLane(t *testing.T, l *Lab) {
 	t.Helper()
 	text, err := workflows.Source("project-lane")
@@ -32,12 +42,127 @@ func reviewerLane(t *testing.T, l *Lab) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	const schemas = "import { RECEIPT, "
 	start := bytes.Index(text, []byte("// The lane of one issue node."))
 	end := bytes.Index(text, []byte("\nphase('build')"))
-	if start < 0 || end < start {
-		t.Fatalf("the project lane has no node lane between its opening comment and phase('build') (%d, %d): reviewerLane needs a new marker", start, end)
+	if start < 0 || end < start || !bytes.HasPrefix(text, []byte(schemas)) {
+		t.Fatalf("the project lane has no node lane between its opening comment and phase('build') (%d, %d), or does not open with %q: reviewerLane needs a new marker", start, end, schemas)
 	}
-	l.Source = slices.Concat(text[:start:start], node, text[end:])
+	head := bytes.Replace(text[:start:start], []byte(schemas), []byte("import { VERDICT, RECEIPT, "), 1)
+	l.Source = slices.Concat(head, node, text[end:])
+	l.OldOps = map[string]engine.Op{"review": oldReviewOp{}}
+}
+
+// oldReviewOp is crw.review(node, head, criteriaDigest, call, opts) as the build before CRW-1447 registered it (ops reviewOp of that
+// build), test data that writes the record of an old node reviewer's call: state verdict for a completed call whose answer is a valid
+// VERDICT by a reviewer of another model family than every author of the node, the call's own status otherwise (held, unknown, refused,
+// null_model, superseded). The coverage of the criteria by a verified verdict is not judged here: crw.accept judges it again on the row.
+type oldReviewOp struct{}
+
+func (oldReviewOp) Run(_ context.Context, req engine.OpRequest) (engine.OpResult, error) {
+	var a []json.RawMessage
+	if err := json.Unmarshal(req.Args, &a); err != nil || len(a) < 4 {
+		return engine.OpResult{}, fmt.Errorf("crw.review(node, head, criteriaDigest, call, opts): %v (%d arguments)", err, len(a))
+	}
+	var node, criteria string
+	var head ops.HeadRef
+	var call ops.CallRef
+	var opts struct {
+		Retried bool `json:"retried"`
+	}
+	for i, into := range []any{&node, &head, &criteria, &call, &opts} {
+		if i < len(a) {
+			if err := json.Unmarshal(a[i], into); err != nil {
+				return engine.OpResult{}, fmt.Errorf("crw.review: argument %d: %w", i, err)
+			}
+		}
+	}
+	res := ops.ReviewResult{Verdict: json.RawMessage(`null`), Findings: []ops.FindingRef{}, Head: head.Commit, CriteriaDigest: criteria, Retried: opts.Retried,
+		Call: ops.Brief{CallID: call.CallID, Handle: call.Handle, Status: call.Status, Reason: call.Reason, Role: call.Meta.Role}}
+	var v ops.ReviewVerdict
+	detail := ""
+	switch call.Status {
+	case "completed":
+		var err error
+		if v, err = ops.DecodeVerdict(call.Output); err != nil {
+			res.State, res.Reason, detail = ops.StateNullModel, "verdict_invalid", err.Error()
+			break
+		}
+		if why := oldIndependent(call.Meta.ConfiguredPair.Model, oldAuthorModels(req.Journal.Events(), node)); why != "" {
+			res.State, res.Reason = ops.StateRefused, why
+			break
+		}
+		res.State, res.Verdict = ops.StateVerdict, call.Output
+		for _, d := range v.Defects {
+			res.Findings = append(res.Findings, ops.FindingRef{Ref: d.Ref, Kind: d.Kind, Digest: oldFindingDigest(d)})
+		}
+	case "null_model":
+		res.State, res.Reason = ops.StateNullModel, call.Reason
+	case "held":
+		res.State, res.Reason = ops.StateHeld, call.Reason
+	case "unknown":
+		res.State, res.Reason = ops.StateUnknown, call.Reason
+	case "refused":
+		res.State, res.Reason = ops.StateRefused, call.Reason
+	default:
+		res.State, res.Reason = ops.StateSuperseded, call.Reason
+	}
+	out, err := json.Marshal(res)
+	if err != nil {
+		return engine.OpResult{}, err
+	}
+	return engine.OpResult{Result: out, Data: map[string]any{
+		"node": node, "head": head.Commit, "criteria_digest": criteria, "state": res.State, "reason": res.Reason, "verdict": v.Verdict,
+		"call": call.CallID, "reviewer_model": call.Meta.ConfiguredPair.Model, "defects": len(v.Defects), "retried": opts.Retried, "detail": detail,
+	}}, nil
+}
+
+func (oldReviewOp) Proven(context.Context, []engine.Event, engine.Event) (bool, string, error) {
+	return true, "", nil
+}
+
+// oldAuthorModels are the models of the node's authors as the journal's prepared calls name them: the architect, and the executors of
+// the node.
+func oldAuthorModels(events []engine.Event, node string) []string {
+	var out []string
+	for _, ev := range events {
+		if ev.Kind != engine.KindCall || ev.Op != "agent" || ev.Event != engine.EvPrepared {
+			continue
+		}
+		role := str(ev.Data, "role")
+		if role != "architect" && !((role == "executor" || role == "executor-t1") && str(ev.Data, "node") == node) {
+			continue
+		}
+		model := str(ev.Data, "configured_model")
+		if model == "" {
+			model = str(ev.Data, "model")
+		}
+		if model != "" && !slices.Contains(out, model) {
+			out = append(out, model)
+		}
+	}
+	return out
+}
+
+// oldIndependent is why a reviewer of the model is no independent second opinion of the authors ("" when its family differs from
+// every one of theirs).
+func oldIndependent(reviewer string, authors []string) string {
+	if reviewer == "" || len(authors) == 0 {
+		return "independence_unproven"
+	}
+	for _, a := range authors {
+		if a == "" || execution.ModelFamily(a) == execution.ModelFamily(reviewer) {
+			return engine.ReasonIndependenceRefused
+		}
+	}
+	return ""
+}
+
+// oldFindingDigest says two defects are the same finding: the kind, the place and the words, lower case and one space apart.
+func oldFindingDigest(d ops.Defect) string {
+	words := strings.ToLower(strings.Join(strings.Fields(d.Finding), " "))
+	sum := sha256.Sum256([]byte(strings.Join([]string{d.Kind, d.File, fmt.Sprint(d.Line), words}, "\x00")))
+	return hex.EncodeToString(sum[:])[:16]
 }
 
 // reviews scripts the verdicts of the reviewer calls of a node, one for each round.

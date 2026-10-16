@@ -691,9 +691,6 @@ func (l *laneLab) onTurn(r fakehost.TurnRequest) fakehost.TurnPlan {
 		return labSay(map[string]any{"verdict": "ALIGNED", "misaligned": []any{}})
 	case c.Role == "architect":
 		return labSay(l.design())
-	case c.Role == "reviewer-final":
-		return labSay(map[string]any{"verdict": "verified", "criteria": []any{map[string]any{"id": "c1", "met": true, "evidence": "read the range"}}, "defects": []any{},
-			"alignment": map[string]any{"verdict": "ALIGNED", "drift": []any{}}, "summary": "reviewed the range"})
 	case c.Role == "critic" && strings.HasPrefix(c.Label, "design-audit"):
 		return labSay(map[string]any{"verdict": "approved", "findings": []any{}, "summary": "the DESIGN holds"})
 	case c.Role == "reviewer":

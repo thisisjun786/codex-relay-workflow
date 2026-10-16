@@ -1,22 +1,22 @@
 // crw:lib/lane: the composites of the project lane. Each is a sequence of agent calls and crw operations that the script would
-// otherwise repeat at every site, written once so that the sequence is the same everywhere: crw.dag (the lane scheduler),
-// crw.review (the reviewer call and its record), crw.reviewHalt, crw.explore and crw.exploreEvidence (the explorer fan-out and its
-// record), crw.land (accept, then integrate), crw.evidence (the tier evidence of a node) and crw.milestoneHalt (a milestone that
-// cannot go on).
+// otherwise repeat at every site, written once so that the sequence is the same everywhere: crw.dag (the lane scheduler), crw.explore
+// (the explorer fan-out and its record), crw.land (accept, then integrate), crw.evidence (the tier evidence of a node) and
+// crw.milestoneHalt (a milestone that cannot go on). A node is judged by its unit check (crw.unitCheck, an operation of the host), and
+// no composite calls a reviewer agent (CRW-1447).
 //
 // crw.dag also runs the signal path of a milestone (CRW-1202) when it is given an onSignal function: every RECEIPT of a lane is a
 // trigger, the triggers are taken in the journal's order into one signal at a time, and onSignal decides what the signal comes to
 // (continue, refresh or halt). The signal path is described above dag.
 //
 // install(crw) makes them members of the crw object, next to the operations the host registers (internal/flow/ops): the script
-// then reads as the design writes it, `crw.review(...)`, `crw.land(...)`. A composite is not an operation of its own: it takes no
+// then reads as the design writes it, `crw.dag(...)`, `crw.land(...)`. A composite is not an operation of its own: it takes no
 // position of its path, and every position it uses is that of a call or of an operation it makes, so a resume replays it through
 // the journal like any other code of the script. It reads no variable outside its arguments.
 
-import { FINDINGS, FINDINGS_END, VERDICT } from 'crw:lib/schemas'
+import { FINDINGS, FINDINGS_END } from 'crw:lib/schemas'
 import { evidence } from 'crw:lib/evidence'
-import { explorerPacket, reviewPacket } from 'crw:lib/packets'
-import { closeMilestone, settleReviews } from 'crw:lib/close'
+import { explorerPacket } from 'crw:lib/packets'
+import { closeMilestone } from 'crw:lib/close'
 
 // The executors a project runs at once (docs: at most three, and never more than the region-disjoint ready nodes).
 export const DEFAULT_CAP = 3
@@ -603,59 +603,6 @@ export async function explore(kind, questions, ctx, opts) {
   }
 }
 
-// exploreEvidence is SP-EXPL-3: a verdict with a defect of kind evidence_missing sends its evidence_question to an explorer
-// before the node's next round; its FINDINGS go to the next fix packet and the next reviewer packet. A verdict with no such defect
-// records the skip. The finding is never interpreted again by a model. ctx.head is the committed head the reviewer judged: the
-// explorer's read-only worktree is made at it, so the evidence is about the revision the question was asked of.
-export async function exploreEvidence(node, verdict, ctx) {
-  const questions = verdict.defects
-    .filter((d) => d.kind === 'evidence_missing' && d.evidence_question)
-    .map((d) => ({ id: d.ref, question: d.evidence_question.question, scope: d.file, files_needed: d.evidence_question.files_needed }))
-  return explore('evidence', questions, Object.assign({ node }, ctx || {}))
-}
-
-// review is the reviewer call of a round and its record: a fresh reviewer thread reads the committed head (SP-REV-1) and answers
-// VERDICT, and crw.review's record decides the state of the answer. A reviewer whose answer is null_model is asked once more on a
-// fresh thread; the result of that second call is the result. The state is verdict only for a completed, valid VERDICT of a
-// reviewer of another model family than the node's authors.
-async function review(record, node, plan, head, ci, opts) {
-  const round = opts.round || 1
-  const packet = reviewPacket(node, plan, head, ci, opts)
-  await crw.spawnDecision('REV_1', 'spawn', { node, role: 'reviewer', inputs: { round, head: head.commit } })
-  let call = await agent.call(packet, { agentType: 'reviewer', node, head: head.commit, schema: VERDICT, label: 'review:' + node + ':r' + round })
-  let rv = await record(node, head, plan.criteria_digest, call, {})
-  if (rv.state === 'null_model') {
-    call = await agent.call(packet, { agentType: 'reviewer', node, head: head.commit, schema: VERDICT, label: 'review:' + node + ':r' + round + ':retry' })
-    rv = await record(node, head, plan.criteria_digest, call, { retried: true })
-  }
-  return rv
-}
-
-// reviewHalt takes the review results that are not a verdict, which are never an executor fix and never tier evidence: held and
-// unknown hold the node, refused (independence_refused included) escalates as a configuration fault, null_model - asked twice
-// already - escalates, superseded stops.
-async function reviewHalt(node, rv) {
-  const call = rv.call.callId
-  switch (rv.state) {
-    case 'held':
-      await crw.hold(node, { reason: rv.reason || 'host_infra_unknown', call, source: 'review' })
-      return { node, state: 'held', reason: rv.reason, call }
-    case 'unknown':
-      await crw.hold(node, { reason: 'dispatch_unknown', call, source: 'review' })
-      return { node, state: 'held', reason: 'dispatch_unknown', call }
-    case 'refused': {
-      const esc = await crw.escalate(node, { reason: rv.reason || 'reviewer_refused', call, ask: 'configuration' })
-      return { node, state: 'escalated', reason: rv.reason || 'reviewer_refused', call, escalation: esc.id }
-    }
-    case 'null_model': {
-      const esc = await crw.escalate(node, { reason: 'reviewer_null_model', call, detail: rv.reason || '' })
-      return { node, state: 'escalated', reason: 'reviewer_null_model', call, escalation: esc.id }
-    }
-    default:
-      return { node, state: 'superseded', call }
-  }
-}
-
 // milestoneHalt takes a call of the design phase, of the close or of a re-plan that did not complete, or a gate that failed. held and
 // unknown hold the milestone (a resume goes on when the cause is gone, and runs the same call again as a new turn), superseded
 // stops, and everything else - refused, null_model, a gate that failed or cannot be settled, a QA that is INCONCLUSIVE, a crosscheck
@@ -725,21 +672,16 @@ async function tierStep(mint, node, ev) {
   return { id: recorded.id, checkpoint: recorded.checkpoint }
 }
 
-// install makes the composites members of crw. The operation the host registered as crw.review is the record of a review, and the
-// engine's crw.tierStep mints the id of a step; the composites replace them, calling them for the part they own.
+// install makes the composites members of crw. The engine's crw.tierStep mints the id of a step; the composite replaces it, calling it
+// for the part it owns.
 export function install(host) {
-  const record = host.review
   const mint = host.tierStep
   host.tierStep = (node, ev) => tierStep(mint, node, ev)
   host.dag = dag
   host.explore = explore
-  host.exploreEvidence = exploreEvidence
-  host.review = (node, plan, head, ci, opts) => review(record, node, plan, head, ci, opts || {})
-  host.reviewHalt = reviewHalt
   host.milestoneHalt = milestoneHalt
   host.land = land
   host.closeMilestone = closeMilestone
-  host.settleReviews = settleReviews
   host.evidence = evidence
   host.skip = (rule, info) => host.spawnDecision(rule, 'skip', info || {})
   return host

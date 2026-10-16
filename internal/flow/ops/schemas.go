@@ -27,7 +27,6 @@ const (
 	SchemaReceipt      = "RECEIPT"
 	SchemaVerdict      = "VERDICT"
 	SchemaVerdictBatch = "VERDICT_BATCH"
-	SchemaVerdictFinal = "VERDICT_FINAL"
 	SchemaDesign       = "DESIGN"
 	SchemaDesignAudit  = "DESIGN_AUDIT"
 	SchemaReflection   = "REFLECTION"
@@ -66,9 +65,6 @@ var schemaTexts = map[string]string{
 	SchemaVerdict: `{"type":"object","properties":{` + verdictFieldsJSON + `},"required":["verdict","criteria","defects","summary"],"additionalProperties":false}`,
 	SchemaVerdictBatch: `{"type":"object","properties":{"nodes":{"type":"array","items":{"type":"object","properties":{"node":{"type":"string"},"head":{"type":"string"},"criteria_digest":{"type":"string"},` +
 		verdictFieldsJSON + `},"required":["node","head","criteria_digest","verdict","criteria","defects","summary"],"additionalProperties":false}}},"required":["nodes"],"additionalProperties":false}`,
-	SchemaVerdictFinal: `{"type":"object","properties":{"verdict":{"type":"string","enum":["verified","needs_changes"]},"criteria":{"type":"array","items":` + criterionJSON + `},"defects":{"type":"array","items":` + defectJSON + `},` +
-		`"alignment":{"type":"object","properties":{"verdict":{"type":"string","enum":["ALIGNED","MISALIGNED","NOT_ASSESSED"]},"drift":{"type":"array","items":{"type":"object","properties":{"decision_id":{"type":"string"},"observed":{"type":"string"},"file":{"type":"string"},"line":{"type":"integer"},"affected_nodes":` + textsJSON + `},"required":["decision_id","observed","file","line","affected_nodes"],"additionalProperties":false}}},"required":["verdict","drift"],"additionalProperties":false},` +
-		`"summary":{"type":"string"}},"required":["verdict","criteria","defects","alignment","summary"],"additionalProperties":false}`,
 	SchemaDesign: `{"type":"object","properties":{` +
 		`"decisions":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"evidence":` + textsJSON + `,"change":{"type":"string"},"alternatives":` + textsJSON + `,"assumptions":` + textsJSON + `},"required":["id","evidence","change","alternatives","assumptions"],"additionalProperties":false}},` +
 		`"issues":{"type":"array","items":{"type":"object","properties":{"issue":{"type":"string"},"node":{"type":"string"},"size_fit":{"type":"string","enum":["executor","split","bundle_split"]},"size_reason":{"type":"string"},` +
@@ -319,45 +315,6 @@ func DecodeVerdictBatch(raw []byte) (VerdictBatch, error) {
 		}
 	}
 	return b, nil
-}
-
-// Drift is one observed departure of the integrated range from a decision.
-type Drift struct {
-	DecisionID    string   `json:"decision_id"`
-	Observed      string   `json:"observed"`
-	File          string   `json:"file"`
-	Line          int      `json:"line"`
-	AffectedNodes []string `json:"affected_nodes"`
-}
-
-// Alignment is the milestone-level judgement of reviewer-final.
-type Alignment struct {
-	Verdict string  `json:"verdict"`
-	Drift   []Drift `json:"drift"`
-}
-
-// VerdictFinal is the answer of reviewer-final (F13).
-type VerdictFinal struct {
-	Verdict   string      `json:"verdict"`
-	Criteria  []Criterion `json:"criteria"`
-	Defects   []Defect    `json:"defects"`
-	Alignment Alignment   `json:"alignment"`
-	Summary   string      `json:"summary"`
-}
-
-// DecodeVerdictFinal reads a VERDICT_FINAL. A MISALIGNED alignment names the drift it saw.
-func DecodeVerdictFinal(raw []byte) (VerdictFinal, error) {
-	v, err := decode[VerdictFinal](SchemaVerdictFinal, raw)
-	if err != nil {
-		return v, err
-	}
-	if err := checkDefects("VERDICT_FINAL", v.Defects); err != nil {
-		return v, err
-	}
-	if v.Alignment.Verdict == "MISALIGNED" && len(v.Alignment.Drift) == 0 {
-		return v, fmt.Errorf("VERDICT_FINAL: MISALIGNED names no drift")
-	}
-	return v, nil
 }
 
 // Decision is one decision of a DESIGN.

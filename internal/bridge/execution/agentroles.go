@@ -7,13 +7,15 @@ import (
 	"unicode"
 )
 
-// Agent role names: the seven roles a flow engine runs a call as. They are not the relay's roles (supervisor,
+// Agent role names: the six roles a flow engine runs a call as. They are not the relay's roles (supervisor,
 // parent, child); the policy file declares them in their own sections, agent-roles and agent-aliases.
 const (
-	AgentArchitect     = "architect"
-	AgentExecutor      = "executor"
-	AgentExecutorT1    = "executor-t1"
-	AgentReviewer      = "reviewer"
+	AgentArchitect  = "architect"
+	AgentExecutor   = "executor"
+	AgentExecutorT1 = "executor-t1"
+	AgentReviewer   = "reviewer"
+	// AgentReviewerFinal is the retired role key (CRW-1450) that old journal rows, policy files and role stores carry; no active
+	// list holds it. A policy file's entry or alias row for it loads and is ignored with RetiredRoleKeyNotice.
 	AgentReviewerFinal = "reviewer-final"
 	AgentExplorer      = "explorer"
 	// AgentCritic is the design audit's role (CRW-1434): it audits the architect's design. It came after the other six, so a
@@ -22,7 +24,7 @@ const (
 )
 
 // DefaultCriticPair is the critic's compiled default pair, the one a policy file's agent-roles section that declares no critic
-// gives it (every file written before the critic existed): reviewer-final's pair, on another model family than the architect's
+// gives it (every file written before the critic existed): a gpt pair at xhigh, on another model family than the architect's
 // usual one. It matches the role store's compiled default of the critic key.
 var DefaultCriticPair = RolePair{Model: "gpt-6.1-sol", Effort: "xhigh"}
 
@@ -31,11 +33,18 @@ var DefaultCriticPair = RolePair{Model: "gpt-6.1-sol", Effort: "xhigh"}
 // declares no section for it.
 const AgentUnitCheck = "unit-check"
 
-// AgentRoleNames is the seven agent roles in the order the design lists them, the critic last; every section that iterates
+// AgentRoleNames is the six agent roles in the order the design lists them, the critic last; every section that iterates
 // roles follows it.
-var AgentRoleNames = [...]string{AgentArchitect, AgentExecutor, AgentExecutorT1, AgentReviewer, AgentReviewerFinal, AgentExplorer, AgentCritic}
+var AgentRoleNames = [...]string{AgentArchitect, AgentExecutor, AgentExecutorT1, AgentReviewer, AgentExplorer, AgentCritic}
 
-const supportedAgentRoles = `"architect", "critic", "executor", "executor-t1", "explorer", "reviewer", "reviewer-final"`
+const supportedAgentRoles = `"architect", "critic", "executor", "executor-t1", "explorer", "reviewer"`
+
+// RetiredRoleKeyNotice is what the loader says of the retired reviewer-final key (CRW-1450) a policy file still names: the entry
+// of agent-roles and an agent-aliases row that names it are accepted and ignored. role.RetiredKeyNotice is the same text.
+const RetiredRoleKeyNotice = AgentReviewerFinal + " is a retired role key and is ignored"
+
+// retiredAgentRole reports whether name is the retired role key.
+func retiredAgentRole(name string) bool { return name == AgentReviewerFinal }
 
 // AgentRole is one role of the agent-roles section: its one pair and the Claude model aliases that name its model
 // (a call whose agentType is the role may state its model option as the pair's model or as one of these).
@@ -78,7 +87,7 @@ func (r AliasRow) within(o AliasRow) bool {
 
 // AgentRoles is the agent-roles and agent-aliases sections of a policy file.
 type AgentRoles struct {
-	// Roles holds the seven roles in AgentRoleNames order (a file without a critic has the filled one, DefaultCriticPair).
+	// Roles holds the six roles in AgentRoleNames order (a file without a critic has the filled one, DefaultCriticPair).
 	Roles []AgentRole
 	// Aliases are the rows of the alias table, in the order the file states them; no two overlap unless one is
 	// strictly more specific, so a call matches the most specific row and the order decides nothing.
@@ -121,7 +130,7 @@ func (p Policy) AgentRoles() (AgentRoles, bool) {
 // defaultAliasOf lists, per role, the Claude model aliases that name its model when a file states none.
 var defaultAliasOf = map[string][]string{
 	AgentArchitect: {"opus"}, AgentExecutor: {"haiku"}, AgentExecutorT1: {"sonnet"},
-	AgentReviewer: {"ocx-gpt-6-1-sol"}, AgentReviewerFinal: {"ocx-gpt-6-1-sol"}, AgentExplorer: {"haiku"},
+	AgentReviewer: {"ocx-gpt-6-1-sol"}, AgentExplorer: {"haiku"},
 	AgentCritic: {"ocx-gpt-6-1-sol"},
 }
 
@@ -135,14 +144,13 @@ const AliasAmbiguousHaikuDetail = "alias_ambiguous: model 'haiku' without isolat
 
 // defaultAliasRows is the design's alias table, used when a file declares agent-roles and no agent-aliases. It
 // holds no model name: its keys are the names Claude scripts give a model. The explorer and the critic have no row: a
-// call names them by agentType (a critic row for ocx-gpt-6-1-sol at xhigh would overlap reviewer-final's).
+// call names them by agentType. A call of ocx-gpt-6-1-sol resolves as reviewer whatever its effort.
 func defaultAliasRows() []AliasRow {
 	return []AliasRow{
 		{Key: "opus", Role: AgentArchitect},
 		{Key: "haiku", Isolation: "worktree", Role: AgentExecutor},
 		{Key: "haiku", Refuse: AliasAmbiguous, Detail: AliasAmbiguousHaikuDetail},
 		{Key: "sonnet", Role: AgentExecutorT1},
-		{Key: "ocx-gpt-6-1-sol", Effort: "xhigh", Role: AgentReviewerFinal},
 		{Key: "ocx-gpt-6-1-sol", Role: AgentReviewer},
 	}
 }
@@ -168,17 +176,21 @@ func CanonicalFamily(family string) (string, bool) {
 }
 
 // parseAgentSections reads agent-roles and agent-aliases from the policy document; nil when the file declares neither.
-// filled reports that agent-roles declares no critic, so the critic has its compiled default pair (DefaultCriticPair).
-func parseAgentSections(data object) (declared *AgentRoles, filled bool, err error) {
+// filled reports that agent-roles declares no critic, so the critic has its compiled default pair (DefaultCriticPair). retired names
+// the sections that hold the retired role key (an agent-roles entry, an agent-aliases row naming it), which were skipped.
+func parseAgentSections(data object) (declared *AgentRoles, filled bool, retired []string, err error) {
 	if !has(data, "agent-roles") {
 		if has(data, "agent-aliases") {
-			return nil, false, &PolicyError{"agent-aliases maps onto the agent roles, and this file declares no agent-roles"}
+			return nil, false, nil, &PolicyError{"agent-aliases maps onto the agent roles, and this file declares no agent-roles"}
 		}
-		return nil, false, nil
+		return nil, false, nil, nil
 	}
-	byName, err := parseAgentRoles(data.Get("agent-roles"))
+	byName, retiredEntry, err := parseAgentRoles(data.Get("agent-roles"))
 	if err != nil {
-		return nil, false, err
+		return nil, false, nil, err
+	}
+	if retiredEntry {
+		retired = append(retired, "agent-roles")
 	}
 	if _, ok := byName[AgentCritic]; !ok {
 		byName[AgentCritic] = AgentRole{Name: AgentCritic, Pair: RolePair{Model: DefaultCriticPair.Model, Effort: DefaultCriticPair.Effort}, Aliases: DefaultModelAliases(AgentCritic)}
@@ -190,11 +202,24 @@ func parseAgentSections(data object) (declared *AgentRoles, filled bool, err err
 	}
 	declared.Aliases = defaultAliasRows()
 	if has(data, "agent-aliases") {
-		if declared.Aliases, err = parseAgentAliases(data.Get("agent-aliases")); err != nil {
-			return nil, false, err
+		var retiredRow bool
+		if declared.Aliases, retiredRow, err = parseAgentAliases(data.Get("agent-aliases")); err != nil {
+			return nil, false, nil, err
+		}
+		if retiredRow {
+			retired = append(retired, "agent-aliases")
 		}
 	}
-	return declared, filled, nil
+	return declared, filled, retired, nil
+}
+
+// retiredKeyWarning is the warning of a policy file whose agent sections name the retired role key: which sections, and the notice.
+func retiredKeyWarning(sections []string) string {
+	verb := "names"
+	if len(sections) > 1 {
+		verb = "name"
+	}
+	return fmt.Sprintf("the execution policy's %s %s %s: %s", strings.Join(sections, " and "), verb, AgentReviewerFinal, RetiredRoleKeyNotice)
 }
 
 // criticFilledWarning is the warning of an agent-roles section that declares no critic: the compiled default applies to it.
@@ -210,25 +235,30 @@ func (a *AgentRoles) byName() map[string]AgentRole {
 	return out
 }
 
-// parseAgentRoles reads the agent-roles section: every one of the six roles before the critic, each with exactly one pair, and the
-// critic when the file declares it (a file written before the critic leaves it out; parseAgentSections fills it).
-func parseAgentRoles(declared any) (map[string]AgentRole, error) {
+// parseAgentRoles reads the agent-roles section: every one of the five roles before the critic, each with exactly one pair, and the
+// critic when the file declares it (a file written before the critic leaves it out; parseAgentSections fills it). An entry of the
+// retired role key (a file written before CRW-1450) is skipped unread, and retired reports it.
+func parseAgentRoles(declared any) (roles map[string]AgentRole, retired bool, err error) {
 	section, ok := declared.(object)
 	if !ok {
-		return nil, &PolicyError{"agent-roles must be a JSON object keyed by agent role"}
+		return nil, false, &PolicyError{"agent-roles must be a JSON object keyed by agent role"}
 	}
-	roles := map[string]AgentRole{}
+	roles = map[string]AgentRole{}
 	for _, name := range keys(section) {
+		if retiredAgentRole(name) {
+			retired = true
+			continue
+		}
 		if !slices.Contains(AgentRoleNames[:], name) {
-			return nil, &PolicyError{fmt.Sprintf("%s is not an agent role; supported are %s", repr(name), supportedAgentRoles)}
+			return nil, false, &PolicyError{fmt.Sprintf("%s is not an agent role; supported are %s", repr(name), supportedAgentRoles)}
 		}
 		entry, ok := section.Get(name).(object)
 		if !ok {
-			return nil, &PolicyError{fmt.Sprintf("agent role %s must be an object", repr(name))}
+			return nil, false, &PolicyError{fmt.Sprintf("agent role %s must be an object", repr(name))}
 		}
 		role, err := parseAgentRole(name, entry)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		roles[name] = role
 	}
@@ -239,9 +269,9 @@ func parseAgentRoles(declared any) (map[string]AgentRole, error) {
 		}
 	}
 	if len(missing) > 0 {
-		return nil, &PolicyError{fmt.Sprintf("agent-roles does not declare %s; every agent role has exactly one pair", repr(missing))}
+		return nil, false, &PolicyError{fmt.Sprintf("agent-roles does not declare %s; every agent role has exactly one pair", repr(missing))}
 	}
-	return roles, nil
+	return roles, retired, nil
 }
 
 func parseAgentRole(name string, entry object) (AgentRole, error) {
@@ -309,24 +339,25 @@ func withAliases(role AgentRole, entry object) (AgentRole, error) {
 }
 
 // parseAgentAliases reads the alias table: rows of a key, an optional effort and isolation, and exactly one of a role
-// or a refusal. Two rows may cover a common call only when one of them is strictly more specific.
-func parseAgentAliases(declared any) ([]AliasRow, error) {
+// or a refusal. Two rows may cover a common call only when one of them is strictly more specific. A row that names the retired
+// role key (a file written before CRW-1450) is read and then dropped, and retired reports it: the calls it covered resolve by the
+// other rows.
+func parseAgentAliases(declared any) (rows []AliasRow, retired bool, err error) {
 	list, ok := declared.([]any)
 	if !ok || len(list) == 0 {
-		return nil, &PolicyError{"agent-aliases must be a non-empty list of rows"}
+		return nil, false, &PolicyError{"agent-aliases must be a non-empty list of rows"}
 	}
-	var rows []AliasRow
 	for i, item := range list {
 		where := fmt.Sprintf("agent-aliases row %d", i+1)
 		entry, ok := item.(object)
 		if !ok {
-			return nil, &PolicyError{where + " must be an object"}
+			return nil, false, &PolicyError{where + " must be an object"}
 		}
 		if err := only(entry, []string{"detail", "effort", "isolation", "key", "refuse", "role"}, where); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		if !has(entry, "key") {
-			return nil, &PolicyError{where + " is missing the key"}
+			return nil, false, &PolicyError{where + " is missing the key"}
 		}
 		var row AliasRow
 		fields := []struct {
@@ -339,28 +370,32 @@ func parseAgentAliases(declared any) ([]AliasRow, error) {
 			}
 			value, err := identifier(entry.Get(field.name), "the "+field.name+" of "+where, Maximum)
 			if err != nil {
-				return nil, err
+				return nil, false, err
 			}
 			*field.into = value
 		}
 		if (row.Role == "") == (row.Refuse == "") {
-			return nil, &PolicyError{where + " must state exactly one of role and refuse"}
+			return nil, false, &PolicyError{where + " must state exactly one of role and refuse"}
+		}
+		if retiredAgentRole(row.Role) {
+			retired = true
+			continue
 		}
 		if row.Role != "" && !slices.Contains(AgentRoleNames[:], row.Role) {
-			return nil, &PolicyError{fmt.Sprintf("%s names %s, which is not an agent role; supported are %s", where, repr(row.Role), supportedAgentRoles)}
+			return nil, false, &PolicyError{fmt.Sprintf("%s names %s, which is not an agent role; supported are %s", where, repr(row.Role), supportedAgentRoles)}
 		}
 		if row.Refuse != "" && row.Detail == "" {
 			row.Detail = row.Refuse + ": alias " + row.Key + " is refused by this host's alias table"
 		}
 		if row.Role != "" && row.Detail != "" {
-			return nil, &PolicyError{where + " gives a detail to a row that names a role; only a refusal has guidance"}
+			return nil, false, &PolicyError{where + " gives a detail to a row that names a role; only a refusal has guidance"}
 		}
 		rows = append(rows, row)
 	}
 	if err := checkAliasOverlap(rows); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return rows, nil
+	return rows, retired, nil
 }
 
 // checkAliasOverlap refuses rows that cover a common call without one being strictly more specific than the other.
@@ -424,7 +459,7 @@ func checkAgentRoles(roles map[string]AgentRole, allowed map[string][]string, cr
 	return append(warnings, FamilyOverlaps(pairs, AgentExecutor, AgentExecutorT1)...)
 }
 
-// FamilyOverlaps describes each reviewer role (reviewer, reviewer-final) whose model is of the family of one of the author
+// FamilyOverlaps describes the reviewer role when its model is of the family of one of the author
 // roles named, and the critic when its model is of the architect's family (the critic audits the architect's design, whichever
 // authors are named), in a table of role -> model; a role with no model is not compared. A review is independent only when it
 // comes from another family than the author's, so each overlap is a warning for whoever decided the pairs.
@@ -439,10 +474,8 @@ func FamilyOverlaps(models map[string]string, authors ...string) []string {
 			out = append(out, fmt.Sprintf("agent role %s runs %s, the same model family (%s) as agent role %s on %s; a review is independent only when it comes from another family than the author's", repr(reviewer), repr(models[reviewer]), repr(family), repr(author), repr(models[author])))
 		}
 	}
-	for _, reviewer := range [...]string{AgentReviewer, AgentReviewerFinal} {
-		for _, author := range authors {
-			overlap(reviewer, author)
-		}
+	for _, author := range authors {
+		overlap(AgentReviewer, author)
 	}
 	overlap(AgentCritic, AgentArchitect)
 	return out

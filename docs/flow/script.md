@@ -37,13 +37,14 @@ error. An ad-hoc script has no workflows directory: it imports `crw:lib/<name>` 
 
 `crw flow run` (like every `crw flow` command that resolves calls) reads its role table once, when it starts, from
 the helper role store `CRW_HOME/subagents.json`: the pairs of `architect`, `executor`, `executor-t1`, `reviewer`,
-`reviewer-final`, `explorer` and `critic`, with the code's alias table (see
+`explorer` and `critic`, with the code's alias table (see
 [role-execution-policy.md](../role-execution-policy.md#the-agent-roles-of-a-flow-run)). The execution policy's
 `agent-roles` and `agent-aliases` sections are not read; a file that still declares them is a warning, and one whose
 sections do not parse still loads, with the sections ignored and the loader's reason as another warning. The run record
-keeps the store's path and the canonical digest of the seven pairs, and the warnings of the table (a flow-only key at
-its compiled default, an undecided role, a reviewer on an author's model family, a critic on the architect's). A test with no store runs on the
-fake backend's placeholder table. `crw flow roles` prints the table, the source, the digest and the warnings.
+keeps the store's path and the canonical digest of the six pairs, and the warnings of the table (a flow-only key at
+its compiled default, an undecided role, a reviewer on an author's model family, a critic on the architect's, and the retired role key
+of the `crw.reviewerFinal` op when the store or the policy file still holds it: the key is ignored, takes no pair and is not in the
+digest). A test with no store runs on the fake backend's placeholder table. `crw flow roles` prints the table, the source, the digest and the warnings.
 
 ## File format
 
@@ -134,7 +135,7 @@ target drops to ES2016 (esbuild then lowers async/await to generators) and this 
 | `crw.deferredAsks(node)` | The number of the node's standing `crw.release` rows that the relay held back `defer:edit_overlap` and that the lane asked again after (a later `crw.release` row of the node's path, completed or refused), or 0 for a run that does not resume: the held-back answers a resume replays, which `crw.dag` asks again after as the record did (CRW-1467). A read: it takes no position and writes no row. |
 | `crw.priorRelease(node)` | The release of the node that an earlier process recorded and the journal still stands on, with the revision it was made under, the number of the signal that made that revision and `refused`, the releases of the lane's path before it that compared another plan (`plan_changed`), or `null`. |
 
-`opts` of a call: `agentType` (`architect`, `executor`, `executor-t1`, `reviewer`, `reviewer-final`, `explorer`, `critic`), `schema`,
+`opts` of a call: `agentType` (`architect`, `executor`, `executor-t1`, `reviewer`, `explorer`, `critic`), `schema`,
 `label`, `phase`, `node`, `worktree` or `cwd`, `head`, `resume`, `stepDecision`, `qa` (below), and the Claude-style `model`, `effort` and
 `isolation`. The other `crw.*` members are the operations and composites of [the project lane](#the-project-lane); each operation is an
 `engine.Op` registered in `Config.Ops`, takes a position of its path like a call, and a resume replays it only while its effect still
@@ -164,19 +165,19 @@ do not write), no pending tree (what the call edits there is discarded; it is ne
 ## Roles, pairs and aliases
 
 A fresh call names a role with `agentType`. A role has a fixed model and effort (its pair), a role family (`executor` and
-`executor-t1` form one, `reviewer` and `reviewer-final` form one, `architect`, `explorer` and `critic` are alone) and a sandbox:
+`executor-t1` form one, `architect`, `reviewer`, `explorer` and `critic` are alone) and a sandbox:
 `workspace-write` for `executor` and `executor-t1`, the only roles that write (to their call's own cwd), `read-only` for
-the others. The role table is the helper role store's seven pairs, read once per run (see the policy paragraph of the
+the others. The role table is the helper role store's six pairs, read once per run (see the policy paragraph of the
 run options above); a test with no store runs on the fake backend's placeholder pairs and the same alias table.
 
 - With a role key as `agentType`, a `model` option must be absent, the role's model or an alias of its model family
-  (`haiku`: `executor` and `explorer`; `sonnet`: `executor-t1`; `opus`: `architect`; `ocx-gpt-6-1-sol`: `reviewer`,
-  `reviewer-final` and `critic`); otherwise the call is `refused` with reason `pair_refused`.
+  (`haiku`: `executor` and `explorer`; `sonnet`: `executor-t1`; `opus`: `architect`; `ocx-gpt-6-1-sol`: `reviewer` and
+  `critic`); otherwise the call is `refused` with reason `pair_refused`.
 - A call without a role key is looked up in the alias table by (a non-role `agentType` string, else the `model` alias;
   `effort`; `isolation`), the most specific matching row deciding: `opus` is `architect`; `haiku` with
   `isolation: 'worktree'` is `executor`; `sonnet` is `executor-t1`; `ocx-gpt-6-1-sol` (as `model` or as `agentType`)
-  with `effort: 'xhigh'` is `reviewer-final`, otherwise `reviewer`. No alias row names `critic`: a critic call names it by
-  `agentType`.
+  is `reviewer` at any effort (an `effort: 'xhigh'` is recorded in `requestedPair`, and the thread runs on the reviewer's pair).
+  No alias row names `critic`: a critic call names it by `agentType`.
 - `haiku` without isolation is ambiguous. Claude runs it in a shared checkout; a CRW call has a write cwd of its own that
   no other call shares, so the call is `refused` with reason `policy_refused`, cause `alias_ambiguous` (the intent row
   and the refusal row carry `cause`), and the detail names both fixes: `isolation: 'worktree'` for a build (role
@@ -333,7 +334,7 @@ DESIGN's first audit round is also given the commands of the done conditions of 
 from the body the handoff carries), runs each once and reports its exit code and the tests it ran in the `end_conditions` of its
 answer (`FINDINGS_END`, the one explorer whose schema has the member; every other explorer answers `FINDINGS` with the packet it had
 before, and a milestone's digest leaves `end_condition` out, so a run recorded before CRW-1382 replays its explorer calls and keeps its
-pinned plan on a resume), which the answer carries into the design audit, and a command that failed, ran no test or was not reported is a
+pinned plan on a resume), which the answer carries into the critic's design check, and a command that failed, ran no test or was not reported is a
 warning of the `crw.exploreRecord` row (CRW-1382; never a stop), and a first round that spawns no explorer (a DESIGN with no open
 question to explore) runs none of them, which its `crw.exploreRecord` row records once as the warning `end_condition_not_run` naming each
 command and its issue (CRW-1397; warn only); when a question of the round got an answer (an explorer's findings, or an answer the run has
@@ -353,8 +354,8 @@ or `null (no dispositions reported)`), and the critic raises a rebuttal it does 
 `r0` of the design ledger (`crw.designLedger`); `crw.dag` runs one lane for each node and the signal path of the milestone
 ([The architect's continuity and the re-plan](#the-architects-continuity-and-the-re-plan)); when every lane landed, `crw.closeMilestone` closes the milestone over
 evidence the run makes itself ([The milestone close](#the-milestone-close)); the architect reflects on the integrated range, on its own thread, and a
-reason to re-plan asks it for the whole DESIGN of the milestone again; `crw.settleReviews` audits the reviews behind the
-acceptances against the reviewer threads on the host and archives the threads whose audit passed, and `crw.reportUp` records the report
+reason to re-plan asks it for the whole DESIGN of the milestone again; `auditAcceptances` of `crw:lib/close` audits every
+acceptance against the record it rests on (`crw.audit`, [The milestone close](#the-milestone-close)) and archives nothing, and `crw.reportUp` records the report
 (its delivery is the seam of the issue that owns it); for a bundle, `crw.mergeRequest` asks the parent to merge the pull request of the closed
 milestone ("The bundle's pull request" below). A milestone that cannot go on says why (`crw.milestoneHalt`): a call of the design phase, of the close or of
 a re-plan that did not complete is never read as an approval, a design, a gate, a review or an alignment (`held` and `unknown` hold the milestone, `refused` and
@@ -479,25 +480,16 @@ since nothing reads their effect again, and runs none of them live (journal.md, 
 
 **A split node (CRW-1459).** A node the architect sized `split` names its sub-tasks in the DESIGN (`sub_tasks`, each with an `id`, a `summary`, `edit_regions` and a `done_condition`), and `crw.release` releases it to one executor as any node. Its sub-tasks run in their order on the node's one executor thread: the build does the first (its packet carries `SUB-TASKS`, each marked done or to do, and says to do the first one not done, and only it), and each next one is a turn of the same thread, `subtask:<node>:<tier>:s<k>` (the packet of `subTaskPacket`: the sub-task, its edit regions and its done condition). A `ready` or `self_failed` receipt of a sub-task before the last gets no unit check: the lane commits it as a checkpoint, `crw.commit(node, call, regions)` with the sub-task's `edit_regions` (its `out_of_scope` is recorded against them), with no `crw.unitCheck`, no `crw.verify` and no `crw.land`, and the same thread goes on to the next sub-task. A checkpoint commit is thus the one commit that holds work no check has judged yet; the check of the node's whole change judges it with the rest, and nothing of the node lands before that check. A split node makes one checkpoint `crw.commit` per sub-task before the last and is judged once: the receipt of the last sub-task, and every receipt after it (a fix round), goes, with no uncommitted check, through the node's commit against the plan's regions and its verification, then the one check of the node's whole change, `crw.unitCheck(node, call, {round, final, commit: head, base})` in the committed mode over the range from the verification's `base` to the head against every criterion of the node (the call is the executor call the range ends on, whose receipt is read as an uncommitted check's; the receipt of every other executor call a commit of the range was made from, the checkpoint calls among them, is read too, and one that is not taken holds the node on that call), then its land. A finding of that check goes back to the same thread as a fix round (the round trip cap `UNIT_CHECK_ROUNDS` and the carried findings of the node lane hold for it as for any check), and the fix's work is committed, verified and checked as a whole again; two checks of the whole change in a row that share a finding are the evidence of a tier step. The acceptance rests on that check alone. A sub-task that reported failed is named in the next packet (`REPORTED FAILED`, with the receipt's summary and gap) and is judged with the node; it is no tier evidence. The other states keep their transitions. A fresh thread (a rebuild, the `executor-t1` build after a tier step) starts in a new attempt worktree at the node's last commit, which holds the sub-tasks done, and its packet starts at the first sub-task not done, or, with every sub-task done, is the node's packet over that checkpoint; the uncommitted edits of the sub-task in flight are abandoned with the attempt, as those of every abandoned attempt are. A split with no sub-tasks (a DESIGN recorded before CRW-1435) is released to no executor and goes up as `size_split`.
 
-**Review.** `crw.review(node, plan, head, ci, opts)` is the old reviewer path, kept for the journals of old runs: neither the project
-lane nor `land-head` calls it, nor `crw.reviewHalt` or `crw.exploreEvidence`. It is a fresh reviewer thread over the committed head (SP-REV-1), with the record
-of its answer (`crw.review` row: node, head, criteria digest, state). The state is `verdict` only for a completed, valid `VERDICT` of a
-reviewer whose model family differs from every author of the node (the node's executors and the architect); a `verified` verdict
-names no unmet criterion and no defect that blocks (`premerge.Blocks`: a defect of P0 to P2 whatever its impact, or one whose impact
-is other than `minor_separable`), and a defect of kind `evidence_missing` carries its `evidence_question`. The
-criteria of a plan are `c1` to `cn` in the plan's order (the packets label them so); a `verified` verdict has one entry for each, once
-(`ops.CheckCoverage`), because the premerge record is made of the entries it names and the digest of the whole set is attached to it.
-An answer that breaks those rules is `null_model` (`verdict_invalid`). The other states - `held`, `unknown`, `refused`
-(`independence_refused` included), `null_model`, `superseded` - are the call's own status; a `null_model` reviewer is asked once more
-on a fresh thread, and only the second result is the result. `crw.reviewHalt` takes every state that is not a verdict: `held` and
-`unknown` hold the node, `refused` and a second `null_model` escalate, `superseded` stops; none of them is an executor fix or tier
-evidence. A `needs_changes` verdict with a defect of kind `evidence_missing` sends the question to an explorer (SP-EXPL-3, at most
-two a node) before the next round, read at the committed head the reviewer judged (the call carries `head`), and its `FINDINGS` go into the next fix packet and the next reviewer packet; a verdict without such
-a defect records the skip.
+**Review.** A `crw.review` row is the record of the old reviewer path, which only old runs wrote: a fresh reviewer thread over a
+node's committed head and the record of its `VERDICT` (node, head, criteria digest, state). No operation of that name is registered,
+and no shipped script calls a reviewer for a node. The rows of old runs are read: `crw flow show` and the run readers list the review,
+`crw.accept` takes the newest judgment of the head among the old review rows and the unit checks, and the audit reads an old review's
+acceptance on its reviewer thread ([The milestone close](#the-milestone-close)). A run whose journal holds such a row is refused for every resume and every
+write ([Old runs of the retired review paths](#old-runs-of-the-retired-review-paths)).
 
 **Tier evidence (SP-TIER-1).** `crw:lib/evidence` keeps the evidence of one node and tier from the results the lane feeds it: (a)
-`needs_changes` in two consecutive reviewed rounds with a finding digest in both (`FindingDigest`: kind, file, line and the words of
-the finding), and in the node lane two consecutive unit checks that rule `needs_changes` and share a finding id (file and text, no
+`needs_changes` in two consecutive reviewed rounds with a finding in both: in the node lane two consecutive unit checks that rule
+`needs_changes` and share a finding id (`reviewadapter.FindingID`: file and text, no
 line; a verified check's findings block nothing and are no evidence: what is left of them after the round trips is carried), (b) the required verification failing on two consecutive committed heads, (c) `null_model` on two consecutive executor
 calls of the tier, (d) four reviewed rounds (reviews or unit checks) without a verified verdict. `crw.tierStep` then mints the step decision and
 `crw.stepRecord` appends the `flow_step_decisions` row (the rule, the letter of the evidence, the evidence ids, the head and tree of
@@ -551,7 +543,6 @@ inline (SP-INL-1), reuse an answer (SP-INL-2), skip, refuse or hand a question t
 | `commit(node, call, regions)` | the commit of the call's recorded `pending_tree` (`commit`, `parent`, `tree`, `out_of_scope`, the receipt's outcome and `plan_mismatch`) | the commit is on the history of the node's worktree |
 | `verify(node, head, opts)` | the verification (`ok`, `command`, `digest`, the record); a verification that could not run is `ran: false`, not a failure. With no node, `opts` names the milestone, the command and the base: the verification of the integrated head for the final gate, in a worktree of the repository | always while it ran |
 | `unitCheck(node, call, opts)` | the unit check of the node's work by the review tool, run in Go (no agent call): uncommitted mode over the changes executor call `call` left, or, with `opts.commit` and `opts.base`, committed mode over `base..commit` (with a `call`, the executor call the range ends on: its receipt is read as in uncommitted mode); the `reviewadapter.Result`, the `hold` the lane is to write (`unit_check_quota`, `unit_check_no_answer`, `receipt_*`), `retried`, the judged call and the check's id | always, but a check that names a `hold` (asked again) |
-| `review(node, head, criteriaDigest, call, opts)` | the `ReviewResult` (the old reviewer path) | always |
 | `accept(node, head, opts)` / `integrate(node, head, acceptanceId)` | the acceptance id (`opts.carried`: the findings the node lane carried, each `{id, check}`, read from the record of the check that carried it into the premerge record's defects) / the batch commit and the target tip | the acceptance is active and not stale / the batch commit is on the target |
 | `escalate(node, info)` / `hold(node, info)` | the escalation flow row and, for `tiers_exhausted`, `blocked_scope` and `size_split`, the relay's close of the execution; the hold (the relay is told, nothing is closed) | always |
 | `decide(node, ask)` | whether a `decision_applied` row answers the ask | no applied row has appeared since |
@@ -560,21 +551,20 @@ inline (SP-INL-1), reuse an answer (SP-INL-2), skip, refuse or hand a question t
 | `qaReceipt(milestone, gate, capture, passes, receipt)` | the QA receipt: its state (`PASS`, `REVISE`, `FAIL`, `INCONCLUSIVE`), the head, the calls with their roles and read-back pairs | always |
 | `qaCapture(milestone, gate, capture)` | the capture of the QA call as the later calls read it: each capture with the path it can be opened at (the relative path resolved against the worktree the capture ran in), the identity of the tree the call ended in, and `ok` or the reason the capture cannot be handed on | always |
 | `crosscheck(milestone, gate, opts)` | one round of the crosscheck over the gate's range, run in Go with no agent call (row `crw.crosscheck`): X = `{state, reason, hold, detail, verdict, questions}`, the state `verdict` (V: `verified` or `needs_changes` by `ops.CrosscheckRule`), `held` (`hold`), `refused`, `failed` or `no_verdict` (`reason`); round 1 only | the row is of the same milestone, head, round and evidence round and did not hold |
-| `reviewerFinal(milestone, gate, call, opts)` | the review of reviewer-final over the range (`range`, `criteria_digest`, the alignment); a `verified` answer is a verdict only when it evaluated every criterion of the milestone once, all met, with no defect that blocks. The shipped close does not call it | always |
 | `milestoneClose(milestone, evidence)` / `reportUp(milestone, close)` | the range and the tip the close judged over `{gate, crosscheck}`, and whether the target moved on after the gate; evidence with no verified crosscheck V of the gate's milestone and head is refused `close_unverified` / the report row | the integration target is still the tip the close judged / always |
-| `replanSignals(milestone, opts)` | the two numbers of SP-ARCH-2 and the reasons that stand (`plan_mismatch`, `slice_change`, and at the close `reflection_misaligned`, and `reviewer_final_misaligned` for a reviewer-final alignment, which the shipped close does not hand it) | always |
+| `replanSignals(milestone, opts)` | the two numbers of SP-ARCH-2 and the reasons that stand (`plan_mismatch`, `slice_change`, and at the close `reflection_misaligned`, and `reviewer_final_misaligned` for a MISALIGNED `opts.final`, which the shipped close does not hand it) | always |
 | `currentDesign(milestone)` | the revision that stands, its DESIGN, the handle of the architect thread and the heads the nodes landed with | always |
 | `reflection(milestone, gate, call)` | the architect's REFLECTION over the integrated range: a verdict only for a completed, valid answer; the row moves the architect's handle on | always |
 | `planRead(milestone, node)` | the plan revision a lane reads before its release: the digest of the milestone as the relay has it, its replay-stable observed occurrence, the plan the audited DESIGN stands on (`base`: the plan the current revision was made for, or the one a later signal judged and kept it for), whether it changed, the signal in flight that read this very plan (`judging`), and the position it ran at | stands once the node was released after it, or once a signal row that stands took that occurrence of the changed revision as a trigger; else it reads again |
 | `signalBind(milestone, k, prev, members, attempt)` / `signalDone(milestone, k, outcome)` / `signalClose(milestone, summary)` | the signal row (its triggers, what had started and what had not, the tip of the target, the plan revision read), its result (continue, refresh, halt; the revision it made) and the end of the signal path | always; a resume replays a bind only with the same arguments (`attempt` is `live:<n>` for a recorded signal one of whose triggers ran again, `n` one more than the attempt of the recorded row, so that its arguments are never the recorded ones, also when that row is itself the live attempt of an earlier resume) |
-| `audit(milestone)` / `archive(milestone)` | the audit results of the milestone's acceptances (row `crw.audit`) / the reviewer threads archived and kept | always |
+| `audit(milestone)` / `archive(milestone)` | the audit results of the milestone's acceptances (row `crw.audit`) / the reviewer threads of old review acceptances archived and kept; no shipped script calls `crw.archive` | always |
 
 The composites (`crw:lib/lane` and `crw:lib/close`, made members of `crw` by `install(crw)`; they take no position of their own): `crw.dag`,
-`crw.review`, `crw.reviewHalt`, `crw.explore`, `crw.exploreEvidence`, `crw.land`, `crw.tierStep`, `crw.evidence`, `crw.skip`,
-`crw.closeMilestone`, `crw.settleReviews` and `crw.milestoneHalt`; `crw.review`, `crw.reviewHalt` and `crw.exploreEvidence` are the old
-reviewer path, kept for the journals of old runs, and no shipped script calls them. `crw.dag` takes an `onSignal` function (below). The seams the operations are built on - `Relay` (the scheduler: milestone, release, agent
+`crw.explore`, `crw.land`, `crw.tierStep`, `crw.evidence`, `crw.skip`, `crw.closeMilestone` and `crw.milestoneHalt`; the close's
+`auditAcceptances` and `reportClose` are functions `crw:lib/close` exports. `crw.dag` takes an `onSignal` function (below). The seams the operations are built on - `Relay` (the scheduler: milestone, release, agent
 acceptance and integration, the close of an execution), `Verifier` (`CILocalVerifier` runs `crw-dev ci local` through the verifier's tools of the configuration, [the verifier's tools](../runtime-install.md#the-verifiers-tools)), `Decisions`
-(`StoreDecisions` writes the relay store), `Threads` (the host the close reads the reviewer threads from and archives them on) and
+(`StoreDecisions` writes the relay store), `Threads` (the host the audit reads an old review's reviewer thread from, and the one
+`crw.archive` archives on) and
 `Reporter` (F11) - are interfaces in `internal/flow/ops/seams.go`; the dagsched-backed `Relay` belongs to the run process.
 
 ## Landing a head made outside a run
@@ -678,12 +668,12 @@ cannot be read, or that has dropped the node, releases nothing).
 **The numbers (SP-ARCH-2).** `crw.replanSignals` writes two numbers to the journal: the RECEIPTs that report a `plan_mismatch`, of lanes released under the revision that stands (each call
 once; a RECEIPT of a lane released under an older revision does not count in the new revision's number), and the share of the milestone's nodes whose slice
 digest of the plan now is not the one the revision that stands was made against. The reasons are two plan mismatches, more than a quarter of the slices changed
-(exactly a quarter is not a reason), and, once the milestone closed, a MISALIGNED REFLECTION. The op also counts a MISALIGNED reviewer-final alignment
-(`reviewer_final_misaligned`) when a close hands it one; the shipped close runs the crosscheck and hands it none. One reason is enough, whatever the
+(exactly a quarter is not a reason), and, once the milestone closed, a MISALIGNED REFLECTION. The op also counts a MISALIGNED
+`opts.final` (`reviewer_final_misaligned`) when a caller hands it one; the shipped close runs the crosscheck and hands it none. One reason is enough, whatever the
 alignment says. Every decision - to re-plan, and to skip it with its reason - is a row of `flow_spawn_decisions` (`ARCH_2`).
 
 **The signal path.** `crw.dag(plan, lane, {nodes, milestone, cap, onSignal})` runs the signal path next to the lanes when it is given `onSignal`. The
-RECEIPT of an executor call of a lane is a trigger (`sig.receipt`), and so is a plan revision a lane reads before its release (`crw.planRead` answers `changed` when the plan is another than the one the audited DESIGN stands on, and `judging` when a signal in flight read this very plan; `sig.plan`; the trigger is `plan:<occurrence>:<digest>`, once per observed occurrence). The occurrence names the newest standing observation of another digest, or the first ledger row (journal.md); concurrent reads of the same occurrence coalesce, but P0 → P1 → P2 → P1 takes a new signal for the return to P1. Its lane waits for that signal's decision and any required DESIGN audit, not the earlier signal for P1. Replayed reads and recorded signal members preserve the same identity, including the legacy key of a read recorded without an occurrence. The path `signals:<milestone>` takes the triggers that have arrived, in the order of the
+RECEIPT of an executor call of a lane is a trigger (`sig.receipt`), and so is a plan revision a lane reads before its release (`crw.planRead` answers `changed` when the plan is another than the one the audited DESIGN stands on, and `judging` when a signal in flight read this very plan; `sig.plan`; the trigger is `plan:<occurrence>:<digest>`, once per observed occurrence). The occurrence names the newest standing observation of another digest, or the first ledger row (journal.md); concurrent reads of the same occurrence coalesce, but P0 → P1 → P2 → P1 takes a new signal for the return to P1. Its lane waits for that signal's decision and the critic's design check of any DESIGN it requires, not the earlier signal for P1. Replayed reads and recorded signal members preserve the same identity, including the legacy key of a read recorded without an occurrence. The path `signals:<milestone>` takes the triggers that have arrived, in the order of the
 journal and not the order they finished in, into one signal at a time, and the triggers that arrive while a signal runs are taken together by the next one.
 A signal is `crw.signalBind` (its input: the number `k`, the triggers as (call, digest) and the result digest of the signal before it; the row records what had started and
 what had not - a node has started when a release of it to an executor stands, or the design row that stands sized its issue for a child, a bundle split or a split with no sub-tasks
@@ -700,12 +690,12 @@ replayed enter the first signal that runs again, in the journal's order. A trigg
 revision that stands: a node whose slice is the one that revision was made against keeps its replay and a flow row `release_rebind` says so (its packet is still the one of the
 revision it was built from); any other node is released again under the revision that stands - with a new packet when it had not started, from its first position (the position is live, so
 is every later one of the lane) when it had started and was not accepted - and a node an acceptance rests on is refused (`accepted_node_changed`, with the route: a plan revision with
-`update_node` or `dag-correct`). A milestone that closed with a reason to re-plan is `replanned`: the revision is recorded, the owner thread is asked for the correction issues
-(`crw-add-issue` and a plan revision), and the milestone does not report.
+`update_node` or `dag-correct`). A milestone that closed with a reason to re-plan is `replanned`: the close runs every final step first, the audit and then the report up that carries the gate, the crosscheck and the reflection, and only then the re-plan; the revision is recorded and the owner thread is asked for the correction issues
+(`crw-add-issue` and a plan revision).
 
 **The run process's scheduler (CRW-1277).** The shipped binary installs the lane's operations in the run process (`cmd/crw` assigns
 `cli.OpsFor = cli.SchedulerLane`): `ops.NewLane` over `cli.SchedRelay` (the `Relay` over `internal/relay/dagsched`), `CILocalVerifier`,
-`StoreDecisions`, the host's reviewer threads and the reporter of F11 (`report.Reporter`: the report's rows in the run's journal, the notice
+`StoreDecisions`, the host's threads and the reporter of F11 (`report.Reporter`: the report's rows in the run's journal, the notice
 through `crw manage send-parent` on the relay the run is in), with the run's owner thread as the actor. The
 milestone is the compiled milestone of the crw-plan handoff (`crw-flow-compile-input/1`) the run pinned with `crw flow start --handoff
 FILE` (a night batch pins the one its decision names): the nodes of the plan at the revision the run pinned (`flow_runs.plan_revision`)
@@ -793,7 +783,7 @@ mark is another call on a resume.
 DESIGN, met or not, with its evidence), pass B hunts bugs. The script builds the text of each pass (`crosscheckPacket`: the range, the
 criteria, the decisions, which live in the journal's ledger row and not in the checkout, the lens of the pass and the close rule word for
 word), and the op runs both passes itself, in Go, through the review adapter (`reviewadapter.Adapter` over the engine's command line,
-answering `reviewadapter.AnswerSchema`): no agent call, no reviewer thread and no spawn decision (the close does not call SP-REVF-1).
+answering `reviewadapter.AnswerSchema`): no agent call, no reviewer thread and no spawn decision.
 The op appends the EXECUTOR RECEIPTS section to each prompt: for every node of the milestone it reads the newest completed `crw.unitCheck`
 row of role `unit-check` in the run's journal and its executor receipt (an `accepted` copy is read and its sha256 checked; `not_assigned`,
 and `no_executor` for a node with no unit check in the run, are listed and block nothing), writes the receipt bytes to
@@ -856,7 +846,8 @@ author families and each author with its source, name, model and family, the rec
 
 **The close.** Only a V of `verified` lets the milestone close: `crw.milestoneClose(milestone, {gate, crosscheck: V})` records the tip it
 judged, and refuses, recording no close, evidence whose crosscheck is not a verified V of the gate's milestone and head (and, for a journal
-of a close made before the crosscheck, evidence with no crosscheck whose reviewer-final review is not verified, or evidence with neither):
+of a close made before the crosscheck, evidence with no crosscheck whose `final` member, the old close's `crw.reviewerFinal` review,
+is not verified, or evidence with neither):
 `close_unverified`. When the target is no longer the head the gate judged, the close is judged again from the new head, at most three
 times. A crosscheck that does not verify the range keeps the milestone open, and the close stops:
 
@@ -881,8 +872,11 @@ A closed milestone's result carries V as `crosscheck`, and its report names the 
 ([reporting.md](reporting.md)). What the alignment of the range does is in
 [The architect's continuity and the re-plan](#the-architects-continuity-and-the-re-plan).
 
-**The audit and the archive.** `crw.settleReviews(ms)` runs `crw.audit`, then `crw.archive`. For each acceptance of the milestone on the
-agent path, the audit reads the reviewer call's persistent thread from the host (`thread/turns/list` with `itemsView` full, and
+**The audit.** `auditAcceptances(ms)` of `crw:lib/close` runs `crw.audit` and archives nothing; `reportClose` runs it
+before `crw.reportUp`, which reports the audit with the close. An acceptance on a unit check (basis `unit_check`) rests on no reviewer
+thread: its audit vouches for the `crw.unitCheck` row it names (completed, role `unit-check`, result state `ok`, a verified verdict, of
+the node, on the head, under the criteria digest of the node's release) and reads nothing from the host. For an acceptance of an old
+run on a review, the audit reads the reviewer call's persistent thread from the host (`thread/turns/list` with `itemsView` full, and
 `thread/items/list` for a turn the list returned in summary) and checks that the journal recorded the thread, a turn id and the result
 digest; that the turn is `completed` on the host; that the digest of the last `agentMessage` is the result digest of the journal; that the
 packet the thread was sent names the head and the criteria digest of the acceptance (the `HEAD:` and `CRITERIA DIGEST:` lines of the
@@ -892,9 +886,10 @@ another on its thread records that thread on its prepared row and creates none, 
 turn of the call that started the thread. The result of an acceptance is `ok`, `mismatch`
 (the record and the host differ, or the record is incomplete) or `unobserved` (the host does not list the turn, does not return its items,
 does not answer, or the executor's pair was never read back); unobserved is not a pass. The results are a row `crw.audit` in the journal.
-A mismatch is escalated (`audit_mismatch`). `crw.archive` then archives the reviewer thread of an acceptance only when the newest audit
-row about it says `ok`, reading the rows and not the script; a thread already archived is not archived again, and a host that refuses
-keeps the thread. `crw flow audit` is the same audit on demand.
+A mismatch is escalated (`audit_mismatch`). The `crw.archive` op stays registered for the records of old runs and no shipped script
+calls it: it archives the reviewer thread of an acceptance only when the newest audit row about it says `ok`, reading the rows and not
+the script; a thread already archived is not archived again, and a host that refuses keeps the thread. `crw flow audit` is the same
+audit on demand.
 
 **`crw flow audit`.** `crw flow audit (--run RUN | --acceptance ID) [--milestone M] [--state DIR] [--socket PATH] [--json] [--no-record]`
 opens the relay store the journal of the run is in (an acceptance given alone is looked up in the store), connects to the App Server
@@ -978,7 +973,7 @@ A held row records whether the
 call's packet reached the host (`input_state`: `delivered` or `not_delivered`) and the `codexErrorInfo` verbatim; on a backend
 that places calls an executor's held row also carries `p_held`, the working snapshot of its worktree when the failure was
 classified, and its completed row `pending_tree`, the working snapshot when the turn ended. The run record holds the workflow name, the script digest, the helper digests, the digest of `args`, the meta, and
-the path of the helper role store with the canonical digest of the seven role pairs (`policy_source`, `policy_digest`),
+the path of the helper role store with the canonical digest of the six role pairs (`policy_source`, `policy_digest`),
 the role table's warnings (`policy_warnings`) when it has any, and the `backend` the run's calls run on (`session` or
 `app-server`).
 
@@ -1116,6 +1111,50 @@ the rest of its path are the suffix: its calls end `superseded` with the reason 
 `crw flow resume` goes on with every call that is not settled and not in recovery hold (an intent nobody answered, a hold that was
 cleared, a call that ended held); `crw flow recover` settles a call in recovery hold, and a call it does not accept is a call
 `crw flow resume` takes.
+
+### Old runs of the retired review paths
+
+The project lane judges a node by its unit check, closes a milestone on its crosscheck and audits the acceptances before its report,
+where an old lane called a reviewer for the node, a reviewer for the milestone and archived the reviewer threads after its audit
+(CRW-1429). Over an old run's journal the current script would not replay those positions: it would run them live, and every later
+position of their path after them (the report would be sent twice). So a run whose journal holds a row of those paths is refused
+with a reason (`engine.LegacyJournal`, the code `legacy_issue_child_run` of every legacy refusal) and its records are read. Within the
+rows of its run id, a run is one when its journal holds
+
+- anywhere, a `crw.review` or `crw.reviewerFinal` row: no operation of either name is registered, so only an old script wrote it;
+- anywhere, an agent call of the retired role key of the `crw.reviewerFinal` op, from a lane or from a user workflow: the key names no
+  role, so only an old build called it, and the role is part of a call's input digest, so the call does not replay in any script;
+- in the lane scope, an agent call of role `reviewer`, a completed `crw.spawnDecision` row of a retired rule (`SP-REV-1`, `SP-REV-2`,
+  `SP-REVF-1`, `SP-EXPL-3`: what an old lane wrote before the record of the review, when its process ended in between), or a
+  `crw.archive` row. A `reviewer` call labelled `design-audit:` is the design check of a build before the critic, which ran it with
+  role `reviewer`; the current lane calls the critic at that position;
+- anywhere, the settle shape of the old close: a `crw.archive` row whose path holds a `crw.audit` call at the position right before it,
+  or a `crw.escalate` call there and a `crw.audit` call at the position before that (the audit, the `audit_mismatch` escalation on a
+  mismatch, the archive). It finds an old lane nested under any name and a script that imported `crw:lib/close` and settled that way.
+
+The lane scope is the rows an old built-in lane wrote: the whole run when its started row names `project-lane`, `land-head` or
+`night-batch` (`engine.LegacyLaneWorkflows`), and the subtree of every lane the run nested with `workflow()`: a `workflow_opened` row
+whose label names one of those workflows, `workflow:<name>`, or a `{scriptPath}` whose base name without `.js` is one (a script nests
+a sibling file by its name). The subtree is every row whose path is the child path of that position (`<parent>/<position>:workflow`)
+or lies under it; a nested lane writes under its parent's run id and has no started row of its own. Outside the lane scope the role
+key `reviewer` and the `crw.archive` op stay usable: a user workflow's reviewer call, one under a nested workflow that is not a lane,
+and an archive that does not follow an audit on its path in that way make no run legacy. A workflow of the user that runs
+`crw.audit` and then `crw.archive` on one path is the settle shape and is refused: start a new run, and its records stay readable.
+
+The reason names the row (its op or role, its call id, its node or milestone, the label of an agent call that has no node, and for a
+nested lane its `workflow_opened` label and call id), the retired path it belongs to (a node's old reviewer path, the path of the
+`crw.reviewerFinal` op, the old `reviewer` call of the design check with CRW-1453, or the review-thread archive of the old close) with
+CRW-1429, and ends with "the run is not resumed and nothing is written to it; its records stay read only". Every resume refuses it
+before a row is written (`crw flow resume`, `crw flow resume RUN SCRIPT`, the resumes of `crw flow answer` and `crw flow next`), and so
+does every command that would write a row to it: `crw flow cancel`, `pause`, `recover` (it appends no `recovery_cleared` row),
+`dispatched` and the run's report up; `crw flow audit`
+prints its results and records no row, and `--no-record` is unchanged. Every read path reads the old rows as they are: `crw flow show`,
+the summary and the run readers, the proofs of the old ops, the trace export and `crw flow audit --no-record`. A role table that
+changed since the run started is a repin on resume, never a refusal: the refusal comes from the rows.
+
+What the rows cannot show: an old lane nested under a name that is none of those workflows, whose process ended after a reviewer
+call and before the row that recorded its review, leaves no row a marker matches. Its old copy imports composites that `crw:lib/lane`
+does not export, so the resumed child does not load, and its `workflow()` position fails without running any op live.
 
 A call that ended held has one resolution command whatever the reason (a spent budget, a refused `thread/start`, a failed turn, an
 engine pause, a flow binding that could not be written): `crw flow resume RUN SCRIPT`. A held row asks no operator input
@@ -1333,7 +1372,7 @@ run's directory `<state>/flow/<run>/` and none writes the journal, which only th
 - `crw flow start WORKFLOW [--backend session|app-server]` starts a session run by default; `--backend app-server` opens a thread
   per call, for the tests and shadow runs. The spec records the `backend`. A session run's pool is `min(pool, agents.max_threads - 1)`
   (the owner keeps a slot for a helper of its own; `agents.max_threads` is read from `<CODEX_HOME>/config.toml`, default 6), the
-  preview lists the spawn format of each of the seven roles (`spawn_agent(agent_type, message, model, reasoning_effort,
+  preview lists the spawn format of each of the six roles (`spawn_agent(agent_type, message, model, reasoning_effort,
   fork_context=false)`) and the six session facts below, and the answer names the command the steps are taken with
   (`next`). Before the process starts the owner thread is bound (below).
 - `crw flow next RUN [--wait S] [--json]` answers the run's `state` (`running`, `waiting_session`, `waiting_decision`, `paused`,
@@ -1377,10 +1416,10 @@ run's directory `<state>/flow/<run>/` and none writes the journal, which only th
   (the foreground command through `engine.ResumeHold`): at most `agents.max_threads - 1` calls in flight whatever `--pool` says,
   and the owner thread bound to the run while the resume runs and its line closed when the run ends.
 - The owner thread is bound to a session run by the `orchestrator` line of its flow-bound file (`internal/flow/bound`
-  `BindOrchestrator`: `kind: orchestrator`, `run_id`, the `policyDigest` of the role table and the `helperPairs` of the seven roles
-  architect, executor, executor-t1, reviewer, reviewer-final, explorer, critic; `Line.Validate` takes no orchestrator line without
-  the first six; the critic is optional, so the open line of a run an earlier crw bound stays readable and its critic spawns are
-  undecided).
+  `BindOrchestrator`: `kind: orchestrator`, `run_id`, the `policyDigest` of the role table and the `helperPairs` of the six roles
+  architect, executor, executor-t1, reviewer, explorer, critic; `Line.Validate` takes no orchestrator line without the first five;
+  the critic is optional, so the open line of a run an earlier crw bound stays readable and its critic spawns are undecided, and a
+  pair an earlier crw wrote for the retired role key of the `crw.reviewerFinal` op is read and never applied).
   A pair carries the decided parts of its role only: an undecided role has the empty pair, a role that names a model and leaves its
   effort undecided has the empty effort, and an effort without a model is no role's pair.
   The start writes it before any process of the run exists. While a process holds the run, that process is the one party that writes
@@ -1401,10 +1440,10 @@ run's directory `<state>/flow/<run>/` and none writes the journal, which only th
   fork (`full_history_fork_refused`: the fork keeps the parent's pair). Every other spawn is allowed with `model` and
   `reasoning_effort` overwritten from the decided parts of the pair of its role (an undecided effort keeps the `reasoning_effort` the
   spawn was sent, and an undecided role keeps the whole spawn, with the warning `role_undecided`): the role the first `CRW-ROLE:` line of the message header names when it
-  is exactly one of the seven (a parser of the flow-bound path; the ordinary path's oracle parser is unchanged), else the role of
+  is exactly one of the six (a parser of the flow-bound path; the ordinary path's oracle parser is unchanged), else the role of
   the `agent_type` (worker is executor), else explorer. The ledger line (`decisions/<owner>.jsonl`) records the `role`, the `op` of
   the `crw-flow-op:` first line, and a `warning` where the table has one: `role_agent_type_mismatch` (the header role does not pair
-  with the agent_type: executor-t1 with executor, reviewer-final and critic with reviewer, the others with their own name), `unrecorded_spawn`
+  with the agent_type: executor-t1 with executor, critic with reviewer, the others with their own name), `unrecorded_spawn`
   (no step marker) or `unrecorded_author` (no marker, an executor's or architect's type). A ledger that cannot be written allows the
   spawn and says so on stderr, and a flow-bound directory or file that cannot be trusted is read as no binding, with a stderr
   warning: no spawn is refused for it. The run joins the ledger's `op` with the owner turn's `collabAgentToolCall` items to find the
@@ -1425,7 +1464,7 @@ run's directory `<state>/flow/<run>/` and none writes the journal, which only th
   run's repository other than the run's own `refs/crw/flow/<run>/` (the run moves those itself) and the binding files of the
   flow-bound directory (the hook's ledger and claims are left out: the owner's spawns write them while a subagent works).
 - The session facts of the preview are warnings, never a refusal (CRW-1318): `owner_bound` (the owner can be bound: a thread id, a
-  readable binding, no other live run, live as the binding reads it: its process holds the run lock or its start holds the start lock), `role_models` (the seven pairs, a role without one or without an effort, a reviewer of an author's model family, a critic of the architect's),
+  readable binding, no other live run, live as the binding reads it: its process holds the run lock or its start holds the start lock), `role_models` (the six pairs, a role without one or without an effort, a reviewer of an author's model family, a critic of the architect's),
   `owner_state_writable` (the run directory, the flow-bound directory, the control socket and the repository), `subagent_slots`
   (`agents.max_threads` leaves a slot for a call) and `multi_agent_v1` (`features.multi_agent_v2` is off: under V2 the protocol
   stops); `verifier_prerequisites`, the sixth, is judged for every run (CRW-1319).

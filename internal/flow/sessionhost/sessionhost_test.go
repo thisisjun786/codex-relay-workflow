@@ -147,7 +147,7 @@ func TestReadAgent(t *testing.T) {
 	e := newEnv(t)
 	gate := make(chan struct{})
 	child := e.spawn(fakehost.SubagentSpec{ToolUseID: "exec-1", AgentType: "reviewer", Nickname: "Scout", Model: "gpt-6.1-sol", Effort: "xhigh",
-		Message: message("c_abc/t1-a1", "reviewer-final", "packet"), RolloutPath: "/r/child.jsonl", Plan: fakehost.TurnPlan{Gate: gate, Message: "{}"}})
+		Message: message("c_abc/t1-a1", "critic", "packet"), RolloutPath: "/r/child.jsonl", Plan: fakehost.TurnPlan{Gate: gate, Message: "{}"}})
 	ctx := context.Background()
 	got, err := e.host.ReadAgent(ctx, child)
 	if err != nil {
