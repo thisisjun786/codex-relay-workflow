@@ -1408,11 +1408,87 @@ func TestVerifyRowThatDidNotRunIsNotProven(t *testing.T) {
 func TestChildAndSplitReleaseRowsStayProven(t *testing.T) {
 	w := newWorld(t)
 	op := w.lane.Ops()[NameRelease]
-	for kind, want := range map[string]bool{"child": true, "split": true, "executor": false} {
+	for kind, want := range map[string]bool{"child": true, "split": true, "bundle_split": true, "executor": false} {
 		ok, why, err := op.Proven(context.Background(), nil, engine.Event{Data: map[string]any{"node": "A", "plan": "p", "released": false, "kind": kind, "reason": "x"}})
 		if err != nil || ok != want {
 			t.Errorf("kind %s: proven %v (%s) %v, want %v", kind, ok, why, err, want)
 		}
+	}
+}
+
+// S-3 (CRW-1459): a node of a DESIGN of the S-1 shape sized for a split carries its sub-tasks and is released to one executor like
+// any node - the relay is asked, the row is an ordinary executor release (kind executor, released true), and it is proven while the
+// relay says it stands. A node sized for a bundle split is not released: its row is unreleased (kind bundle_split, reason size_split),
+// the relay is not asked, the row is a decision that stands, and the node has started under it (startRowOf, crw.releasedPlans), as a
+// legacy split or child row has.
+func TestSplitReleaseRowIsReleasedAndProven(t *testing.T) {
+	w := newWorld(t)
+	w.relay.plan = planOfNodes(map[string]string{"A": "sa", "B": "sb", "C": "sc"}, "A", "B", "C")
+	w.relay.plan.Nodes[1].Regions = []string{"B/"}
+	d := designOf("A", "B", "C")
+	d.Issues[1].SizeFit, d.Issues[1].SizeReason, d.Issues[1].IssueSizeDecision = "split", "two packages", "over_line"
+	d.Issues[1].SubTasks = []SubTask{
+		{ID: "s1", Summary: "do s1", EditRegions: []string{"B/one.go"}, DoneCondition: "s1 is done"},
+		{ID: "s2", Summary: "do s2", EditRegions: []string{"B/two.go"}, DoneCondition: "s2 is done", After: []string{"s1"}},
+	}
+	d.Issues[2].SizeFit, d.Issues[2].SizeReason, d.Issues[2].IssueSizeDecision = "bundle_split", "regions_gt3", "over_line"
+	w.ledgered(true, d)
+	op := w.lane.Ops()[NameRelease]
+	rowOf := func(node string) engine.Event {
+		t.Helper()
+		row, ok := rows(w.j.Events()).opRows(OpRelease).last(func(ev engine.Event) bool { return dataStr(ev, "node") == node })
+		if !ok {
+			t.Fatalf("no release row of %s", node)
+		}
+		return row
+	}
+
+	var split ReleaseOutcome
+	_ = json.Unmarshal(w.must("release", "plan-1", "B", "M"), &split)
+	if !split.Released || split.Kind != "executor" || split.ExecutionID != "exec-B" {
+		t.Errorf("release of the split node: %+v, want released to an executor (kind executor, execution exec-B)", split)
+	}
+	if len(w.relay.releases) != 1 || w.relay.releases[0].Node != "B" || !slices.Equal(w.relay.releases[0].Regions, AdmissionRegions([]string{"B/"}, d.Issues[1].EditRegions)) {
+		t.Errorf("the relay was asked %+v, want one release of B with its admission regions", w.relay.releases)
+	}
+	row := rowOf("B")
+	if !dataBool(row, "released") || dataStr(row, "kind") != "executor" || dataStr(row, "slice_digest") == "" {
+		t.Errorf("the split node's release row %v, want released true, kind executor and the slice it was released under", row.Data)
+	}
+	if ok, why, err := op.Proven(context.Background(), w.j.Events(), row); err != nil || !ok {
+		t.Errorf("the split node's release row: proven %v (%s) %v, want true while the relay says it stands", ok, why, err)
+	}
+
+	var bundle ReleaseOutcome
+	_ = json.Unmarshal(w.must("release", "plan-1", "C", "M"), &bundle)
+	if bundle.Released || bundle.Kind != "bundle_split" || bundle.Reason != "size_split" || bundle.ExecutionID != "" {
+		t.Errorf("release of the bundle-split node: %+v, want released false, kind bundle_split, reason size_split", bundle)
+	}
+	if len(w.relay.releases) != 1 {
+		t.Errorf("the relay was asked %d releases, want only B's: a bundle-split node takes no executor slot", len(w.relay.releases))
+	}
+	if ok, why, err := op.Proven(context.Background(), w.j.Events(), rowOf("C")); err != nil || !ok {
+		t.Errorf("the bundle-split node's release row: proven %v (%s) %v, want true (a decision that stands)", ok, why, err)
+	}
+
+	r := rows(w.j.Events())
+	for node, want := range map[string]string{"B": "released", "C": "bundle_split"} {
+		if _, kind, ok := startRowOf(r, node); !ok || kind != want {
+			t.Errorf("startRowOf(%s) = %q, %v, want %s, true", node, kind, ok, want)
+		}
+	}
+	if _, _, ok := startRowOf(r, "A"); ok {
+		t.Error("A has started with no release row")
+	}
+	raw := w.must("releasedPlans", "M")
+	var kinds []map[string]any
+	_ = json.Unmarshal(raw, &kinds)
+	kind := map[string]any{}
+	for _, p := range kinds {
+		kind[p["node"].(string)] = p["kind"]
+	}
+	if len(kinds) != 2 || kind["B"] != "released" || kind["C"] != "bundle_split" {
+		t.Errorf("the kinds of the released plans %v, want B released and C bundle_split; A has not started", kind)
 	}
 }
 
