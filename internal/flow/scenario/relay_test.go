@@ -336,8 +336,11 @@ func (r *FakeRelay) Integrate(_ context.Context, req ops.IntegrateRequest) (ops.
 	}
 	l := r.lab
 	tip := l.git(l.Repo, "rev-parse", IntegrationRef)
-	if out, err := l.gitErr(l.Repo, "merge-base", "--is-ancestor", req.Head, tip); err == nil {
-		_ = out
+	if _, err := l.gitErr(l.Repo, "merge-base", "--is-ancestor", req.Head, tip); err == nil {
+		// a head already on the tip lands as a replay; the node is landed all the same, so it holds neither its slot nor its regions
+		// (a replay after a real land finds them clear)
+		r.held[req.Node] = false
+		delete(r.holding, req.Node)
 		return ops.IntegrateResult{Landed: true, BatchCommit: tip, IntegrationRef: IntegrationRef, Tip: tip, Replayed: true}, nil
 	}
 	batch := req.Head

@@ -687,6 +687,43 @@ func TestDagAdmitsByTheRelayRule(t *testing.T) {
 	}
 }
 
+// A node whose head is already on the integration tip lands as a replay and frees its slot and its regions as a real land does
+// (CRW-1461): the node B, whose regions overlap the regions of the landed node A, is released and not held back defer:edit_overlap
+// for a node that has landed.
+func TestIntegrateOfHeadOnTipFreesTheNode(t *testing.T) {
+	l := NewLab(t,
+		NodeSpec{ID: "A", Issue: "CRW-A", Title: "issue A", Regions: []string{"a.go"}},
+		NodeSpec{ID: "B", Issue: "CRW-B", Title: "issue B", Regions: []string{"a.go"}},
+	)
+	r := l.Relay
+	r.Slots = 2
+	r.HoldBackIf = r.relayRegionRule
+	ctx := context.Background()
+	relA, err := r.Release(ctx, ops.ReleaseRequest{Node: "A", Regions: []string{"a.go"}})
+	if err != nil || !relA.Released {
+		t.Fatalf("release of A: %+v, %v", relA, err)
+	}
+	// the head is the base, which the integration branch already holds
+	acc := ops.AcceptRequest{Node: "A", Head: l.Base, Base: l.Base}
+	r.mu.Lock()
+	r.accepted["acc-A"] = acc
+	r.mu.Unlock()
+	got, err := r.Integrate(ctx, ops.IntegrateRequest{Node: "A", Head: l.Base, AcceptanceID: "acc-A"})
+	if err != nil || !got.Landed || !got.Replayed {
+		t.Fatalf("integrate of A: %+v, %v; want landed and replayed", got, err)
+	}
+	if r.SlotHeld("A") {
+		t.Errorf("A holds its slot after it landed")
+	}
+	relB, err := r.Release(ctx, ops.ReleaseRequest{Node: "B", Regions: []string{"a.go"}})
+	if err != nil {
+		t.Fatalf("release of B: %v", err)
+	}
+	if !relB.Released {
+		t.Errorf("B was not released: reason %q, want released after A landed", relB.Reason)
+	}
+}
+
 // TestUnitCheckHoldOfTheLaneHasSourceUnitCheck (CRW-1465): a unit check that gave no judgment for the tool's quota holds the node: the
 // lane writes crw.hold with source unit_check and reason unit_check_quota, commits nothing, calls no reviewer and counts no tier
 // evidence. A resume asks the checker again (the held check is no result to replay), and the node lands without a new executor call,
