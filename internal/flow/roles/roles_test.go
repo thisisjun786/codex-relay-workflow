@@ -260,7 +260,8 @@ func TestArchitectOverlayExecutorContract(t *testing.T) {
 	for _, want := range []string{
 		"The executor never commits",
 		"The run commits",
-		"fixed message `crw <node> <call>`",
+		"fixed message `crw <node> [call_id:<12-hex SHA-256>]`",
+		"`CRW-Request: <64-hex SHA-256>`",
 		"request id",
 		"no commit message and no commit body",
 		"RECEIPT",

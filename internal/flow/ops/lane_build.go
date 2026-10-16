@@ -766,9 +766,12 @@ func (o *commitOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResu
 	}
 	out := CommitOutcome{Tree: tree, Changed: []string{}, OutOfScope: []string{}}
 	strayHead := ""
-	// An op that ran and did not write its row runs again under the same request id: the commit it made is the one this call
-	// makes (its message names the request), and nothing is committed twice.
-	if msg, err := g(ctx, wt, nil, "log", "-1", "--format=%B"); err == nil && strings.Contains(msg, req.RequestID) {
+	// An op that ran and did not write its row runs again under the same request id: the commit it
+	// made is the one this call makes. New messages contain only hashed call/request identities:
+	// the subject's call hash and one request marker after a blank line. Old raw request lines
+	// and the first scrubbed format (with an extra run-id pseudonym) still replay.
+	marker := commitRequestMarker(req.RequestID)
+	if msg, err := g(ctx, wt, nil, "log", "-1", "--format=%B"); err == nil && commitRequestMatches(msg, req.RequestID) {
 		out.Commit = head
 		if parent, err := g(ctx, wt, nil, "rev-parse", "--verify", head+"^"); err == nil {
 			out.Parent = parent
@@ -780,7 +783,9 @@ func (o *commitOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResu
 		if moved, ok := term.Data["executor_head_moved"].(map[string]any); ok && str(moved, "start") != "" && str(moved, "start") != head {
 			parent, expect = str(moved, "start"), head
 		}
-		made, err := Commit(ctx, g, wt, CommitRequest{Tree: tree, Parent: parent, Expect: expect, Message: fmt.Sprintf("crw %s %s\n\n%s", node, short(ex.CallID), req.RequestID)})
+		callHash := sha256.Sum256([]byte(ex.CallID))
+		made, err := Commit(ctx, g, wt, CommitRequest{Tree: tree, Parent: parent, Expect: expect,
+			Message: fmt.Sprintf("crw %s [call_id:%x]\n\n%s", node, callHash[:6], marker)})
 		if err != nil {
 			return engine.OpResult{}, err
 		}
@@ -1009,4 +1014,23 @@ func expectedCriteria(r rows, node string) []string {
 		return nil
 	}
 	return CriterionIDs(len(n.Criteria))
+}
+
+// commitRequestMarker is the one request identity both the writer and retry reader use.
+func commitRequestMarker(requestID string) string {
+	sum := sha256.Sum256([]byte(requestID))
+	return fmt.Sprintf("CRW-Request: %x", sum[:])
+}
+
+// commitRequestMatches accepts the exact marker line of either scrubbed format and the raw
+// request line of pre-scrub commits. It never matches a shortened or embedded request hash.
+func commitRequestMatches(message, requestID string) bool {
+	marker := commitRequestMarker(requestID)
+	for _, line := range strings.Split(message, "\n") {
+		line = strings.TrimSuffix(line, "\r")
+		if line == marker || line == requestID {
+			return true
+		}
+	}
+	return false
 }

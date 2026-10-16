@@ -1,12 +1,93 @@
 package ops
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 )
+
+func TestCrwCommitScrubsAndRetriesWithoutDuplicate(t *testing.T) {
+	for _, name := range []string{"current", "legacy request line", "first scrubbed format"} {
+		t.Run(name, func(t *testing.T) {
+			f := newFx(t)
+			f.events = nil
+			callID := "c_0123456789ab"
+			requestID := "req_" + strings.Repeat("a", 24)
+			f.prepare(callID, "fresh", f.wt, f.start)
+			f.edit("a.txt", "built\n")
+			tree := f.complete(callID)
+			j := engine.NewMemoryJournal()
+			for _, row := range f.events {
+				j.Append(row)
+			}
+			lane := NewLane(Deps{RunID: "run-1", Repo: f.repo, Journal: j})
+			args, err := json.Marshal([]any{"n1", map[string]string{"callId": callID}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			req := engine.OpRequest{RunID: "run-1", CallID: "commit-1", RequestID: requestID, Args: args, Journal: j}
+			prior := ""
+			callHash := sha256.Sum256([]byte(callID))
+			requestHash := sha256.Sum256([]byte(requestID))
+			wantMessage := fmt.Sprintf("crw n1 [call_id:%x]\n\nCRW-Request: %x", callHash[:6], requestHash[:])
+			if name != "current" {
+				// Simulate an old binary that committed, then crashed before recording its op row.
+				oldMessage := "crw n1 old-call\n\n" + requestID
+				if name == "first scrubbed format" {
+					oldMessage = fmt.Sprintf("crw n1 [call_id:%x]\n\n[run_id:%x]\nCRW-Request: %x", callHash[:6], requestHash[:6], requestHash[:])
+				}
+				prior = gitIn(t, f.wt, "-c", "user.name=test", "-c", "user.email=test@example.invalid",
+					"commit-tree", tree, "-p", f.start, "-m", oldMessage)
+				gitIn(t, f.wt, "update-ref", "HEAD", prior, f.start)
+				gitIn(t, f.wt, "reset", "-q", "--mixed", "HEAD", "--")
+			}
+			first, err := lane.Ops()[NameCommit].Run(ctx, req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			commit := first.Data["commit"].(string)
+			if first.Data["parent"] != f.start || first.Data["tree"] != tree {
+				t.Fatalf("wrong snapshot or parent: %+v", first.Data)
+			}
+			if name != "current" {
+				if commit != prior {
+					t.Fatalf("legacy retry created %s instead of reusing %s", commit, prior)
+				}
+			} else {
+				message := strings.TrimSuffix(gitIn(t, f.wt, "log", "-1", "--format=%B"), "\n")
+				if message != wantMessage {
+					t.Fatalf("generated message = %q, want %q", message, wantMessage)
+				}
+			}
+			count := gitIn(t, f.wt, "rev-list", "--count", "HEAD")
+			index := gitIn(t, f.wt, "write-tree")
+			// Deliberately leave the journal without the completed crw.commit row.
+			again, err := lane.Ops()[NameCommit].Run(ctx, req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if again.Data["commit"] != commit || again.Data["parent"] != f.start || again.Data["tree"] != tree ||
+				gitIn(t, f.wt, "rev-parse", "HEAD") != commit ||
+				gitIn(t, f.wt, "rev-list", "--count", "HEAD") != count ||
+				gitIn(t, f.wt, "write-tree") != index {
+				t.Fatalf("retry changed the commit, snapshot or index: first=%+v again=%+v", first.Data, again.Data)
+			}
+			req.RequestID = "req_" + strings.Repeat("b", 24)
+			other, err := lane.Ops()[NameCommit].Run(ctx, req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if other.Data["commit"] == commit || other.Data["parent"] != commit || other.Data["tree"] != tree {
+				t.Fatalf("a different request reused the previous commit: %+v", other.Data)
+			}
+		})
+	}
+}
 
 // CRW-1331 (CRW-1316 §6.3): an executor subagent of a session call that committed in its worktree moved HEAD. The engine keeps
 // that commit on the attempt's stray ref and records executor_head_moved on the completed row; crw.commit then commits the pending

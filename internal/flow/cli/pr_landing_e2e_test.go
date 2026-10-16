@@ -151,7 +151,8 @@ func TestPRUnitLandingEndToEnd(t *testing.T) {
 	if len(comments) != 1 {
 		t.Fatalf("comments on the pull request: %q", comments)
 	}
-	for _, want := range []string{"result: pushed", "dev: " + devBefore + " -> " + devAfter, "verification-record: " + land.Verification.Record, "review: accept (" + land.Review.VerdictFile + ")"} {
+	// the comment is public text (CRW-1549): the record and verdict file paths are masked
+	for _, want := range []string{"result: pushed", "dev: " + devBefore + " -> " + devAfter, "verification-record: [path]", "review: accept ([path]"} {
 		if !strings.Contains(comments[0], want) {
 			t.Errorf("the comment does not say %q:\n%s", want, comments[0])
 		}

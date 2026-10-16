@@ -14,10 +14,13 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/gitprobe"
+	"github.com/thisisjun786/codex-relay-workflow/internal/publication"
+	"github.com/thisisjun786/codex-relay-workflow/internal/publishpolicy"
 	"github.com/thisisjun786/codex-relay-workflow/internal/tracking"
 )
 
@@ -47,8 +50,9 @@ merge is done by the dev queue (crw manage integrate --enqueue-pr REF, then its 
          the milestone nodes' OWNER:NAME:N keys (--issue, when given, must name the same; a milestone whose keys are not of that form
          takes --issue as given). --run needs --push DIR and pushes exactly the crosschecked tip, never forced: the checkout's --head
          branch must be at that tip. --body and --body-file are not taken. --state DIR and --socket PATH select the relay store the run
-         is read from (read-only). The title and the body are refused (exit 2) when they hold a path under the host's home, state or scratch roots,
-         the host's name, a thread, call or run id or a secret; this check also runs on --body.
+         is read from (read-only). The title and the body pass the publication scrub (CRW-1549): a path under the host's home, state or
+         scratch roots, the host's name, a thread, call, run or session id or an address is substituted and recorded, and only a token
+         or secret shape is refused (exit 2); this check also runs on --body.
   show   reads the pull request: state, merged, head commit, head and base branch, the issues it carries; --checks adds the check
          runs and commit statuses of its head and their judgment (none, pending, success, failure).
   branch makes the bundle's integration branch in the checkout DIR: the local branch --name (default bundle/M) at the tip of the local
@@ -70,29 +74,50 @@ type Deps struct {
 	Journal func(ctx context.Context, src Source, run string) ([]engine.Event, error)
 	// Hostname and Home are the host's name and the user's home directory the leak check looks for (nil: os.Hostname, os.UserHomeDir).
 	Hostname, Home func() string
+	// PublicationPolicy reads the repository's publication policy (CRW-1549); nil loads it through
+	// the configuration file.
+	PublicationPolicy func(repo string) (publishpolicy.Policy, error)
 }
 
 // Default is the production dependencies.
 func Default() *Deps {
 	return &Deps{NewPullRequests: func(repo string) (tracking.PullRequests, error) {
-		return tracking.NewGitHub(repo, tracking.DefaultTokenSource())
+		return publication.NewGitHub(repo)
 	}, Journal: readJournal}
 }
 
-// leakContext is what is local to this host, for the leak check.
-func (d *Deps) leakContext() LeakContext {
-	var c LeakContext
+// pubContext is the local scrub context (CRW-1549): the host defaults, with a test's hostname and
+// home in place of the automatic ones (the configured state and work roots are kept).
+func (d *Deps) pubContext() publishpolicy.Context {
+	c := publishpolicy.HostContext()
 	if d.Hostname != nil {
-		c.Hostname = d.Hostname()
-	} else if h, err := os.Hostname(); err == nil {
-		c.Hostname = h
+		c.Hostnames = nil
+		if h := d.Hostname(); h != "" {
+			c.Hostnames = []string{h}
+		}
 	}
 	if d.Home != nil {
-		c.Home = d.Home()
-	} else if h, err := os.UserHomeDir(); err == nil {
-		c.Home = h
+		if home := d.Home(); home != "" {
+			auto, _ := os.UserHomeDir()
+			kept := c.Paths[:0]
+			for _, p := range c.Paths {
+				if p != auto {
+					kept = append(kept, p)
+				}
+			}
+			c.Paths = append(kept, home)
+		}
 	}
 	return c
+}
+
+// publicationPolicy is the repository's publication policy: the configured dependency when a test
+// gives one, else the configuration file's (CRW-1549).
+func (d *Deps) publicationPolicy(repo string) (publishpolicy.Policy, error) {
+	if d.PublicationPolicy != nil {
+		return d.PublicationPolicy(repo)
+	}
+	return publication.Policy(repo, os.Getenv)
 }
 
 // Handles reports whether `crw flow args...` is this command.
@@ -139,10 +164,11 @@ type ChecksView struct {
 
 // Answer is what the command prints.
 type Answer struct {
-	PullRequest View        `json:"pull_request"`
-	Pushed      string      `json:"pushed,omitempty"`
-	Checks      *ChecksView `json:"checks,omitempty"`
-	Warnings    []string    `json:"warnings,omitempty"`
+	PullRequest View                  `json:"pull_request"`
+	Pushed      string                `json:"pushed,omitempty"`
+	Checks      *ChecksView           `json:"checks,omitempty"`
+	Warnings    []string              `json:"warnings,omitempty"`
+	Redactions  []publishpolicy.Event `json:"redactions,omitempty"`
 }
 
 func viewOf(pr tracking.PullRequest) View {
@@ -273,6 +299,34 @@ func RunWith(ctx context.Context, d *Deps, args []string, stdout, stderr io.Writ
 			fmt.Fprintf(stderr, "crw flow pr: error: %s: %s\n", reason, fmt.Sprintf(format, a...))
 			return 2
 		}
+		// the publication policy and the host context are read once (CRW-1549): the raw run facts and
+		// the rendered public text pass the same scrub.
+		pol, err := d.publicationPolicy(*repo)
+		if err != nil {
+			return failed("%v", err)
+		}
+		pubctx := d.pubContext()
+		// the local paths this command was given are private roots too (CRW-1549): --state and --push
+		for _, root := range []string{*state, *push} {
+			if filepath.IsAbs(root) && root != "/" {
+				pubctx.Paths = append(pubctx.Paths, root)
+			}
+		}
+		var redactions []publishpolicy.Event
+		// scrubField applies the scrub to one public field, records the event of a changed or blocked
+		// one, and answers the sanitized text.
+		scrubField := func(field, text string) (string, bool) {
+			r := publishpolicy.Scrub(text, pubctx, pol)
+			if r.Blocked || len(r.Changes) > 0 {
+				ev := publishpolicy.Event{Repo: *repo, Surface: "pr", Field: field, Changes: r.Changes, Blocked: r.Blocked}
+				redactions = append(redactions, ev)
+				publication.Recorder(stderr)(ev)
+			}
+			if r.Blocked {
+				return "", false
+			}
+			return r.Text, true
+		}
 		tip := ""
 		if *runID != "" {
 			if d.Journal == nil {
@@ -299,14 +353,34 @@ func RunWith(ctx context.Context, d *Deps, args []string, stdout, stderr io.Writ
 			if reason != "" {
 				return refuse(reason, "%s", message)
 			}
+			// the raw facts are judged before the body is rendered: a digest is cut to twelve
+			// characters there, under a token's shape (CRW-1549). Only a block is recorded; the
+			// privacy changes of the rendered text are counted where they are written.
+			raw, err := json.Marshal(facts.Body)
+			if err != nil {
+				return failed("the body facts cannot be encoded: %v", err)
+			}
+			if r := publishpolicy.Scrub(string(raw), pubctx, pol); r.Blocked {
+				ev := publishpolicy.Event{Repo: *repo, Surface: "pr", Field: "body", Changes: r.Changes, Blocked: true}
+				publication.Recorder(stderr)(ev)
+				return refuse(reasonBodyLeak, "%s", publishpolicy.ErrSecret)
+			}
 			in.Issues, in.Body, tip = refs, Body(facts.Body, refs), facts.Body.Tip
 		}
-		// the input is checked before anything is pushed: what the adapter would refuse pushes nothing
+		// the public text passes the publication scrub before anything is pushed or opened
+		// (CRW-1549): the repository's policy decides what is replaced, the event goes to stderr
+		// and the answer, a secret stops here.
+		var ok bool
+		if in.Title, ok = scrubField("title", in.Title); !ok {
+			return refuse(reasonBodyLeak, "%s", publishpolicy.ErrSecret)
+		}
+		if in.Body, ok = scrubField("body", in.Body); !ok {
+			return refuse(reasonBodyLeak, "%s", publishpolicy.ErrSecret)
+		}
+		// the input is checked after its text is what will be sent: what the adapter would refuse
+		// pushes nothing
 		if err := in.Check(); err != nil {
 			return usage("%v", err)
-		}
-		if leaks := Leaks(publishedText(in), d.leakContext()); len(leaks) > 0 {
-			return refuse(reasonBodyLeak, "%s", leakMessage(leaks))
 		}
 		if *push != "" {
 			// a configured remote of the checkout and nothing else, refused before anything is pushed
@@ -328,7 +402,7 @@ func RunWith(ctx context.Context, d *Deps, args []string, stdout, stderr io.Writ
 				return refuse(reasonCrosscheckMoved, "the branch %s of %s is at %s, the crosschecked tip is %s", *head, *push, orNone(short(local, 12)), short(tip, 12))
 			}
 		}
-		var ans Answer
+		ans := Answer{Redactions: redactions}
 		switch {
 		case tip != "":
 			if err := pushCommit(ctx, d.Env, *push, *remote, *head, tip); err != nil {
@@ -504,15 +578,6 @@ func localTip(ctx context.Context, env []string, checkout, branch string) (strin
 		return "", fmt.Errorf("the branch %s of %s could not be read: %w", branch, checkout, err)
 	}
 	return tip, nil
-}
-
-// publishedText is everything a pull request publishes: the title, and the body with the Carries line tracking appends.
-func publishedText(in tracking.NewPullRequest) string {
-	var refs []string
-	for _, r := range in.Issues {
-		refs = append(refs, r.String())
-	}
-	return in.Title + "\n" + in.Body + "\nCarries: " + strings.Join(refs, ", ")
 }
 
 // crosscheckWhy is the sentence of a refused crosscheck.
