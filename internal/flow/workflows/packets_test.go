@@ -199,17 +199,21 @@ func TestCriticReplanPacketListsReleasedPlans(t *testing.T) {
 	}
 	// a node sized for a split with no sub-tasks (a legacy row), a child or a bundle split started too: it is listed with how it
 	// started; a split with sub-tasks is released to an executor and listed as released (CRW-1459)
-	// a bundle split's 부모 was asked only when the escalation_notice row of its escalation records a delivered result (crw.releasedPlans
-	// asked, CRW-1437); a notice the channel queued and has not delivered (request queued) says the request is queued, not yet delivered,
-	// and with no notice row the packet says the request is not delivered yet: never that the 부모 was asked
+	// a bundle split says a bundle_split_request escalation was raised for it and names the escalation id (crw.releasedPlans
+	// escalation_id, CRW-1437), and before it is recorded only that its lane escalates it so. It makes no claim about whether the
+	// request reached anyone, nor names a recipient, whatever an entry carries: asked or request members (which an earlier binary of this branch wrote)
+	// change nothing, since the result of crw.releasedPlans is replayed on a resume
+	const raised = "- n2 (CRW-2), sized for a bundle split under r0 (no executor started; a bundle_split_request escalation was raised for it: esc-7)\n  plan: {"
 	for _, row := range []struct{ name, kind, asked, want string }{
 		{"split", "split", "", "- n2 (CRW-2), sized for a split under r0 with no sub-tasks (a legacy split row: no executor started; its lane escalated it as size_split)\n  plan: {"},
 		{"child", "child", "", "- n2 (CRW-2), sized for a child under r0 (no executor started; its lane escalated it as size_split)\n  plan: {"},
-		{"bundle_split-asked", "bundle_split", "asked: true, ", "- n2 (CRW-2), sized for a bundle split under r0 (no executor started; the 부모 was asked: bundle_split_request)\n  plan: {"},
-		{"bundle_split-unasked", "bundle_split", "asked: false, ", "- n2 (CRW-2), sized for a bundle split under r0 (no executor started; the request to the 부모 is not delivered yet: bundle_split_request)\n  plan: {"},
-		{"bundle_split-queued", "bundle_split", "request: 'queued', ", "- n2 (CRW-2), sized for a bundle split under r0 (no executor started; the request to the 부모 is queued, not yet delivered: bundle_split_request)\n  plan: {"},
-		{"bundle_split-delivered", "bundle_split", "asked: true, request: 'delivered', ", "- n2 (CRW-2), sized for a bundle split under r0 (no executor started; the 부모 was asked: bundle_split_request)\n  plan: {"},
-		{"bundle_split", "bundle_split", "", "- n2 (CRW-2), sized for a bundle split under r0 (no executor started; the request to the 부모 is not delivered yet: bundle_split_request)\n  plan: {"},
+		{"bundle_split-raised", "bundle_split", "escalation_id: 'esc-7', ", raised},
+		{"bundle_split-asked", "bundle_split", "asked: true, escalation_id: 'esc-7', ", raised},
+		{"bundle_split-unasked", "bundle_split", "asked: false, escalation_id: 'esc-7', ", raised},
+		{"bundle_split-queued", "bundle_split", "request: 'queued', escalation_id: 'esc-7', ", raised},
+		{"bundle_split-delivered", "bundle_split", "asked: true, request: 'delivered', escalation_id: 'esc-7', ", raised},
+		{"bundle_split", "bundle_split", "", "- n2 (CRW-2), sized for a bundle split under r0 (no executor started; its lane escalates it as size_split with ask bundle_split_request)\n  plan: {"},
+		{"bundle_split-unraised-asked", "bundle_split", "asked: true, request: 'delivered', ", "- n2 (CRW-2), sized for a bundle split under r0 (no executor started; its lane escalates it as size_split with ask bundle_split_request)\n  plan: {"},
 		{"released", "released", "", "- n2 (CRW-2), released under r0\n  plan: {"},
 	} {
 		sized := packetText(t, "critic-released-"+row.name+"-packet", "designAuditPacket",
@@ -217,8 +221,13 @@ func TestCriticReplanPacketListsReleasedPlans(t *testing.T) {
 		if !strings.Contains(sized, row.want) {
 			t.Errorf("a released entry %s:\n%s", row.name, sized)
 		}
-		if !strings.HasPrefix(row.asked, "asked: true, ") && strings.Contains(sized, "was asked") {
-			t.Errorf("a released entry %s says the 부모 was asked:\n%s", row.name, sized)
+		_, entry, _ := strings.Cut(sized, "- n2 (CRW-2), ")
+		entry, _, _ = strings.Cut(entry, "\n  plan: {")
+		// nor who the request went to: a run whose plan names no project tells the 자식's own thread, not the 부모
+		for _, claim := range []string{"asked", "deliver", "queued", "reached", "sent", "told", "부모", "자식", "parent", "orchestrator", "thread"} {
+			if strings.Contains(entry, claim) {
+				t.Errorf("a released entry %s makes a delivery or recipient claim (%q): %s", row.name, claim, entry)
+			}
 		}
 	}
 	// an entry of the flat form an earlier lane binary recorded is rendered, not thrown on

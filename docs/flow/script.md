@@ -624,11 +624,9 @@ and the head each node landed with.
 (the re-plan's DESIGN goes through the same audit rounds as the first DESIGN, `needs_changes` returning it to the architect on the same thread; the critic's packet
 carries `RELEASED PLANS`, the plan each started node was released with as `crw.releasedPlans` reads it from the revision of its release - the whole issue, every field, and the whole
 decisions its `decision_refs` name; a node whose issue was sized for a child, a bundle split or a split with no sub-tasks started too (its lane recorded the design row and escalated it), is
-listed with that plan and is no unstarted node of the re-plan; a bundle split is listed as asked of the 부모 only when the `escalation_notice` row of its
-`bundle_split_request` escalation records a delivered result (`result` `accepted`), or a `message_delivery` row the run's journal holds says the message that row names (`request_id`) was
-`accepted` (`asked`, `request` `delivered`); a notice with no such delivery (a notice the channel staged, which a `held_uncertain` send of a flow escalation reads as too, a delivery that reads
-`unknown` or `refused`, or a notice row with no `result`, which an earlier binary wrote: `request` `queued`) lists it as a request queued, not yet delivered, and with no notice row it is a request
-not delivered yet, since a failed send writes no such row and does not stop the run - and a started node whose issue differs from it in any field, or a decision such a plan names that the DESIGN drops or changes
+listed with that plan and is no unstarted node of the re-plan; a bundle split is listed with the id of the `bundle_split_request` escalation its lane raised for it
+(`escalation_id`; before that escalation is recorded, as one its lane escalates so), and the packet says nothing of whether that request was delivered or to whom, since the result of
+`crw.releasedPlans` is replayed on a resume and a delivery can change after it was read - and a started node whose issue differs from it in any field, or a decision such a plan names that the DESIGN drops or changes
 in any field, is a P1 finding). `crw.designLedger` holds the revision to the same rule and refuses it otherwise: a started node (the one predicate of
 `crw.releasedPlans`) has no issue, its issue differs in any field from its released plan (an absent list reads as an empty one), or a decision that plan
 names is missing or differs in any field from the decision of the revision the node started under; it refuses a revision that drops a decision of the

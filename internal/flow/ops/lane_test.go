@@ -498,11 +498,11 @@ func TestReleasedPlansListTheNodesSizedForASplitOrAChild(t *testing.T) {
 	}
 }
 
-// CRW-1437: a node sized for a bundle split is listed with whether its request reached the 부모: its lane escalated it as size_split
-// with ask bundle_split_request, and the 부모 was asked only when the escalation_notice row of that escalation records a delivered
-// result (result accepted). A notice the channel staged and has not delivered (result queued, which a held_uncertain send of a flow
-// escalation reads as too) says the request is queued (request queued, no asked key), and so does an older notice row with no
-// result member. With no notice row the plan names neither. A notice of another escalation of the run does not count.
+// CRW-1437: a node sized for a bundle split is listed with the id of the bundle_split_request escalation its lane raised for it
+// (escalation_id), and with no claim about whether that request was delivered or to whom: before the escalation the plan names no
+// escalation_id, after it the id of B's escalation, and no notice row or delivery row of it (accepted, queued, with no result, or
+// a message_delivery of any result) changes the plan, since crw.releasedPlans is replayed on a resume. The plan of A, which is no
+// bundle split, names none, and an escalation of A does not count for B.
 func TestReleasedPlansSayWhetherABundleSplitRequestWentUp(t *testing.T) {
 	w := newWorld(t)
 	w.relay.plan = planOfNodes(map[string]string{"A": "sa", "B": "sb"}, "A", "B")
@@ -528,52 +528,61 @@ func TestReleasedPlansSayWhetherABundleSplitRequestWentUp(t *testing.T) {
 		t.Fatalf("no released plan of B")
 		return nil
 	}
-	want := func(when string, asked any, request any) {
+	noClaim := func(when string, p map[string]any) {
 		t.Helper()
-		p := planOfB()
-		if p["asked"] != asked || p["request"] != request {
-			t.Errorf("%s: the released plan of B has asked %v and request %v, want asked %v and request %v", when, p["asked"], p["request"], asked, request)
+		for _, k := range []string{"asked", "request", "delivered", "result", "notice", "recipient"} {
+			if v, ok := p[k]; ok {
+				t.Errorf("%s: the released plan of %v has %s %v; it makes no delivery claim", when, p["node"], k, v)
+			}
 		}
 	}
+	want := func(when string, id any) map[string]any {
+		t.Helper()
+		p := planOfB()
+		if p["escalation_id"] != id {
+			t.Errorf("%s: the released plan of B has escalation_id %v, want %v", when, p["escalation_id"], id)
+		}
+		noClaim(when, p)
+		return p
+	}
 	other := w.must("escalate", "A", EscalateInfo{Reason: "blocked_scope"})
-	esc := w.must("escalate", "B", EscalateInfo{Reason: "size_split", Ask: "bundle_split_request", Detail: "regions_gt3"})
-	var otherOut, escOut EscalateOutcome
+	var otherOut EscalateOutcome
 	_ = json.Unmarshal(other, &otherOut)
+	want("before B's escalation", nil)
+	esc := w.must("escalate", "B", EscalateInfo{Reason: "size_split", Ask: "bundle_split_request", Detail: "regions_gt3"})
+	var escOut EscalateOutcome
 	_ = json.Unmarshal(esc, &escOut)
+	if escOut.ID == "" {
+		t.Fatalf("the escalation of B has no id: %s", esc)
+	}
+	raised, _ := json.Marshal(want("after B's escalation", escOut.ID))
+	// what the upward hook and the daemon's settle append about the notice of it changes nothing in the plan
 	notice := func(id string, data map[string]any) {
 		data["escalation_id"] = id
-		w.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindFlow, Event: EvEscalationNotice, Data: data})
+		w.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindFlow, Event: "escalation_notice", Data: data})
 	}
-	notice(otherOut.ID, map[string]any{"result": "accepted", "request_id": "rq0", "thread": "th"})
-	want("before any notice of B's escalation", nil, nil)
-	notice(escOut.ID, map[string]any{"request_id": "rq1", "thread": "th"})
-	want("after a notice row of B's escalation with no result member", nil, "queued")
-	notice(escOut.ID, map[string]any{"result": "queued", "request_id": "rq2", "thread": "th"})
-	want("after a queued notice of B's escalation", nil, "queued")
-	// the daemon's settle of the staged message appends a message_delivery row (CRW-1380): unknown (held_uncertain) is no delivery,
-	// and an accepted delivery of another message does not count; accepted for the notice's message is its delivery
 	delivered := func(message, result string) {
-		w.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindFlow, Event: EvMessageDelivery,
+		w.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindFlow, Event: "message_delivery",
 			Data: map[string]any{"message_id": message, "kind": "flow_escalation", "result": result, "request_id": "tr"}})
 	}
+	notice(otherOut.ID, map[string]any{"result": "accepted", "request_id": "rq0", "thread": "th"})
+	notice(escOut.ID, map[string]any{"request_id": "rq1", "thread": "th"})
+	notice(escOut.ID, map[string]any{"result": "queued", "request_id": "rq2", "thread": "th"})
 	delivered("rq2", "unknown")
-	want("after the delivery of B's notice reads unknown", nil, "queued")
-	delivered("rq0", "accepted")
-	want("after another message was delivered", nil, "queued")
 	delivered("rq2", "accepted")
-	want("after the daemon delivered B's queued notice", true, "delivered")
 	notice(escOut.ID, map[string]any{"result": "accepted", "request_id": "rq3", "thread": "th"})
-	want("after a notice of B's escalation the channel delivered", true, "delivered")
+	after, _ := json.Marshal(want("after the notice and delivery rows of B's escalation", escOut.ID))
+	if string(after) != string(raised) {
+		t.Errorf("the notice and delivery rows changed the released plan of B:\n%s\nwant\n%s", after, raised)
+	}
 	for _, p := range plans() {
 		if p["node"] != "A" {
 			continue
 		}
-		if v, ok := p["asked"]; ok {
-			t.Errorf("the released plan of A has asked %v; only a bundle split names it", v)
+		if v, ok := p["escalation_id"]; ok {
+			t.Errorf("the released plan of A has escalation_id %v; only a bundle split names it", v)
 		}
-		if v, ok := p["request"]; ok {
-			t.Errorf("the released plan of A has request %v; only a bundle split names it", v)
-		}
+		noClaim("the plan of A", p)
 	}
 }
 

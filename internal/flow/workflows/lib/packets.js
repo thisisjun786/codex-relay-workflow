@@ -210,19 +210,19 @@ export function designAuditPacket(ms, cand, round, prior, context) {
 // released under, its whole issue plan (every field) and the whole decisions its decision_refs name, so the critic sees any drift.
 // An entry with no plan member (the flat form an earlier lane binary recorded) is rendered from its own fields. A node sized for a
 // split without sub-tasks (the legacy row of a DESIGN recorded before S-1), a child or a bundle split (kind) is listed with that: it
-// started, its lane escalated it, and no executor started. A bundle split says the 부모 was asked only when its request was delivered
-// (asked: the escalation_notice row of its escalation records a delivered result); a request the channel queued (request queued) is
-// queued, not yet delivered, and one with no notice row is not delivered yet. A split with sub-tasks is released to an executor
-// (CRW-1459) and is listed as released, as an executor node is.
+// started, its lane escalated it, and no executor started. A bundle split says a bundle_split_request escalation was raised for it and
+// names its id (escalation_id, CRW-1437); before that escalation is recorded it says only that its lane escalates it so. It makes no
+// claim about whether the request reached the 부모: crw.releasedPlans is replayed on a resume, and a delivery can change after it was
+// read. A split with sub-tasks is released to an executor (CRW-1459) and is listed as released, as an executor node is.
 function releasedSection(released) {
   // how a started node started: released, or sized for a node its lane escalated as size_split with no executor
   const how = (p) => {
     if (p.kind === 'split') return 'sized for a split under ' + p.revision + ' with no sub-tasks (a legacy split row: no executor started; its lane escalated it as size_split)'
     if (p.kind === 'child') return 'sized for a child under ' + p.revision + ' (no executor started; its lane escalated it as size_split)'
     if (p.kind === 'bundle_split') {
-      const request = p.asked === true ? 'the 부모 was asked'
-        : p.request === 'queued' ? 'the request to the 부모 is queued, not yet delivered' : 'the request to the 부모 is not delivered yet'
-      return 'sized for a bundle split under ' + p.revision + ' (no executor started; ' + request + ': bundle_split_request)'
+      const raised = p.escalation_id ? 'a bundle_split_request escalation was raised for it: ' + p.escalation_id
+        : 'its lane escalates it as size_split with ask bundle_split_request'
+      return 'sized for a bundle split under ' + p.revision + ' (no executor started; ' + raised + ')'
     }
     return 'released under ' + p.revision
   }
