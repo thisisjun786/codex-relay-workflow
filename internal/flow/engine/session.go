@@ -456,7 +456,7 @@ func (c *callRun) sessionRecover(ctx context.Context) (res CallResult, stop bool
 			// row says so, so a held call that goes on with a delivered input takes it to a new attempt (sessionResumeHeld) and never
 			// sends a repair to the subagent this hold closes; a published repair is the call's one repair (repair_used)
 			c.repairUsed = c.repairUsed || st.repair
-			return c.evidenceRefreshHold(err), true, 0, ""
+			return c.evidenceRefreshHold(ctx, err), true, 0, ""
 		}
 	}
 	c.firstK = max(st.k, 1)
@@ -720,7 +720,7 @@ func (c *callRun) sessionBind(turnCtx, ctx context.Context, k int, op, input str
 			// its step was published with (open, or claimed by the subagent before the restart)
 			if c.evidenceGated() {
 				if err := c.ensureEvidence(turnCtx, marker); err != nil {
-					return nil, c.evidenceHold(err, ""), true, nil
+					return nil, c.evidenceHold(ctx, err, ""), true, nil
 				}
 			}
 			return c.sessionAdopt(turnCtx, ctx, k, op, input, repair, st)
@@ -729,7 +729,7 @@ func (c *callRun) sessionBind(turnCtx, ctx context.Context, k int, op, input str
 	if action == StepSpawn && c.evidenceGated() {
 		// the step's evidence record is written before its step_published row, and a step published again reuses it (CRW-1482)
 		if err := c.ensureEvidence(turnCtx, marker); err != nil {
-			return nil, c.evidenceHold(err, ""), true, nil
+			return nil, c.evidenceHold(ctx, err, ""), true, nil
 		}
 	}
 	packet := c.sessionPacket(k, marker, input, repair, action)
@@ -781,7 +781,7 @@ func (c *callRun) sessionBind(turnCtx, ctx context.Context, k int, op, input str
 		bound = true
 		return nil, CallResult{}, false, nil
 	}
-	if res, held := c.evidenceUnbound(); held {
+	if res, held := c.evidenceUnbound(ctx); held {
 		return nil, res, true, nil
 	}
 	// a step that cannot be written (a full disk) was sent to nobody: it is recorded as not dispatched and written again, and the
@@ -819,7 +819,7 @@ func (c *callRun) sessionBind(turnCtx, ctx context.Context, k int, op, input str
 				bound = true
 				return nil, CallResult{}, false, nil
 			}
-			if res, held := c.evidenceUnbound(); held {
+			if res, held := c.evidenceUnbound(ctx); held {
 				return nil, res, true, nil
 			}
 		case <-find.C:
@@ -827,7 +827,7 @@ func (c *callRun) sessionBind(turnCtx, ctx context.Context, k int, op, input str
 				bound = true
 				return nil, CallResult{}, false, nil
 			}
-			if res, held := c.evidenceUnbound(); held {
+			if res, held := c.evidenceUnbound(ctx); held {
 				return nil, res, true, nil
 			}
 		case <-turnCtx.Done():
