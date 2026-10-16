@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -97,6 +98,9 @@ type Lab struct {
 	// Crosschecker is the lab's crosschecker, the engine of crw.crosscheck (CRW-1473): a scenario scripts it with Crosschecks.
 	Crosschecker *LabCrosschecker
 	crosscheck   *ops.Crosscheck
+	// legacyDesign, set by UseLegacyDesign, makes the architect answer the DESIGN of designFor as a binary before S-1 wrote it (no
+	// issue carries sub_tasks; CRW-1435).
+	legacyDesign bool
 }
 
 // hookJournal wraps the run's journal: a process that dies writes no more rows, and a test can look at every row as it is written.
@@ -849,6 +853,8 @@ func (l *Lab) defaultPlan(c *Call) fakehost.TurnPlan {
 	switch {
 	case c.Role == "architect" && strings.HasPrefix(c.Label, "reflection:"):
 		return Say(Reflection(true))
+	case c.Role == "architect" && l.legacyDesign:
+		return Say(legacyDesignOf(l.t, l.designFor()))
 	case c.Role == "architect":
 		return Say(l.designFor())
 	case c.Role == "executor" && strings.HasPrefix(c.Label, "qa:"):
@@ -873,6 +879,129 @@ func (l *Lab) defaultPlan(c *Call) fakehost.TurnPlan {
 		return Say(Receipt("ready_for_review"))
 	}
 	return fakehost.TurnPlan{Message: "ok"}
+}
+
+// designImport is the line of project-lane.js that imports the schemas, DESIGN among them. The legacy lane imports them less DESIGN
+// (legacyDesignImport) and declares DESIGN from legacyDesignSchemaJSON after the header (legacyDesignConst): a script's header holds
+// its imports and then its meta.
+const (
+	designImport       = "import { RECEIPT, DESIGN, DESIGN_AUDIT, REFLECTION } from 'crw:lib/schemas'\n"
+	legacyDesignImport = "import { RECEIPT, DESIGN_AUDIT, REFLECTION } from 'crw:lib/schemas'\n"
+	legacyDesignConst  = "const DESIGN = " + legacyDesignSchemaJSON + "\n"
+	metaLine           = "\nexport const meta = "
+)
+
+// legacyDesignSchemaJSON is the DESIGN of crw:lib/schemas before S-1 (CRW-1435): a node is sized for an executor, a child or a split,
+// and an issue has no sub_tasks member. TestLegacyDesignLaneSwapsOnlyTheDesignSchema pins it to the current DESIGN less S-1.
+const legacyDesignSchemaJSON = `{"type":"object","properties":{` +
+	`"decisions":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"evidence":{"type":"array","items":{"type":"string"}},"change":{"type":"string"},` +
+	`"alternatives":{"type":"array","items":{"type":"string"}},"assumptions":{"type":"array","items":{"type":"string"}}},"required":["id","evidence","change","alternatives","assumptions"],"additionalProperties":false}},` +
+	`"issues":{"type":"array","items":{"type":"object","properties":{"issue":{"type":"string"},"node":{"type":"string"},"size_fit":{"type":"string","enum":["executor","child","split"]},` +
+	`"size_reason":{"type":"string"},"issue_size_decision":{"type":"string","enum":["ok","over_line","over_line_accepted"]},"edit_regions":{"type":"array","items":{"type":"string"}},` +
+	`"approach":{"type":"string"},"tests_first":{"type":"array","items":{"type":"string"}},"done_condition":{"type":"string"},"decision_refs":{"type":"array","items":{"type":"string"}},` +
+	`"order_after":{"type":"array","items":{"type":"string"}},"group":{"type":["string","null"]}},` +
+	`"required":["issue","node","size_fit","size_reason","issue_size_decision","edit_regions","approach","tests_first","done_condition","decision_refs","order_after","group"],"additionalProperties":false}},` +
+	`"open_questions":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"question":{"type":"string"},"scope":{"type":"string"},"files_needed":{"type":"array","items":{"type":"string"}}},` +
+	`"required":["id","question","scope","files_needed"],"additionalProperties":false}},` +
+	`"risks":{"type":"array","items":{"type":"string"}},` +
+	`"dispositions":{"type":["array","null"],"items":{"type":"object","properties":{"finding":{"type":"string"},"disposition":{"type":"string","enum":["folded","rebutted"]},"reason":{"type":"string"}},` +
+	`"required":["finding","disposition","reason"],"additionalProperties":false}}},` +
+	`"required":["decisions","issues","open_questions","risks","dispositions"],"additionalProperties":false}`
+
+// legacyDesignLane is the text of the project lane an old run (before S-1, CRW-1435) ran: the current project-lane.js with its line-1
+// import of DESIGN replaced by the DESIGN of that time, declared after the header, so its architect answers a DESIGN that sizes a node
+// for a child, or for a split without sub-tasks, as an old architect did.
+func legacyDesignLane(t *testing.T) []byte {
+	t.Helper()
+	text, err := workflows.Source("project-lane")
+	if err != nil {
+		t.Fatal(err)
+	}
+	head, ok := strings.CutPrefix(string(text), designImport)
+	at := strings.Index(head, metaLine)
+	if !ok || at < 0 || strings.Contains(head[at+1:], metaLine) {
+		t.Fatalf("project-lane.js no longer starts with the import of DESIGN the legacy lane replaces, followed by one meta line")
+	}
+	end := at + 1 + strings.IndexByte(head[at+1:], '\n') + 1
+	return []byte(legacyDesignImport + head[:end] + legacyDesignConst + head[end:])
+}
+
+// legacyDesignOf is a DESIGN as an architect before S-1 answered it: d with the sub_tasks member of every issue dropped.
+func legacyDesignOf(t *testing.T, d ops.Design) json.RawMessage {
+	t.Helper()
+	b, err := json.Marshal(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+	issues, _ := m["issues"].([]any)
+	for _, is := range issues {
+		delete(is.(map[string]any), "sub_tasks")
+	}
+	out, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// UseLegacyDesign makes the lab an old run's world (before S-1, CRW-1435): the project lane it runs is legacyDesignLane, and its
+// architect answers the DESIGN of designFor with no sub_tasks member. A node sized for a child, or for a split with no sub-tasks,
+// reaches a lane only so: the current DESIGN refuses both.
+func (l *Lab) UseLegacyDesign() {
+	l.t.Helper()
+	l.Source = legacyDesignLane(l.t)
+	l.legacyDesign = true
+}
+
+// The legacy lane differs from the current project lane only in where DESIGN comes from, and its DESIGN is the current one less S-1
+// (CRW-1435): child back in the size_fit enum and no sub_tasks member. The lane loads.
+func TestLegacyDesignLaneSwapsOnlyTheDesignSchema(t *testing.T) {
+	text, err := workflows.Source("project-lane")
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := string(legacyDesignLane(t))
+	if strings.Count(legacy, legacyDesignConst) != 1 {
+		t.Fatalf("the legacy lane does not declare DESIGN once")
+	}
+	if got := designImport + strings.Replace(strings.TrimPrefix(legacy, legacyDesignImport), legacyDesignConst, "", 1); got != string(text) {
+		t.Errorf("the legacy lane differs from project-lane.js beyond the import of DESIGN")
+	}
+	if _, err := script.Load(script.Source{Name: "project-lane.js", Text: []byte(legacy), Dir: workflows.FS}); err != nil {
+		t.Fatalf("the legacy lane does not load: %v", err)
+	}
+	current, _ := ops.SchemaText(ops.SchemaDesign)
+	var want map[string]any
+	if err := json.Unmarshal([]byte(current), &want); err != nil {
+		t.Fatal(err)
+	}
+	issue := want["properties"].(map[string]any)["issues"].(map[string]any)["items"].(map[string]any)
+	props := issue["properties"].(map[string]any)
+	delete(props, "sub_tasks")
+	props["size_fit"].(map[string]any)["enum"] = []any{"executor", "child", "split"}
+	var required []any
+	for _, r := range issue["required"].([]any) {
+		if r != "sub_tasks" {
+			required = append(required, r)
+		}
+	}
+	issue["required"] = required
+	var got map[string]any
+	if err := json.Unmarshal([]byte(legacyDesignSchemaJSON), &got); err != nil {
+		t.Fatalf("the legacy DESIGN is not JSON: %v", err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		gb, _ := json.MarshalIndent(got, "", " ")
+		wb, _ := json.MarshalIndent(want, "", " ")
+		t.Errorf("the legacy DESIGN is not the current DESIGN less S-1\nlegacy:\n%s\nwant:\n%s", gb, wb)
+	}
+	if errs := script.LintStrictSchema(got); len(errs) > 0 {
+		t.Errorf("the legacy DESIGN fails the strict structured-output lint: %v", errs)
+	}
 }
 
 // ---- helpers for scenarios ----
@@ -932,6 +1061,8 @@ type LabChecker struct {
 type CheckInfo struct {
 	Node     string
 	Round, N int
+	// Prompt and Worktree are the request's: the prompt the op built and the worktree the check judges.
+	Prompt, Worktree string
 }
 
 type labRoundKey struct{}
@@ -991,7 +1122,7 @@ func (u *LabChecker) Check(ctx context.Context, req reviewadapter.Request) (revi
 	round, _ := ctx.Value(labRoundKey{}).(int)
 	c, ruled := UnitCheck{}, false
 	for _, rl := range rules {
-		if c, ruled = rl(CheckInfo{Node: node, Round: round, N: n}); ruled {
+		if c, ruled = rl(CheckInfo{Node: node, Round: round, N: n, Prompt: req.Prompt, Worktree: req.Worktree}); ruled {
 			break
 		}
 	}

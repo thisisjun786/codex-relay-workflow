@@ -9,15 +9,18 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/compile"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/journal"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/workflows"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
@@ -165,6 +168,54 @@ func TestSchedRelayMilestoneCarriesTheEndConditionCommands(t *testing.T) {
 		default:
 			if len(n.EndCondition) != 0 {
 				t.Errorf("%s carries no body and has the end condition %q", n.Issue, n.EndCondition)
+			}
+		}
+	}
+}
+
+// TestMilestoneCarriesPlannedRegionAttributes (CRW-1461): a node whose planned regions rename or delete a symbol, or hold a region
+// exclusive, carries its whole planned list with those attributes as planned_regions, in the order of its regions and with the same
+// texts, so the lane admits it by what it plans; a node whose regions are all plain edits carries no planned_regions key.
+func TestMilestoneCarriesPlannedRegionAttributes(t *testing.T) {
+	l := newLaneLab(t,
+		labIssue{Key: "A-1", Milestone: "M1", Regions: []compile.Region{{Path: "pkg/a.go", Kind: "symbol", Key: "F", Change: "delete"}, {Path: "b.go", Kind: "file", Change: "edit"}}},
+		labIssue{Key: "A-2", Milestone: "M1", Regions: []compile.Region{{Path: "c.go", Kind: "file"}, {Path: "pkg/d.go", Kind: "symbol", Key: "G", Change: "edit"}}},
+		labIssue{Key: "A-3", Milestone: "M1", After: []string{"A-1", "A-2"}, Regions: []compile.Region{{Path: "e.go", Kind: "file", Exclusive: true}}})
+	m, err := l.relayFor("run-plannedat01", l.handoffBytes(nil), 1).Milestone(ctx, l.plan, "M1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"A-1": `[{"text":"pkg/a.go#F","change":"delete"},"b.go"]`,
+		"A-3": `[{"text":"e.go","exclusive":true}]`,
+	}
+	if len(m.Nodes) != 3 {
+		t.Fatalf("the nodes of M1: %+v", m.Nodes)
+	}
+	for _, n := range m.Nodes {
+		raw, err := json.Marshal(n)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			t.Fatal(err)
+		}
+		got, has := fields["planned_regions"]
+		w, planned := want[n.Issue]
+		switch {
+		case !planned && has:
+			t.Errorf("%s plans only edits and carries planned_regions %s", n.Issue, got)
+		case planned && string(got) != w:
+			t.Errorf("%s's planned_regions: %s, want %s", n.Issue, got, w)
+		}
+		if planned {
+			texts := []string{}
+			for _, rg := range n.PlannedRegions {
+				texts = append(texts, rg.Text)
+			}
+			if !slices.Equal(texts, n.Regions) {
+				t.Errorf("%s's planned texts %q are not its regions %q", n.Issue, texts, n.Regions)
 			}
 		}
 	}
@@ -659,19 +710,24 @@ func TestSchedRelayAcceptIntegrateCloseOnTempStore(t *testing.T) {
 	}
 }
 
-// TestSchedRelayReleaseChildRefusesUnwired (CRW-1277 g): the run starts no `child` session, since a managed child start needs host settings it
-// does not hold: ReleaseChild is an error, never a result the lane would record as a running child.
+// TestSchedRelayReleaseChildRefusesUnwired (CRW-1277 g, CRW-1464): the run starts no `child` session. CRW-1285 gave the relay a managed
+// child start behind host settings no start pins since CRW-1417; CRW-1464 deleted it, so the run's relay has no method that starts a
+// `child` session and holds no host settings for one. A node sized for a child is an unreleased sized row of crw.release that asks the
+// relay nothing (ops TestAChildSizedNodeHasStarted), and the lane escalates it as size_split.
 func TestSchedRelayReleaseChildRefusesUnwired(t *testing.T) {
 	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
 	r := l.relayFor("run-child00001", l.handoffBytes(nil), 1)
-	res, err := r.ReleaseChild(ctx, ops.ChildRequest{Plan: l.plan, Node: l.nodeOf["A-1"], RunID: r.RunID, RequestID: "c1"})
-	// CRW-1285 superseded the answer (g): a run that holds no host settings (no --child-host) still starts no child, and its refusal is
-	// child_host_unset; the managed start with host settings is TestReleaseChildStartsAManagedChildWithHostSettings
-	if !errors.Is(err, ErrChildHostUnset) || !strings.HasPrefix(err.Error(), "refused:child_host_unset:") || res.Started || res.Child != "" {
-		t.Fatalf("ReleaseChild: %+v %v", res, err)
+	typ := reflect.TypeOf(r)
+	for _, name := range []string{"ReleaseChild", "Child"} {
+		if _, ok := typ.MethodByName(name); ok {
+			t.Errorf("the run's relay has a method %s", name)
+		}
+		if _, ok := typ.Elem().FieldByName(name); ok {
+			t.Errorf("the run's relay has a field %s", name)
+		}
 	}
 	if n := l.count("SELECT COUNT(*) FROM dag_agent_executions") + l.count("SELECT COUNT(*) FROM managed_start_requests") + l.count("SELECT COUNT(*) FROM dag_coordinator_claims"); n != 0 {
-		t.Errorf("the refused child release wrote %d rows", n)
+		t.Errorf("building the run's relay wrote %d rows", n)
 	}
 }
 
@@ -920,21 +976,21 @@ func TestSchedRelayCloseLeavesARetiredRelationshipExecution(t *testing.T) {
 	}
 }
 
-// TestChildSizedNodeWithARetiredRelationshipExecutionEscalates (CRW-1415, PR #889 round 2): a run of the current project lane over a plan
-// whose child-sized node the retired `child` session path once executed escalates the node as size_split with detail child_retired, with no
-// item error and no close refusal, and the other node of the milestone lands.
+// TestChildSizedNodeWithARetiredRelationshipExecutionEscalates (CRW-1415, PR #889 round 2): a run of the project lane over a plan whose
+// child-sized node the retired `child` session path once executed escalates the node as size_split with detail child_retired, with no
+// item error and no close refusal, and the other node of the milestone lands. Only a DESIGN of before S-1 (CRW-1435) sizes a node for a
+// child: the run is an old run's, of the project lane whose DESIGN is the current one less S-1 (child in the size_fit enum, no
+// sub_tasks member), started from a script file, and its architect answers with no sub_tasks member.
 func TestChildSizedNodeWithARetiredRelationshipExecutionEscalates(t *testing.T) {
+	lane := legacyChildLane(t)
 	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"}, labIssue{Key: "A-2", Milestone: "M1"})
-	l.designEdit = func(d *ops.Design) {
-		for i := range d.Issues {
-			if d.Issues[i].Issue == "A-2" {
-				d.Issues[i].SizeFit, d.Issues[i].SizeReason = "child", "regions_gt3"
-			}
-		}
-	}
+	l.legacyChildDesign("A-2")
 	node := l.nodeOf["A-2"]
 	l.pastRelationshipExecution(node)
-	spec := l.start("start", "project-lane", "--args", `{"plan":"plan-1","milestone":"M1"}`, "--handoff", l.file)
+	spec := l.start("start", lane, "--args", `{"plan":"plan-1","milestone":"M1"}`, "--handoff", l.file)
+	if spec.Script != lane || spec.Workflow != ProjectLaneWorkflow {
+		t.Fatalf("the run is of %s (script %s), want the legacy project lane %s", spec.Workflow, spec.Script, lane)
+	}
 	res := l.runToEnd(spec.RunID)
 	var v laneValue
 	_ = json.Unmarshal(res.Value, &v)
@@ -956,5 +1012,61 @@ func TestChildSizedNodeWithARetiredRelationshipExecutionEscalates(t *testing.T) 
 	}
 	if len(esc) != 1 || str(esc[0].Data, "detail") != "child_retired" {
 		t.Errorf("the escalations of %s: %+v, want one with detail child_retired", node, esc)
+	}
+}
+
+// legacyChildLane is the project lane of a run of before S-1 (CRW-1435), the only lane whose DESIGN sizes a node for a child: the current
+// lane less S-1 (child in the size_fit enum, no sub_tasks member), written to a script file a run is started from.
+func legacyChildLane(t *testing.T) string {
+	t.Helper()
+	text, err := workflows.Source(ProjectLaneWorkflow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const designImport = "import { RECEIPT, DESIGN, DESIGN_AUDIT, REFLECTION } from 'crw:lib/schemas'\n"
+	head, ok := strings.CutPrefix(string(text), designImport)
+	at := strings.Index(head, "\nexport const meta = ")
+	if !ok || at < 0 {
+		t.Fatalf("project-lane.js no longer starts with the import of DESIGN this test replaces, followed by its meta line")
+	}
+	current, _ := ops.SchemaText(ops.SchemaDesign)
+	var design map[string]any
+	if err := json.Unmarshal([]byte(current), &design); err != nil {
+		t.Fatal(err)
+	}
+	issue := design["properties"].(map[string]any)["issues"].(map[string]any)["items"].(map[string]any)
+	delete(issue["properties"].(map[string]any), "sub_tasks")
+	issue["properties"].(map[string]any)["size_fit"].(map[string]any)["enum"] = []any{"executor", "child", "split"}
+	issue["required"] = slices.DeleteFunc(issue["required"].([]any), func(r any) bool { return r == "sub_tasks" })
+	legacyDesign, _ := json.Marshal(design)
+	end := at + 1 + strings.IndexByte(head[at+1:], '\n') + 1
+	lane := filepath.Join(t.TempDir(), ProjectLaneWorkflow+".js")
+	if err := os.WriteFile(lane, []byte("import { RECEIPT, DESIGN_AUDIT, REFLECTION } from 'crw:lib/schemas'\n"+head[:end]+"const DESIGN = "+string(legacyDesign)+"\n"+head[end:]), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return lane
+}
+
+// legacyChildDesign makes the lab's architect answer a DESIGN of before S-1 that sizes the node of issue key for a child: no issue
+// carries the sub_tasks member.
+func (l *laneLab) legacyChildDesign(key string) {
+	l.designEdit = func(d *ops.Design) {
+		for i := range d.Issues {
+			if d.Issues[i].Issue == key {
+				d.Issues[i].SizeFit, d.Issues[i].SizeReason = "child", "regions_gt3"
+			}
+		}
+	}
+	l.turn = func(c labCall, _ fakehost.TurnRequest) (fakehost.TurnPlan, bool) {
+		if c.Role != "architect" || strings.HasPrefix(c.Label, "reflection:") {
+			return fakehost.TurnPlan{}, false
+		}
+		var m map[string]any
+		raw, _ := json.Marshal(l.design())
+		_ = json.Unmarshal(raw, &m)
+		for _, is := range m["issues"].([]any) {
+			delete(is.(map[string]any), "sub_tasks")
+		}
+		return labSay(m), true
 	}
 }

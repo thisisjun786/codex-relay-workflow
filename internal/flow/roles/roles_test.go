@@ -543,3 +543,46 @@ func TestExecutorOverlayTellsToReadOnceEditByOneScriptAndTestInTheSameCall(t *te
 		}
 	}
 }
+
+// TestArchitectOverlayNamesSplitSubTasks (S-1, CRW-1435): the size_fit of a DESIGN issue is one of executor, split and bundle_split,
+// and the `child` session path is retired. The architect overlay says what each value asks of the plan: a split node names 2 to 4
+// sub_tasks (each with its id, summary, edit regions within the node's own, done condition and the earlier sub-tasks it starts
+// after) that one executor carries out in their order, the node judged once; a bundle_split node names none and starts no executor,
+// the run escalates it; a node sized child is refused. internal/flow/workflows/packets_test.go ties the values to the schema.
+func TestArchitectOverlayNamesSplitSubTasks(t *testing.T) {
+	overlay, err := Overlay("architect", Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	size := sectionOf(overlay, "## Size fit")
+	if size == "" {
+		t.Fatal("the architect overlay has no \"## Size fit\" section")
+	}
+	for _, want := range []string{
+		"`size_fit`", "`executor`", "`split`", "`bundle_split`", "`size_reason`",
+		"`sub_tasks`", "2 to 4 sub-tasks",
+		"`id`", "`summary`", "`edit_regions`", "`done_condition`", "`after`",
+		"`^[a-z0-9][a-z0-9-]{0,31}$`",
+		"within the node's own `edit_regions`",
+		"a symbol of a file the node edits",
+		"only earlier sub-tasks",
+		"in their order",
+		"verified, reviewed and landed once",
+		"`size_split`", "`bundle_split_request`", "no executor starts",
+		"`child`", "is refused",
+	} {
+		if !strings.Contains(size, want) {
+			t.Errorf("the size fit section lacks %q:\n%s", want, size)
+		}
+	}
+	// Executor and bundle_split nodes carry no sub-tasks; the overlay says the member is null for them, never left out.
+	if !strings.Contains(size, "`sub_tasks` is `null`") {
+		t.Errorf("the size fit section does not say sub_tasks is null for a node that is not a split:\n%s", size)
+	}
+	// The section no longer offers child as a size: no sentence asks the architect to size a node child.
+	for _, claim := range []string{"size_fit `child`", "sized `child` when", "a child session"} {
+		if strings.Contains(size, claim) {
+			t.Errorf("the size fit section says %q, which offers the retired child path:\n%s", claim, size)
+		}
+	}
+}

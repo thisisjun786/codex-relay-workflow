@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
@@ -89,8 +90,15 @@ func IsDirectKind(kind string) bool { _, ok := directKinds[kind]; return ok }
 // ('initiative:KEY', 'project:KEY' or 'run:ID'), the obligation it discharges (Subject, the
 // caller's stable id for the report: one subject is one message), a one-line summary (the decision
 // asked for, for a decision kind), the text, the evidence pointers and the staging time.
+//
+// Preface is a line the caller's tool writes above the sender's text, such as report-up's
+// attribution of a report made by a thread that is not the initiative's lead. It is not the sender's
+// words: the message body carries it above the text, the packet's origin records it as the channel's,
+// and it never makes a new statement. It does not count as something said: a message whose text and
+// summary are both empty is refused whatever its preface.
 type DirectMessage struct {
 	Kind, Relationship, Subject, Summary, Text string
+	Preface                                    string
 	Evidence                                   []string
 	At                                         string
 }
@@ -128,7 +136,11 @@ func checkDirect(m DirectMessage) error {
 
 // composeDirect is the role-neutral packet of a direct message: the relay-envelope/1 shape the
 // channel renders and reads back, with the layer and both roles named by the kind rather than fixed
-// to parent and supervisor.
+// to parent and supervisor. The body is the preface, a blank line and the text, trimmed and cut to
+// maxDirectBody. The top-level origin records what the channel generated rather than the sender
+// gave (statement.go): evidence "channel" when the pointer is the default one and "sender" when the
+// list is the sender's, text the digest of the sender's whole text less its trailing whitespace
+// (before any cut, composedText) or null, and preface the trimmed preface or null.
 func (c *Channel) composeDirect(m DirectMessage, r Resolution, at string) Packet {
 	k := directKinds[m.Kind]
 	id := DirectMessageID(m)
@@ -138,8 +150,16 @@ func (c *Channel) composeDirect(m DirectMessage, r Resolution, at string) Packet
 			evidence = append(evidence, pointer)
 		}
 	}
+	origin := map[string]any{"evidence": "sender", "text": nil, "preface": nil}
 	if len(evidence) == 0 {
 		evidence = append(evidence, c.command("supervisor-show", "--message", id))
+		origin["evidence"] = "channel"
+	}
+	if text := composedText(m); text != "" {
+		origin["text"] = "sha256:" + pyvalue.SHA256Hex(text)
+	}
+	if preface := strings.TrimSpace(m.Preface); preface != "" {
+		origin["preface"] = preface
 	}
 	key := strings.TrimPrefix(m.Relationship, k.prefix)
 	scope := strings.TrimSuffix(k.prefix, ":") + " " + key
@@ -156,8 +176,12 @@ func (c *Channel) composeDirect(m DirectMessage, r Resolution, at string) Packet
 	if summary := strings.TrimSpace(m.Summary); summary != "" {
 		basis = summary
 	}
+	joined := m.Text
+	if m.Preface != "" {
+		joined = m.Preface + "\n\n" + m.Text
+	}
 	var body any
-	if text := strings.TrimSpace(m.Text); text != "" {
+	if text := strings.TrimSpace(joined); text != "" {
 		body = truncateText(text, maxDirectBody)
 	}
 	layer, recipientRole := directLayer(k, r)
@@ -170,7 +194,18 @@ func (c *Channel) composeDirect(m DirectMessage, r Resolution, at string) Packet
 		"replyTo":       absent("not_applicable", "no reply is directed at one message"), "answerOwedBy": answer, "decision": decision,
 		"reach": reachUnmeasured()}
 	return Packet{"version": packetVersion, "envelope": envelope, "issue": nil, "generation": nil, "criteriaDigest": nil, "policy": nil,
-		"callback": nil, "artifact": nil, "evidence": evidence, "body": body, "activation": nil}
+		"callback": nil, "artifact": nil, "evidence": evidence, "body": body, "activation": nil, "origin": origin}
+}
+
+// composedText is the sender's text of m less only what the body always drops of it, so that the
+// origin's digest changes whenever the text's part of the body does. The body is the joined preface
+// and text, trimmed, so the text always loses its trailing whitespace, and composedText drops only
+// that. Its leading whitespace, the first line's indentation included, is kept: below report-up's
+// attribution the body carries it, and with no preface, where the body's trim drops it, keeping it
+// never makes two texts the body tells apart the same statement. The preface does not decide the
+// digest, so the same text from the lead and from another thread is one statement.
+func composedText(m DirectMessage) string {
+	return strings.TrimRightFunc(m.Text, unicode.IsSpace)
 }
 
 // directLayer is the layer and the recipient role the envelope of a kind names for resolution r: the
@@ -281,7 +316,13 @@ func (c *Channel) StageDirect(ctx context.Context, m DirectMessage, within func(
 			encoded = directDumps(packet)
 		}
 		moved := existing.Text("sender_task_id") != live.Sender || existing.Text("recipient_task_id") != live.Recipient
+		// A row staged before the origin record existed is compared without it, so an unchanged replay
+		// writes nothing and the row keeps its old shape; any rewrite writes the whole packet, origin
+		// included.
 		same := encoded == stored
+		if !storedHasOrigin(stored) {
+			same = directDumps(packetWithout(packet, "origin")) == stored
+		}
 		// The hold rule (CRW-1500, plan-r3 section 3): a superseded_by_report hold is released only when
 		// the rule answers release; kept, the unsent message's routing fields are still rewritten and its
 		// hold word, state and next eligibility stay. The CASE below is split by word: its
@@ -350,21 +391,18 @@ func (c *Channel) StageDirect(ctx context.Context, m DirectMessage, within func(
 
 // directHoldReleases asks the hold rule whether the direct sender's staging of m releases the
 // superseded_by_report hold row carries, live being the hierarchy now and packet what would be staged
-// now. The staging is the rule's restage entry, with the statement read by statementKey (seat, scope,
-// sender and observation time are not part of it); when an endpoint moved it is also the readdress
-// entry, and a release by either is a release. A direct message is owed through its message whenever
-// its sender stages it, which refreshProposal answers too (no tracking record confirms a direct
-// message), so ifOwed releases a new statement. It answers the rule's reason with the verdict.
+// now. The staging is the rule's restage entry, with the statement read by sameDirectStatement (seat,
+// scope, sender, observation time and what the channel generated are not part of it); when an
+// endpoint moved it is also the readdress entry, and a release by either is a release. A direct
+// message is owed through its message whenever its sender stages it, which refreshProposal answers
+// too (no tracking record confirms a direct message), so ifOwed releases a new statement. It answers
+// the rule's reason with the verdict.
 func (c *Channel) directHoldReleases(ctx context.Context, row store.SupervisorMessagesRow, m DirectMessage, packet Packet, live Resolution, at string, moved bool) (bool, string, error) {
 	kind, err := holdKindOf(ctx, c.Store, row)
 	if err != nil {
 		return false, "", err
 	}
-	stored, err := rowStatementKey(row)
-	if err != nil {
-		return false, "", err
-	}
-	fresh, err := freshStatementKey(directStatementColumns(m), packet)
+	sameStatement, err := sameDirectStatement(row, directStatementColumns(m), packet)
 	if err != nil {
 		return false, "", err
 	}
@@ -376,12 +414,34 @@ func (c *Channel) directHoldReleases(ctx context.Context, row store.SupervisorMe
 		}
 		return err == nil, err
 	}
-	verdict, why, err := holdDecision(kind, holdChange{Entry: entryRestage, SameStatement: stored == fresh, SameRecipient: sameRecipient, SameSender: sameSender}, owed)
+	verdict, why, err := holdDecision(kind, holdChange{Entry: entryRestage, SameStatement: sameStatement, SameRecipient: sameRecipient, SameSender: sameSender}, owed)
 	if err != nil || verdict == holdRelease || !moved {
 		return verdict == holdRelease, why, err
 	}
 	verdict, why, err = holdDecision(kind, holdChange{Entry: entryReaddress, SameRecipient: sameRecipient, SameSender: sameSender}, nil)
 	return verdict == holdRelease, why, err
+}
+
+// storedHasOrigin reports whether a stored packet has a top-level origin key. A packet that cannot be
+// read is answered as having one, so it is compared byte for byte as before.
+func storedHasOrigin(packet string) bool {
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(packet), &top); err != nil {
+		return true
+	}
+	_, ok := top["origin"]
+	return ok
+}
+
+// packetWithout is a shallow copy of p without the named top-level key.
+func packetWithout(p Packet, key string) Packet {
+	out := Packet{}
+	for name, value := range p {
+		if name != key {
+			out[name] = value
+		}
+	}
+	return out
 }
 
 // storedObservedAt is the observedAt of a stored packet, or "".

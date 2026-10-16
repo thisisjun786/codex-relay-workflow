@@ -106,7 +106,9 @@ const (
 // as the Codex review's, CRW-1517); a call with no evidence_receipt had no assignment and records not_assigned; any other receipt
 // (missing, unverified, accepted but not copied, a copy that cannot be read or does not hash to the digest) is not taken: whatever
 // the profile, the tool is not run, and the row carries the node, the call, the receipt as read and hold receipt_*, with no role, tree
-// or commit, so no reader takes it and a resume reads the receipt again. A committed check judges a range no executor wrote and records no_executor.
+// or commit, so no reader takes it and a resume reads the receipt again. A committed check judges a range no executor wrote and records
+// no_executor, unless it names the executor call the range ends on (the check of a split node's whole change, CRW-1459): that call's
+// receipt is then read, recorded, handed and held as an uncommitted check's is.
 //
 // A committed check gives the request the range (Request.Base and Head), which a profile's Args may pass to the tool (the Codex
 // committed profile's --base).
@@ -168,7 +170,6 @@ func (o *unitCheckOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpR
 		if opts.Base == "" {
 			return engine.OpResult{}, fmt.Errorf("crw.unitCheck: node %s: a committed check of %s needs the base of its range", node, head)
 		}
-		ex = CallRef{}
 	} else if ex.CallID == "" {
 		return engine.OpResult{}, fmt.Errorf("crw.unitCheck: node %s: an uncommitted check needs the executor call it judges", node)
 	}
@@ -188,6 +189,8 @@ func (o *unitCheckOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpR
 	// committed range, else the HEAD read before the first Check
 	baseHead := ""
 	var receipt checkReceipt
+	// earlier are the receipts taken of the other executor calls of a committed check's range, oldest first
+	var earlier []rangeReceipt
 	if mode == UnitCheckUncommitted {
 		data["call"] = ex.CallID
 		term, ok := r.terminal(ex.CallID)
@@ -263,11 +266,57 @@ func (o *unitCheckOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpR
 				Findings: []reviewadapter.Finding{}}, CheckID: req.CallID}
 			return engine.OpResult{Result: result(out), Data: data}, nil
 		}
+		// a committed check of a run's node names the executor call whose receipt the range ends on (the whole change of a split
+		// node, CRW-1459): its receipt is read and handed as an uncommitted check's is, and held the same way
+		if ex.CallID != "" {
+			data["call"] = ex.CallID
+			term, ok := r.terminal(ex.CallID)
+			if !ok {
+				return engine.OpResult{}, fmt.Errorf("crw.unitCheck: node %s: call %s has no terminal row", node, ex.CallID)
+			}
+			var hold, detail string
+			if receipt, hold, detail = executorReceipt(term); hold != "" {
+				delete(data, "commit")
+				delete(data, "base")
+				data["state"], data["hold"], data["receipt"], data["detail"] = StateReceiptHeld, hold, term.Data["evidence_receipt"], detail
+				out := UnitCheckOutcome{Result: reviewadapter.Result{State: StateReceiptHeld, Detail: detail + "; the tool was not run", Findings: []reviewadapter.Finding{}},
+					Hold: hold, Call: ex.CallID, CheckID: req.CallID}
+				return engine.OpResult{Result: result(out), Data: data}, nil
+			}
+			data["receipt"] = receipt.row
+			// the range also holds commits made from earlier executor calls of the node (a split node's checkpoint commits, which no
+			// check judged before this one, and earlier rounds'): the receipt of each is read and held the same way, so no call's work
+			// lands on a receipt that was not taken; the ones taken are recorded, oldest first
+			var taken []any
+			for _, call := range r.rangeCalls(node, opts.Base, head) {
+				if call == ex.CallID {
+					continue
+				}
+				t, ok := r.terminal(call)
+				if !ok {
+					return engine.OpResult{}, fmt.Errorf("crw.unitCheck: node %s: call %s of the range %s..%s has no terminal row", node, call, opts.Base, head)
+				}
+				rc, hold, detail := executorReceipt(t)
+				if hold != "" {
+					delete(data, "commit")
+					delete(data, "base")
+					data["state"], data["hold"], data["hold_call"], data["receipt"], data["detail"] = StateReceiptHeld, hold, call, t.Data["evidence_receipt"], detail
+					out := UnitCheckOutcome{Result: reviewadapter.Result{State: StateReceiptHeld, Detail: detail + " (call " + call + " of the range); the tool was not run", Findings: []reviewadapter.Finding{}},
+						Hold: hold, Call: call, CheckID: req.CallID}
+					return engine.OpResult{Result: result(out), Data: data}, nil
+				}
+				taken = append(taken, map[string]any{"call": call, "receipt": rc.row})
+				earlier = append(earlier, rangeReceipt{call: call, receipt: rc})
+			}
+			if len(taken) > 0 {
+				data["range_receipts"] = taken
+			}
+		}
 	}
 	if rel, ok := releaseRowOf(r, node); ok {
 		data["execution_id"], data["criteria_digest"] = dataStr(rel, "execution_id"), dataStr(rel, "criteria_digest")
 	}
-	creq := reviewadapter.Request{Profile: profile, Worktree: wt, Prompt: unitCheckPrompt(r, node, mode, opts.Base, head, receipt), Schema: reviewadapter.AnswerSchema, Limit: uc.Limit,
+	creq := reviewadapter.Request{Profile: profile, Worktree: wt, Prompt: unitCheckPrompt(r, node, mode, opts.Base, head, receipt, earlier), Schema: reviewadapter.AnswerSchema, Limit: uc.Limit,
 		GuideRev: UnitCheckGuideRev}
 	if mode == UnitCheckCommitted {
 		// the range the reader of a committed profile takes an answer about (reviewadapter.Profile.Ranged), and the base a profile's Args
@@ -448,10 +497,12 @@ func (o *unitCheckOp) Proven(_ context.Context, _ []engine.Event, row engine.Eve
 
 // unitCheckPrompt is the prompt of a unit check (guide UnitCheckGuideRev): the scope sentence first, in the words the tool's reader
 // expects of its scope (the uncommitted changes of the working tree, or the range base..head), then the node and the criteria of its
-// plan the change is judged against, and in uncommitted mode the executor's accepted evidence receipt (EXECUTOR RECEIPT) when it has one.
-// A tool whose profile takes no prompt (the Codex review's Args leave it out) is not given these bytes; the call's
+// plan the change is judged against, and the executor's accepted evidence receipt (EXECUTOR RECEIPT) when the check read one. The
+// committed check of a split node (CRW-1459) says that the range is the node's whole change, every sub-task of it, and a committed
+// check names the receipts of the other executor calls of its range (EARLIER EXECUTOR RECEIPTS: each call with the digest and the file
+// of its receipt, not its bytes, which would overrun the one argument the tool takes the prompt as). A tool whose profile takes no prompt (the Codex review's Args leave it out) is not given these bytes; the call's
 // Result.PromptSent says so, and the row's receipt records it as handed false.
-func unitCheckPrompt(r rows, node, mode, base, head string, receipt checkReceipt) string {
+func unitCheckPrompt(r rows, node, mode, base, head string, receipt checkReceipt, earlier []rangeReceipt) string {
 	var b strings.Builder
 	if mode == UnitCheckCommitted {
 		fmt.Fprintf(&b, "Review the changes between %s and %s (git diff %s..%s).\n", base, head, base, head)
@@ -472,7 +523,18 @@ func unitCheckPrompt(r rows, node, mode, base, head string, receipt checkReceipt
 			}
 		}
 	}
-	fmt.Fprintf(&b, "\nThis is the unit check of node %s (issue %s) of a crw run. Report every bug, regression or unmet criterion you find in the change.\n", node, issue)
+	var subs []SubTask
+	if ok && mode == UnitCheckCommitted {
+		if is, found, err := issueOf(r, rel, node); err == nil && found {
+			subs = is.SubTasks
+		}
+	}
+	if len(subs) > 0 {
+		fmt.Fprintf(&b, "\nThis is the unit check of node %s (issue %s) of a crw run, of the whole change of the node: its %d sub-tasks are done, and the range "+
+			"holds them all. Report every bug, regression or unmet criterion you find in the change.\n", node, issue, len(subs))
+	} else {
+		fmt.Fprintf(&b, "\nThis is the unit check of node %s (issue %s) of a crw run. Report every bug, regression or unmet criterion you find in the change.\n", node, issue)
+	}
 	if len(criteria) > 0 {
 		b.WriteString("\nCRITERIA (what the change must do)\n")
 		for i, id := range CriterionIDs(len(criteria)) {
@@ -497,7 +559,23 @@ func unitCheckPrompt(r rows, node, mode, base, head string, receipt checkReceipt
 			fmt.Fprintf(&b, "(the receipt is %d bytes; the first %d are above; the whole receipt is the file %s)\n", len(receipt.body), len(body), receipt.file)
 		}
 	}
+	if len(earlier) > 0 {
+		b.WriteString("\nEARLIER EXECUTOR RECEIPTS (of the other executor calls whose commits the range holds, oldest first; each is the executor's report, not a judgment of the change)\n")
+		for _, e := range earlier {
+			if e.receipt.body == nil {
+				fmt.Fprintf(&b, "- call %s: no evidence receipt was assigned\n", e.call)
+				continue
+			}
+			fmt.Fprintf(&b, "- call %s: sha256 %s, %d bytes, the file %s\n", e.call, e.receipt.digest, len(e.receipt.body), e.receipt.file)
+		}
+	}
 	return b.String()
+}
+
+// rangeReceipt is the receipt taken of an executor call a commit of a committed check's range was made from.
+type rangeReceipt struct {
+	call    string
+	receipt checkReceipt
 }
 
 // UnitCheckReceiptPromptLimit is the most bytes of an executor receipt a unit-check prompt carries: the tool takes the prompt as one

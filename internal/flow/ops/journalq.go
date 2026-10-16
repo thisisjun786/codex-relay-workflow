@@ -2,6 +2,7 @@ package ops
 
 import (
 	"encoding/json"
+	"slices"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 )
@@ -50,6 +51,27 @@ func (r rows) last(keep func(engine.Event) bool) (engine.Event, bool) {
 		}
 	}
 	return engine.Event{}, false
+}
+
+// rangeCalls are the executor calls the commits of node in the range base..head were made from, oldest first, each once: the chain of
+// the node's crw.commit rows from the one of head back by their parent, up to base or to a commit no row of the node made.
+func (r rows) rangeCalls(node, base, head string) []string {
+	commits := r.opRows(OpCommit).where(func(ev engine.Event) bool { return dataStr(ev, "node") == node })
+	var calls []string
+	seen := map[string]bool{}
+	for at := head; at != "" && at != base && !seen[at]; {
+		seen[at] = true
+		row, ok := commits.last(func(ev engine.Event) bool { return dataStr(ev, "commit") == at })
+		if !ok {
+			break
+		}
+		if c := dataStr(row, "call"); c != "" && !slices.Contains(calls, c) {
+			calls = append(calls, c)
+		}
+		at = dataStr(row, "parent")
+	}
+	slices.Reverse(calls)
+	return calls
 }
 
 // prepared returns the prepared row of every agent call, in journal order.

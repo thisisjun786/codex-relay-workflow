@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"regexp"
 	"slices"
 	"sort"
+	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 )
@@ -376,23 +378,107 @@ func planTriggerCall(occurrence, digest string) string {
 	return "plan:" + occurrence + ":" + digest
 }
 
-// lanes says which nodes of the milestone had started and which had not: a node is started from its release on, or from the design
-// row that sized it for a split or a child (startRowOf).
-func lanes(r rows, nodes []string) (started, unstarted []string) {
-	started, unstarted = []string{}, []string{}
+// lanes says which nodes of the milestone had started, which can no longer start and which had not, over the milestone's nodes in
+// the order the scheduler offers them (CRW-1439). A node is started from its release on, or from the design row that sized it for a
+// split or a child (startRowOf), or when its newest release row that stands ended it without an executor (terminalUnreleased). A node
+// that has not started is blocked when a node it waits for (After, restricted to the milestone's nodes) ended unreleased, was given
+// up by the run (givenUp), or is blocked itself: as in crw:lib/lane's dag, it never starts. A predecessor that is held, waits on an
+// open escalation or is running does not block: it can still land after a resume or a decision. The rest are unstarted.
+func lanes(r rows, nodes []PlanNode) (started, unstarted, blocked []string) {
+	started, unstarted, blocked = []string{}, []string{}, []string{}
+	byID := make(map[string]PlanNode, len(nodes))
 	for _, n := range nodes {
-		if _, _, ok := startRowOf(r, n); ok {
-			started = append(started, n)
-		} else {
-			unstarted = append(unstarted, n)
+		byID[n.ID] = n
+	}
+	isStarted, ends := map[string]bool{}, map[string]bool{}
+	for _, n := range nodes {
+		term := terminalUnreleased(r, n.ID)
+		if _, _, ok := startRowOf(r, n.ID); ok || term {
+			isStarted[n.ID] = true
+		}
+		ends[n.ID] = term || givenUp(r, n.ID)
+	}
+	// the fixpoint over After: a node seen on the walk and not decided yet (a cycle no plan has) blocks nothing
+	const visiting, yes, no = 1, 2, 3
+	state := map[string]int{}
+	var isBlocked func(id string) bool
+	isBlocked = func(id string) bool {
+		switch state[id] {
+		case visiting, no:
+			return false
+		case yes:
+			return true
+		}
+		state[id] = visiting
+		out := false
+		if !isStarted[id] {
+			for _, p := range byID[id].After {
+				if _, member := byID[p]; member && p != id && (ends[p] || isBlocked(p)) {
+					out = true
+					break
+				}
+			}
+		}
+		state[id] = no
+		if out {
+			state[id] = yes
+		}
+		return out
+	}
+	for _, n := range nodes {
+		switch {
+		case isStarted[n.ID]:
+			started = append(started, n.ID)
+		case isBlocked(n.ID):
+			blocked = append(blocked, n.ID)
+		default:
+			unstarted = append(unstarted, n.ID)
 		}
 	}
-	return started, unstarted
+	return started, unstarted, blocked
 }
 
-// startRowOf is the row a node started under, and how: a release to an executor that stands (released), or, for a node no executor
-// was released for, the design row that stands and found its issue sized for a split or a child (split, child), which its lane
-// recorded before it escalated the node (size_split). Either is a start: no other revision releases the node, and the plan it
+// terminalUnreleased says whether the node's newest crw.release row that stands ended it without an executor: released false, and
+// sized for a child, a split or a bundle split, or refused for a plan that dropped the node (node_not_in_plan) or an epoch another
+// session claimed (epoch_lost). A newest row that refused it for a changed plan (plan_changed, relay_plan_changed), found no design
+// for it or held the run is not: the lane asks again.
+func terminalUnreleased(r rows, node string) bool {
+	row, ok := r.current(OpRelease).last(func(ev engine.Event) bool { return dataStr(ev, "node") == node })
+	if !ok || dataBool(row, "released") {
+		return false
+	}
+	switch dataStr(row, "kind") {
+	case "child", "split", "bundle_split":
+		return true
+	}
+	switch dataStr(row, "reason") {
+	case "node_not_in_plan", ReasonEpochLost:
+		return true
+	}
+	return false
+}
+
+// givenUp says whether the run gave the node up after it released it: a release row that stands, a later completed escalation of
+// the node that closed its execution, and no later integration of the node (the first branch of endedByRun, over rows that stand).
+func givenUp(r rows, node string) bool {
+	rel, ok := releaseRowOf(r, node)
+	if !ok || r.superseded(rel) {
+		return false
+	}
+	esc, ok := r.current(OpEscalate).last(func(ev engine.Event) bool {
+		return ev.Seq > rel.Seq && dataStr(ev, "node") == node && dataBool(ev, "closed")
+	})
+	if !ok {
+		return false
+	}
+	_, landed := r.current(OpIntegrate).last(func(ev engine.Event) bool { return ev.Seq > esc.Seq && dataStr(ev, "node") == node })
+	return !landed
+}
+
+// startRowOf is the row a node started under, and how: a release to an executor that stands (released; a split with sub-tasks is
+// one, CRW-1459), or, for a node no executor was released for, the design row that stands and found its issue sized for a bundle
+// split, a split with no sub-tasks or a child (bundle_split, split, child), which its lane recorded before it escalated the node
+// (size_split). Either is a start: no other revision releases the node, and the plan it
 // started on is the one a re-plan keeps (crw.releasedPlans). It is the one started predicate of the signal path and the re-plan.
 func startRowOf(r rows, node string) (engine.Event, string, bool) {
 	if rel, ok := releaseRowOf(r, node); ok && !r.superseded(rel) {
@@ -402,10 +488,192 @@ func startRowOf(r rows, node string) (engine.Event, string, bool) {
 	if !ok || r.superseded(row) || dataBool(row, "released") {
 		return engine.Event{}, "", false
 	}
-	if kind := dataStr(row, "kind"); kind == "split" || kind == "child" {
+	switch kind := dataStr(row, "kind"); kind {
+	case "split", "child", "bundle_split":
 		return row, kind, true
 	}
 	return engine.Event{}, "", false
+}
+
+// releasedPlans is, in the milestone's order, the plan each started node of the milestone started under: the whole issue of the
+// ledger revision its start row names, and the whole decisions its decision_refs name there. It is the one rule both readers stand
+// on: crw.releasedPlans gives it to the critic of a re-plan (RELEASED PLANS), and crw.designLedger refuses a revision after the first
+// that does not keep it (CRW-1472), so what the critic is told a DESIGN must keep is what the ledger demands.
+func releasedPlans(r rows, ms string) ([]ReleasedPlan, error) {
+	out := []ReleasedPlan{}
+	for _, node := range milestoneNodes(r, ms) {
+		// the started predicate of the signal path (startRowOf): a node it counts started is listed, and only such a node
+		rel, kind, ok := startRowOf(r, node)
+		if !ok {
+			continue
+		}
+		revision := dataStr(rel, "revision")
+		led, ok := ledgerOf(r, ms, revision)
+		if !ok {
+			return nil, fmt.Errorf("the ledger has no revision %s of milestone %s, which node %s was released under", revision, ms, node)
+		}
+		is, found, err := designIssue(led, node)
+		if err != nil {
+			return nil, fmt.Errorf("node %s: %w", node, err)
+		}
+		if !found {
+			return nil, fmt.Errorf("revision %s plans no issue for node %s, which was released under it", revision, node)
+		}
+		is.EditRegions, is.TestsFirst, is.DecisionRefs, is.OrderAfter = nonNil(is.EditRegions), nonNil(is.TestsFirst), nonNil(is.DecisionRefs), nonNil(is.OrderAfter)
+		p := ReleasedPlan{Node: node, Kind: kind, Revision: revision, DesignDigest: dataStr(rel, "design_digest"), Plan: is, Decisions: []Decision{}}
+		if kind == "bundle_split" {
+			p.EscalationID = bundleSplitEscalation(r, node)
+		}
+		design, err := ledgerDesign(led)
+		if err != nil {
+			return nil, fmt.Errorf("node %s: %w", node, err)
+		}
+		for _, ref := range is.DecisionRefs {
+			p.Decisions = append(p.Decisions, decisionsOf(design, ref)...)
+		}
+		out = append(out, p)
+	}
+	return out, nil
+}
+
+// decisionsOf are the decisions of a DESIGN with the id, in its order.
+func decisionsOf(d Design, id string) []Decision {
+	var out []Decision
+	for _, dec := range d.Decisions {
+		if dec.ID == id {
+			out = append(out, dec)
+		}
+	}
+	return out
+}
+
+// revisionKeepsStarted is the rule crw.designLedger holds a revision after the first to (CRW-1472): every started node keeps the
+// issue it started under (releasedPlans, the plans the critic of the re-plan was given), every field of it, and every decision its
+// decision_refs name there, every field of each; every decision of the revision before it (the ledger's current one) is still a
+// decision of the DESIGN, whatever node names it; and every node the milestone still needs has an issue. A node the milestone needs
+// is one of the nodes the run read (milestoneNodes) that the plan of the revision holds (slices: the plan the decision evaluated, or
+// the live one), or one that has started: a node the plan dropped and that never started is not demanded, and one a plan revision
+// added, which the run never runs, is not either. An unstarted node changes freely, and so do the fields of a decision no started
+// node names; such a decision is not dropped.
+func revisionKeepsStarted(r rows, ms string, design Design, plan map[string]string) error {
+	plans, err := releasedPlans(r, ms)
+	if err != nil {
+		return err
+	}
+	issues := make(map[string]DesignIssue, len(design.Issues))
+	for _, is := range design.Issues {
+		issues[is.Node] = is
+	}
+	started := map[string]bool{}
+	for _, p := range plans {
+		started[p.Node] = true
+		is, ok := issues[p.Node]
+		if !ok {
+			return fmt.Errorf("node %s started under revision %s (%s) and has no issue: a started node keeps the issue it started under", p.Node, p.Revision, p.Kind)
+		}
+		if fields := differingFields(canonicalIssue(p.Plan), canonicalIssue(is)); len(fields) > 0 {
+			return fmt.Errorf("node %s started under revision %s (%s), and its issue differs from that plan in %s: a started node keeps every field of its issue", p.Node, p.Revision, p.Kind, strings.Join(fields, ", "))
+		}
+		// the decisions as the revision the node started under has them (once per id, however often decision_refs names it)
+		led, _ := ledgerOf(r, ms, p.Revision)
+		then, err := ledgerDesign(led)
+		if err != nil {
+			return fmt.Errorf("node %s: %w", p.Node, err)
+		}
+		seen := map[string]bool{}
+		for _, ref := range p.Plan.DecisionRefs {
+			if seen[ref] {
+				continue
+			}
+			seen[ref] = true
+			was, now := canonicalDecisions(decisionsOf(then, ref)), canonicalDecisions(decisionsOf(design, ref))
+			switch {
+			case now == "[]" && was != "[]":
+				return fmt.Errorf("decision %s, which node %s started under (revision %s), is missing: a started node keeps the decisions it names", ref, p.Node, p.Revision)
+			case now != was:
+				return fmt.Errorf("decision %s, which node %s started under (revision %s), differs from the decision of that revision: a started node keeps every field of the decisions it names", ref, p.Node, p.Revision)
+			}
+		}
+	}
+	if err := keepsDecisions(r, ms, design); err != nil {
+		return err
+	}
+	for _, node := range milestoneNodes(r, ms) {
+		if _, held := plan[node]; !held || started[node] {
+			continue
+		}
+		if _, ok := issues[node]; !ok {
+			return fmt.Errorf("node %s of milestone %s, which the plan of the revision holds, has no issue", node, ms)
+		}
+	}
+	return nil
+}
+
+// keepsDecisions refuses a DESIGN that drops a decision of the revision before it (CRW-1472 c6): every decision id of the ledger's
+// current revision of the milestone is the id of a decision of the DESIGN, whether a started node, an unstarted one or none names it.
+func keepsDecisions(r rows, ms string, design Design) error {
+	prev, ok := currentLedger(r, ms)
+	if !ok {
+		return nil
+	}
+	before, err := ledgerDesign(prev)
+	if err != nil {
+		return fmt.Errorf("revision %s: %w", dataStr(prev, "revision"), err)
+	}
+	have := make(map[string]bool, len(design.Decisions))
+	for _, dec := range design.Decisions {
+		have[dec.ID] = true
+	}
+	for _, dec := range before.Decisions {
+		if !have[dec.ID] {
+			return fmt.Errorf("decision %s of revision %s is missing: a revision keeps every decision of the revision before it", dec.ID, dataStr(prev, "revision"))
+		}
+	}
+	return nil
+}
+
+// canonicalIssue is an issue as the ledger compares it: its JSON with an absent list read as an empty one, so that an issue keeps
+// its plan whether a list of it marshals as null or as [].
+func canonicalIssue(is DesignIssue) map[string]any {
+	is.EditRegions, is.TestsFirst, is.DecisionRefs, is.OrderAfter = nonNil(is.EditRegions), nonNil(is.TestsFirst), nonNil(is.DecisionRefs), nonNil(is.OrderAfter)
+	subs := make([]SubTask, 0, len(is.SubTasks))
+	for _, sub := range is.SubTasks {
+		sub.EditRegions, sub.After = nonNil(sub.EditRegions), nonNil(sub.After)
+		subs = append(subs, sub)
+	}
+	is.SubTasks = subs
+	b, _ := json.Marshal(is)
+	var m map[string]any
+	_ = json.Unmarshal(b, &m)
+	return m
+}
+
+// canonicalDecisions is the JSON of decisions with an absent list read as an empty one.
+func canonicalDecisions(ds []Decision) string {
+	out := make([]Decision, 0, len(ds))
+	for _, d := range ds {
+		d.Evidence, d.Alternatives, d.Assumptions = nonNil(d.Evidence), nonNil(d.Alternatives), nonNil(d.Assumptions)
+		out = append(out, d)
+	}
+	b, _ := json.Marshal(out)
+	return string(b)
+}
+
+// differingFields are the members, sorted, whose JSON differs between two objects.
+func differingFields(was, now map[string]any) []string {
+	var out []string
+	for k, v := range was {
+		if w, ok := now[k]; !ok || !reflect.DeepEqual(v, w) {
+			out = append(out, k)
+		}
+	}
+	for k := range now {
+		if _, ok := was[k]; !ok {
+			out = append(out, k)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // milestoneNodes are the nodes of the milestone in the order the scheduler offers them, as the run read them first.
@@ -515,16 +783,19 @@ type PlanRead struct {
 
 // SignalBind is the answer of crw.signalBind.
 type SignalBind struct {
-	Milestone  string    `json:"milestone"`
-	K          int       `json:"k"`
-	Prev       string    `json:"prev"`
-	Members    []Trigger `json:"members"`
-	Started    []string  `json:"started"`
-	Unstarted  []string  `json:"unstarted"`
-	Tip        string    `json:"tip"`
-	Revision   string    `json:"revision"`
-	PlanRead   PlanRead  `json:"revision_read"`
-	Superseded []string  `json:"superseded"`
+	Milestone string    `json:"milestone"`
+	K         int       `json:"k"`
+	Prev      string    `json:"prev"`
+	Members   []Trigger `json:"members"`
+	Started   []string  `json:"started"`
+	Unstarted []string  `json:"unstarted"`
+	// Blocked are the nodes that have not started and never will under this run: a node they wait for ended unreleased, was given up
+	// or is blocked (lanes). A row recorded before CRW-1439 has none.
+	Blocked    []string `json:"blocked"`
+	Tip        string   `json:"tip"`
+	Revision   string   `json:"revision"`
+	PlanRead   PlanRead `json:"revision_read"`
+	Superseded []string `json:"superseded"`
 }
 
 func (o *signalBindOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResult, error) {
@@ -557,13 +828,17 @@ func (o *signalBindOp) Run(ctx context.Context, req engine.OpRequest) (engine.Op
 	out := SignalBind{Milestone: ms, K: k, Prev: prev, Members: members, Tip: tip, Revision: dataStr(led, "revision")}
 	out.PlanRead = PlanRead{Digest: digestOf(live), Previous: lastPlanDigest(r, ms)}
 	out.PlanRead.Changed = out.PlanRead.Previous != "" && out.PlanRead.Digest != out.PlanRead.Previous
-	out.Started, out.Unstarted = lanes(r, milestoneNodes(r, ms))
+	var nodes []PlanNode
+	if m, _, err := milestoneOf(r, ms); err == nil {
+		nodes = m.Nodes
+	}
+	out.Started, out.Unstarted, out.Blocked = lanes(r, nodes)
 	out.Superseded = o.l.markSuperseded(r, ms)
 	if out.Superseded == nil {
 		out.Superseded = []string{}
 	}
 	return engine.OpResult{Result: result(out), Data: map[string]any{
-		"milestone": ms, "k": k, "prev": prev, "members": members, "started": out.Started, "unstarted": out.Unstarted, "tip": tip, "revision": out.Revision,
+		"milestone": ms, "k": k, "prev": prev, "members": members, "started": out.Started, "unstarted": out.Unstarted, "blocked": out.Blocked, "tip": tip, "revision": out.Revision,
 		"plan_digest": out.PlanRead.Digest, "revision_read": out.PlanRead, "superseded": out.Superseded, "attempt": attempt,
 	}}, nil
 }

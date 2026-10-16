@@ -166,7 +166,7 @@ func (c *Channel) refreshProposal(ctx context.Context, row store.SupervisorMessa
 	if row.State == "sending" {
 		instant = "transport_start"
 	}
-	detail := pyjson.Dumps(contract.OrderedObject{{Key: "fromEvent", Value: row.EventID.String}, {Key: "toEvent", Value: eventID}, {Key: "fromSubmission", Value: optionalNumber(row.SubmissionNo)}, {Key: "toSubmission", Value: optionalNumber(submission)}, {Key: "at", Value: instant}, {Key: "reason", Value: "what the obligation says moved after staging and nothing had been sent, so the message now carries what is owed now"}}, pyjson.Options{})
+	detail := pyjson.Dumps(contract.OrderedObject{{Key: "fromEvent", Value: row.EventID.String}, {Key: "toEvent", Value: eventID}, {Key: "fromSubmission", Value: optionalNumber(row.SubmissionNo)}, {Key: "toSubmission", Value: optionalNumber(submission)}, {Key: "at", Value: instant}, {Key: "reason", Value: "what the obligation says, or the words the message is written in, moved after staging and nothing had been sent, so the message now carries what is owed now in the current words"}}, pyjson.Options{})
 	_, err = c.Store.Q(ctx).ExecContext(ctx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_restated',?,?)", at, row.MessageID, detail)
 	return true, err
 }

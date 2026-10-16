@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/script"
+	"github.com/thisisjun786/codex-relay-workflow/internal/layername"
 )
 
 // TestLegacyIssueChildPredicate (CRW-1415, PR #889 round 1): a run is a legacy `child` session run when its journal holds a crw.releaseChild
@@ -266,5 +267,33 @@ func TestNestedPathIDIsTheEnginesChildPath(t *testing.T) {
 	}
 	if paths["child-call"] != nested || paths["item-call"] != (&pathState{id: nested}).childID(2, "x") || paths["first"] != RootPath {
 		t.Errorf("the child's rows are on %v, nestedPathID is %q", paths, nested)
+	}
+}
+
+// TestLegacyChildRunRefusalNamesTheChild is the successor of TestChildHostMismatchNamesTheChild (CRW-1478), whose refusal of a managed
+// start on two hosts went with that start (CRW-1464). An old journal's `child` session rows are refused with a reason: every refusal of
+// a legacy `child` session run (a crw.releaseChild row, a child release with its spawn decided, an issue-lane run, a spec that names
+// the issue lane) names the `child` session and the retired path, and carries no bare role word.
+func TestLegacyChildRunRefusalNamesTheChild(t *testing.T) {
+	const run = "run-1"
+	started := func(workflow string) Event {
+		return Event{RunID: run, Kind: KindRun, Event: "started", Data: map[string]any{"workflow": workflow}}
+	}
+	refusals := map[string]string{
+		"releaseChild row": LegacyIssueChild([]Event{started("project-lane"), {RunID: run, Kind: KindCall, CallID: "c_child", Op: OpLegacyReleaseChild, Event: EvCompleted,
+			Data: map[string]any{"node": "A"}}}, run),
+		"child released and decided": LegacyIssueChild([]Event{started("project-lane"),
+			{RunID: run, Kind: KindCall, CallID: "c_rel", Op: "crw.release", Event: EvCompleted, Data: map[string]any{"node": "A", "kind": "child", "released": false}},
+			{RunID: run, Kind: KindCall, CallID: "c_sp", Op: "crw.spawnDecision", Event: EvCompleted, Data: map[string]any{"node": "A", "role": "child"}}}, run),
+		"issue-lane run":            LegacyIssueChild([]Event{started(LegacyIssueLaneWorkflow)}, run),
+		"spec names the issue lane": LegacyRun(nil, run, LegacyIssueLaneWorkflow),
+	}
+	for name, why := range refusals {
+		if !strings.Contains(why, "legacy `child` session run") || !strings.Contains(why, "retired `child` session path") {
+			t.Errorf("%s: %q does not name the `child` session and its retired path", name, why)
+		}
+		if hits := layername.Find(why); len(hits) != 0 {
+			t.Errorf("%s: bare role words %v in %q", name, hits, why)
+		}
 	}
 }

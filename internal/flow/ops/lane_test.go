@@ -164,6 +164,29 @@ func designOf(nodes ...string) Design {
 	return d
 }
 
+// legacyDesignJSON is a DESIGN as a binary before S-1 recorded it (CRW-1435): the Design marshalled, with the sub_tasks member of every
+// issue dropped.
+func legacyDesignJSON(t *testing.T, d Design) json.RawMessage {
+	t.Helper()
+	b, err := json.Marshal(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+	issues, _ := m["issues"].([]any)
+	for _, is := range issues {
+		delete(is.(map[string]any), "sub_tasks")
+	}
+	out, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
 func call(id, status, model string, output any) CallRef {
 	var c CallRef
 	c.CallID, c.Status, c.Handle = id, status, "crwh1:run-1:"+id
@@ -513,13 +536,14 @@ func TestReleasedPlansAndDesignHead(t *testing.T) {
 
 // A node whose audited issue is sized for a split or a child has started too: its lane recorded a release row under the revision it
 // was sized under (released false, kind split or child) and escalated it. crw.releasedPlans lists it with that plan, as it lists a
-// node released to an executor, so a later re-plan's critic compares the DESIGN with it.
+// node released to an executor, so a later re-plan's critic compares the DESIGN with it. The split here has no sub-tasks: the DESIGN
+// was recorded before S-1 (CRW-1435), whose split release is unreleased.
 func TestReleasedPlansListTheNodesSizedForASplitOrAChild(t *testing.T) {
 	w := newWorld(t)
 	w.relay.plan = planOfNodes(map[string]string{"A": "sa", "B": "sb", "C": "sc"}, "A", "B", "C")
 	d := designOf("A", "B", "C")
 	d.Issues[1].SizeFit, d.Issues[1].SizeReason, d.Issues[1].IssueSizeDecision = "split", "two packages", "over_line"
-	w.ledgered(true, d)
+	w.ledgeredLegacy(d)
 	for _, n := range []string{"A", "B"} {
 		w.must("release", "plan-1", n, "M")
 	}
@@ -541,25 +565,127 @@ func TestReleasedPlansListTheNodesSizedForASplitOrAChild(t *testing.T) {
 	}
 }
 
+// CRW-1437: a node sized for a bundle split is listed with the id of the bundle_split_request escalation its lane raised for it
+// (escalation_id), and with no claim about whether that request was delivered or to whom: before the escalation the plan names no
+// escalation_id, after it the id of B's escalation, and no notice row or delivery row of it (accepted, queued, with no result, or
+// a message_delivery of any result) changes the plan, since crw.releasedPlans is replayed on a resume. The plan of A, which is no
+// bundle split, names none, and an escalation of A does not count for B.
+func TestReleasedPlansSayWhetherABundleSplitRequestWentUp(t *testing.T) {
+	w := newWorld(t)
+	w.relay.plan = planOfNodes(map[string]string{"A": "sa", "B": "sb"}, "A", "B")
+	d := designOf("A", "B")
+	d.Issues[1].SizeFit, d.Issues[1].SizeReason, d.Issues[1].IssueSizeDecision = "bundle_split", "regions_gt3", "over_line"
+	w.ledgered(true, d)
+	w.release("A")
+	w.must("release", "plan-1", "B", "M")
+	plans := func() []map[string]any {
+		var got []map[string]any
+		_ = json.Unmarshal(w.must("releasedPlans", "M"), &got)
+		return got
+	}
+	planOfB := func() map[string]any {
+		for _, p := range plans() {
+			if p["node"] == "B" {
+				if p["kind"] != "bundle_split" {
+					t.Fatalf("the released plan of B %v, want kind bundle_split", p)
+				}
+				return p
+			}
+		}
+		t.Fatalf("no released plan of B")
+		return nil
+	}
+	noClaim := func(when string, p map[string]any) {
+		t.Helper()
+		for _, k := range []string{"asked", "request", "delivered", "result", "notice", "recipient"} {
+			if v, ok := p[k]; ok {
+				t.Errorf("%s: the released plan of %v has %s %v; it makes no delivery claim", when, p["node"], k, v)
+			}
+		}
+	}
+	want := func(when string, id any) map[string]any {
+		t.Helper()
+		p := planOfB()
+		if p["escalation_id"] != id {
+			t.Errorf("%s: the released plan of B has escalation_id %v, want %v", when, p["escalation_id"], id)
+		}
+		noClaim(when, p)
+		return p
+	}
+	other := w.must("escalate", "A", EscalateInfo{Reason: "blocked_scope"})
+	var otherOut EscalateOutcome
+	_ = json.Unmarshal(other, &otherOut)
+	want("before B's escalation", nil)
+	esc := w.must("escalate", "B", EscalateInfo{Reason: "size_split", Ask: "bundle_split_request", Detail: "regions_gt3"})
+	var escOut EscalateOutcome
+	_ = json.Unmarshal(esc, &escOut)
+	if escOut.ID == "" {
+		t.Fatalf("the escalation of B has no id: %s", esc)
+	}
+	raised, _ := json.Marshal(want("after B's escalation", escOut.ID))
+	// what the upward hook and the daemon's settle append about the notice of it changes nothing in the plan
+	notice := func(id string, data map[string]any) {
+		data["escalation_id"] = id
+		w.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindFlow, Event: "escalation_notice", Data: data})
+	}
+	delivered := func(message, result string) {
+		w.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindFlow, Event: "message_delivery",
+			Data: map[string]any{"message_id": message, "kind": "flow_escalation", "result": result, "request_id": "tr"}})
+	}
+	notice(otherOut.ID, map[string]any{"result": "accepted", "request_id": "rq0", "thread": "th"})
+	notice(escOut.ID, map[string]any{"request_id": "rq1", "thread": "th"})
+	notice(escOut.ID, map[string]any{"result": "queued", "request_id": "rq2", "thread": "th"})
+	delivered("rq2", "unknown")
+	delivered("rq2", "accepted")
+	notice(escOut.ID, map[string]any{"result": "accepted", "request_id": "rq3", "thread": "th"})
+	after, _ := json.Marshal(want("after the notice and delivery rows of B's escalation", escOut.ID))
+	if string(after) != string(raised) {
+		t.Errorf("the notice and delivery rows changed the released plan of B:\n%s\nwant\n%s", after, raised)
+	}
+	for _, p := range plans() {
+		if p["node"] != "A" {
+			continue
+		}
+		if v, ok := p["escalation_id"]; ok {
+			t.Errorf("the released plan of A has escalation_id %v; only a bundle split names it", v)
+		}
+		noClaim("the plan of A", p)
+	}
+}
+
 // A node whose audited issue is sized for a child has started: its lane recorded a release row (released false, kind child,
 // size_fit_child) before it escalated the node. Both readers of the one started predicate count it so: the signal path (lanes, which
 // crw.signalBind records as started) does not leave it unstarted for a due signal to re-plan, and crw.releasedPlans lists it with
-// the plan it was sized under.
+// the plan it was sized under. A DESIGN sizes a node for a child only when a binary before S-1 recorded it (CRW-1435).
 func TestAChildSizedNodeHasStarted(t *testing.T) {
 	w := newWorld(t)
 	w.relay.plan = planOfNodes(map[string]string{"A": "sa", "B": "sb", "C": "sc"}, "A", "B", "C")
 	d := designOf("A", "B", "C")
 	d.Issues[1].SizeFit, d.Issues[1].SizeReason, d.Issues[1].IssueSizeDecision = "child", "a child of its own", "over_line"
-	w.ledgered(true, d)
+	w.ledgeredLegacy(d)
 	var rel ReleaseOutcome
 	_ = json.Unmarshal(w.must("release", "plan-1", "B", "M"), &rel)
 	if rel.Released || rel.Kind != "child" || rel.Reason != "size_fit_child" {
 		t.Fatalf("release of the child-sized node: %+v, want released false, kind child, size_fit_child", rel)
 	}
 	r := rows(w.j.Events())
-	started, unstarted := lanes(r, []string{"A", "B", "C"})
-	if !reflect.DeepEqual(started, []string{"B"}) || !reflect.DeepEqual(unstarted, []string{"A", "C"}) {
-		t.Errorf("signal path: started %v, unstarted %v, want B started and A, C unstarted", started, unstarted)
+	// CRW-1464: the child row is the shared unreleased sized row: no `child` session is started, the relay is not asked, and no slice is
+	// recorded (the managed start that compared one is deleted)
+	if row, ok := r.opRows(OpRelease).last(func(ev engine.Event) bool { return dataStr(ev, "node") == "B" }); !ok || dataBool(row, "released") || dataStr(row, "kind") != "child" {
+		t.Fatalf("the release row of the child-sized node: %v, %v", row.Data, ok)
+	} else if _, has := row.Data["slice_digest"]; has {
+		t.Errorf("the child-sized node's release row records slice_digest %v; an unreleased sized row records no slice", row.Data["slice_digest"])
+	}
+	if len(w.relay.releases) != 0 {
+		t.Errorf("the relay was asked %+v, want no release: a child-sized node takes no slot", w.relay.releases)
+	}
+	m, _, err := milestoneOf(r, "M")
+	if err != nil {
+		t.Fatal(err)
+	}
+	started, unstarted, blocked := lanes(r, m.Nodes)
+	if !reflect.DeepEqual(started, []string{"B"}) || !reflect.DeepEqual(unstarted, []string{"A", "C"}) || len(blocked) != 0 {
+		t.Errorf("signal path: started %v, unstarted %v, blocked %v, want B started, A, C unstarted and none blocked", started, unstarted, blocked)
 	}
 	if _, kind, ok := startRowOf(r, "B"); !ok || kind != "child" {
 		t.Errorf("startRowOf(B) = %q, %v, want child, true", kind, ok)
@@ -571,6 +697,197 @@ func TestAChildSizedNodeHasStarted(t *testing.T) {
 	_ = json.Unmarshal(raw, &kinds)
 	if len(got) != 1 || got[0].Node != "B" || got[0].Revision != "r0" || !reflect.DeepEqual(got[0].Plan, d.Issues[1]) || kinds[0]["kind"] != "child" {
 		t.Errorf("released plans %+v (kinds %v), want B only, sized for a child under r0 with its whole plan", got, kinds)
+	}
+}
+
+// S-6 (CRW-1472): crw.designLedger refuses a revision after r0 that drops or changes what a started node stands on, and one that
+// drops a node the run still needs. A is released to an executor and B is sized for a bundle split (an unreleased sized row): both
+// have started (startRowOf, the predicate crw.releasedPlans lists by). C has not. A revision is refused when a started node has no
+// issue, when its issue differs in any field from the one it started under, when a decision its decision_refs name is missing or
+// differs in any field, when a decision of the revision before it is missing (whatever node names it, CRW-1472 c6), and when a node of
+// the milestone that the plan of the revision still holds has no issue. An unstarted node changes freely and so do the fields of a
+// decision no started node names, a started node kept as it started passes, and a node the plan dropped and that never started is not
+// demanded.
+func TestDesignLedgerRefusesARevisionMissingANodeOrDecision(t *testing.T) {
+	r0 := func() Design {
+		d := designOf("A", "B", "C")
+		d.Issues[1].SizeFit, d.Issues[1].SizeReason, d.Issues[1].IssueSizeDecision = "bundle_split", "regions_gt3", "over_line"
+		return d
+	}
+	startWith := func(t *testing.T, first Design) *world {
+		w := newWorld(t)
+		w.relay.plan = planOfNodes(map[string]string{"A": "sa", "B": "sb", "C": "sc"}, "A", "B", "C")
+		w.ledgered(true, first)
+		w.release("A")
+		var rel ReleaseOutcome
+		_ = json.Unmarshal(w.must("release", "plan-1", "B", "M"), &rel)
+		if rel.Released || rel.Kind != "bundle_split" {
+			t.Fatalf("release of the bundle-split node: %+v", rel)
+		}
+		r := rows(w.j.Events())
+		for _, n := range []string{"A", "B"} {
+			if _, _, ok := startRowOf(r, n); !ok {
+				t.Fatalf("%s has not started", n)
+			}
+		}
+		if _, _, ok := startRowOf(r, "C"); ok {
+			t.Fatal("C has started")
+		}
+		return w
+	}
+	start := func(t *testing.T) *world { return startWith(t, r0()) }
+	// revise audits the DESIGN after r0 and asks for it as r1, against the plan the relay holds (plan nil) or a plan snapshot
+	revise := func(w *world, d Design, plan *PlanSnapshot) error {
+		design, _ := json.Marshal(d)
+		cand := Candidate{Design: design, Answers: json.RawMessage(`[]`)}
+		w.must("designAudit", "M", 2, cand, call("c_arch2", "completed", "claude-x", nil),
+			call("c_aud2", "completed", "gpt-y", map[string]any{"verdict": "approved", "findings": []any{}, "summary": "ok"}))
+		entry := map[string]any{"design": json.RawMessage(design), "answers": json.RawMessage(`[]`), "architect": call("c_arch2", "completed", "claude-x", nil), "signal": 1, "head": strings.Repeat("2", 40)}
+		if plan != nil {
+			entry["plan"] = plan
+		}
+		_, err := w.op("designLedger", "M", entry)
+		return err
+	}
+	issue := func(d *Design, node string) *DesignIssue {
+		for i := range d.Issues {
+			if d.Issues[i].Node == node {
+				return &d.Issues[i]
+			}
+		}
+		t.Fatalf("no issue %s", node)
+		return nil
+	}
+	drop := func(d *Design, node string) {
+		d.Issues = slices.DeleteFunc(d.Issues, func(is DesignIssue) bool { return is.Node == node })
+	}
+	refused := []struct {
+		name, want string
+		edit       func(d *Design)
+	}{
+		{"a started node has no issue", "A", func(d *Design) { drop(d, "A") }},
+		{"a node sized for a bundle split has no issue", "B", func(d *Design) { drop(d, "B") }},
+		{"a started node's approach differs", "A", func(d *Design) { issue(d, "A").Approach = "approach A after the re-plan" }},
+		{"a started node's edit regions differ", "A", func(d *Design) { issue(d, "A").EditRegions = []string{"A/", "Z/"} }},
+		{"a started node's decision refs differ", "A", func(d *Design) {
+			d.Decisions = append(d.Decisions, Decision{ID: "D2", Evidence: []string{}, Change: "another", Alternatives: []string{}, Assumptions: []string{}})
+			issue(d, "A").DecisionRefs = []string{"D1", "D2"}
+		}},
+		{"a started node's done condition differs", "A", func(d *Design) { issue(d, "A").DoneCondition = "done A otherwise" }},
+		{"a started node's order differs", "A", func(d *Design) { issue(d, "A").OrderAfter = []string{"C"} }},
+		{"a bundle-split node's size reason differs", "B", func(d *Design) { issue(d, "B").SizeReason = "another reason" }},
+		{"a decision a started node names is missing", "D1", func(d *Design) {
+			d.Decisions = []Decision{}
+			for i := range d.Issues {
+				d.Issues[i].DecisionRefs = []string{}
+			}
+			issue(d, "A").DecisionRefs = []string{"D1"}
+		}},
+		{"a decision a started node names changed its change", "D1", func(d *Design) { d.Decisions[0].Change = "another change" }},
+		{"a decision a started node names changed its alternatives", "D1", func(d *Design) { d.Decisions[0].Alternatives = []string{"another way"} }},
+		{"an unstarted node of the plan has no issue", "C", func(d *Design) { drop(d, "C") }},
+	}
+	for _, c := range refused {
+		t.Run("refused/"+c.name, func(t *testing.T) {
+			w := start(t)
+			d := r0()
+			c.edit(&d)
+			err := revise(w, d, nil)
+			if err == nil || !strings.Contains(err.Error(), "crw.designLedger: revision r1") || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("crw.designLedger: %v, want a refusal of revision r1 naming %s", err, c.want)
+			}
+			if cur, _ := currentLedger(rows(w.j.Events()), "M"); dataStr(cur, "revision") != "r0" {
+				t.Errorf("the revision that stands is %v, want r0", cur.Data["revision"])
+			}
+		})
+	}
+	// a started node dropped from the plan is still demanded: its execution stands on its issue
+	t.Run("refused/a started node the plan dropped has no issue", func(t *testing.T) {
+		w := start(t)
+		w.relay.plan = planOfNodes(map[string]string{"B": "sb", "C": "sc"}, "B", "C")
+		d := r0()
+		drop(&d, "A")
+		if err := revise(w, d, nil); err == nil || !strings.Contains(err.Error(), "crw.designLedger: revision r1") || !strings.Contains(err.Error(), "A") {
+			t.Fatalf("crw.designLedger: %v, want a refusal naming A", err)
+		}
+	})
+	// the crosscheck's case: r0 has A on D1 and the unstarted C on D2; a revision that keeps A on D1 and drops C's ref to D2 together
+	// with D2 drops a decision of the revision before it, which no started node names, and is refused; one that keeps D2 and changes
+	// it passes (a decision no started node names changes freely, it is not dropped)
+	onD2 := func() Design {
+		d := r0()
+		d.Decisions = append(d.Decisions, Decision{ID: "D2", Evidence: []string{}, Change: "for C", Alternatives: []string{}, Assumptions: []string{}})
+		issue(&d, "C").DecisionRefs = []string{"D2"}
+		return d
+	}
+	t.Run("refused/a decision of the revision before it that only an unstarted node named is dropped", func(t *testing.T) {
+		w := startWith(t, onD2())
+		d := onD2()
+		d.Decisions = d.Decisions[:1]
+		issue(&d, "C").DecisionRefs = []string{}
+		err := revise(w, d, nil)
+		if err == nil || !strings.Contains(err.Error(), "crw.designLedger: revision r1") || !strings.Contains(err.Error(), "decision D2 of revision r0") {
+			t.Fatalf("crw.designLedger: %v, want a refusal of revision r1 naming decision D2 of r0", err)
+		}
+		if cur, _ := currentLedger(rows(w.j.Events()), "M"); dataStr(cur, "revision") != "r0" {
+			t.Errorf("the revision that stands is %v, want r0", cur.Data["revision"])
+		}
+	})
+	t.Run("passes/a decision of the revision before it that only an unstarted node names changes", func(t *testing.T) {
+		w := startWith(t, onD2())
+		d := onD2()
+		d.Decisions[1].Change, d.Decisions[1].Alternatives = "for C, otherwise", []string{"another way"}
+		if err := revise(w, d, nil); err != nil {
+			t.Fatalf("crw.designLedger: %v, want revision r1", err)
+		}
+	})
+	// a decision the started node names twice is one decision: the revision that keeps it passes
+	t.Run("passes/a decision a started node names twice", func(t *testing.T) {
+		twice := r0()
+		twice.Issues[0].DecisionRefs = []string{"D1", "D1"}
+		w := startWith(t, twice)
+		if err := revise(w, twice, nil); err != nil {
+			t.Fatalf("crw.designLedger: %v, want revision r1", err)
+		}
+	})
+	passes := []struct {
+		name string
+		edit func(w *world, d *Design) *PlanSnapshot
+	}{
+		{"every node as it was", func(*world, *Design) *PlanSnapshot { return nil }},
+		{"an unstarted node changes freely", func(_ *world, d *Design) *PlanSnapshot {
+			c := issue(d, "C")
+			c.Approach, c.EditRegions, c.DoneCondition, c.OrderAfter = "approach C after the re-plan", []string{"C/", "D/"}, "done C otherwise", []string{"A"}
+			d.Decisions = append(d.Decisions, Decision{ID: "D2", Evidence: []string{}, Change: "for C", Alternatives: []string{}, Assumptions: []string{}})
+			c.DecisionRefs = []string{"D1", "D2"}
+			return nil
+		}},
+		{"a decision no started node names changes freely", func(_ *world, d *Design) *PlanSnapshot {
+			d.Decisions = append(d.Decisions, Decision{ID: "D3", Evidence: []string{}, Change: "unused", Alternatives: []string{}, Assumptions: []string{}})
+			return nil
+		}},
+		{"an unstarted node the live plan dropped is not demanded", func(w *world, d *Design) *PlanSnapshot {
+			w.relay.plan = planOfNodes(map[string]string{"A": "sa", "B": "sb"}, "A", "B")
+			drop(d, "C")
+			return nil
+		}},
+		{"an unstarted node the evaluated plan dropped is not demanded", func(_ *world, d *Design) *PlanSnapshot {
+			drop(d, "C")
+			return &PlanSnapshot{Digest: "evaluated", Slices: map[string]string{"A": "sa", "B": "sb"}}
+		}},
+	}
+	for _, c := range passes {
+		t.Run("passes/"+c.name, func(t *testing.T) {
+			w := start(t)
+			d := r0()
+			plan := c.edit(w, &d)
+			if err := revise(w, d, plan); err != nil {
+				t.Fatalf("crw.designLedger: %v, want revision r1", err)
+			}
+			if cur, _ := currentLedger(rows(w.j.Events()), "M"); dataStr(cur, "revision") != "r1" {
+				t.Errorf("the revision that stands is %v, want r1", cur.Data["revision"])
+			}
+		})
 	}
 }
 
@@ -1440,11 +1757,87 @@ func TestVerifyRowThatDidNotRunIsNotProven(t *testing.T) {
 func TestChildAndSplitReleaseRowsStayProven(t *testing.T) {
 	w := newWorld(t)
 	op := w.lane.Ops()[NameRelease]
-	for kind, want := range map[string]bool{"child": true, "split": true, "executor": false} {
+	for kind, want := range map[string]bool{"child": true, "split": true, "bundle_split": true, "executor": false} {
 		ok, why, err := op.Proven(context.Background(), nil, engine.Event{Data: map[string]any{"node": "A", "plan": "p", "released": false, "kind": kind, "reason": "x"}})
 		if err != nil || ok != want {
 			t.Errorf("kind %s: proven %v (%s) %v, want %v", kind, ok, why, err, want)
 		}
+	}
+}
+
+// S-3 (CRW-1459): a node of a DESIGN of the S-1 shape sized for a split carries its sub-tasks and is released to one executor like
+// any node - the relay is asked, the row is an ordinary executor release (kind executor, released true), and it is proven while the
+// relay says it stands. A node sized for a bundle split is not released: its row is unreleased (kind bundle_split, reason size_split),
+// the relay is not asked, the row is a decision that stands, and the node has started under it (startRowOf, crw.releasedPlans), as a
+// legacy split or child row has.
+func TestSplitReleaseRowIsReleasedAndProven(t *testing.T) {
+	w := newWorld(t)
+	w.relay.plan = planOfNodes(map[string]string{"A": "sa", "B": "sb", "C": "sc"}, "A", "B", "C")
+	w.relay.plan.Nodes[1].Regions = []string{"B/"}
+	d := designOf("A", "B", "C")
+	d.Issues[1].SizeFit, d.Issues[1].SizeReason, d.Issues[1].IssueSizeDecision = "split", "two packages", "over_line"
+	d.Issues[1].SubTasks = []SubTask{
+		{ID: "s1", Summary: "do s1", EditRegions: []string{"B/one.go"}, DoneCondition: "s1 is done"},
+		{ID: "s2", Summary: "do s2", EditRegions: []string{"B/two.go"}, DoneCondition: "s2 is done", After: []string{"s1"}},
+	}
+	d.Issues[2].SizeFit, d.Issues[2].SizeReason, d.Issues[2].IssueSizeDecision = "bundle_split", "regions_gt3", "over_line"
+	w.ledgered(true, d)
+	op := w.lane.Ops()[NameRelease]
+	rowOf := func(node string) engine.Event {
+		t.Helper()
+		row, ok := rows(w.j.Events()).opRows(OpRelease).last(func(ev engine.Event) bool { return dataStr(ev, "node") == node })
+		if !ok {
+			t.Fatalf("no release row of %s", node)
+		}
+		return row
+	}
+
+	var split ReleaseOutcome
+	_ = json.Unmarshal(w.must("release", "plan-1", "B", "M"), &split)
+	if !split.Released || split.Kind != "executor" || split.ExecutionID != "exec-B" {
+		t.Errorf("release of the split node: %+v, want released to an executor (kind executor, execution exec-B)", split)
+	}
+	if len(w.relay.releases) != 1 || w.relay.releases[0].Node != "B" || !slices.Equal(w.relay.releases[0].Regions, AdmissionRegions([]string{"B/"}, d.Issues[1].EditRegions)) {
+		t.Errorf("the relay was asked %+v, want one release of B with its admission regions", w.relay.releases)
+	}
+	row := rowOf("B")
+	if !dataBool(row, "released") || dataStr(row, "kind") != "executor" || dataStr(row, "slice_digest") == "" {
+		t.Errorf("the split node's release row %v, want released true, kind executor and the slice it was released under", row.Data)
+	}
+	if ok, why, err := op.Proven(context.Background(), w.j.Events(), row); err != nil || !ok {
+		t.Errorf("the split node's release row: proven %v (%s) %v, want true while the relay says it stands", ok, why, err)
+	}
+
+	var bundle ReleaseOutcome
+	_ = json.Unmarshal(w.must("release", "plan-1", "C", "M"), &bundle)
+	if bundle.Released || bundle.Kind != "bundle_split" || bundle.Reason != "size_split" || bundle.ExecutionID != "" {
+		t.Errorf("release of the bundle-split node: %+v, want released false, kind bundle_split, reason size_split", bundle)
+	}
+	if len(w.relay.releases) != 1 {
+		t.Errorf("the relay was asked %d releases, want only B's: a bundle-split node takes no executor slot", len(w.relay.releases))
+	}
+	if ok, why, err := op.Proven(context.Background(), w.j.Events(), rowOf("C")); err != nil || !ok {
+		t.Errorf("the bundle-split node's release row: proven %v (%s) %v, want true (a decision that stands)", ok, why, err)
+	}
+
+	r := rows(w.j.Events())
+	for node, want := range map[string]string{"B": "released", "C": "bundle_split"} {
+		if _, kind, ok := startRowOf(r, node); !ok || kind != want {
+			t.Errorf("startRowOf(%s) = %q, %v, want %s, true", node, kind, ok, want)
+		}
+	}
+	if _, _, ok := startRowOf(r, "A"); ok {
+		t.Error("A has started with no release row")
+	}
+	raw := w.must("releasedPlans", "M")
+	var kinds []map[string]any
+	_ = json.Unmarshal(raw, &kinds)
+	kind := map[string]any{}
+	for _, p := range kinds {
+		kind[p["node"].(string)] = p["kind"]
+	}
+	if len(kinds) != 2 || kind["B"] != "released" || kind["C"] != "bundle_split" {
+		t.Errorf("the kinds of the released plans %v, want B released and C bundle_split; A has not started", kind)
 	}
 }
 
@@ -1648,6 +2041,54 @@ type acceptCapture struct {
 func (c *acceptCapture) Accept(_ context.Context, r AcceptRequest) (AcceptResult, error) {
 	c.got = append(c.got, r)
 	return AcceptResult{Accepted: true, AcceptanceID: "acc-A"}, nil
+}
+
+// CRW-1459: a split node's sub-tasks are committed with no unit check between them, and crw.accept rests on the one check of the node's
+// whole change, the committed range base..head: a check of an earlier tree (a checkpoint's) is no basis of the head (reviewer_missing),
+// and the check of the whole change is the basis once it is recorded.
+func TestAcceptRestsOnTheCheckOfASplitNodesWholeChange(t *testing.T) {
+	head, base := strings.Repeat("a", 40), strings.Repeat("b", 40)
+	w := newWorld(t)
+	w.relay.plan = planOfNodes(map[string]string{"A": "a1"}, "A")
+	w.relay.plan.Nodes[0].Criteria = []string{"first", "second"}
+	w.ledgered(true, designOf("A"))
+	w.must("release", "plan-1", "A", "M")
+	capture := &acceptCapture{stubRelay: w.relay}
+	w.lane.d.Relay = capture
+	w.lane.d.Git = func(context.Context, string, []string, ...string) (string, error) {
+		return "", errors.New("this test runs no git")
+	}
+	appendRow := func(op, callID string, data map[string]any) {
+		b, _ := json.Marshal(data)
+		var row map[string]any
+		_ = json.Unmarshal(b, &row)
+		w.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: callID, Op: op, Event: engine.EvCompleted, Data: row})
+	}
+	appendRow(OpCommit, "c_commit", map[string]any{"node": "A", "commit": head, "parent": base, "tree": "t-head", "result": "{}"})
+	appendRow(OpVerify, "c_verify", map[string]any{"node": "A", "head": head, "ok": true, "base": base, "digest": strings.Repeat("d", 64), "result": "{}"})
+	check := func(callID string, extra map[string]any) {
+		res, _ := json.Marshal(map[string]any{"state": "ok", "detail": "", "verdict": "verified", "findings": []any{}, "engine_family": "grok", "model": "grok-4.7-medium",
+			"effort": "medium", "guide_rev": "g1", "prompt_digest": "pd-" + callID, "fingerprint_before": "t-head", "fingerprint_after": "t-head", "elapsed_ms": 1})
+		data := map[string]any{"role": "unit-check", "node": "A", "execution_id": "exec-A", "tree": "t-head", "criteria_digest": strings.Repeat("c", 64), "result": string(res)}
+		for k, v := range extra {
+			data[k] = v
+		}
+		appendRow(OpUnitCheck, callID, data)
+	}
+	check("c_checkpoint", map[string]any{"mode": UnitCheckUncommitted, "tree": "t-checkpoint"})
+	if _, err := w.op("accept", "A", head); err == nil || ReasonOf(err.Error()) != "reviewer_missing" {
+		t.Errorf("crw.accept on the check of a checkpoint's tree: %v, want refused reviewer_missing", err)
+	}
+	if len(capture.got) != 0 {
+		t.Fatalf("the relay was asked to accept on the check of a checkpoint's tree: %+v", capture.got)
+	}
+	check("c_whole", map[string]any{"mode": UnitCheckCommitted, "commit": head, "base": base})
+	if _, err := w.op("accept", "A", head); err != nil {
+		t.Fatalf("crw.accept on the check of the whole change: %v", err)
+	}
+	if len(capture.got) != 1 || capture.got[0].ReviewerCall != "c_whole" {
+		t.Errorf("accept requests %+v, want one on c_whole", capture.got)
+	}
 }
 
 // CRW-1456: crw.accept assembles the premerge record of a head from a unit-check record when no newer verified review stands on
@@ -3448,6 +3889,147 @@ func TestUnitCheckCarriesTheExecutorReceiptToTheCheckAndTheAcceptance(t *testing
 	if rc := checkReceiptOf(u.lastCheck()); str(rc, "state") != "accepted" || str(rc, "sha256") != longDigest {
 		t.Errorf("the long receipt's row %v", rc)
 	}
+}
+
+// TestACommittedCheckOfAnExecutorsRangeCarriesItsReceipt (CRW-1459): the check of a split node's whole change is a committed check that
+// names the executor call the range ends on. That call's accepted receipt is read, put in the prompt and recorded on the row as an
+// uncommitted check's is, and crw.accept rests on the committed check and names the receipt in the premerge record. The row names no
+// sub-task: the check judges the node's whole change.
+func TestACommittedCheckOfAnExecutorsRangeCarriesItsReceipt(t *testing.T) {
+	u := newUCWorld(t)
+	body := "RED-FIRST: go test -run TestA ./a: FAIL TestA\n"
+	copyPath, digest := receiptCopy(t, body)
+	ex := u.buildWithReceipt("c_ex1", "built\n", map[string]any{"assignment": "as1", "state": "accepted", "path": "/p/receipt.md", "sha256": digest,
+		"agent_id": "agent-1", "turn_id": "turn-1", "turn_match": true, "copy": copyPath})
+	u.checkOnTree(u.snapshot())
+	decodeCheck(t, u.must("unitCheck", "A", ex, map[string]any{"round": 1}))
+	var commit CommitOutcome
+	_ = json.Unmarshal(u.must("commit", "A", ex, []string{"a.txt"}), &commit)
+	u.must("verify", "A", commit.Commit)
+	u.checkOnTree(u.snapshot())
+	u.checker.replies[0].res.PromptSent = true
+	out := decodeCheck(t, u.must("unitCheck", "A", ex, map[string]any{"round": 1, "final": true, "commit": commit.Commit, "base": commit.Parent}))
+	if out.State != reviewadapter.StateOK || out.Hold != "" || out.Call != ex.CallID {
+		t.Fatalf("answer %+v", out)
+	}
+	prompt := u.checker.got[len(u.checker.got)-1].Prompt
+	if !strings.HasPrefix(prompt, "Review the changes between "+commit.Parent+" and "+commit.Commit) || !strings.Contains(prompt, "EXECUTOR RECEIPT") || !strings.Contains(prompt, body) {
+		t.Errorf("the committed check's prompt:\n%s", prompt)
+	}
+	row := u.lastCheck()
+	if rc := checkReceiptOf(row); str(rc, "state") != "accepted" || str(rc, "sha256") != digest || rc["handed"] != true || dataStr(row, "call") != ex.CallID ||
+		dataStr(row, "commit") != commit.Commit || dataStr(row, "base") != commit.Parent {
+		t.Errorf("the committed check's row %v", row.Data)
+	}
+	if _, ok := row.Data["sub"]; ok {
+		t.Errorf("the committed check's row names a sub-task: %v", row.Data)
+	}
+	capture := &acceptCapture{stubRelay: u.relay}
+	u.lane.d.Relay = capture
+	if _, err := u.op("accept", "A", commit.Commit); err != nil {
+		t.Fatalf("crw.accept on the committed check: %v", err)
+	}
+	if len(capture.got) != 1 || capture.got[0].ReviewerCall != row.CallID {
+		t.Fatalf("accept requests %+v, want one on %s", capture.got, row.CallID)
+	}
+	rec, err := premerge.Decode(capture.got[0].Premerge)
+	if err != nil {
+		t.Fatalf("premerge: %v", err)
+	}
+	for id, c := range rec.Criteria {
+		if !strings.Contains(c.Evidence, "executor receipt "+digest) {
+			t.Errorf("criterion %s evidence %q does not name the executor receipt", id, c.Evidence)
+		}
+	}
+}
+
+// TestACommittedCheckReadsTheReceiptOfEveryCallItsRangeHolds (CRW-1459, bugbot x1425-r2-1): a split node's sub-tasks before the last are
+// committed as checkpoints with no check of their own, so the check of the node's whole change reads the receipt of every executor call a
+// commit of its range was made from, not only the call the range ends on. A checkpoint call whose receipt is missing holds the check:
+// the tool is not run and the row names the held call, its receipt and no range. Calls whose receipts are taken are recorded on the
+// row (range_receipts), oldest first.
+func TestACommittedCheckReadsTheReceiptOfEveryCallItsRangeHolds(t *testing.T) {
+	body := "RED-FIRST: go test -run TestA ./a: FAIL TestA\n"
+	twoCommits := func(u *ucWorld, first map[string]any) (CallRef, CallRef, CommitOutcome) {
+		copyPath, digest := receiptCopy(t, body)
+		var ex1 CallRef
+		if first == nil {
+			ex1 = u.build("c_ex1", "one\n")
+		} else {
+			ex1 = u.buildWithReceipt("c_ex1", "one\n", first)
+		}
+		var c1, c2 CommitOutcome
+		_ = json.Unmarshal(u.must("commit", "A", ex1, []string{"a.txt"}), &c1)
+		ex2 := u.buildWithReceipt("c_ex2", "two\n", map[string]any{"assignment": "as2", "state": "accepted", "path": "/p/receipt.md", "sha256": digest,
+			"agent_id": "agent-1", "turn_id": "turn-2", "turn_match": true, "copy": copyPath})
+		_ = json.Unmarshal(u.must("commit", "A", ex2, []string{"a.txt"}), &c2)
+		if c2.Parent != c1.Commit {
+			t.Fatalf("the second commit %+v is not on the first %+v", c2, c1)
+		}
+		u.must("verify", "A", c2.Commit)
+		return ex1, ex2, CommitOutcome{Commit: c2.Commit, Parent: c1.Parent}
+	}
+	t.Run("a checkpoint call with a missing receipt holds the check", func(t *testing.T) {
+		u := newUCWorld(t)
+		_, ex2, rng := twoCommits(u, map[string]any{"assignment": "as1", "state": "missing", "detail": "no receipt was written"})
+		u.checkOnTree(u.snapshot())
+		out := decodeCheck(t, u.must("unitCheck", "A", ex2, map[string]any{"round": 1, "commit": rng.Commit, "base": rng.Parent}))
+		if out.State != StateReceiptHeld || out.Hold != "receipt_missing" || out.Call != "c_ex1" {
+			t.Fatalf("answer %+v, want held receipt_missing on the checkpoint call c_ex1", out)
+		}
+		if len(u.checker.got) != 0 {
+			t.Errorf("the tool was run %d times on a range with an untaken receipt", len(u.checker.got))
+		}
+		row := u.lastCheck()
+		if dataStr(row, "hold") != "receipt_missing" || dataStr(row, "hold_call") != "c_ex1" || dataStr(row, "role") != "" {
+			t.Errorf("the held row %v", row.Data)
+		}
+		for _, k := range []string{"commit", "base", "range_receipts"} {
+			if _, ok := row.Data[k]; ok {
+				t.Errorf("the held row has %s: %v", k, row.Data)
+			}
+		}
+	})
+	t.Run("the receipts taken are recorded", func(t *testing.T) {
+		u := newUCWorld(t)
+		_, ex2, rng := twoCommits(u, nil)
+		u.checkOnTree(u.snapshot())
+		out := decodeCheck(t, u.must("unitCheck", "A", ex2, map[string]any{"round": 1, "commit": rng.Commit, "base": rng.Parent}))
+		if out.State != reviewadapter.StateOK || out.Hold != "" {
+			t.Fatalf("answer %+v", out)
+		}
+		row := u.lastCheck()
+		got, _ := json.Marshal(row.Data["range_receipts"])
+		if string(got) != `[{"call":"c_ex1","receipt":{"state":"not_assigned"}}]` {
+			t.Errorf("range_receipts %s, want the checkpoint call c_ex1 with its receipt not_assigned", got)
+		}
+		if rc := checkReceiptOf(row); str(rc, "state") != "accepted" || dataStr(row, "call") != ex2.CallID {
+			t.Errorf("the receipt of the call the range ends on %v", row.Data)
+		}
+		if prompt := u.checker.got[len(u.checker.got)-1].Prompt; !strings.Contains(prompt, "EARLIER EXECUTOR RECEIPTS") || !strings.Contains(prompt, "- call c_ex1: no evidence receipt was assigned") {
+			t.Errorf("the prompt does not name the checkpoint call's receipt:\n%s", prompt)
+		}
+	})
+	t.Run("an accepted receipt of a checkpoint call is named in the prompt by its file", func(t *testing.T) {
+		u := newUCWorld(t)
+		first := "RED-FIRST of the first sub-task\n"
+		copyPath, digest := receiptCopy(t, first)
+		_, ex2, rng := twoCommits(u, map[string]any{"assignment": "as1", "state": "accepted", "path": "/p/receipt1.md", "sha256": digest,
+			"agent_id": "agent-1", "turn_id": "turn-1", "turn_match": true, "copy": copyPath})
+		u.checkOnTree(u.snapshot())
+		decodeCheck(t, u.must("unitCheck", "A", ex2, map[string]any{"round": 1, "commit": rng.Commit, "base": rng.Parent}))
+		prompt := u.checker.got[len(u.checker.got)-1].Prompt
+		if want := fmt.Sprintf("- call c_ex1: sha256 %s, %d bytes, the file %s", digest, len(first), copyPath); !strings.Contains(prompt, want) {
+			t.Errorf("the prompt lacks %q:\n%s", want, prompt)
+		}
+		taken, _ := u.lastCheck().Data["range_receipts"].([]any)
+		if len(taken) != 1 {
+			t.Fatalf("range_receipts %v, want the checkpoint call's", u.lastCheck().Data["range_receipts"])
+		}
+		if e, _ := taken[0].(map[string]any); str(e, "call") != "c_ex1" || str(checkReceiptOf(engine.Event{Data: e}), "sha256") != digest || str(checkReceiptOf(engine.Event{Data: e}), "state") != "accepted" {
+			t.Errorf("range_receipts %v, want c_ex1 accepted with sha256 %s", taken, digest)
+		}
+	})
 }
 
 // acceptOnHead commits the pending change of call ex, verifies the head and accepts it, and answers the premerge record crw.accept

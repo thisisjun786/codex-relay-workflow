@@ -163,11 +163,13 @@ func TestReplanCriticAndExplorerCallsCarryTheSignalHead(t *testing.T) {
 			l.mu.Unlock()
 			d := l.design()
 			d.OpenQuestions = append(d.OpenQuestions, again)
-			// the re-plan rewrites the started A-1's tests and done condition: the critic must see what A-1 was released with
+			// the re-plan rewrites the unstarted B-1's tests and done condition and keeps the started A-1 as it was released (a
+			// revision that changes a started node is refused by crw.designLedger, CRW-1472): the critic must see what A-1 was
+			// released with, and not the plan of B-1
 			for i := range d.Issues {
-				if d.Issues[i].Node == nodeA {
-					d.Issues[i].TestsFirst = []string{"a test A-1 was not released with"}
-					d.Issues[i].DoneCondition = "a done condition A-1 was not released with"
+				if d.Issues[i].Node == nodeB {
+					d.Issues[i].TestsFirst = []string{"a test of B-1 after the re-plan"}
+					d.Issues[i].DoneCondition = "a done condition of B-1 after the re-plan"
 				}
 			}
 			return labSay(d), true

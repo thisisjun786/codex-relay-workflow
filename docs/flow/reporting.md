@@ -10,13 +10,13 @@ messages ([supervisor-channel.md](../relay/supervisor-channel.md#direct-messages
 
 | What | From | To | By | Recorded as | Pump kind |
 | --- | --- | --- | --- | --- | --- |
-| an escalation of the run (`dispatch_unknown`, `tiers_exhausted`, `blocked_scope`, `size_split`, `restore_snapshot_mismatch`, a configuration fault, the run-level hold `plan_superseded` with the pinned and head revisions and the node, CRW-1291) | the run | the level above the run's project (the parent's management seat, else a supervisor registered at the initiative's scope, the legacy configuration, else a live store seat); a run whose plan names no project: the child's thread | the supervisor channel (`flow_escalation`); else `crw manage send-parent` | `escalation`, `escalation_notice`, `message_delivery` | `run_escalation` |
+| an escalation of the run (`dispatch_unknown`, `tiers_exhausted`, `blocked_scope`, `size_split`, with ask `bundle_split_request` for a node sized `bundle_split`, `restore_snapshot_mismatch`, a configuration fault, the run-level hold `plan_superseded` with the pinned and head revisions and the node, CRW-1291) | the run | the level above the run's project (the parent's management seat, else a supervisor registered at the initiative's scope, the legacy configuration, else a live store seat); a run whose plan names no project: the child's thread | the supervisor channel (`flow_escalation`); else `crw manage send-parent` | `escalation`, `escalation_notice`, `message_delivery` | `run_escalation` |
 | the completion digest (`state=`, `reason=`, `lanes=` of the milestone state the run came to; none for a run the operator paused) | the run | as an escalation | the supervisor channel (`flow_completion`); else `crw manage send-parent` | `completion_notice`, `message_delivery` | |
 | a run that stopped writing | nobody | the pump's management thread | the pump | | `run_dead` |
 | the plan summary that is owed | the run | the child's thread | `crw manage send-parent` | `summary_document`, `summary_notice`, `summary_notice_settled` | |
 | a milestone report | the run | the parent above the project (else a supervisor registered at the initiative's scope, the legacy configuration, else a live store seat) | the writer of `crw flow report-up` through the supervisor channel (`flow_milestone_report`) | `report`, `report_delivery`, `report_read` | `report_undelivered`, `report_unread` |
 | a run that started no node (`project_blocked`, CRW-1320) | the run | as a milestone report | the writer of `crw flow report-up` through the supervisor channel (`flow_project_blocked`) | `report`, `report_delivery`, `report_read` | `report_undelivered`, `report_unread` |
-| a project-level blocker or decision request | the child | as a milestone report | `crw flow report-up` through the supervisor channel (`flow_project_blocked`, `flow_project_decision_request`) | `report`, `report_delivery`, `report_read` | `report_undelivered`, `report_unread` |
+| a project-level blocker or decision request (the request for a bundle split of an issue whose node escalated `size_split` with ask `bundle_split_request` included) | the child | as a milestone report | `crw flow report-up` through the supervisor channel (`flow_project_blocked`, `flow_project_decision_request`) | `report`, `report_delivery`, `report_read` | `report_undelivered`, `report_unread` |
 | a decision only Jun can make | the child | the parent above the project (else the store seat, then the parent that holds it) | `crw flow report-up` through the supervisor channel (`flow_jun_decision_request`); under a supervisor registered at the initiative's scope it stands | `report`, `report_delivery` | `jun_decision`, only for one the channel did not take |
 | a step that waits for the owner (a session run, CRW-1348) | the run | the run's owner | the supervisor channel (`session_step_waiting`, `run:<id>`) | `session_wake`, `message_delivery` | |
 
@@ -79,7 +79,12 @@ above the project) ends the case: the next decision goes through the channel to 
 The run tells the level above its project about each escalation row it wrote, once: `report.RelaySender` stages it on the supervisor
 channel as a `flow_escalation` direct message through `project:<the project of the run's plan>`, subject `<run>/esc-<escalation id>`,
 and the relay daemon delivers it to the parent's management seat above the project (else a supervisor at the initiative's scope, else
-the store seat) as it delivers a report. The run records the notice as an `escalation_notice` row (the escalation id, the result, the
+the store seat) as it delivers a report. The notice names the run, the node, the reason and the class, then the detail, and, for an
+escalation that carries an ask, ends with `The run waits for your decision (<ask>).`. An escalation that asks `bundle_split_request`
+(a node the architect sized `bundle_split`, closed by the escalation) ends, in place of that line, with the request: a bundle split of
+the node's issue (named from the run's plan, else the node is named by its id) is the parent's to make, and the child asks the parent
+for it with `crw flow report-up --kind project_decision_request --run RUN --evidence FILE`, a project-level decision request
+([below](#milestone-reports-and-project-level-reports)). The run records the notice as an `escalation_notice` row (the escalation id, the result, the
 request id, and the thread the notice was addressed to: the recipient the channel staged it for), and a notice the channel did not stage
 is staged again, under the same subject, by the next reconcile. A run whose plan names no project has no relationship to stage under:
 its notice goes to the child's thread that started it with `crw manage send-parent --thread <child thread> --logical-id
@@ -125,16 +130,26 @@ committed batch:
    and the same batch again is the entry the relay already holds (`Replayed`).
 2. Telling the child's thread is judged by rows, not by `Replayed`. For the newest entry, when it is owed (`pending`, `claimed` or
    `failed`) and no `summary_notice` row names its summary id, the run writes one (the summary id, the plan, the document, the logical id
-   `summary-<summary id>`); the row is written once for a summary id, whether the entry is new or the relay answered one it held.
+   `summary-<summary id>`, and `text`, the notice in this build's words); the row is written once for a summary id, whether the entry is
+   new or the relay answered one it held. The run reads the rows again after the write, so an intent another writer stored first is the
+   one whose text goes. An intent that only this second read finds, for an entry newer than the states the run read, is neither sent nor
+   settled: the next reconcile reads both again and sends it.
 3. Every `summary_notice` of the stream without a `summary_notice_settled` row is delivered: when its entry is confirmed or superseded
    first, the settlement is `obsolete` and nothing is sent (the new entry has an intent of its own); otherwise
    `crw manage send-parent --thread <child thread> --logical-id summary-<summary id>` carries the `summary_owed` notice (the summary
-   id, the plan, the document) and the settlement is `accepted` or `queued`. A refusal settles `refused` and the run escalates
-   (`summary_notice_refused`). An outcome nobody knows, or no answer, writes no settlement, and the next reconcile sends the notice again
+   id, the plan, the document) and the settlement is `accepted` or `queued`. Every send carries the `text` of the earliest
+   `summary_notice` row of the summary id, never words composed again: the manage outbox keys `summary-<summary id>` to the sha256 of
+   the first text it carried, so a retry in other words would be refused locally. A row without `text` (the rows of every build before
+   CRW-1548) is sent in the words those builds composed. Two writers that both wrote the intent send the earliest row's text; only a
+   second writer that sends before the earliest row is on record can still send other words. A refusal settles `refused` and the run
+   escalates (`summary_notice_refused`). An outcome nobody knows, or no answer, writes no settlement, and the next reconcile sends the notice again
    under the same logical id. A run that died between any two of these steps finds its place in the rows when it is resumed, so an owed
    entry is not left without a notice.
 
-The logical id makes the notice idempotent in `crw manage`. A direct send replays the settled record of the delivery ledger. The
+The logical id makes the notice idempotent in `crw manage`. A direct send replays the settled record of the delivery ledger. A retry id of
+a summary notice that was saved before its send and never sent (`get_operation` answers that the bridge never recorded it) is sent under that same
+id when the delivery resumes, also once the retry cap is spent: nothing is keyed to the id at the bridge, so no attempt is duplicated, and no
+retry is spent; any other logical id in that state settles refused. The
 `--queue` path of an id that starts with `summary-` writes the notice only when the parent queue holds none of it: not pending, not in a
 batch the pump pinned, not in `sent/`, not refused. The answer names the state (`state`: `pending`, `in_flight`, `sent`, `refused`) and
 the run records it as the settlement. The pump leaves a summary notice that `sent/` already holds out of its batches, and leaves a
@@ -259,7 +274,7 @@ All of these are rows of `flow_events` (`kind` is the first column of the table,
 | `message_delivery` | `message_id`, `kind`, `subject`, `result` (`accepted`, `refused`, `unknown`), `request_id`, `turn_id`, `observation`, `reason`, and `wake_id` for a step wake (written by the daemon as a `report_delivery` row is); the row's `node_id` is the escalation's node for an escalation |
 | `report_read` | `report_id`, `turn` |
 | `summary_document` | `document` |
-| `summary_notice` | `summary_id`, `plan`, `document`, `logical_id`, `run` |
+| `summary_notice` | `summary_id`, `plan`, `document`, `logical_id`, `run`, `text` (the notice every send of the summary id carries; absent in the rows of the builds before CRW-1548, which are sent in those builds' words) |
 | `summary_notice_settled` | `summary_id`, `plan`, `document`, `result` (`accepted`, `queued`, `obsolete`, `refused`), `request_id`, `logical_id`, `run` |
 | `escalation_notice` | `escalation_id`, `result`, `request_id`, `thread` (the thread the notice was addressed to) |
 | `completion_notice` | `notice_key`, `status` (the engine status), `result`, `request_id`, and with an outcome `state`, `reason` and `lanes` (`node:state/reason` of each lane that did not land) |

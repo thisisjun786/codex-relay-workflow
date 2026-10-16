@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/lint"
@@ -28,6 +30,8 @@ func TestSizeFitChildEscalatesSizeSplitAndStartsNoChild(t *testing.T) {
 		{ID: "B", Issue: "CRW-B", Title: "issue B", Regions: []string{"b/"}},
 	}
 	l := NewLab(t, nodes...)
+	// only a DESIGN recorded before S-1 sizes a node for a child (CRW-1435)
+	l.UseLegacyDesign()
 	got := mustRunIncomplete(t, l)
 	if state, reason := laneOf(t, got, "A"); state != "escalated" || reason != "size_split" {
 		t.Fatalf("lane A: %s %s, want escalated size_split", state, reason)
@@ -68,6 +72,55 @@ func TestSizeFitChildEscalatesSizeSplitAndStartsNoChild(t *testing.T) {
 	}
 	if l.Relay.SlotHeld("A") {
 		t.Errorf("a slot is held for the child-sized node")
+	}
+}
+
+// A node the architect sized for a bundle split (CRW-1437) is too big for one node and goes up to the parent: the lane escalates it once
+// with reason size_split, detail its size reason and ask bundle_split_request, calls no executor for it, writes no crw.decide for it (the
+// node is closed: size_split closes its execution, so no slot stays held), and the other nodes of the milestone are not held up by it.
+func TestBundleSplitEscalatesSizeSplitWithAsk(t *testing.T) {
+	nodes := []NodeSpec{
+		{ID: "A", Issue: "CRW-A", Title: "a bundle-sized issue", Regions: []string{"a/"}, SizeFit: "bundle_split", SizeReason: "regions_gt3"},
+		{ID: "B", Issue: "CRW-B", Title: "issue B", Regions: []string{"b/"}},
+	}
+	l := NewLab(t, nodes...)
+	got := mustRunIncomplete(t, l)
+	if state, reason := laneOf(t, got, "A"); state != "escalated" || reason != "size_split" {
+		t.Fatalf("lane A: %s %s, want escalated size_split", state, reason)
+	}
+	if state, _ := laneOf(t, got, "B"); state != "landed" {
+		t.Fatalf("lane B: %s", state)
+	}
+	var esc []engine.Event
+	for _, ev := range l.FlowRows(engine.EvEscalation) {
+		if str(ev.Data, "node") == "A" {
+			esc = append(esc, ev)
+		}
+	}
+	if len(esc) != 1 || esc[0].Op != ops.OpEscalate || str(esc[0].Data, "reason") != "size_split" {
+		t.Fatalf("escalations of A %+v, want one size_split", esc)
+	}
+	if d, a := str(esc[0].Data, "detail"), str(esc[0].Data, "ask"); d != "regions_gt3" || a != "bundle_split_request" {
+		t.Errorf("the escalation of A has detail %q ask %q, want the size reason and bundle_split_request", d, a)
+	}
+	if ev, _ := esc[0].Data["evidence"].(map[string]any); str(ev, "size_reason") != "regions_gt3" {
+		t.Errorf("the escalation of A carries evidence %v, want the size reason", esc[0].Data["evidence"])
+	}
+	for _, c := range l.Calls() {
+		if c.Node == "A" {
+			t.Errorf("a call for the bundle-split node: %+v", c)
+		}
+	}
+	for _, r := range l.Rows(ops.OpDecide) {
+		if str(r.Data, "node") == "A" {
+			t.Errorf("a crw.decide row for the bundle-split node: %+v", r)
+		}
+	}
+	if !slices.Contains(l.Relay.CloseReasons(), "A:size_split") {
+		t.Errorf("closes %v: A's execution was not closed with size_split", l.Relay.CloseReasons())
+	}
+	if l.Relay.SlotHeld("A") {
+		t.Errorf("a slot is held for the bundle-split node")
 	}
 }
 
@@ -140,6 +193,8 @@ func TestSpawnDecisionsRecorded(t *testing.T) {
 		{ID: "B", Issue: "CRW-B", Title: "a big issue", Regions: []string{"b/"}, SizeFit: "child", SizeReason: "own_goal"},
 	}
 	l := NewLab(t, nodes...)
+	// only a DESIGN recorded before S-1 sizes a node for a child (CRW-1435)
+	l.UseLegacyDesign()
 	same := Finding("P1", "the guard is missing")
 	l.UnitChecks("A", NeedsChanges(same), NeedsChanges(same))
 	d := l.designFor()
@@ -595,6 +650,134 @@ func TestVerifyNamesTheIntegrationTipAsBase(t *testing.T) {
 	}
 }
 
+// The lane admits two nodes at once only when the relay's own region rule lets both be released (CRW-1461): crw.dag reads the overlap
+// of two nodes from crw.regionsOverlap, which judges by the relay's rule (dagsched.Overlaps over the normal forms, with the plan's change
+// and hold), so a pair the relay would hold back defer:edit_overlap is never admitted together. Each case is a pair A, B the old
+// script-side comparison of texts took for disjoint - another spelling of one file, a symbol of a file the other edits whole, a symbol
+// of a file the other deletes a symbol of - beside a node C on a file of its own: with two slots, A and C run at once, B is asked for
+// only after A landed, and no release is held back.
+func TestDagAdmitsByTheRelayRule(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		a, b    string
+		planned []ops.LaneRegion
+	}{
+		{"another spelling", "a.go", "./a.go", nil},
+		{"a symbol of the file", "a.go", "a.go#F", nil},
+		{"a symbol of a file a delete makes one place", "pkg/a.go#F", "pkg/a.go#G", []ops.LaneRegion{{Text: "pkg/a.go#F", Change: "delete"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			l := NewLab(t,
+				NodeSpec{ID: "A", Issue: "CRW-A", Title: "issue A", Regions: []string{tc.a}, Planned: tc.planned},
+				NodeSpec{ID: "B", Issue: "CRW-B", Title: "issue B", Regions: []string{tc.b}},
+				NodeSpec{ID: "C", Issue: "CRW-C", Title: "issue C", Regions: []string{"c.go"}},
+			)
+			l.Cap = 2
+			l.Relay.HoldBackIf = l.Relay.relayRegionRule
+			// C's release is answered before A integrates: C runs beside A, and what B waits for is A's landing, not C's
+			cReleased := make(chan struct{})
+			var once sync.Once
+			l.OnRow(func(ev engine.Event) {
+				if ev.Kind == engine.KindCall && ev.Op == ops.OpRelease && ev.Event == engine.EvCompleted && str(ev.Data, "node") == "C" {
+					once.Do(func() { close(cReleased) })
+				}
+			})
+			var mu sync.Mutex
+			startSeq := map[string][]int{}
+			l.Relay.OnRelease = func(req ops.ReleaseRequest) {
+				seq := l.LastSeq()
+				mu.Lock()
+				startSeq[req.Node] = append(startSeq[req.Node], seq)
+				mu.Unlock()
+			}
+			l.Relay.OnIntegrate = func(node string) {
+				if node != "A" {
+					return
+				}
+				select {
+				case <-cReleased:
+				case <-time.After(2 * time.Minute):
+					t.Errorf("A integrated before C's release was answered")
+				}
+			}
+			got := mustRunIncomplete(t, l)
+			for _, ev := range l.Rows(ops.OpRelease) {
+				if str(ev.Data, "reason") == "defer:edit_overlap" {
+					t.Errorf("the release of %s was held back defer:edit_overlap", str(ev.Data, "node"))
+				}
+			}
+			if got.State != "closed" {
+				t.Fatalf("state %q, lanes %+v; calls %v", got.State, got.Lanes, l.Labels())
+			}
+			for _, n := range []string{"A", "B", "C"} {
+				if state, reason := laneOf(t, got, n); state != "landed" {
+					t.Errorf("lane %s: %s %s, want landed", n, state, reason)
+				}
+			}
+			seqOfRow := func(op, node string) int {
+				for _, ev := range l.Rows(op) {
+					if str(ev.Data, "node") == node {
+						return ev.Seq
+					}
+				}
+				t.Fatalf("no completed %s row of %s", op, node)
+				return 0
+			}
+			integratedA := seqOfRow(ops.OpIntegrate, "A")
+			releasedC := seqOfRow(ops.OpRelease, "C")
+			mu.Lock()
+			asksB := append([]int(nil), startSeq["B"]...)
+			mu.Unlock()
+			if len(asksB) == 0 {
+				t.Fatalf("B was never asked for")
+			}
+			if integratedA > asksB[0] {
+				t.Errorf("B was first asked for at seq %d, before A integrated at seq %d", asksB[0], integratedA)
+			}
+			if releasedC >= integratedA {
+				t.Errorf("C was released at seq %d, not before A integrated at seq %d: C did not run beside A", releasedC, integratedA)
+			}
+		})
+	}
+}
+
+// A node whose head is already on the integration tip lands as a replay and frees its slot and its regions as a real land does
+// (CRW-1461): the node B, whose regions overlap the regions of the landed node A, is released and not held back defer:edit_overlap
+// for a node that has landed.
+func TestIntegrateOfHeadOnTipFreesTheNode(t *testing.T) {
+	l := NewLab(t,
+		NodeSpec{ID: "A", Issue: "CRW-A", Title: "issue A", Regions: []string{"a.go"}},
+		NodeSpec{ID: "B", Issue: "CRW-B", Title: "issue B", Regions: []string{"a.go"}},
+	)
+	r := l.Relay
+	r.Slots = 2
+	r.HoldBackIf = r.relayRegionRule
+	ctx := context.Background()
+	relA, err := r.Release(ctx, ops.ReleaseRequest{Node: "A", Regions: []string{"a.go"}})
+	if err != nil || !relA.Released {
+		t.Fatalf("release of A: %+v, %v", relA, err)
+	}
+	// the head is the base, which the integration branch already holds
+	acc := ops.AcceptRequest{Node: "A", Head: l.Base, Base: l.Base}
+	r.mu.Lock()
+	r.accepted["acc-A"] = acc
+	r.mu.Unlock()
+	got, err := r.Integrate(ctx, ops.IntegrateRequest{Node: "A", Head: l.Base, AcceptanceID: "acc-A"})
+	if err != nil || !got.Landed || !got.Replayed {
+		t.Fatalf("integrate of A: %+v, %v; want landed and replayed", got, err)
+	}
+	if r.SlotHeld("A") {
+		t.Errorf("A holds its slot after it landed")
+	}
+	relB, err := r.Release(ctx, ops.ReleaseRequest{Node: "B", Regions: []string{"a.go"}})
+	if err != nil {
+		t.Fatalf("release of B: %v", err)
+	}
+	if !relB.Released {
+		t.Errorf("B was not released: reason %q, want released after A landed", relB.Reason)
+	}
+}
+
 // TestUnitCheckHoldOfTheLaneHasSourceUnitCheck (CRW-1465): a unit check that gave no judgment for the tool's quota holds the node: the
 // lane writes crw.hold with source unit_check and reason unit_check_quota, commits nothing, calls no reviewer and counts no tier
 // evidence. A resume asks the checker again (the held check is no result to replay), and the node lands without a new executor call,
@@ -820,4 +1003,549 @@ func TestRebuildPacketCarriesTheLastFindingsAndCI(t *testing.T) {
 			}
 		}
 	})
+}
+
+// ---- the sub-tasks of a split node (CRW-1459) ----
+
+// splitLab is a lab of one node A sized for a split whose sub-tasks are ids, in that order, each with its own file a/<id>.txt.
+func splitLab(t *testing.T, ids ...string) *Lab {
+	t.Helper()
+	return splitLabWith(t, nil, ids...)
+}
+
+// splitLabWith is splitLab with the node's criteria (none: the lab's default criterion).
+func splitLabWith(t *testing.T, criteria []string, ids ...string) *Lab {
+	t.Helper()
+	l := NewLab(t, NodeSpec{ID: "A", Issue: "CRW-A", Title: "issue A", Regions: []string{"a/"}, SizeFit: "split", SizeReason: "regions_gt3", Criteria: criteria})
+	d := l.designFor()
+	for _, id := range ids {
+		d.Issues[0].SubTasks = append(d.Issues[0].SubTasks, ops.SubTask{ID: id, Summary: "write " + id, EditRegions: []string{"a/" + id + ".txt"}, DoneCondition: "a/" + id + ".txt is written"})
+	}
+	l.Design = &d
+	return l
+}
+
+// writes answers an executor turn of node A with a receipt of outcome after it wrote a/<id>.txt.
+func writes(id, outcome string) func(*Call) fakehostPlan {
+	return func(c *Call) fakehostPlan {
+		c.EditPath("a/"+id+".txt", id+"\n")
+		return Say(ReceiptWith(outcome, map[string]any{"summary": "wrote " + id, "gap": map[bool]any{true: "the " + id + " part is missing"}[outcome == "failed"]}))
+	}
+}
+
+// rowsOfNode are the completed rows of op whose node is node.
+func rowsOfNode(l *Lab, op, node string) []engine.Event {
+	var out []engine.Event
+	for _, r := range l.Rows(op) {
+		if str(r.Data, "node") == node {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// noJudgementBefore asserts that no crw.unitCheck, crw.verify, crw.review, crw.accept or crw.integrate row of node A comes before seq:
+// a split node's sub-tasks run with no check between them, and the node is judged once, after its last sub-task.
+func noJudgementBefore(t *testing.T, l *Lab, seq int, what string) {
+	t.Helper()
+	for _, op := range []string{ops.OpUnitCheck, ops.OpVerify, "crw.review", ops.OpAccept, ops.OpIntegrate} {
+		for _, r := range rowsOfNode(l, op, "A") {
+			if r.Seq < seq {
+				t.Errorf("a %s row (seq %d) before %s (seq %d)", op, r.Seq, what, seq)
+			}
+		}
+	}
+}
+
+// TestSplitNodeRunsSubTasksInOrderOnOneExecutorThread (CRW-1459, S-3): a node sized for a split with sub-tasks runs them in their
+// order on one executor thread: the build does the first, and each next one is a turn of the same thread (subtask:A:executor:s2,
+// :s3). Each sub-task before the last ends in a checkpoint crw.commit of the node, with no unit check between them; the node is
+// checked, verified and landed once, after the receipt of the last sub-task, and its last commit holds every sub-task's file.
+func TestSplitNodeRunsSubTasksInOrderOnOneExecutorThread(t *testing.T) {
+	l := splitLab(t, "one", "two", "three")
+	var mu sync.Mutex
+	threads := map[string]string{}
+	record := func(id string) func(*Call) fakehostPlan {
+		w := writes(id, "ready_for_review")
+		return func(c *Call) fakehostPlan {
+			mu.Lock()
+			threads[c.Label] = c.ThreadID
+			mu.Unlock()
+			return w(c)
+		}
+	}
+	l.Sequence("^build:A:executor$", record("one"))
+	l.Sequence("^subtask:A:executor:s2$", record("two"))
+	l.Sequence("^subtask:A:executor:s3$", record("three"))
+	if got := mustRun(t, l); got.State != "closed" {
+		t.Fatalf("state %q; calls %v", got.State, l.Labels())
+	}
+	want := []string{"architect", "design-audit:r1", "build:A:executor", "subtask:A:executor:s2", "subtask:A:executor:s3", "reflection:M1"}
+	if labels := l.Labels(); !slices.Equal(labels, want) {
+		t.Fatalf("calls %v, want %v", labels, want)
+	}
+	build, s2, s3 := callNamed(t, l, "build:A:executor"), callNamed(t, l, "subtask:A:executor:s2"), callNamed(t, l, "subtask:A:executor:s3")
+	if s2.Resume != build.ID || s3.Resume != s2.ID {
+		t.Errorf("the sub-task calls resume %q and %q, want %q and %q", s2.Resume, s3.Resume, build.ID, s2.ID)
+	}
+	if th := threads["build:A:executor"]; th == "" || threads["subtask:A:executor:s2"] != th || threads["subtask:A:executor:s3"] != th {
+		t.Errorf("threads %v, want one thread", threads)
+	}
+	commits := rowsOfNode(l, ops.OpCommit, "A")
+	if len(commits) != 3 {
+		t.Fatalf("%d crw.commit rows of A, want 3 (two checkpoints and the node's)", len(commits))
+	}
+	if !(commits[0].Seq < s2.Seq && s2.Seq < commits[1].Seq && commits[1].Seq < s3.Seq && s3.Seq < commits[2].Seq) {
+		t.Errorf("commits at %d, %d, %d; sub-task calls at %d, %d", commits[0].Seq, commits[1].Seq, commits[2].Seq, s2.Seq, s3.Seq)
+	}
+	if str(commits[1].Data, "parent") != str(commits[0].Data, "commit") || str(commits[2].Data, "parent") != str(commits[1].Data, "commit") {
+		t.Errorf("the commits of A do not chain: %v", commits)
+	}
+	noJudgementBefore(t, l, s3.Seq, "the last sub-task's call")
+	for _, op := range []string{ops.OpVerify, ops.OpAccept, ops.OpIntegrate} {
+		if n := len(rowsOfNode(l, op, "A")); n != 1 {
+			t.Errorf("%d %s rows of A, want 1", n, op)
+		}
+	}
+	last := str(commits[2].Data, "commit")
+	for _, id := range []string{"one", "two", "three"} {
+		if out := l.Git("show", last+":a/"+id+".txt"); strings.TrimSpace(out) != id {
+			t.Errorf("the last commit of A has a/%s.txt %q", id, out)
+		}
+	}
+	first := textOfCall(l, build.ID)
+	for _, w := range []string{"SUB-TASKS (", "- 1. one (to do): write one", "- 3. three (to do): write three", "Do sub-task 1 (one) now, and only it"} {
+		if !strings.Contains(first, w) {
+			t.Errorf("the build packet lacks %q:\n%s", w, first)
+		}
+	}
+	second := textOfCall(l, s2.ID)
+	for _, w := range []string{"sub-task 2 of 3 (two): write two", "a/two.txt", "a/two.txt is written"} {
+		if !strings.Contains(second, w) {
+			t.Errorf("the s2 packet lacks %q:\n%s", w, second)
+		}
+	}
+	noTierStep(t, l)
+}
+
+// TestSplitSubTaskSelfFailedGoesOnWithoutAJudgement (CRW-1459, S-3, R1-01): a sub-task before the last that ends self_failed is no
+// judgement of the node: its tree gets the checkpoint commit and the same thread goes on to the next sub-task, whose packet names it
+// as reported failed, with its summary and gap; no verification, review or land of the node comes before that call, and the node lands
+// after the last sub-task. The failed receipt is no tier evidence.
+func TestSplitSubTaskSelfFailedGoesOnWithoutAJudgement(t *testing.T) {
+	l := splitLab(t, "one", "two")
+	l.Sequence("^build:A:executor$", writes("one", "failed"))
+	l.Sequence("^subtask:A:executor:s2$", writes("two", "ready_for_review"))
+	if got := mustRun(t, l); got.State != "closed" {
+		t.Fatalf("state %q; calls %v", got.State, l.Labels())
+	}
+	want := []string{"architect", "design-audit:r1", "build:A:executor", "subtask:A:executor:s2", "reflection:M1"}
+	if labels := l.Labels(); !slices.Equal(labels, want) {
+		t.Fatalf("calls %v, want %v", labels, want)
+	}
+	build, s2 := callNamed(t, l, "build:A:executor"), callNamed(t, l, "subtask:A:executor:s2")
+	if s2.Resume != build.ID {
+		t.Errorf("the s2 call resumes %q, want the build %q", s2.Resume, build.ID)
+	}
+	commits := rowsOfNode(l, ops.OpCommit, "A")
+	if len(commits) != 2 || !(build.Seq < commits[0].Seq && commits[0].Seq < s2.Seq) || str(commits[0].Data, "call") != build.ID {
+		t.Fatalf("commits of A %v, want the checkpoint of the build's call before the s2 call (seq %d)", commits, s2.Seq)
+	}
+	noJudgementBefore(t, l, s2.Seq, "the s2 call")
+	text := textOfCall(l, s2.ID)
+	for _, w := range []string{"reported failed", "wrote one", "the one part is missing", "it is part of this node and is judged with it"} {
+		if !strings.Contains(text, w) {
+			t.Errorf("the s2 packet lacks %q:\n%s", w, text)
+		}
+	}
+	if n := len(rowsOfNode(l, ops.OpIntegrate, "A")); n != 1 {
+		t.Errorf("%d crw.integrate rows of A, want 1", n)
+	}
+	// the node lands on the check of its whole change after the last sub-task, never on the failed sub-task's receipt
+	checks, accepts := rowsOfNode(l, ops.OpUnitCheck, "A"), rowsOfNode(l, ops.OpAccept, "A")
+	if len(checks) != 1 || str(checks[0].Data, "mode") != ops.UnitCheckCommitted || str(checks[0].Data, "commit") != str(commits[1].Data, "commit") ||
+		len(accepts) != 1 || str(accepts[0].Data, "reviewer_call") != checks[0].CallID {
+		t.Errorf("checks %v and acceptances %v of A, want one acceptance on the one check of the whole change", checks, accepts)
+	}
+	last := str(commits[1].Data, "commit")
+	for _, id := range []string{"one", "two"} {
+		if out := l.Git("show", last+":a/"+id+".txt"); strings.TrimSpace(out) != id {
+			t.Errorf("the last commit of A has a/%s.txt %q", id, out)
+		}
+	}
+	noTierStep(t, l)
+}
+
+// TestSplitNodeKeepsEarlierSubTasksAcrossARebuildAndATierStep (CRW-1459, S-5, R1-02): the checkpoint commits carry the earlier
+// sub-tasks into a fresh thread. The first sub-task writes a/one.txt and is checkpointed; the second ends null_model, its rebuild ends
+// null_model again (SP-TIER-1 c) and the tier steps. The rebuild and the executor-t1 build each start at sub-task 2 (their packets say
+// so) in a worktree at the checkpoint, which holds a/one.txt; the node's last commit holds both files, and the step row's checkpoint
+// head is the first sub-task's commit.
+func TestSplitNodeKeepsEarlierSubTasksAcrossARebuildAndATierStep(t *testing.T) {
+	l := splitLab(t, "one", "two")
+	l.Sequence("^build:A:executor$", writes("one", "ready_for_review"))
+	l.Sequence("^subtask:A:executor:s2$", func(*Call) fakehostPlan { return Garbage() })
+	l.Sequence("^rebuild:A:executor:", func(*Call) fakehostPlan { return Garbage() })
+	var atStart struct{ head, file string }
+	l.Sequence("^build:A:executor-t1$", func(c *Call) fakehostPlan {
+		atStart.head = l.GitIn(c.Cwd, "rev-parse", "HEAD")
+		b, _ := os.ReadFile(filepath.Join(c.Cwd, "a", "one.txt"))
+		atStart.file = string(b)
+		return writes("two", "ready_for_review")(c)
+	})
+	if got := mustRun(t, l); got.State != "closed" {
+		t.Fatalf("state %q; calls %v", got.State, l.Labels())
+	}
+	want := []string{"architect", "design-audit:r1", "build:A:executor", "subtask:A:executor:s2", "rebuild:A:executor:r2", "build:A:executor-t1", "reflection:M1"}
+	if labels := l.Labels(); !slices.Equal(labels, want) {
+		t.Fatalf("calls %v, want %v", labels, want)
+	}
+	commits := rowsOfNode(l, ops.OpCommit, "A")
+	if len(commits) != 2 {
+		t.Fatalf("%d crw.commit rows of A, want the checkpoint and the node's", len(commits))
+	}
+	c1 := str(commits[0].Data, "commit")
+	if atStart.head != c1 || strings.TrimSpace(atStart.file) != "one" {
+		t.Errorf("the executor-t1 build started at %s with a/one.txt %q, want the checkpoint %s holding it", atStart.head, atStart.file, c1)
+	}
+	steps := l.StepRows()
+	if len(steps) != 1 || steps[0].Head != c1 {
+		t.Errorf("step rows %+v, want one with checkpoint head %s", steps, c1)
+	}
+	for _, label := range []string{"rebuild:A:executor:r2", "build:A:executor-t1"} {
+		text := textOfCall(l, callNamed(t, l, label).ID)
+		for _, w := range []string{"- 1. one (done): write one", "- 2. two (to do): write two", "Do sub-task 2 (two) now, and only it"} {
+			if !strings.Contains(text, w) {
+				t.Errorf("the packet of %s lacks %q:\n%s", label, w, text)
+			}
+		}
+	}
+	last := str(commits[1].Data, "commit")
+	if str(commits[1].Data, "parent") != c1 {
+		t.Errorf("the node's commit is on %s, want the checkpoint %s", commits[1].Data["parent"], c1)
+	}
+	for _, id := range []string{"one", "two"} {
+		if out := l.Git("show", last+":a/"+id+".txt"); strings.TrimSpace(out) != id {
+			t.Errorf("the last commit of A has a/%s.txt %q", id, out)
+		}
+	}
+	noJudgementBefore(t, l, callNamed(t, l, "build:A:executor-t1").Seq, "the executor-t1 build")
+}
+
+// splitCriteria are criteria of a split node A with the sub-tasks one and two, each met by one sub-task's file.
+var splitCriteria = []string{"a/one.txt holds one", "a/two.txt holds two"}
+
+var criterionLine = regexp.MustCompile(`(?m)^c\d+: (a/\S+) holds (\S+)$`)
+
+// criteriaChecker is a checker that does what the prompt asks: every criterion the prompt names (a `cN: a/<file> holds <word>` line)
+// is judged in the worktree, and one the tree does not meet is a finding; a prompt that names no criterion is verified.
+func criteriaChecker(c CheckInfo) (UnitCheck, bool) {
+	var found []reviewadapter.Finding
+	for _, m := range criterionLine.FindAllStringSubmatch(c.Prompt, -1) {
+		b, _ := os.ReadFile(filepath.Join(c.Worktree, m[1]))
+		if strings.TrimSpace(string(b)) != m[2] {
+			found = append(found, reviewadapter.Finding{Severity: "P1", Impact: "core_function", File: m[1], Line: 1, Text: "the criterion " + m[1] + " holds " + m[2] + " is not met"})
+		}
+	}
+	if len(found) > 0 {
+		return NeedsChanges(found...), true
+	}
+	return UnitCheck{}, true
+}
+
+// TestASplitSubTaskIsNotCheckedBeforeTheLast (CRW-1459, the crosscheck's tiers_exhausted sequence; a check of each sub-task alone is
+// CRW-1564's): a split node's sub-tasks run with no unit check between them, and the node is checked once, after the last, on its whole change (the committed range from its base to its head) against every criterion of the
+// node. With a checker that reports every criterion its prompt names and the tree does not meet, a correct first sub-task is not
+// failed for the second sub-task's criterion: the second sub-task runs on the same thread and the node lands with no tier step (a check
+// of the whole node's criteria on the first sub-task ran two fix rounds, stepped the tier and ended tiers_exhausted after four checks,
+// with no commit and no second sub-task).
+func TestASplitSubTaskIsNotCheckedBeforeTheLast(t *testing.T) {
+	l := splitLabWith(t, splitCriteria, "one", "two")
+	l.OnUnitCheck(criteriaChecker)
+	l.Sequence("^build:A:executor$", writes("one", "ready_for_review"))
+	l.Sequence("^subtask:A:executor:s2$", writes("two", "ready_for_review"))
+	if got := mustRun(t, l); got.State != "closed" {
+		t.Fatalf("state %q; calls %v", got.State, l.Labels())
+	}
+	want := []string{"architect", "design-audit:r1", "build:A:executor", "subtask:A:executor:s2", "reflection:M1"}
+	if labels := l.Labels(); !slices.Equal(labels, want) {
+		t.Fatalf("calls %v, want %v", labels, want)
+	}
+	noTierStep(t, l)
+	for _, ev := range l.FlowRows(engine.EvEscalation) {
+		t.Errorf("an escalation %v", ev.Data)
+	}
+	commits := rowsOfNode(l, ops.OpCommit, "A")
+	if len(commits) != 2 {
+		t.Fatalf("%d crw.commit rows of A, want the checkpoint and the node's", len(commits))
+	}
+	base, head := str(commits[0].Data, "parent"), str(commits[1].Data, "commit")
+	checks := l.Checker.Calls("A")
+	if len(checks) != 1 {
+		t.Fatalf("%d unit checks of A, want only the check of the whole change", len(checks))
+	}
+	prompt := checks[0].Request.Prompt
+	for _, w := range []string{"Review the changes between " + base + " and " + head, "the whole change of the node", "c1: a/one.txt holds one", "c2: a/two.txt holds two"} {
+		if !strings.Contains(prompt, w) {
+			t.Errorf("the check of A lacks %q:\n%s", w, prompt)
+		}
+	}
+	for _, w := range []string{"SUB-TASK 1 of 2", "DONE CONDITION", "NOT DUE YET", "EARLIER SUB-TASKS"} {
+		if strings.Contains(prompt, w) {
+			t.Errorf("the check of A judges a sub-task (%q):\n%s", w, prompt)
+		}
+	}
+	rows := rowsOfNode(l, ops.OpUnitCheck, "A")
+	if len(rows) != 1 || str(rows[0].Data, "mode") != ops.UnitCheckCommitted || str(rows[0].Data, "base") != base || str(rows[0].Data, "commit") != head || rows[0].Seq < commits[1].Seq {
+		t.Fatalf("the unit-check rows of A %v, want one committed check of %s..%s after the node's commit", rows, base, head)
+	}
+	if _, ok := rows[0].Data["sub"]; ok {
+		t.Errorf("the check of A names a sub-task: %v", rows[0].Data)
+	}
+}
+
+// TestASplitNodeIsAcceptedOnTheCheckOfItsWholeChange (CRW-1459): after the last sub-task's commit and its verification, the lane checks
+// the node's whole change, the committed range from the node's base to its head, against every criterion of the node, and the
+// acceptance rests on that check alone. A finding of it goes back to the same executor thread as a fix round; the fix is committed and
+// verified, and the whole change is checked again; the node lands on that second check of the whole change. No other check of the
+// node is made: none of a sub-task, none of the fix's uncommitted change.
+func TestASplitNodeIsAcceptedOnTheCheckOfItsWholeChange(t *testing.T) {
+	l := splitLabWith(t, splitCriteria, "one", "two")
+	whole := 0
+	l.OnUnitCheck(func(c CheckInfo) (UnitCheck, bool) {
+		if !strings.HasPrefix(c.Prompt, "Review the changes between ") {
+			return UnitCheck{}, false
+		}
+		whole++
+		if whole == 1 {
+			return NeedsChanges(reviewadapter.Finding{Severity: "P2", Impact: "core_function", File: "a/two.txt", Line: 1, Text: "the parts do not agree"}), true
+		}
+		return UnitCheck{}, false
+	})
+	l.OnUnitCheck(criteriaChecker)
+	l.Sequence("^build:A:executor$", writes("one", "ready_for_review"))
+	l.Sequence("^subtask:A:executor:s2$", writes("two", "ready_for_review"))
+	l.Sequence("^fix:A:executor:", writes("agree", "ready_for_review"))
+	if got := mustRun(t, l); got.State != "closed" {
+		t.Fatalf("state %q; calls %v", got.State, l.Labels())
+	}
+	want := []string{"architect", "design-audit:r1", "build:A:executor", "subtask:A:executor:s2", "fix:A:executor:r2", "reflection:M1"}
+	if labels := l.Labels(); !slices.Equal(labels, want) {
+		t.Fatalf("calls %v, want %v", labels, want)
+	}
+	s2, fix := callNamed(t, l, "subtask:A:executor:s2"), callNamed(t, l, "fix:A:executor:r2")
+	if fix.Resume != s2.ID {
+		t.Errorf("the fix resumes %q, want the last sub-task's call %q", fix.Resume, s2.ID)
+	}
+	noTierStep(t, l)
+	commits := rowsOfNode(l, ops.OpCommit, "A")
+	if len(commits) != 3 {
+		t.Fatalf("%d crw.commit rows of A, want the checkpoint, the node's and the fix's", len(commits))
+	}
+	base, head1, head2 := str(commits[0].Data, "parent"), str(commits[1].Data, "commit"), str(commits[2].Data, "commit")
+	var wholeRows []engine.Event
+	for _, r := range rowsOfNode(l, ops.OpUnitCheck, "A") {
+		if str(r.Data, "mode") == ops.UnitCheckCommitted {
+			wholeRows = append(wholeRows, r)
+		}
+	}
+	if len(wholeRows) != 2 {
+		t.Fatalf("%d checks of the whole change of A, want 2", len(wholeRows))
+	}
+	for i, h := range []string{head1, head2} {
+		if r := wholeRows[i]; str(r.Data, "commit") != h || str(r.Data, "base") != base || str(r.Data, "sub") != "" {
+			t.Errorf("check %d of the whole change: %v, want the range %s..%s", i+1, r.Data, base, h)
+		}
+	}
+	if rows := rowsOfNode(l, ops.OpUnitCheck, "A"); len(rows) != len(wholeRows) {
+		t.Errorf("%d unit checks of A, want only the %d of its whole change: %v", len(rows), len(wholeRows), rows)
+	}
+	verifies := rowsOfNode(l, ops.OpVerify, "A")
+	if len(verifies) != 2 || !(verifies[0].Seq < wholeRows[0].Seq && wholeRows[0].Seq < fix.Seq && verifies[1].Seq < wholeRows[1].Seq) {
+		t.Errorf("verifies %v, checks of the whole change at %d and %d, the fix at %d", verifies, wholeRows[0].Seq, wholeRows[1].Seq, fix.Seq)
+	}
+	var prompt string
+	for _, c := range l.Checker.Calls("A") {
+		if strings.Contains(c.Request.Prompt, ".."+head2) {
+			prompt = c.Request.Prompt
+		}
+	}
+	for _, w := range []string{"git diff " + base + ".." + head2, "c1: a/one.txt holds one", "c2: a/two.txt holds two", "the whole change of the node"} {
+		if !strings.Contains(prompt, w) {
+			t.Errorf("the last check of the whole change lacks %q:\n%s", w, prompt)
+		}
+	}
+	accepts := rowsOfNode(l, ops.OpAccept, "A")
+	if len(accepts) != 1 || str(accepts[0].Data, "reviewer_call") != wholeRows[1].CallID || str(accepts[0].Data, "head") != head2 {
+		t.Errorf("the acceptance %v, want it on the check %s of the whole change at %s", accepts, wholeRows[1].CallID, head2)
+	}
+}
+
+// TestASplitNodeAfterATierStepPastItsLastSubTaskIsBuiltAsAWhole (CRW-1459, S-5): the node's commit after the last sub-task marks
+// every sub-task done. The verification of that commit fails, its fix's commit fails again (SP-TIER-1 b) and the tier steps: the
+// executor-t1 build starts at the node's last commit, which holds both sub-tasks, and its packet is the node's packet over it with
+// every sub-task done (no sub-task to do now); the node's only checks are of its whole change.
+func TestASplitNodeAfterATierStepPastItsLastSubTaskIsBuiltAsAWhole(t *testing.T) {
+	l := splitLab(t, "one", "two")
+	l.Verify.Fail = map[string][]int{"A": {1, 2}}
+	l.Sequence("^build:A:executor$", writes("one", "ready_for_review"))
+	l.Sequence("^subtask:A:executor:s2$", writes("two", "ready_for_review"))
+	l.Sequence("^fix:A:executor:", writes("fix", "ready_for_review"))
+	l.Sequence("^build:A:executor-t1$", writes("t1", "ready_for_review"))
+	if got := mustRun(t, l); got.State != "closed" {
+		t.Fatalf("state %q; calls %v", got.State, l.Labels())
+	}
+	want := []string{"architect", "design-audit:r1", "build:A:executor", "subtask:A:executor:s2", "fix:A:executor:r2", "build:A:executor-t1", "reflection:M1"}
+	if labels := l.Labels(); !slices.Equal(labels, want) {
+		t.Fatalf("calls %v, want %v", labels, want)
+	}
+	t1 := callNamed(t, l, "build:A:executor-t1")
+	text := textOfCall(l, t1.ID)
+	for _, w := range []string{"- 1. one (done): write one", "- 2. two (done): write two", "Every sub-task is done and committed in your worktree"} {
+		if !strings.Contains(text, w) {
+			t.Errorf("the executor-t1 packet lacks %q:\n%s", w, text)
+		}
+	}
+	if strings.Contains(text, "Do sub-task") || strings.Contains(text, "(to do)") {
+		t.Errorf("the executor-t1 packet asks for a sub-task the node's commit holds:\n%s", text)
+	}
+	checks := rowsOfNode(l, ops.OpUnitCheck, "A")
+	if len(checks) == 0 {
+		t.Errorf("no check of the whole change of A")
+	}
+	for _, r := range checks {
+		if _, sub := r.Data["sub"]; sub || str(r.Data, "mode") != ops.UnitCheckCommitted || r.Seq < t1.Seq {
+			t.Errorf("a check of A %v, want only checks of its whole change after the executor-t1 build", r.Data)
+		}
+	}
+}
+
+// TestARepeatedFindingOfTheWholeChangeStepsTheTier (CRW-1459, SP-TIER-1 a): two checks of a split node's whole change in a row that rule
+// needs_changes on one finding are the evidence of a tier step: the fix between them is committed and verified with no check of its
+// own, so they are the node's two reviewed rounds. The executor-t1 build starts at the node's last commit and the node lands on the next
+// check of its whole change.
+func TestARepeatedFindingOfTheWholeChangeStepsTheTier(t *testing.T) {
+	l := splitLab(t, "one", "two")
+	whole := 0
+	l.OnUnitCheck(func(c CheckInfo) (UnitCheck, bool) {
+		if !strings.HasPrefix(c.Prompt, "Review the changes between ") {
+			return UnitCheck{}, false
+		}
+		whole++
+		if whole <= 2 {
+			return NeedsChanges(reviewadapter.Finding{Severity: "P2", Impact: "core_function", File: "a/two.txt", Line: 1, Text: "the parts do not agree"}), true
+		}
+		return UnitCheck{}, false
+	})
+	l.Sequence("^build:A:executor$", writes("one", "ready_for_review"))
+	l.Sequence("^subtask:A:executor:s2$", writes("two", "ready_for_review"))
+	l.Sequence("^fix:A:executor:", writes("agree", "ready_for_review"))
+	l.Sequence("^build:A:executor-t1$", writes("t1", "ready_for_review"))
+	if got := mustRun(t, l); got.State != "closed" {
+		t.Fatalf("state %q; calls %v", got.State, l.Labels())
+	}
+	want := []string{"architect", "design-audit:r1", "build:A:executor", "subtask:A:executor:s2", "fix:A:executor:r2", "build:A:executor-t1", "reflection:M1"}
+	if labels := l.Labels(); !slices.Equal(labels, want) {
+		t.Fatalf("calls %v, want %v", labels, want)
+	}
+	steps := l.StepRows()
+	if len(steps) != 1 {
+		t.Fatalf("step rows %+v, want one", steps)
+	}
+	if whole != 3 || len(l.Checker.Calls("A")) != 3 {
+		t.Errorf("%d checks of the whole change of %d checks of A, want 3 of 3", whole, len(l.Checker.Calls("A")))
+	}
+}
+
+// TestTheCheckOfASplitNodesWholeChangeKeepsTheRoundCapAndCarries (CRW-1459 with CRW-1436): the one check of a split node's whole change
+// keeps the node lane's round trip cap and its carried findings. Three checks of the whole change with findings f1, f2, f2 make two fix
+// round trips, and what is left after them is carried before the tier evidence it also makes is read: a blocking finding escalates
+// unit_check_carried with it and lands nothing, a non-blocking one lands carried and is a defect of the premerge record, and no
+// executor-t1 starts in either case.
+func TestTheCheckOfASplitNodesWholeChangeKeepsTheRoundCapAndCarries(t *testing.T) {
+	f1 := Finding("P2", "the first thing is wrong")
+	run := func(t *testing.T, second, third UnitCheck) (*Lab, carriedResult, string, string, []string) {
+		l := splitLab(t, "one", "two")
+		l.UnitChecks("A", NeedsChanges(f1), second, third, UnitCheck{})
+		l.Sequence("^build:A:executor$", writes("one", "ready_for_review"))
+		l.Sequence("^subtask:A:executor:s2$", writes("two", "ready_for_review"))
+		fixes := 0
+		l.Sequence("^fix:A:executor:", func(c *Call) fakehostPlan {
+			fixes++
+			return writes(fmt.Sprintf("fix%d", fixes), "ready_for_review")(c)
+		})
+		got, state, reason, carried := runCarried(t, l)
+		for _, r := range rowsOfNode(l, ops.OpUnitCheck, "A") {
+			if str(r.Data, "mode") != ops.UnitCheckCommitted {
+				t.Errorf("a check of A that is not of its whole change: %v", r.Data)
+			}
+		}
+		if n := len(l.Checker.Calls("A")); n != 3 {
+			t.Errorf("%d checks of A, want 3", n)
+		}
+		noTierStep(t, l)
+		return l, got, state, reason, carried
+	}
+	t.Run("blocking", func(t *testing.T) {
+		f2 := Finding("P2", "the second thing is wrong")
+		l, got, state, reason, carried := run(t, NeedsChanges(f2), NeedsChanges(f2))
+		if got.State != "incomplete" || state != "escalated" || reason != "unit_check_carried" {
+			t.Fatalf("%+v; calls %v", got, l.Labels())
+		}
+		if id := reviewadapter.FindingID(f2.File, f2.Text); !slices.Equal(carried, []string{id}) {
+			t.Errorf("carried %v, want [%s]", carried, id)
+		}
+		if want := []string{"architect", "design-audit:r1", "build:A:executor", "subtask:A:executor:s2", "fix:A:executor:r2", "fix:A:executor:r3"}; !slices.Equal(l.Labels(), want) {
+			t.Errorf("calls %v, want %v", l.Labels(), want)
+		}
+		if len(l.Relay.Landed) != 0 || len(rowsOfNode(l, ops.OpAccept, "A")) != 0 {
+			t.Errorf("landed %v", l.Relay.Landed)
+		}
+	})
+	t.Run("non-blocking", func(t *testing.T) {
+		f2 := Finding("P3", "a name could be clearer")
+		l, got, state, _, carried := run(t, UnitCheck{Findings: []reviewadapter.Finding{f2}}, UnitCheck{Findings: []reviewadapter.Finding{f2}})
+		if got.State != "closed" || state != "landed" {
+			t.Fatalf("%+v; calls %v", got, l.Labels())
+		}
+		id := reviewadapter.FindingID(f2.File, f2.Text)
+		if !slices.Equal(carried, []string{id}) {
+			t.Errorf("carried %v, want [%s]", carried, id)
+		}
+		if ids := premergeDefects(t, l, "A"); !slices.Contains(ids, id) {
+			t.Errorf("the premerge defects %v do not name the carried finding %s", ids, id)
+		}
+	})
+}
+
+// TestABrokenSubTaskRuleGoesBackToTheArchitect (CRW-1435, the DI's P2): an architect answer that breaks a sub-task rule the schema cannot
+// express (a sub-task region outside the node's) passes the engine's schema check; the design audit makes it a finding and the DESIGN
+// goes back to the architect for a design-fix round, whose DESIGN is approved, and the node lands. The run does not end script_error.
+func TestABrokenSubTaskRuleGoesBackToTheArchitect(t *testing.T) {
+	l := splitLab(t, "one", "two")
+	bad := l.designFor()
+	bad.Issues = slices.Clone(bad.Issues)
+	bad.Issues[0].SubTasks = []ops.SubTask{bad.Issues[0].SubTasks[0], {ID: "two", Summary: "write two", EditRegions: []string{"b/two.txt"}, DoneCondition: "b/two.txt is written"}}
+	l.Sequence("^architect$", func(*Call) fakehostPlan { return Say(bad) })
+	l.Sequence("^build:A:executor$", writes("one", "ready_for_review"))
+	l.Sequence("^subtask:A:executor:s2$", writes("two", "ready_for_review"))
+	res := l.Run()
+	if res.Status != engine.RunCompleted {
+		t.Fatalf("run %s: %s: %s; calls %v", res.Status, res.ErrorKind, res.Error, l.Labels())
+	}
+	got := Value[laneResult](t, res)
+	if got.State != "closed" {
+		t.Fatalf("state %q; calls %v", got.State, l.Labels())
+	}
+	want := []string{"architect", "design-audit:r1", "design-fix:r1", "design-audit:r2", "build:A:executor", "subtask:A:executor:s2", "reflection:M1"}
+	if labels := l.Labels(); !slices.Equal(labels, want) {
+		t.Fatalf("calls %v, want %v", labels, want)
+	}
+	audits := l.Rows(ops.OpDesignAudit)
+	if len(audits) != 2 || str(audits[0].Data, "state") != ops.AuditNeedsChanges || str(audits[1].Data, "state") != ops.AuditApproved {
+		t.Errorf("the audits %v", audits)
+	}
+	if fix := textOfCall(l, callNamed(t, l, "design-fix:r1").ID); !strings.Contains(fix, "b/two.txt") {
+		t.Errorf("the design-fix packet does not name the broken rule:\n%s", fix)
+	}
 }
