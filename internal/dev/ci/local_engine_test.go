@@ -204,3 +204,22 @@ func TestLocal_the_secrets_step_runs_on_linux_x64(t *testing.T) {
 		t.Errorf("the plan did not run: result %q, %v", made.Result, statErr)
 	}
 }
+
+// CRW-1588: the repository marker preflight is engine source too — a tree whose gitprobe differs from the
+// commit's would refuse or accept a step TMPDIR the commit's engine judges the other way, so a run from it
+// is refused before any step and writes no record.
+func TestLocal_git_marker_source_is_part_of_the_engine(t *testing.T) {
+	repo := localEngineRepo(t)
+	const path = "internal/gitprobe/repository.go"
+	repo.write(path, "package gitprobe\n")
+	repo.commit()
+	repo.write(path, "package gitprobe\n// edited marker predicate\n")
+	record := filepath.Join(t.TempDir(), "r.json")
+	made, _, err := localVerify(localRunOptions(repo, localFixturePlan("echo hello"), record), "", io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "engine_differs_from_commit") || !strings.Contains(err.Error(), path) {
+		t.Fatalf("err = %v, result = %q; want dirty marker predicate refusal", err, made.Result)
+	}
+	if _, err := os.Stat(record); !os.IsNotExist(err) {
+		t.Fatalf("record was written: %v", err)
+	}
+}

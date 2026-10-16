@@ -115,3 +115,33 @@ func TestCorpusAnchorLinkedWorktree(t *testing.T) {
 		t.Fatal("a repository and a linked worktree (whose .git is a file) look like repositories, their parent does not")
 	}
 }
+
+// CRW-1588: a .git that resolves to no Git directory — the empty directory a sandbox leaves behind, a
+// file that is no gitfile, or a gitfile whose target is missing — does not look like a repository; one
+// naming a real Git directory still does.
+func TestLooksLikeRepoRequiresARepository(t *testing.T) {
+	base := t.TempDir()
+	empty := filepath.Join(base, "empty")
+	if err := os.MkdirAll(filepath.Join(empty, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	garbage := filepath.Join(base, "garbage")
+	writeFile(t, garbage, ".git", "not a gitfile\n")
+	missing := filepath.Join(base, "missing")
+	writeFile(t, missing, ".git", "gitdir: "+filepath.Join(base, "gone")+"\n")
+	for _, dir := range []string{empty, garbage, missing} {
+		if LooksLikeRepo(dir) {
+			t.Errorf("%s looks like a repository although its .git resolves to none", dir)
+		}
+	}
+	meta := filepath.Join(base, "meta")
+	if err := os.MkdirAll(filepath.Join(meta, "objects"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, meta, "HEAD", "ref: refs/heads/main\n")
+	wt := filepath.Join(base, "wt")
+	writeFile(t, wt, ".git", "gitdir: "+meta+"\n")
+	if !LooksLikeRepo(wt) {
+		t.Error("a gitfile naming a real Git directory does not look like a repository")
+	}
+}

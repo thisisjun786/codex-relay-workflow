@@ -1,0 +1,117 @@
+{
+  "issue": "CRW-1588",
+  "intentionally-changed": [
+    {
+      "id": "hook__session-start-detecting-managed-worktree__extra_root_env_is_honored",
+      "reason": "CRW-1588: a dangling gitfile is no repository marker. Replace the oracle's /fake gitdir with HEAD, objects and refs in this case's temporary metadata directory, preserving every recorded hook answer. Only the setup file and its added metadata directories change (docs/port-cxc/known-defects/CRW-1588.md). Previously identical under CRW-198.",
+      "given": {
+        "files": {
+          "tmp/custom-root/ab12/repo/.git": "gitdir: ${TMP}/repository/.git\n",
+          "tmp/repository/.git/HEAD": "ref: refs/heads/main\n"
+        },
+        "dirs": ["tmp/repository/.git/objects", "tmp/repository/.git/refs"]
+      },
+      "set": {
+        "tree/tmp/custom-root/ab12/repo/.git/content": "gitdir: ${TMP}/repository/.git\n",
+        "tree/tmp/repository/type": "dir",
+        "tree/tmp/repository/mode": "0755",
+        "tree/tmp/repository/target": "",
+        "tree/tmp/repository/form": "",
+        "tree/tmp/repository/sha256": "",
+        "tree/tmp/repository/size": "",
+        "tree/tmp/repository/content": "",
+        "tree/tmp/repository/.git/type": "dir",
+        "tree/tmp/repository/.git/mode": "0755",
+        "tree/tmp/repository/.git/target": "",
+        "tree/tmp/repository/.git/form": "",
+        "tree/tmp/repository/.git/sha256": "",
+        "tree/tmp/repository/.git/size": "",
+        "tree/tmp/repository/.git/content": ""
+      }
+    },
+    {
+      "id": "hook__session-start-detecting-managed-worktree__managed_cwd_injects_identity",
+      "reason": "CRW-1588: a dangling gitfile is no repository marker. Replace the oracle's /fake gitdir with HEAD, objects and refs in this case's temporary metadata directory, preserving every recorded hook answer. Only the setup file and its added metadata directories change (docs/port-cxc/known-defects/CRW-1588.md). Previously identical under CRW-198.",
+      "given": {
+        "files": {
+          "codex/worktrees/7627/repo/.git": "gitdir: ${TMP}/repository/.git\n",
+          "tmp/repository/.git/HEAD": "ref: refs/heads/main\n"
+        },
+        "dirs": ["tmp/repository/.git/objects", "tmp/repository/.git/refs"]
+      },
+      "set": {
+        "tree/codex/worktrees/7627/repo/.git/content": "gitdir: ${TMP}/repository/.git\n",
+        "tree/tmp/repository/type": "dir",
+        "tree/tmp/repository/mode": "0755",
+        "tree/tmp/repository/target": "",
+        "tree/tmp/repository/form": "",
+        "tree/tmp/repository/sha256": "",
+        "tree/tmp/repository/size": "",
+        "tree/tmp/repository/content": "",
+        "tree/tmp/repository/.git/type": "dir",
+        "tree/tmp/repository/.git/mode": "0755",
+        "tree/tmp/repository/.git/target": "",
+        "tree/tmp/repository/.git/form": "",
+        "tree/tmp/repository/.git/sha256": "",
+        "tree/tmp/repository/.git/size": "",
+        "tree/tmp/repository/.git/content": ""
+      }
+    },
+    {
+      "id": "hook__session-start-detecting-managed-worktree__pabcd_off_still_injects_subagent_silent",
+      "reason": "CRW-1588: a dangling gitfile is no repository marker. Replace the oracle's /fake gitdir with HEAD, objects and refs in this case's temporary metadata directory, preserving every recorded hook answer. Only the setup file and its added metadata directories change (docs/port-cxc/known-defects/CRW-1588.md). Previously identical under CRW-198.",
+      "given": {
+        "files": {
+          "codex/worktrees/7627/repo/.git": "gitdir: ${TMP}/repository/.git\n",
+          "tmp/repository/.git/HEAD": "ref: refs/heads/main\n"
+        },
+        "dirs": ["tmp/repository/.git/objects", "tmp/repository/.git/refs"]
+      },
+      "set": {
+        "tree/codex/worktrees/7627/repo/.git/content": "gitdir: ${TMP}/repository/.git\n",
+        "tree/tmp/repository/type": "dir",
+        "tree/tmp/repository/mode": "0755",
+        "tree/tmp/repository/target": "",
+        "tree/tmp/repository/form": "",
+        "tree/tmp/repository/sha256": "",
+        "tree/tmp/repository/size": "",
+        "tree/tmp/repository/content": "",
+        "tree/tmp/repository/.git/type": "dir",
+        "tree/tmp/repository/.git/mode": "0755",
+        "tree/tmp/repository/.git/target": "",
+        "tree/tmp/repository/.git/form": "",
+        "tree/tmp/repository/.git/sha256": "",
+        "tree/tmp/repository/.git/size": "",
+        "tree/tmp/repository/.git/content": ""
+      }
+    },
+    {
+      "id": "hook__session-start-detecting-managed-worktree__symlinked_cwd_resolves_into_slot",
+      "reason": "CRW-1588: a dangling gitfile is no repository marker. Replace the oracle's /fake gitdir with HEAD, objects and refs in this case's temporary metadata directory, preserving every recorded hook answer. Only the setup file and its added metadata directories change (docs/port-cxc/known-defects/CRW-1588.md). Previously identical under CRW-198.",
+      "given": {
+        "files": {
+          "codex/worktrees/7627/repo/.git": "gitdir: ${TMP}/repository/.git\n",
+          "tmp/repository/.git/HEAD": "ref: refs/heads/main\n"
+        },
+        "dirs": ["tmp/repository/.git/objects", "tmp/repository/.git/refs"]
+      },
+      "set": {
+        "tree/codex/worktrees/7627/repo/.git/content": "gitdir: ${TMP}/repository/.git\n",
+        "tree/tmp/repository/type": "dir",
+        "tree/tmp/repository/mode": "0755",
+        "tree/tmp/repository/target": "",
+        "tree/tmp/repository/form": "",
+        "tree/tmp/repository/sha256": "",
+        "tree/tmp/repository/size": "",
+        "tree/tmp/repository/content": "",
+        "tree/tmp/repository/.git/type": "dir",
+        "tree/tmp/repository/.git/mode": "0755",
+        "tree/tmp/repository/.git/target": "",
+        "tree/tmp/repository/.git/form": "",
+        "tree/tmp/repository/.git/sha256": "",
+        "tree/tmp/repository/.git/size": "",
+        "tree/tmp/repository/.git/content": ""
+      }
+    }
+  ]
+}

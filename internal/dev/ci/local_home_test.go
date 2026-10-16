@@ -185,16 +185,15 @@ func localNoEntry(t *testing.T, dir, prefix string) {
 	}
 }
 
-// CRW-1489, CRW-1569: the 1209 shape's stray .git, a caller TMPDIR below a .git (the bwrap marker
-// /tmp/.git), is never the step's: the walk up from it meets the .git, so the run is refused before any
-// step with temp_dir_unusable naming that .git, and no step TMPDIR is made below it. The steps are not
-// moved to another place (TestLocal_never_moves_the_step_TMPDIR).
-func TestLocal_a_callers_TMPDIR_below_a_stray_git_is_not_the_steps(t *testing.T) {
+// CRW-1489, CRW-1569: a caller TMPDIR below a real repository is never the step's: the walk up from it
+// meets the repository's .git, so the run is refused before any step with temp_dir_unusable naming that
+// .git, and no step TMPDIR is made below it. The steps are not moved to another place
+// (TestLocal_never_moves_the_step_TMPDIR); a .git holding no repository is no marker at all
+// (TestLocalStepTempDirIgnoresNonRepositoryMarkers).
+func TestLocal_a_callers_TMPDIR_below_a_repository_is_refused(t *testing.T) {
 	w := localShortWorkRoot(t)
 	p := t.TempDir()
-	if err := os.Mkdir(filepath.Join(p, ".git"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	runGitOrFail(t, p, "init", "-q")
 	callerTmp := filepath.Join(p, "tmp")
 	if err := os.Mkdir(callerTmp, 0o755); err != nil {
 		t.Fatal(err)
@@ -659,20 +658,22 @@ func TestLocal_git_above_follows_a_link_to_a_parent_with_a_git(t *testing.T) {
 		t.Fatal(err)
 	}
 	repoGit := filepath.Join(base, "repo", ".git")
-	for _, d := range []string{repoGit, filepath.Join(base, "repo", "sub", "tmp"), filepath.Join(base, "plain", "tmp")} {
+	for _, d := range []string{filepath.Join(base, "repo", "sub", "tmp"), filepath.Join(base, "plain", "tmp")} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
+	runGitOrFail(t, filepath.Join(base, "repo"), "init", "-q")
 	if err := os.Symlink(filepath.Join(base, "repo", "sub"), filepath.Join(base, "link")); err != nil {
 		t.Fatal(err)
 	}
 	ceilings := []string{filepath.Dir(base)}
-	if got := localGitAbove(filepath.Join(base, "link", "tmp"), ceilings); got != repoGit {
-		t.Errorf("a directory below a link to a repository: want %q, got %q", repoGit, got)
+	got, err := localGitAbove(filepath.Join(base, "link", "tmp"), ceilings)
+	if err != nil || got != repoGit {
+		t.Errorf("a directory below a link to a repository: want %q, got %q, %v", repoGit, got, err)
 	}
-	if got := localGitAbove(filepath.Join(base, "plain", "tmp"), ceilings); got != "" {
-		t.Errorf("a directory with no .git above it and no link: want none, got %q", got)
+	if got, err := localGitAbove(filepath.Join(base, "plain", "tmp"), ceilings); err != nil || got != "" {
+		t.Errorf("a directory with no repository above it and no link: want none, got %q, %v", got, err)
 	}
 }
 
@@ -713,6 +714,38 @@ func TestLocal_accepts_a_long_TMPDIR(t *testing.T) {
 	localNoEntry(t, repo.work, "t")
 }
 
+// CRW-1588: a .git that holds no repository (the empty directory a sandbox leaves behind, or a file
+// that is no gitfile) is no marker: the step TMPDIR is made below such a TMPDIR. A marker that resolves
+// to a real Git directory still refuses (TestLocal_never_moves_the_step_TMPDIR).
+func TestLocalStepTempDirIgnoresNonRepositoryMarkers(t *testing.T) {
+	for _, kind := range []string{"empty directory", "garbage file"} {
+		t.Run(kind, func(t *testing.T) {
+			base := t.TempDir()
+			marker := filepath.Join(base, ".git")
+			if kind == "empty directory" {
+				if err := os.Mkdir(marker, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.WriteFile(marker, []byte("not a gitfile\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			tmp := filepath.Join(base, "tmp")
+			if err := os.Mkdir(tmp, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("TMPDIR", tmp)
+			made, err := localStepTempDir(localOptions{gitCeilings: []string{filepath.Dir(base)}})
+			if err != nil {
+				t.Fatalf("non-repository marker rejected: %v", err)
+			}
+			t.Cleanup(func() { _ = os.RemoveAll(made) })
+			if filepath.Dir(made) != tmp || !localStepTmpName("ci").MatchString(filepath.Base(made)) {
+				t.Fatalf("step TMPDIR %q is not directly below %q", made, tmp)
+			}
+		})
+	}
+}
+
 // CRW-1569: the step TMPDIR is never moved. A TMPDIR below a .git is refused with temp_dir_unusable
 // naming the .git and the way out (set TMPDIR), before any checkout or step: no step ran, no record was
 // written, no step TMPDIR was made below the TMPDIR, and nothing was made below the work root. The base
@@ -720,9 +753,7 @@ func TestLocal_accepts_a_long_TMPDIR(t *testing.T) {
 func TestLocal_never_moves_the_step_TMPDIR(t *testing.T) {
 	repo := newLocalFixture(t)
 	p := t.TempDir()
-	if err := os.Mkdir(filepath.Join(p, ".git"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	runGitOrFail(t, p, "init", "-q")
 	callerTmp := filepath.Join(p, "tmp")
 	if err := os.Mkdir(callerTmp, 0o755); err != nil {
 		t.Fatal(err)

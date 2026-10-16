@@ -229,7 +229,8 @@ func TestCodexHomeLinkFollowedByDotDotNamesTheKernelsDirectory(t *testing.T) {
 	sub := mk(codex, "sub")
 	project := mk(root, "projects", "app")
 	repo := mk(codex, "worktrees", "abc", "repo")
-	write(filepath.Join(repo, ".git"), "gitdir: /nowhere\n")
+	gitMeta(t, mk(root, "gitdir"))
+	write(filepath.Join(repo, ".git"), "gitdir: "+filepath.Join(root, "gitdir")+"\n")
 	write(filepath.Join(codex, "config.toml"), "[projects.\""+project+"\"]\ntrust_level = \"trusted\"\n")
 	cfg := mk(root, "cfg")
 	write(filepath.Join(cfg, "config.toml"), "# the decoy: no projects\n")
@@ -253,5 +254,33 @@ func TestCodexHomeLinkFollowedByDotDotNamesTheKernelsDirectory(t *testing.T) {
 	// The decoy directory next to the link is no worktree base.
 	if err := CheckDestination(filepath.Join(cfg, "worktrees", "def", "repo"), "workspace-write"); err == nil {
 		t.Fatal("the lexical spelling's worktrees directory was taken for a base")
+	}
+}
+
+// CRW-1588: a .git file is a linked worktree's marker only when it resolves to a Git directory; an empty,
+// garbage or dangling file does not authorize the directory below a worktree base.
+func TestLinkedWorktreeRequiresAValidGitfile(t *testing.T) {
+	base := t.TempDir()
+	checkout := filepath.Join(base, "slot", "checkout")
+	if err := os.MkdirAll(checkout, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r := &rules{worktreeBase: []string{base}}
+	marker := filepath.Join(checkout, ".git")
+	for _, content := range []string{"", "garbage\n", "gitdir: " + filepath.Join(base, "missing") + "\n"} {
+		if err := os.WriteFile(marker, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if r.linkedWorktree(checkout) {
+			t.Errorf("invalid marker %q counted as linked worktree", content)
+		}
+	}
+	target := filepath.Join(base, "metadata")
+	gitMeta(t, target)
+	if err := os.WriteFile(marker, []byte("gitdir: "+target+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !r.linkedWorktree(checkout) {
+		t.Fatal("valid gitfile did not identify linked worktree")
 	}
 }

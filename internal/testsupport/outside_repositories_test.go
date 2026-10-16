@@ -11,22 +11,41 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
-// CRW-1034: a directory with an empty .git (or a bare repository's HEAD and objects) among its ancestors is inside a repository as the
-// worktree destination guard reads it; the helper that picks a root for worktree tests must not answer one.
+// gitMeta makes a Git directory at dir: the regular HEAD and objects directory a marker must resolve to
+// (CRW-1588: a .git that holds no repository is no marker).
+func gitMeta(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(dir, "objects"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "HEAD"), []byte("ref: refs/heads/main\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// CRW-1034: a directory with a repository among its ancestors (a .git resolving to a Git directory, or a bare
+// repository's HEAD and objects) is inside it as the worktree destination guard reads it, and the helper that
+// picks a root for worktree tests must not answer one. A .git that resolves to no repository — the empty
+// directory a sandbox leaves behind — is no marker (CRW-1588).
 func TestInsideRepositoryReadsTheGuardsMarkers(t *testing.T) {
 	t.Parallel()
 	base := t.TempDir()
+	if testsupport.InsideRepository(base) {
+		t.Skip("the temporary location of this host is below a repository marker")
+	}
 	empty := filepath.Join(base, "empty-dotgit")
 	if err := os.MkdirAll(filepath.Join(empty, ".git", "deeper"), 0o700); err != nil {
 		t.Fatal(err)
 	}
+	garbage := filepath.Join(base, "garbage-dotgit")
+	if err := os.MkdirAll(garbage, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(garbage, ".git"), []byte("not a gitfile\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	bare := filepath.Join(base, "bare")
-	if err := os.MkdirAll(filepath.Join(bare, "objects"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(bare, "HEAD"), []byte("ref: refs/heads/main\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	gitMeta(t, bare)
 	plain := filepath.Join(base, "plain", "child")
 	if err := os.MkdirAll(plain, 0o700); err != nil {
 		t.Fatal(err)
@@ -34,14 +53,10 @@ func TestInsideRepositoryReadsTheGuardsMarkers(t *testing.T) {
 	for _, c := range []struct {
 		dir  string
 		want bool
-	}{{empty, true}, {filepath.Join(empty, "sub"), true}, {bare, true}, {filepath.Join(bare, "sub"), true}} {
+	}{{empty, false}, {filepath.Join(empty, "sub"), false}, {garbage, false}, {bare, true}, {filepath.Join(bare, "sub"), true}, {plain, false}} {
 		if got := testsupport.InsideRepository(c.dir); got != c.want {
 			t.Errorf("InsideRepository(%s) = %v, want %v", c.dir, got, c.want)
 		}
-	}
-	// the temporary base of this test binary is a clean location unless the host has a .git above it, which the guard would also refuse
-	if got, want := testsupport.InsideRepository(plain), testsupport.InsideRepository(base); got != want {
-		t.Errorf("InsideRepository(plain) = %v, but its parent says %v", got, want)
 	}
 }
 
@@ -49,9 +64,7 @@ func TestTempParentOutsideRepositoriesSkipsAParentInsideOne(t *testing.T) {
 	t.Parallel()
 	base := t.TempDir()
 	inside := filepath.Join(base, "inside")
-	if err := os.MkdirAll(filepath.Join(inside, ".git"), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	gitMeta(t, filepath.Join(inside, ".git"))
 	// "outside" is made clean by cutting the search at base: it has no marker of its own, and the search stops at the first marker it finds
 	outside := filepath.Join(base, "outside")
 	if err := os.Mkdir(outside, 0o700); err != nil {
@@ -84,9 +97,7 @@ func TestTempParentOutsideRepositoriesJudgesThePhysicalPath(t *testing.T) {
 	t.Parallel()
 	base := t.TempDir()
 	real := filepath.Join(base, "repo", "tmp")
-	if err := os.MkdirAll(filepath.Join(base, "repo", ".git"), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	gitMeta(t, filepath.Join(base, "repo", ".git"))
 	if err := os.MkdirAll(real, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -174,12 +185,10 @@ func failureOf(t *testing.T, fn func(testing.TB)) *recordingTB {
 }
 
 // CRW-1579 (R1-3): TMPDIR below a repository marker is a failure with its reason, not a move to /var/tmp or /dev/shm and not
-// a skip: the host sets TMPDIR to a directory with no .git above.
+// a skip: the host sets TMPDIR to a directory outside every repository.
 func TestMkdirTempOutsideRepositories_failsWithTheReasonInsideARepository(t *testing.T) {
 	base := t.TempDir()
-	if err := os.Mkdir(filepath.Join(base, ".git"), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	gitMeta(t, filepath.Join(base, ".git"))
 	tmp := filepath.Join(base, "tmp")
 	if err := os.Mkdir(tmp, 0o700); err != nil {
 		t.Fatal(err)
@@ -193,8 +202,8 @@ func TestMkdirTempOutsideRepositories_failsWithTheReasonInsideARepository(t *tes
 	if made != "" {
 		t.Fatalf("a directory was made (%s) although TMPDIR=%s is inside a repository", made, tmp)
 	}
-	if !strings.Contains(r.message, "set TMPDIR to a directory with no .git above") || !strings.Contains(r.message, tmp) {
-		t.Fatalf("the failure %q does not name TMPDIR %s and say to set TMPDIR to a directory with no .git above", r.message, tmp)
+	if !strings.Contains(r.message, "set TMPDIR to a directory outside every repository") || !strings.Contains(r.message, tmp) {
+		t.Fatalf("the failure %q does not name TMPDIR %s and say to set TMPDIR to a directory outside every repository", r.message, tmp)
 	}
 }
 

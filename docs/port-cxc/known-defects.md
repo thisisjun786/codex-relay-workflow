@@ -1581,3 +1581,7 @@ The fuzz campaigns judged one case at a time, started one `python3` per pyjson r
 ## CRW-1482 — a flow run's executor receipt is judged in its call worktree
 
 The stop hook looked for a session flow run executor's receipt under the owner's native cwd, where the child never writes, and its final message (the RECEIPT JSON alone) had no `EVIDENCE_RECORDED` line: three blocks, then a tombstone, on every executor path of the 1209 field trial (C9); port: fixed (CRW's flow engine, extending CRW-1115). The engine records a flow assignment for each executor step (root = the call worktree, op = the step's marker) and names its one receipt file in the spawn message; the hook accepts that file without a marker line and refuses a receipt anywhere else with a reason that names it; the completed row records `evidence_receipt` with a copy on the step bus for the acceptance path. Details and limits are in [CRW-1482](known-defects/CRW-1482.md).
+
+## CRW-1588 — repository markers are judged by their contents
+
+The managed-worktree detector confirms a checkout from any `.git` entry, including an empty directory or a dangling gitfile (the SessionStart managed-worktree fixtures use `/fake` targets); port: fixed. The shared marker predicate requires HEAD and objects, follows valid gitfiles and linked-worktree commondir, and ignores empty or malformed markers. Four positive replay inputs now provide real metadata while keeping their recorded hook answers. Details are in [CRW-1588](known-defects/CRW-1588.md).
