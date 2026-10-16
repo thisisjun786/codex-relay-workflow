@@ -39,8 +39,9 @@ func IsSubagentSpawner(obj map[string]any) bool {
 // MintRecursionGrant writes one 15-minute grant for the spawner's cwd and session under
 // tmpRoot and returns its nonce. Unlike the oracle it uses the per-uid and key directories only
 // when they are real directories owned by the current uid with mode 0700; otherwise it returns
-// no grant. The caller chooses tmpRoot (the oracle's os.tmpdir() reads TMPDIR, TMP and TEMP in
-// that order, os.TempDir only TMPDIR) and the clock.
+// no grant. The caller chooses tmpRoot and the clock: the spawn hook takes it from tmploc (TMPDIR
+// only, refused when relative), where the oracle's os.tmpdir() read TMPDIR, TMP and TEMP in that
+// order (CRW-1579).
 func MintRecursionGrant(obj map[string]any, tmpRoot string, now time.Time) (string, bool) {
 	return spawnGrantMint(obj, tmpRoot, os.Getuid(), now)
 }
