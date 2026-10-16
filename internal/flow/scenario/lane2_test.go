@@ -1315,3 +1315,35 @@ func TestARepeatedFindingOfTheWholeChangeStepsTheTier(t *testing.T) {
 		t.Errorf("%d checks of the whole change, want 3", whole)
 	}
 }
+
+// TestABrokenSubTaskRuleGoesBackToTheArchitect (CRW-1435, the DI's P2): an architect answer that breaks a sub-task rule the schema cannot
+// express (a sub-task region outside the node's) passes the engine's schema check; the design audit makes it a finding and the DESIGN
+// goes back to the architect for a design-fix round, whose DESIGN is approved, and the node lands. The run does not end script_error.
+func TestABrokenSubTaskRuleGoesBackToTheArchitect(t *testing.T) {
+	l := splitLab(t, "one", "two")
+	bad := l.designFor()
+	bad.Issues = slices.Clone(bad.Issues)
+	bad.Issues[0].SubTasks = []ops.SubTask{bad.Issues[0].SubTasks[0], {ID: "two", Summary: "write two", EditRegions: []string{"b/two.txt"}, DoneCondition: "b/two.txt is written"}}
+	l.Sequence("^architect$", func(*Call) fakehostPlan { return Say(bad) })
+	l.Sequence("^build:A:executor$", writes("one", "ready_for_review"))
+	l.Sequence("^subtask:A:executor:s2$", writes("two", "ready_for_review"))
+	res := l.Run()
+	if res.Status != engine.RunCompleted {
+		t.Fatalf("run %s: %s: %s; calls %v", res.Status, res.ErrorKind, res.Error, l.Labels())
+	}
+	got := Value[laneResult](t, res)
+	if got.State != "closed" {
+		t.Fatalf("state %q; calls %v", got.State, l.Labels())
+	}
+	want := []string{"architect", "design-audit:r1", "design-fix:r1", "design-audit:r2", "build:A:executor", "subtask:A:executor:s2", "reflection:M1"}
+	if labels := l.Labels(); !slices.Equal(labels, want) {
+		t.Fatalf("calls %v, want %v", labels, want)
+	}
+	audits := l.Rows(ops.OpDesignAudit)
+	if len(audits) != 2 || str(audits[0].Data, "state") != ops.AuditNeedsChanges || str(audits[1].Data, "state") != ops.AuditApproved {
+		t.Errorf("the audits %v", audits)
+	}
+	if fix := textOfCall(l, callNamed(t, l, "design-fix:r1").ID); !strings.Contains(fix, "b/two.txt") {
+		t.Errorf("the design-fix packet does not name the broken rule:\n%s", fix)
+	}
+}

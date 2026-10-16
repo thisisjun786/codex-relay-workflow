@@ -129,7 +129,10 @@ func (o *designAuditOp) Run(_ context.Context, req engine.OpRequest) (engine.OpR
 	if err := args(req.Args, &ms, &round, &cand, &arch, &call); err != nil {
 		return engine.OpResult{}, fmt.Errorf("crw.designAudit(milestone, round, candidate, architect, call): %w", err)
 	}
-	if _, err := DecodeDesign(cand.Design); err != nil {
+	// a candidate that breaks a design rule its schema cannot express (CRW-1435) is a DESIGN to fix, not an op error: the rule is a
+	// finding of the audit, which needs changes whatever the critic ruled, so the lane sends the DESIGN back to the architect
+	var broken *DesignRuleError
+	if _, err := DecodeDesign(cand.Design); err != nil && !errors.As(err, &broken) {
 		return engine.OpResult{}, fmt.Errorf("crw.designAudit: the candidate is no DESIGN: %w", err)
 	}
 	res := AuditResult{Round: round, CandidateDigest: cand.digest(), Findings: []AuditFinding{}, Reviewer: call.brief(), Architect: arch.brief()}
@@ -160,10 +163,16 @@ func (o *designAuditOp) Run(_ context.Context, req engine.OpRequest) (engine.OpR
 	default:
 		res.State, res.Reason = StateSuperseded, call.Reason
 	}
-	return engine.OpResult{Result: result(res), Data: map[string]any{
+	data := map[string]any{
 		"milestone": ms, "round": round, "candidate_digest": res.CandidateDigest, "state": res.State, "reason": res.Reason,
 		"reviewer_call": call.CallID, "architect_call": arch.CallID, "reviewer_model": call.Meta.ConfiguredPair.Model, "architect_model": arch.Meta.ConfiguredPair.Model,
-	}}, nil
+	}
+	if broken != nil && (res.State == AuditApproved || res.State == AuditNeedsChanges) {
+		res.State = AuditNeedsChanges
+		res.Findings = append(res.Findings, AuditFinding{Ref: broken.Node, Severity: "P1", Finding: broken.Msg + " (a design rule the DESIGN schema cannot express)", Evidence: []string{}})
+		data["state"], data["design_rule"] = res.State, broken.Msg
+	}
+	return engine.OpResult{Result: result(res), Data: data}, nil
 }
 
 func (o *designAuditOp) Proven(ctx context.Context, ev []engine.Event, row engine.Event) (bool, string, error) {

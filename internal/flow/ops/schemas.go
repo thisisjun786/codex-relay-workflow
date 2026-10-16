@@ -73,7 +73,7 @@ var schemaTexts = map[string]string{
 		`"decisions":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"evidence":` + textsJSON + `,"change":{"type":"string"},"alternatives":` + textsJSON + `,"assumptions":` + textsJSON + `},"required":["id","evidence","change","alternatives","assumptions"],"additionalProperties":false}},` +
 		`"issues":{"type":"array","items":{"type":"object","properties":{"issue":{"type":"string"},"node":{"type":"string"},"size_fit":{"type":"string","enum":["executor","split","bundle_split"]},"size_reason":{"type":"string"},` +
 		`"issue_size_decision":{"type":"string","enum":["ok","over_line","over_line_accepted"]},"edit_regions":` + textsJSON + `,"approach":{"type":"string"},"tests_first":` + textsJSON + `,"done_condition":{"type":"string"},"decision_refs":` + textsJSON + `,"order_after":` + textsJSON + `,"group":` + maybeTextJSON + `,` +
-		`"sub_tasks":{"type":["array","null"],"items":{"type":"object","properties":{"id":{"type":"string"},"summary":{"type":"string"},"edit_regions":` + textsJSON + `,"done_condition":{"type":"string"},` +
+		`"sub_tasks":{"type":["array","null"],"maxItems":4,"items":{"type":"object","properties":{"id":{"type":"string","pattern":"` + subTaskIDForm + `"},"summary":{"type":"string"},"edit_regions":{"type":"array","items":{"type":"string"},"minItems":1},"done_condition":{"type":"string"},` +
 		`"after":{"type":["array","null"],"items":{"type":"string"}}},"required":["id","summary","edit_regions","done_condition","after"],"additionalProperties":false}}},` +
 		`"required":["issue","node","size_fit","size_reason","issue_size_decision","edit_regions","approach","tests_first","done_condition","decision_refs","order_after","group","sub_tasks"],"additionalProperties":false}},` +
 		`"open_questions":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"question":{"type":"string"},"scope":{"type":"string"},"files_needed":` + textsJSON + `},"required":["id","question","scope","files_needed"],"additionalProperties":false}},` +
@@ -437,6 +437,8 @@ type Design struct {
 // 2 to 4 sub-tasks (ids unique and of the sub-task id form, edit regions within the node's, `after` naming only earlier sub-tasks) and
 // an executor or bundle_split node names none. A DESIGN in which no issue carries it was recorded before S-1: it is read with every
 // sub_tasks null against legacyDesignSchema, which also takes child, and the sub-task rules do not apply (an old split has none).
+// The schema holds what of the sub-task rules a strict output schema can express (at most 4, the id form, a region for each); the
+// rest are design rules, answered as a *DesignRuleError.
 func DecodeDesign(raw []byte) (Design, error) {
 	raw = withNullDispositions(raw)
 	var d Design
@@ -476,32 +478,32 @@ func DecodeDesign(raw []byte) (Design, error) {
 		}
 		if is.SizeFit != "split" {
 			if len(is.SubTasks) > 0 {
-				return d, fmt.Errorf("DESIGN: node %q is size_fit %s and names sub-tasks (only a split node does)", is.Node, is.SizeFit)
+				return d, designRule(is.Node, "DESIGN: node %q is size_fit %s and names sub-tasks (only a split node does)", is.Node, is.SizeFit)
 			}
 			continue
 		}
 		if n := len(is.SubTasks); n < 2 || n > 4 {
-			return d, fmt.Errorf("DESIGN: split node %q names %d sub-tasks, want 2 to 4", is.Node, n)
+			return d, designRule(is.Node, "DESIGN: split node %q names %d sub-tasks, want 2 to 4", is.Node, n)
 		}
 		ids := map[string]bool{}
 		for _, sub := range is.SubTasks {
 			if !subTaskID.MatchString(sub.ID) {
-				return d, fmt.Errorf("DESIGN: split node %q has the sub-task id %q, want %s", is.Node, sub.ID, subTaskID)
+				return d, designRule(is.Node, "DESIGN: split node %q has the sub-task id %q, want %s", is.Node, sub.ID, subTaskIDForm)
 			}
 			if ids[sub.ID] {
-				return d, fmt.Errorf("DESIGN: split node %q has two sub-tasks %q", is.Node, sub.ID)
+				return d, designRule(is.Node, "DESIGN: split node %q has two sub-tasks %q", is.Node, sub.ID)
 			}
 			if len(sub.EditRegions) == 0 {
-				return d, fmt.Errorf("DESIGN: sub-task %q of node %q names no edit region", sub.ID, is.Node)
+				return d, designRule(is.Node, "DESIGN: sub-task %q of node %q names no edit region", sub.ID, is.Node)
 			}
 			for _, region := range sub.EditRegions {
 				if !slices.ContainsFunc(is.EditRegions, func(own string) bool { return regionWithin(region, own) }) {
-					return d, fmt.Errorf("DESIGN: the region %q of sub-task %q is not within the edit regions of node %q", region, sub.ID, is.Node)
+					return d, designRule(is.Node, "DESIGN: the region %q of sub-task %q is not within the edit regions of node %q", region, sub.ID, is.Node)
 				}
 			}
 			for _, before := range sub.After {
 				if !ids[before] {
-					return d, fmt.Errorf("DESIGN: sub-task %q of node %q starts after %q, which is not an earlier sub-task", sub.ID, is.Node, before)
+					return d, designRule(is.Node, "DESIGN: sub-task %q of node %q starts after %q, which is not an earlier sub-task", sub.ID, is.Node, before)
 				}
 			}
 			ids[sub.ID] = true
@@ -510,8 +512,26 @@ func DecodeDesign(raw []byte) (Design, error) {
 	return d, nil
 }
 
-// subTaskID is the form of a sub-task id: it becomes part of a sub-task key and of a worktree path.
-var subTaskID = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
+// subTaskIDForm is the form of a sub-task id, in the DESIGN schema (pattern) and in DecodeDesign: it becomes part of a sub-task key and
+// of a worktree path.
+const subTaskIDForm = `^[a-z0-9][a-z0-9-]{0,31}$`
+
+var subTaskID = regexp.MustCompile(subTaskIDForm)
+
+// DesignRuleError is a rule of the DESIGN that its schema cannot express and the DESIGN breaks (CRW-1435): the count of a node's
+// sub-tasks for its size_fit, unique sub-task ids, sub-task regions within the node's and an `after` that names only earlier sub-tasks
+// (the schema, which a strict output schema keeps free of conditions, holds the most count, the id form and a region for each). Node
+// names the issue's node. crw.designAudit takes it as a finding of the audit, which sends the DESIGN back to the architect.
+type DesignRuleError struct {
+	Node string
+	Msg  string
+}
+
+func (e *DesignRuleError) Error() string { return e.Msg }
+
+func designRule(node, format string, a ...any) error {
+	return &DesignRuleError{Node: node, Msg: fmt.Sprintf(format, a...)}
+}
 
 // regionWithin says whether the region sub of a sub-task lies within the region node of its node: the same region (in the normal form
 // RegionOf gives), a path in the node's tree or the tree itself, or a symbol of the node's file. The root tree holds the relative paths

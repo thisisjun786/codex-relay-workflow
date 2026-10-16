@@ -92,9 +92,18 @@ export const DESIGN = obj({
     group: maybeText,
     // sub_tasks: the parts of a split node, in their order (each id unique, its edit regions within the node's, `after` the ids
     // of earlier sub-tasks or null); null for an executor or a bundle_split node
+    // (at most 4; the id form and a region for each are in the schema, the rest is the design audit's: 2 to 4 for a split node, unique
+    // ids, regions within the node's, `after` naming earlier sub-tasks)
     sub_tasks: {
       type: ['array', 'null'],
-      items: obj({ id: text, summary: text, edit_regions: texts, done_condition: text, after: { type: ['array', 'null'], items: text } }),
+      maxItems: 4,
+      items: obj({
+        id: { type: 'string', pattern: '^[a-z0-9][a-z0-9-]{0,31}$' },
+        summary: text,
+        edit_regions: { type: 'array', items: text, minItems: 1 },
+        done_condition: text,
+        after: { type: ['array', 'null'], items: text },
+      }),
     },
   })),
   open_questions: list(obj({ id: text, question: text, scope: text, files_needed: texts })),

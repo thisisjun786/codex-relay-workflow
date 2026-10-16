@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -484,5 +485,89 @@ func TestLedgerReaderAcceptsLegacyChild(t *testing.T) {
 	gd := gateDecisions(rows(w.j.Events()), "M")
 	if len(gd) != 1 || gd[0].ID != "D1" || !reflect.DeepEqual(gd[0].Nodes, []string{"A", "B"}) {
 		t.Errorf("the final gate's decisions over the legacy row: %+v, want D1 of A and B", gd)
+	}
+}
+
+// The DESIGN schema holds the sub-task rules a strict schema can express (CRW-1435, the DI's P2): at most 4 sub-tasks, the sub-task id
+// form and at least one edit region per sub-task, in the Go copy and in crw:lib/schemas alike (TestSchemasProducerConsumerPaired). So an
+// architect answer that breaks one is refused by the engine's schema check of the answer. The rules that depend on the issue or on the
+// other sub-tasks (2 to 4 for a split node and none for another, unique ids, regions within the node's, `after` naming only earlier
+// sub-tasks) pass the schema and are design rules: DecodeDesign answers them as a *DesignRuleError naming the node, which
+// crw.designAudit turns into a finding of the audit.
+func TestTheDesignSchemaHoldsTheSubTaskRulesItCanExpress(t *testing.T) {
+	regions := []string{"pkg/", "cmd/main.go"}
+	split := func(fit string, subs any) []byte {
+		return designJSON(t, designIssueJSON("n1", fit, regions, subs))
+	}
+	ok := subTaskJSON("b", []string{"cmd/main.go"}, nil)
+	schemaRefused := map[string][]byte{
+		"five sub-tasks": split("split", []any{subTaskJSON("a", []string{"pkg/"}, nil), subTaskJSON("b", []string{"pkg/"}, nil), subTaskJSON("c", []string{"pkg/"}, nil),
+			subTaskJSON("d", []string{"pkg/"}, nil), subTaskJSON("e", []string{"pkg/"}, nil)}),
+		"an id with a capital":          split("split", []any{subTaskJSON("S1", []string{"pkg/a.go"}, nil), ok}),
+		"an id with a slash":            split("split", []any{subTaskJSON("a/b", []string{"pkg/a.go"}, nil), ok}),
+		"an id that starts with a dash": split("split", []any{subTaskJSON("-a", []string{"pkg/a.go"}, nil), ok}),
+		"an id of 33 characters":        split("split", []any{subTaskJSON(strings.Repeat("a", 33), []string{"pkg/a.go"}, nil), ok}),
+		"a sub-task with no regions":    split("split", []any{subTaskJSON("a", []string{}, nil), ok}),
+	}
+	for name, raw := range schemaRefused {
+		if err := Validate(SchemaDesign, raw); err == nil {
+			t.Errorf("%s: the DESIGN schema accepts it", name)
+		}
+		var rule *DesignRuleError
+		if _, err := DecodeDesign(raw); err == nil || errors.As(err, &rule) {
+			t.Errorf("%s: DecodeDesign answers %v, want a refusal of the schema", name, err)
+		}
+	}
+	ruleRefused := map[string][]byte{
+		"one sub-task of a split":      split("split", []any{subTaskJSON("a", []string{"pkg/a.go"}, nil)}),
+		"no sub-task of a split":       split("split", nil),
+		"sub-tasks of an executor":     split("executor", []any{subTaskJSON("a", []string{"pkg/a.go"}, nil), ok}),
+		"two sub-tasks of one id":      split("split", []any{subTaskJSON("a", []string{"pkg/a.go"}, nil), subTaskJSON("a", []string{"cmd/main.go"}, nil)}),
+		"a region outside the node":    split("split", []any{subTaskJSON("a", []string{"pkg/a.go"}, nil), subTaskJSON("b", []string{"other/b.go"}, nil)}),
+		"after names a later sub-task": split("split", []any{subTaskJSON("a", []string{"pkg/a.go"}, []string{"b"}), ok}),
+	}
+	for name, raw := range ruleRefused {
+		if err := Validate(SchemaDesign, raw); err != nil {
+			t.Errorf("%s: the DESIGN schema refuses it (%v); it is a design rule", name, err)
+		}
+		var rule *DesignRuleError
+		if _, err := DecodeDesign(raw); !errors.As(err, &rule) || rule.Node != "n1" {
+			t.Errorf("%s: DecodeDesign answers %v, want a design rule of node n1", name, err)
+		}
+	}
+}
+
+// crw.designAudit judges a candidate that breaks a design rule (TestTheDesignSchemaHoldsTheSubTaskRulesItCanExpress) as a DESIGN to fix,
+// not as an op error: the audit's state is needs_changes with a P1 finding that names the node and the rule, added to the critic's own
+// findings, also when the critic approved, so the lane sends the DESIGN back to the architect for a design-fix round. A call of the
+// critic that did not complete keeps its state. A candidate that is no DESIGN of the schema is still an op error.
+func TestDesignAuditSendsABrokenDesignRuleBackToTheArchitect(t *testing.T) {
+	w := newWorld(t)
+	w.must("milestone", "plan-1", "M")
+	broken := designJSON(t, designIssueJSON("n1", "split", []string{"pkg/"}, []any{subTaskJSON("a", []string{"pkg/a.go"}, nil), subTaskJSON("b", []string{"other/b.go"}, nil)}))
+	cand := Candidate{Design: broken, Answers: json.RawMessage(`[]`)}
+	audit := func(critic CallRef) AuditResult {
+		t.Helper()
+		var r AuditResult
+		_ = json.Unmarshal(w.must("designAudit", "M", 1, cand, call("c_arch", "completed", "claude-x", nil), critic), &r)
+		return r
+	}
+	approved := audit(call("c_aud", "completed", "gpt-y", map[string]any{"verdict": "approved", "findings": []any{}, "summary": "ok"}))
+	if approved.State != AuditNeedsChanges || len(approved.Findings) != 1 || approved.Findings[0].Ref != "n1" || approved.Findings[0].Severity != "P1" ||
+		!strings.Contains(approved.Findings[0].Finding, "other/b.go") {
+		t.Errorf("an approved audit of a DESIGN that breaks a design rule: %+v", approved)
+	}
+	own := map[string]any{"ref": "D1", "severity": "P2", "finding": "the decision needs evidence", "evidence": []string{}}
+	needs := audit(call("c_aud2", "completed", "gpt-y", map[string]any{"verdict": "needs_changes", "findings": []any{own}, "summary": "fix"}))
+	if needs.State != AuditNeedsChanges || len(needs.Findings) != 2 || needs.Findings[0].Ref != "D1" || needs.Findings[1].Ref != "n1" {
+		t.Errorf("a needs_changes audit of a DESIGN that breaks a design rule: %+v", needs)
+	}
+	if held := audit(call("c_aud3", "held", "gpt-y", nil)); held.State != StateHeld {
+		t.Errorf("a held critic call: %+v", held)
+	}
+	bad := Candidate{Design: designJSON(t, designIssueJSON("n1", "split", []string{"pkg/"}, []any{subTaskJSON("S1", []string{"pkg/a.go"}, nil), subTaskJSON("b", []string{"pkg/b.go"}, nil)})),
+		Answers: json.RawMessage(`[]`)}
+	if _, err := w.op("designAudit", "M", 1, bad, call("c_arch", "completed", "claude-x", nil), call("c_aud4", "completed", "gpt-y", map[string]any{"verdict": "approved", "findings": []any{}, "summary": "ok"})); err == nil {
+		t.Error("a candidate the DESIGN schema refuses is audited")
 	}
 }
