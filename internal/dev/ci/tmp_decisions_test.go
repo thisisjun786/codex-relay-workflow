@@ -101,7 +101,6 @@ var tmpGlobs = []tmpGlob{
 
 // The units that move the pending sites (plan-r2 of bundle 1566-tmp-arch).
 const (
-	tmpU4 = "U-A5-4 agy, report sender, review bundle"
 	tmpU5 = "U-A5-5 laneparity, cxcfuzz, cxccorpus: the recorded scratch constant"
 	tmpU6 = "U-A5-6 testsupport and sandboxroottest: no fallbacks, no empty parent"
 	tmpU7 = "U-A5-7 contracttest temp sites"
@@ -124,7 +123,6 @@ var tmpPending = []tmpEntry{
 	{"internal/dev/laneparity/scratch.go", `dir = os.TempDir()`, tmpU5},
 	{"internal/flow/ops/gitsnap.go", `dir, err := os.MkdirTemp("", "crw-snapshot-")`, tmpU8},
 	{"internal/flow/ops/gitsnap.go", `dir, err := os.MkdirTemp("", "crw-restore-")`, tmpU8},
-	{"internal/flow/report/send.go", `dir = os.TempDir()`, tmpU4},
 	{"internal/relay/dagsched/baserefresh_git.go", `dir, err := os.MkdirTemp("", "dag-base-refresh-")`, tmpU8},
 	{"internal/relay/dagsched/conflicts.go", `dir, err := os.MkdirTemp("", "dag-merge-tree-")`, tmpU8},
 	{"internal/relay/dagsched/integration_batch.go", `tmp, err := os.MkdirTemp("", "crw-965-integrate-")`, tmpU8},
@@ -132,10 +130,6 @@ var tmpPending = []tmpEntry{
 	{"internal/relay/mergeturn/train.go", `dir, err := os.MkdirTemp("", "crw-train-")`, tmpU8},
 	{"internal/relay/store/hold.go", `dir, err := os.MkdirTemp("", "crw-projection-")`, tmpU8},
 	{"internal/relay/store/ownership/record.go", `dir, err := os.MkdirTemp("", "crw-ownership-")`, tmpU8},
-	{"internal/review/agy/agy.go", `WorkRoot         string        // the directory the per-call directory is made in; default os.TempDir()`, tmpU4},
-	{"internal/review/agy/agy.go", `c.WorkRoot = os.TempDir()`, tmpU4},
-	{"internal/review/agy/lock.go", `home = os.TempDir()`, tmpU4},
-	{"internal/review/bundle/gitdiff.go", `dir, err := os.MkdirTemp("", "crw-bundle-")`, tmpU4},
 	{"internal/runtime/doctor/hooktrust_retrust.go", `temp, err := os.MkdirTemp("", "crw-retrust-verify-")`, tmpU8},
 	{"internal/runtime/exercise/exercise.go", `scratch, err := os.MkdirTemp("", "crw-bridge-exercise-")`, tmpU8},
 	{"internal/runtime/install/archive.go", `scratch, err := os.MkdirTemp("", "crw-install-release-")`, tmpU8},
@@ -172,6 +166,7 @@ var tmpNeverEmptyParents = []tmpEntry{
 	{"internal/dev/ci/local.go", `dir, err := os.MkdirTemp(root, localSocketPattern)`, "root is tmploc.SocketRoot, or a test's socketRoot option when it is not \"\""},
 	{"internal/dev/cxccorpus/shipped.go", `tmp, err := os.CreateTemp(dir, ".hook-*.tmp")`, "dir is the shipped hooks directory below the checkout, checked to be a plain directory first"},
 	{"internal/dev/skillport/stage.go", `if tmp, err = os.MkdirTemp(filepath.Join(root, SkillsRoot), ".stage-"); err != nil {`, "a join below the checkout root with a constant, never \"\""},
+	{"internal/flow/report/send.go", `f, err = os.CreateTemp(dir, "crw-notice-*.txt")`, "dir is ManageSender.Dir, used only when it is absolute (the case above); an empty Dir goes to tmploc.CreateTemp"},
 	{"internal/flow/trace/trace.go", `tmp, err := os.CreateTemp(dir, ".crw-flow-out-*")`, tmpParentBeside},
 	{"internal/hookswitch/write.go", `f, err := os.CreateTemp(dir, ".switch.json.*.tmp")`, "dir is filepath.Dir of the switch file's path"},
 	{"internal/integrator/queue.go", `tmp, err := os.CreateTemp(r.Cfg.QueueDir, ".enqueue-"+name+"-")`, "queue_dir is required and must be absolute (integrator Config validation)"},
@@ -187,6 +182,7 @@ var tmpNeverEmptyParents = []tmpEntry{
 	{"internal/pabcd/stateroot/anchor.go", `tmp, err := os.CreateTemp(dir, "."+sessionID+".*.tmp")`, "dir is filepath.Dir of the anchor's path"},
 	{"internal/policystore/policy_write.go", `file, err := os.CreateTemp(dir, writeTempPrefix)`, tmpParentBeside},
 	{"internal/relay/store/diagnostic_probe.go", `if temp, err := os.CreateTemp(selection.Path, ".probe-"); err == nil {`, "selection.Path is the state directory the probe has just found to exist"},
+	{"internal/review/agy/workdir.go", `root, err := os.MkdirTemp(parent, "crw-agy-")`, "parent is filepath.Abs of the work root (the line above), whose default is tmploc.Dir()"},
 	{"internal/role/store.go", `f, err := os.CreateTemp(dir, path[strings.LastIndexByte(path, '/')+1:]+".*.tmp")`, tmpParentBeside},
 	{"internal/runtime/install/mcp.go", `file, err := os.CreateTemp(dir, ".crw-write-")`, "dir is filepath.Dir of the record's path"},
 	{"internal/runtime/pointer/pointer.go", `file, err := os.CreateTemp(parent, ".crw-pointer-")`, "parent is filepath.Dir of the pointer's path"},
@@ -205,8 +201,6 @@ var tmpNeverEmptyParents = []tmpEntry{
 var tmpPendingParents = []tmpEntry{
 	{"internal/contracttest/cxc_hookfire.go", `dir, mkErr := os.MkdirTemp(in.Scratch, "fire-")`, tmpU7},
 	{"internal/dev/laneparity/scratch.go", `return os.MkdirTemp(parent, pattern)`, tmpU5},
-	{"internal/flow/report/send.go", `f, err := os.CreateTemp(dir, "crw-notice-*.txt")`, tmpU4},
-	{"internal/review/agy/workdir.go", `root, err := os.MkdirTemp(parent, "crw-agy-")`, tmpU4},
 	{"internal/sandboxroot/sandboxroottest/sandboxroottest.go", `fakes, err := os.MkdirTemp(parent, "crw-sandboxroot-test-")`, tmpU6},
 	{"internal/testsupport/outside_repositories.go", `dir, err := os.MkdirTemp(parent, pattern)`, tmpU6},
 }
