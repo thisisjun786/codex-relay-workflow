@@ -12,7 +12,7 @@ import (
 	"testing"
 )
 
-// CRW-1418 (REFAC1015 B1-4): the issue-child path is retired. A node the architect sized `child` goes up as a `size_split`
+// CRW-1418 (REFAC1015 B1-4): the `child` session path is retired. A node the architect sized `child` goes up as a `size_split`
 // escalation with detail `child_retired`; the issue-lane workflow, `crw flow apply` and `crw flow start --child-host` are gone.
 // The six flow documents that described that path no longer name it, and neither do the two skill pages that sent a node to it: crw-plan,
 // whose size fields told planners and architects to give an oversized bundle `size_fit` `child`, and crw-run's task packet, which said a
@@ -20,7 +20,7 @@ import (
 // the pages may say so without the words below. The rest of the crw-run skill, other skills, the known-defects records, the refactor
 // backlog and the inventory map are not scanned here: they keep their own history or belong to another issue.
 
-// issueChildPathDocs is the documents that may not name the issue-child path.
+// issueChildPathDocs is the documents that may not name the `child` session path.
 var issueChildPathDocs = []string{
 	"docs/flow/script.md",
 	"docs/flow/reporting.md",
@@ -32,10 +32,10 @@ var issueChildPathDocs = []string{
 	"plugins/crw/skills/crw-run/references/task-packet.md",
 }
 
-// issueChildPathWord is a word of the retired issue-child path ("flow apply" as a word of its own: "the workflow apply to" is not it).
+// issueChildPathWord is a word of the retired `child` session path ("flow apply" as a word of its own: "the workflow apply to" is not it).
 var issueChildPathWord = regexp.MustCompile(`SP-CHILD-[12]|issue-lane|\bflow apply|--child-host|child_host|child-host`)
 
-// issueChildPathProblems is each line of text that names the retired issue-child path, with its line number.
+// issueChildPathProblems is each line of text that names the retired `child` session path, with its line number.
 func issueChildPathProblems(text string) []string {
 	var problems []string
 	for i, line := range strings.Split(text, "\n") {
@@ -49,7 +49,7 @@ func issueChildPathProblems(text string) []string {
 func TestFlowDocsHaveNoIssueChildPath(t *testing.T) {
 	for _, file := range issueChildPathDocs {
 		if problems := issueChildPathProblems(readRepoText(t, file)); len(problems) > 0 {
-			t.Errorf("%s still names the retired issue-child path:\n  %s", file, strings.Join(problems, "\n  "))
+			t.Errorf("%s still names the retired `child` session path:\n  %s", file, strings.Join(problems, "\n  "))
 		}
 	}
 
@@ -69,15 +69,15 @@ func TestFlowDocsHaveNoIssueChildPath(t *testing.T) {
 	})
 }
 
-// CRW-1426 (N3-1): the skills carry no id of the retired path either. The SP-CHILD-1 tag of the exception path (an issue child of a plan
+// CRW-1426 (N3-1): the skills carry no id of the retired path either. The SP-CHILD-1 tag of the exception path (a `child` session of a plan
 // with no flow run) is gone from the five skill pages that quoted it; the path itself stays and stays pinned
 // (TestIssueChildDispatchIsOnlyForAPlanWithNoFlowRun). `--child-host` alone is the live `codex-session-relay register` flag, so only the
 // `flow start --child-host` form is the retired word; old port records that quote an id are history and are not scanned.
 
-// skillIssueChildPathWord is a word of the retired issue-child path in a skill page.
+// skillIssueChildPathWord is a word of the retired `child` session path in a skill page.
 var skillIssueChildPathWord = regexp.MustCompile(`SP-CHILD-[12]|issue-lane|\bflow apply|flow start\s+--child-host|child_host`)
 
-// skillIssueChildPathProblems is each line of text that names the retired issue-child path, with its line number.
+// skillIssueChildPathProblems is each line of text that names the retired `child` session path, with its line number.
 func skillIssueChildPathProblems(text string) []string {
 	var problems []string
 	for i, line := range strings.Split(text, "\n") {
@@ -109,7 +109,7 @@ func TestSkillsHaveNoIssueChildPath(t *testing.T) {
 		}
 		scanned++
 		if problems := skillIssueChildPathProblems(string(data)); len(problems) > 0 {
-			t.Errorf("%s still names the retired issue-child path:\n  %s", filepath.ToSlash(rel), strings.Join(problems, "\n  "))
+			t.Errorf("%s still names the retired `child` session path:\n  %s", filepath.ToSlash(rel), strings.Join(problems, "\n  "))
 		}
 		return nil
 	})
@@ -136,9 +136,9 @@ func TestSkillsHaveNoIssueChildPath(t *testing.T) {
 	})
 }
 
-// CRW-1418 (PR #889 round 2): the issue child is dispatched only for a plan with no flow run. The places of crw-run and crw-pabcd that
-// tell the child to dispatch, reuse, observe or correct an issue child say so in the same sentence: crw-run's execution request and its
-// project-run loop, and the managed lanes of crw-pabcd's dispatch surfaces. A sentence that says no issue child is started or that one
+// CRW-1418 (PR #889 round 2): the `child` session is dispatched only for a plan with no flow run. The places of crw-run and crw-pabcd that
+// tell the child to dispatch, reuse, observe or correct a `child` session say so in the same sentence: crw-run's execution request and its
+// project-run loop, and the managed lanes of crw-pabcd's dispatch surfaces. A sentence that says no `child` session is started or that one
 // never does something needs no condition.
 var issueChildDispatchPlaces = []struct{ file, heading string }{
 	{runSkillFile, "Determine the requested operation"},
@@ -147,19 +147,19 @@ var issueChildDispatchPlaces = []struct{ file, heading string }{
 }
 
 var (
-	// issueChildDispatch is a sentence that sends work to an issue child, or waits for or reads one: a verb before the issue child, or
-	// the issue child before a word of its dispatch, observation, result or correction.
+	// issueChildDispatch is a sentence that sends work to a `child` session, or waits for or reads one: a verb before the `child` session, or
+	// the `child` session before a word of its dispatch, observation, result or correction.
 	issueChildDispatch = regexp.MustCompile(`(?i)\b(reuse|create|dispatch|launch|start|resume|observe)\w*\b[^.]*\x60child\x60 sessions?\b|\x60child\x60 sessions?\b[^.]*\b(dispatch|observ|run|event|result|correct|start|resum)\w*`)
-	// issueChildNegated is a sentence that says no issue child is started, or that one does not or never does something.
+	// issueChildNegated is a sentence that says no `child` session is started, or that one does not or never does something.
 	issueChildNegated = regexp.MustCompile(`(?i)\b(do not|does not|never|no \x60child\x60 sessions?|starts? no \x60child\x60 sessions?)\b`)
-	// noFlowRunCondition is the condition of the issue child's dispatch.
+	// noFlowRunCondition is the condition of the `child` session's dispatch.
 	noFlowRunCondition = regexp.MustCompile(`(?i)\bplan with no flow run\b`)
 	// sentenceEnd ends a sentence of normalized text: a period, an exclamation or a question mark followed by a space (a `crw.release`
 	// stays whole).
 	sentenceEnd = regexp.MustCompile(`[.!?]\s+`)
 )
 
-// issueChildDispatchProblems is each sentence of text (a section of a skill page) that dispatches or observes an issue child and does
+// issueChildDispatchProblems is each sentence of text (a section of a skill page) that dispatches or observes a `child` session and does
 // not say it is only for a plan with no flow run.
 func issueChildDispatchProblems(text string) []string {
 	var problems []string
@@ -181,7 +181,7 @@ func TestIssueChildDispatchIsOnlyForAPlanWithNoFlowRun(t *testing.T) {
 			continue
 		}
 		if problems := issueChildDispatchProblems(section); len(problems) > 0 {
-			t.Errorf("%s, %q: an issue child is dispatched without the condition of a plan with no flow run:\n  %s", place.file, place.heading, strings.Join(problems, "\n  "))
+			t.Errorf("%s, %q: a `child` session is dispatched without the condition of a plan with no flow run:\n  %s", place.file, place.heading, strings.Join(problems, "\n  "))
 		}
 	}
 

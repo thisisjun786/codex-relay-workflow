@@ -624,7 +624,7 @@ func TestExecRunKillsLeftoverChildrenAfterTheToolExits(t *testing.T) {
 }
 
 // bugbotNoBugsFixture is a real cursor-agent envelope of a clean Bugbot review
-// (/state/crw/crw-lane-b1-issue-child/evidence/bugbot-U1a-r2.json.raw.json, the ids and usage trimmed).
+// (the bugbot-U1a-r2.json.raw.json evidence of the b1 lane, the ids and usage trimmed).
 const bugbotNoBugsFixture = `{"type":"result","subtype":"success","is_error":false,"duration_ms":289515,"duration_api_ms":289515,"result":"I'll review only the uncommitted changes. Checking the review tool schema, then starting the Bugbot review.Bugbot found no bugs."}` + "\n"
 
 // bugbotNoBugsScopeFixture is a real cursor-agent envelope of a clean Bugbot review that names its scope after the sentence

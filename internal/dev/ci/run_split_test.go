@@ -124,7 +124,7 @@ func relayCommandSequence(t *testing.T, text string) []string {
 
 // TestRunCommandSequenceUnchanged: crw-run names the same relay commands in the same order as before the split.
 func TestRunCommandSequenceUnchanged(t *testing.T) {
-	// CRW-1222: the section on a flow run names dag-coordinator-claim once, ahead of the commands of the issue-child procedure,
+	// CRW-1222: the section on a flow run names dag-coordinator-claim once, ahead of the commands of the `child` session procedure,
 	// to say that this thread never claims the epoch of a plan a run holds (TestRunProjectNeverClaimsRunEpoch); every other
 	// command stays where it was.
 	child, parent := runSkillParts(t)

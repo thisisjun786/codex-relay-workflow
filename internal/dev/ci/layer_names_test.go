@@ -438,7 +438,7 @@ func TestLayerNamesLinkTheTable(t *testing.T) {
 			"The parent (relay role `parent`) accepts what the child (relay role `child`) reports." + link,
 			// CRW-1431: the first use needs no parenthetical.
 			"The parent (repository session) decides. The child (project session) runs it." + link,
-			"The parent decides. The child runs it, and an issue child reports to it." + link,
+			"The parent decides. The child runs it, and a `child` session reports to it." + link,
 			"The child role and the child pair line, the parent-title replay, a HEAD that is no longer the parent refuses the commit.",
 			// Argon V5 K3: a phrase that is not a session reads the same at the start of a sentence or in another case.
 			"The parent render chain draws it. First, state the child's question. The Parent Direction holds.",
@@ -514,7 +514,7 @@ func TestRunInitiativeOffThePath(t *testing.T) {
 }
 
 // TestRunSkillUsesTheLayerNames (CRW-1353, the CRW-1352 carry-over d1): crw-run's own text uses the table's names, so its relay
-// sense of "parent" (this task in its relay role `parent`) is written as the child and "child" as the issue child. The parent
+// sense of "parent" (this task in its relay role `parent`) is written as the child and "child" as the `child` session. The parent
 // (repository session) has its own section at the end of the skill; anywhere before it, outside code spans and link texts, each
 // "parent" is the repository session and says so: "the parent (repository session...". The relay role id `parent` stays a word in
 // code font. The whole file is read (Argon V5 K6): inside the parent's section each "parent" is that section's parent, "the

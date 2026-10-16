@@ -193,7 +193,7 @@ func runSectionProblems(section string, relay map[string]bool) []string {
 		`(?i)milestone ends .?incomplete`,
 		`(?i)out-of-band [^.]*transition[^.]*(is )?(raised|goes) (to the manager )?as an escalation`,
 		`(?i)` + "`crw flow resume`",
-		// A node sized for an issue child starts no issue child (CRW-1415): the project lane escalates it as size_split with detail
+		// A node sized for a `child` session starts no `child` session (CRW-1415): the project lane escalates it as size_split with detail
 		// child_retired, the parent asks for a bundle split, and the thread sends no task packet for it.
 		`(?i)starts? no \x60child\x60 session`,
 		"`size_split`",
@@ -204,10 +204,10 @@ func runSectionProblems(section string, relay map[string]bool) []string {
 		problems = append(problems, "the section lacks "+p)
 	}
 	if m := regexp.MustCompile("(?i)releases? the (issue )?child of an oversized issue|crw\\.releaseChild|`issue-lane`").FindString(flat); m != "" {
-		problems = append(problems, "the section says the run starts an issue child ("+m+"), a path the project lane retired")
+		problems = append(problems, "the section says the run starts a `child` session ("+m+"), a path the project lane retired")
 	}
 	if regexp.MustCompile(`(?i)is the path of an oversized issue`).MatchString(flat) {
-		problems = append(problems, "the section sends an oversized issue to the dispatch of an issue child, which a run does not use")
+		problems = append(problems, "the section sends an oversized issue to the dispatch of a `child` session, which a run does not use")
 	}
 	// A thread never hands a decision up through a command the binary does not have.
 	if strings.Contains(flat, "crw manage decisions") {
@@ -380,17 +380,17 @@ func TestPlanSizeFieldsAndOrchestrationWording(t *testing.T) {
 		`(?i)the concept boundary decides`,
 		"`over_line_accepted`", `(?i)bundle reason`,
 		"`size_split`", "`region_order_missing`",
-		// a run starts no issue child (CRW-1415): a node that reaches it as `child` is escalated, and the planner splits instead
+		// a run starts no `child` session (CRW-1415): a node that reaches it as `child` is escalated, and the planner splits instead
 		"`child_retired`", `(?i)bundle split`, `(?i)starts? no \x60child\x60 session`,
 		`(?i)no model name and no effort`,
 		fmt.Sprintf(`(?i)a name, at most %d issues`, compileMaxGroup(t)),
 	}); len(missing) > 0 {
 		t.Errorf("Set the size fields lacks: %s\n%s", strings.Join(missing, "\n  "), fields)
 	}
-	// the size fields send no node to an issue child: no planner or architect is told to set `child`
+	// the size fields send no node to a `child` session: no planner or architect is told to set `child`
 	for _, retired := range []string{"(?i)gets `size_fit` `child`", "(?i)may set `child`", `(?i)coordinates an issue-lane run`, `(?i)a child is for an issue that needs a coordinator`, `(?i)or send it to a child`} {
 		if m := regexp.MustCompile(retired).FindString(fields); m != "" {
-			t.Errorf("Set the size fields still sends a node to the retired issue child: %q", m)
+			t.Errorf("Set the size fields still sends a node to the retired `child` session: %q", m)
 		}
 	}
 	orchestration := normalized(sectionOf(plan, "Write the Orchestration section of the project"))
@@ -521,7 +521,7 @@ func TestPlanKeyDocsNameTheMilestoneKey(t *testing.T) {
 	}
 }
 
-// A task packet belongs to an issue child of a plan with no run. A flow run starts no issue child (CRW-1415): a node sized for one goes up
+// A task packet belongs to a `child` session of a plan with no run. A flow run starts no `child` session (CRW-1415): a node sized for one goes up
 // as a `size_split` escalation with detail `child_retired` and the repository session asks for a bundle split; the nodes a run releases get no packet from
 // the thread and start no PABCD state machine.
 func taskPacketScopeProblems(intro string) []string {
