@@ -19,6 +19,9 @@ func TestAdmissionRegionsDropsAnotherSpellingOfARegion(t *testing.T) {
 		{"overlapping", []string{"pkg/a.go", "docs//"}, []string{"pkg//a.go", "pkg/./a.go", "docs/", "pkg/", "./pkg/", "pkg/a.go#Run"},
 			[]string{"pkg/a.go", "docs//", "pkg/", "pkg/a.go#Run"}},
 		{"repeated edit regions", []string{"pkg/a.go"}, []string{"x.go", " ./x.go", "x.go"}, []string{"pkg/a.go", "x.go"}},
+		{"design only", nil, []string{"a.go", "./a.go", "b.go"}, []string{"a.go", "b.go"}},
+		{"plan only", []string{"a.go"}, nil, []string{"a.go"}},
+		{"both absent", nil, nil, []string{}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			if got := AdmissionRegions(c.plan, c.edit); !slices.Equal(got, c.want) {

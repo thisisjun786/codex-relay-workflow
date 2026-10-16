@@ -503,11 +503,11 @@ func TestSchedRelayHeldBackReleaseIsNotAnError(t *testing.T) {
 	if err != nil || waiting.Released || !strings.HasPrefix(waiting.Reason, "wait:") {
 		t.Fatalf("a node waiting for its predecessor: %+v %v", waiting, err)
 	}
-	if first, err := r.Release(ctx, ops.ReleaseRequest{Plan: l.plan, Node: l.nodeOf["A-1"], RunID: r.RunID, RequestID: "req-a1"}); err != nil || !first.Released {
+	if first, err := r.Release(ctx, ops.ReleaseRequest{Plan: l.plan, Node: l.nodeOf["A-1"], RunID: r.RunID, RequestID: "req-a1", Regions: []string{"node-A-1.txt"}}); err != nil || !first.Released {
 		t.Fatalf("the first node: %+v %v", first, err)
 	}
-	// C-1 declares no region at the relay, so it overlaps the running A-1
-	overlap, err := r.Release(ctx, ops.ReleaseRequest{Plan: l.plan, Node: l.nodeOf["C-1"], RunID: r.RunID, RequestID: "req-c1"})
+	// C-1's admission regions name the file the running A-1 holds, so it overlaps it
+	overlap, err := r.Release(ctx, ops.ReleaseRequest{Plan: l.plan, Node: l.nodeOf["C-1"], RunID: r.RunID, RequestID: "req-c1", Regions: []string{"node-A-1.txt"}})
 	if err != nil || overlap.Released || overlap.Reason == "" {
 		t.Fatalf("a node whose region overlaps a running one: %+v %v", overlap, err)
 	}

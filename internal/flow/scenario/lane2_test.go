@@ -126,6 +126,41 @@ func TestBundleSplitEscalatesSizeSplitWithAsk(t *testing.T) {
 	}
 }
 
+// A node with no regions on either side is undeclared, and the unknown holds nothing (CRW-1576): the one slot the lane has is taken by
+// the undeclared node A whose escalation closes its execution and returns the slot, and the next undeclared node B is released on the
+// freed slot and lands — the closed earlier node does not gate it.
+func TestUndeclaredNodeEscalationLetsNextLaneRun(t *testing.T) {
+	nodes := []NodeSpec{
+		{ID: "A", Issue: "CRW-A", Title: "a bundle-sized issue", SizeFit: "bundle_split", SizeReason: "regions_gt3"},
+		{ID: "B", Issue: "CRW-B", Title: "issue B"},
+	}
+	l := NewLab(t, nodes...)
+	l.Cap = 1
+	l.Relay.HoldBackIf = l.Relay.relayRegionRule
+	got := mustRunIncomplete(t, l)
+	if state, reason := laneOf(t, got, "A"); state != "escalated" || reason != "size_split" {
+		t.Fatalf("lane A: %s %s, want escalated size_split", state, reason)
+	}
+	if state, _ := laneOf(t, got, "B"); state != "landed" {
+		t.Fatalf("lane B: %s, want landed after the escalation of A freed the slot", state)
+	}
+	if l.Relay.SlotHeld("A") {
+		t.Errorf("a slot is held for the escalated node")
+	}
+	var escAt int
+	for _, ev := range l.FlowRows(engine.EvEscalation) {
+		if str(ev.Data, "node") == "A" && str(ev.Data, "reason") == "size_split" {
+			escAt = ev.Seq
+		}
+	}
+	if escAt == 0 {
+		t.Fatalf("no size_split escalation of A")
+	}
+	if relB := firstRowSeq(t, l, ops.OpRelease, "B"); relB < escAt {
+		t.Errorf("B was released at seq %d, before the escalation of A at seq %d", relB, escAt)
+	}
+}
+
 // A group is an order unit only: its members run in the declared order, each with its own fresh executor on the executor tier (a
 // tier step of the first does not carry to the second), the second one's worktree starts at the integration tip after the first
 // landed, and no handle crosses from one node to the other.
@@ -740,6 +775,58 @@ func TestDagAdmitsByTheRelayRule(t *testing.T) {
 				t.Errorf("C was released at seq %d, not before A integrated at seq %d: C did not run beside A", releasedC, integratedA)
 			}
 		})
+	}
+}
+
+// A node whose plan declares no regions but whose DESIGN names edit regions is not undeclared (CRW-1576): the admission union keeps
+// whichever side names regions, so two nodes whose DESIGNs' edit_regions name one file still serialize — B is released only after A
+// landed, while the disjoint C runs beside A.
+func TestDesignOnlyRegionsStillSerializeKnownOverlap(t *testing.T) {
+	l := NewLab(t,
+		NodeSpec{ID: "A", Issue: "CRW-A", Title: "issue A"},
+		NodeSpec{ID: "B", Issue: "CRW-B", Title: "issue B"},
+		NodeSpec{ID: "C", Issue: "CRW-C", Title: "issue C", Regions: []string{"c.go"}},
+	)
+	d := l.designFor()
+	d.Issues[0].EditRegions = []string{"shared.go"}
+	d.Issues[1].EditRegions = []string{"shared.go"}
+	l.Design = &d
+	l.Cap = 2
+	l.Relay.HoldBackIf = l.Relay.relayRegionRule
+	// C's release is answered before A integrates: C runs beside A, and what B waits for is A's landing, not C's
+	cReleased := make(chan struct{})
+	var once sync.Once
+	l.OnRow(func(ev engine.Event) {
+		if ev.Kind == engine.KindCall && ev.Op == ops.OpRelease && ev.Event == engine.EvCompleted && str(ev.Data, "node") == "C" {
+			once.Do(func() { close(cReleased) })
+		}
+	})
+	l.Relay.OnIntegrate = func(node string) {
+		if node == "A" {
+			waitFor(t, cReleased, "C's release before A integrates")
+		}
+	}
+	got := mustRunIncomplete(t, l)
+	if got.State != "closed" {
+		t.Fatalf("state %q, lanes %+v; calls %v", got.State, got.Lanes, l.Labels())
+	}
+	for _, ev := range l.Rows(ops.OpRelease) {
+		if str(ev.Data, "reason") == "defer:edit_overlap" {
+			t.Errorf("the release of %s was held back defer:edit_overlap", str(ev.Data, "node"))
+		}
+	}
+	for _, n := range []string{"A", "B", "C"} {
+		if state, reason := laneOf(t, got, n); state != "landed" {
+			t.Errorf("lane %s: %s %s, want landed", n, state, reason)
+		}
+	}
+	if relB, intA := firstRowSeq(t, l, ops.OpRelease, "B"), firstRowSeq(t, l, ops.OpIntegrate, "A"); relB < intA {
+		t.Errorf("B was released at seq %d, before A integrated at seq %d: the DESIGN-only shared.go overlap did not serialize them", relB, intA)
+	}
+	for _, req := range l.Relay.Releases {
+		if (req.Node == "A" || req.Node == "B") && !slices.Contains(req.Regions, "shared.go") {
+			t.Errorf("the release of %s asked for %q, want the DESIGN's shared.go admitted", req.Node, req.Regions)
+		}
 	}
 }
 

@@ -482,6 +482,7 @@ func TestCycleAndRegionOrderRefused(t *testing.T) {
 		"a group orders them":                    project(iss("A", regions("internal/x/"), group("g")), iss("B", regions("internal/x/y.go"), group("g"))),
 		"a third issue orders them transitively": project(iss("A", regions("internal/x/")), iss("M", after("A")), iss("B", regions("internal/x/y.go"), after("M"))),
 		"disjoint regions need no order":         project(iss("A", regions("internal/x/a.go")), iss("B", regions("internal/x/b.go"))),
+		"undeclared regions need no order":       project(iss("A"), iss("B")),
 		"two symbols of one file are apart": project(
 			func() Issue {
 				i := iss("A")

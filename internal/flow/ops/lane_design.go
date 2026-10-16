@@ -394,15 +394,13 @@ type ReleaseOpts struct {
 }
 
 // AdmissionRegions are the regions the lane admits a node by, as crw:lib/lane admissionRegions makes them: the plan's declared regions
-// and then the DESIGN's edit_regions the plan does not name. A node with no regions on either side is undeclared (none), and an
-// undeclared node overlaps every other. An edit region is compared by its normal form (RegionOf, CRW-1404), so one that names a region
+// and then the DESIGN's edit_regions the plan does not name. A node with no regions on either side is undeclared ([] when both are
+// empty): its edit overlap is unknown and does not block a release, which warns of it (CRW-1576). An edit region is compared by its
+// normal form (RegionOf, CRW-1404), so one that names a region
 // already admitted in another spelling (blanks around it, ./path) is not admitted again: the relay would refuse the declaration of a
 // planned region and a second spelling of it whose change or exclusive flag differ.
 func AdmissionRegions(plan, edit []string) []string {
 	out := []string{}
-	if len(plan) == 0 || len(edit) == 0 {
-		return out
-	}
 	out = append(out, plan...)
 	seen := map[RegionForm]bool{}
 	for _, r := range plan {
@@ -457,8 +455,8 @@ func (f RegionForm) Text() string {
 	return f.Path
 }
 
-// WarnRegionsNotDeclared is the warning of a release whose admission regions the relay did not declare (CRW-1391): the release goes on
-// as for an undeclared node, which overlaps every other.
+// WarnRegionsNotDeclared is the warning of a release whose admission regions the relay did not declare (CRW-1391) or that names none
+// over a node with no declaration in force (CRW-1576): the release goes on with the edit overlap unknown.
 const WarnRegionsNotDeclared = "regions_not_declared"
 
 // ReasonPlanChanged is the reason of a pinned release whose plan is not the one the audited DESIGN stands on.
@@ -612,7 +610,7 @@ func (o *releaseOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpRes
 	// committed under; a released row records the slice the relay committed, an unreleased one the slice the flow asked for
 	data["slice_digest"], data["criteria_digest"] = slice, mnode.CriteriaDigest
 	// the regions the lane admitted the node by (crw:lib/lane admissionRegions) are the ones the relay declares for it before the release
-	// (CRW-1391): the relay's own overlap judgment reads only declarations, and an undeclared node overlaps every other
+	// (CRW-1391): the relay's own overlap judgment reads only declarations, and a node with none is unknown, not an overlap (CRW-1576)
 	regions := AdmissionRegions(mnode.Regions, entry.EditRegions)
 	data["regions"] = regions
 	admitted, err := admittedOthers(r, led, plan, ms, node)
@@ -638,8 +636,8 @@ func (o *releaseOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpRes
 		data["regions_declared"] = res.RegionsDeclared
 	}
 	if res.RegionsWarning != "" {
-		// fail open: the release went on as for an undeclared node, and the row and the answer say what was not declared and why
-		out.Warnings = []string{fmt.Sprintf("%s: the admission regions %s of node %s were not declared to the relay (%s), so the relay judges the node as undeclared, overlapping every other",
+		// fail open: the release went on with the overlap of the node unknown, and the row and the answer say what was not declared and why
+		out.Warnings = []string{fmt.Sprintf("%s: the admission regions %s of node %s were not declared to the relay (%s); edit overlap is unknown and does not block release",
 			WarnRegionsNotDeclared, strings.Join(regions, ", "), node, res.RegionsWarning)}
 		data["warnings"] = out.Warnings
 	}

@@ -26,32 +26,37 @@ func TestDeclareRegionsCannotFreeAHeldNode(t *testing.T) {
 		}
 		f.declare("h", "cand", "a.go")
 		f.startNode("h", "held")
-		if got := f.read("h").node("cand").Reason; got != DeferEditOverlap {
-			t.Fatalf("the candidate against a running holder = %s", got)
+		// an undeclared holder holds nothing proven: it does not defer the candidate (CRW-1576)
+		if got := f.read("h").node("cand"); declareHolder && got.Reason != DeferEditOverlap {
+			t.Fatalf("the candidate against a running declared holder = %+v", got)
+		} else if !declareHolder && got.Disposition != DispReady {
+			t.Fatalf("the candidate against a running undeclared holder = %+v, want it ready", got)
 		}
 		return f
 	}
-	refused := func(t *testing.T, f *fixture, path string) {
+	refused := func(t *testing.T, f *fixture, path string, heldBack bool) {
 		t.Helper()
 		_, err := f.sched.DeclareRegions(context.Background(), "h", "held", "parent", []Region{region(path, "file", "")})
 		var r *store.RefusedError
 		if !errors.As(err, &r) || r.Reason != "disposition_conflict" {
 			t.Fatalf("a declaration of %s for a running node: %v, want disposition_conflict", path, err)
 		}
-		if got := f.read("h").node("cand").Reason; got != DeferEditOverlap {
-			t.Fatalf("the candidate after the refused declaration = %s, want it still deferred", got)
+		if got := f.read("h").node("cand"); heldBack && got.Reason != DeferEditOverlap {
+			t.Fatalf("the candidate after the refused declaration = %+v, want it still deferred", got)
+		} else if !heldBack && got.Disposition != DispReady {
+			t.Fatalf("the candidate after the refused declaration = %+v, want it still ready", got)
 		}
 	}
 	t.Run("narrowing the declaration of a running node", func(t *testing.T) {
 		f := setup(t, true)
-		refused(t, f, "b.go")
+		refused(t, f, "b.go", true)
 		if d := f.declare("h", "held", "a.go"); !d.Replayed || d.Seq != 1 {
 			t.Fatalf("the identical declaration = %+v, want a replay", d)
 		}
 	})
 	t.Run("declaring for the first time after the node started", func(t *testing.T) {
 		f := setup(t, false)
-		refused(t, f, "b.go")
+		refused(t, f, "b.go", false)
 	})
 	t.Run("a release that was decided holds too", func(t *testing.T) {
 		f := newFixture(t)
@@ -60,7 +65,7 @@ func TestDeclareRegionsCannotFreeAHeldNode(t *testing.T) {
 		f.declare("h", "held", "a.go")
 		f.declare("h", "cand", "a.go")
 		f.releaseRow("h", "held")
-		refused(t, f, "b.go")
+		refused(t, f, "b.go", true)
 	})
 	t.Run("before the release a declaration may change freely", func(t *testing.T) {
 		f := newFixture(t)

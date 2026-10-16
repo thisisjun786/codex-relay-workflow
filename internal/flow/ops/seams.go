@@ -70,14 +70,15 @@ type ReleaseRequest struct {
 	// coordinator epoch, so the land takes nothing from the run that holds the node.
 	Land bool
 	// Regions are the node's admission regions (CRW-1391): the plan's regions together with the DESIGN's edit_regions (AdmissionRegions),
-	// empty when either side names none. The relay declares them for the node (dag_node_regions) before it releases it when the node has
-	// no declaration in force, so two nodes the flow admits together are judged by the regions they edit and not as undeclared nodes,
-	// which overlap every other. A declaration that fails is a warning of the release (RegionsWarning), and the release goes on.
+	// empty when both sides name none. The relay declares them for the node (dag_node_regions) before it releases it when the node has
+	// no declaration in force, so two nodes the flow admits together are judged by the regions they edit. A node with no admission
+	// regions and no declaration in force is undeclared: its edit overlap is unknown and does not block the release, which warns of it
+	// (CRW-1576). A declaration that fails is a warning of the release (RegionsWarning), and the release goes on.
 	Regions []string
 	// Admitted are the admission regions of the milestone's other nodes, by node (CRW-1391): the relay's release judgment reads every
-	// ready node ranked before this one as a holder of its declaration, and an undeclared one overlaps every other, so the relay declares
-	// those of them that have no declaration in force too, before the release. A declaration of another node that fails is that node's
-	// own release's to warn of.
+	// ready node ranked before this one as a holder of its declaration, so the relay declares those of them that have no declaration in
+	// force too, before the release, and a real clash is judged on the declarations of both sides. A declaration of another node that
+	// fails is that node's own release's to warn of.
 	Admitted map[string][]string
 }
 
@@ -108,8 +109,9 @@ type ReleaseResult struct {
 	// it replays ("" when the relay does not say). A land of a node another run holds reads it (CRW-1354).
 	Run string `json:"run,omitempty"`
 	// RegionsDeclared says what became of the request's admission regions (CRW-1391): declared (this release declared them), kept (the
-	// node had a declaration in force, which stands), failed (the declaration was refused or could not be made: RegionsWarning says why,
-	// and the release went on as for an undeclared node) or "" (no regions were asked for).
+	// node had a declaration in force, which stands), unknown (the request named none and the node has none in force: RegionsWarning
+	// says the edit overlap is unknown and does not block release, CRW-1576), failed (the declaration was refused or could not be made:
+	// RegionsWarning says why, and the release went on) or "" (the relay did not say).
 	RegionsDeclared string `json:"regions_declared,omitempty"`
 	RegionsWarning  string `json:"regions_warning,omitempty"`
 }

@@ -106,7 +106,7 @@ func (j *ReleaseJudgement) applyPolicy(policy *OptimismState) {
 
 // deferDetail is the detail of a candidate the judgement cut: the sentence the reading always gave, then the rule, the row that decided it (the first exclusive one) and the counts.
 func (j ReleaseJudgement) deferDetail() string {
-	detail := "its edit regions overlap a node that is running or accepted and not yet landed, or a region is undeclared; release rule " + RuleDefer + ":"
+	detail := "its edit regions overlap a node that is running or accepted and not yet landed; release rule " + RuleDefer + ":"
 	if j.HeldByPolicy {
 		detail = "its edit regions overlap a node that is running or accepted and not yet landed; release rule " + RuleDefer + ": local-optimistic release is switched off by the release policy (" + j.PolicyReason + ");"
 		for _, b := range j.Basis {
@@ -121,11 +121,7 @@ func (j ReleaseJudgement) deferDetail() string {
 		if b.Grade != GradeExclusive {
 			continue
 		}
-		if b.Undeclared != "" {
-			detail += " exclusive overlap with " + b.Holder + " (the " + b.Undeclared + " is undeclared)"
-		} else {
-			detail += " exclusive overlap with " + b.Holder + " on " + b.Path + " (candidate " + describeGrade(b.CandidateGrade, b.CandidateRule) + ", holder " + describeGrade(b.HolderGrade, b.HolderRule) + ")"
-		}
+		detail += " exclusive overlap with " + b.Holder + " on " + b.Path + " (candidate " + describeGrade(b.CandidateGrade, b.CandidateRule) + ", holder " + describeGrade(b.HolderGrade, b.HolderRule) + ")"
 		break
 	}
 	return detail + "; overlaps: mechanical " + itoa64(int64(j.Overlaps.Mechanical)) + ", local " + itoa64(int64(j.Overlaps.Local)) + ", exclusive " + itoa64(int64(j.Overlaps.Exclusive))
@@ -244,8 +240,9 @@ func placeOf(a, b Region) string {
 }
 
 // judgeRelease judges a candidate against everything that holds regions. Per holder the worst grade over every pair of regions counts once; the candidate is released under the worst of them:
-// no overlap is independent, mechanical overlaps are mechanical, a local one is local-optimistic and an exclusive one defers it. An undeclared node (the candidate or the holder) overlaps every other and
-// is exclusive. The basis rows are every overlapping pair of regions with what the plan's latest conflict observations say of the place, worst grade first.
+// no overlap is independent, mechanical overlaps are mechanical, a local one is local-optimistic and an exclusive one defers it. An undeclared node (the candidate or the holder) is unknown, not an
+// overlap: it counts nothing and decides nothing, and the basis keeps a row that says which side is undeclared. The basis rows are every overlapping pair of regions with what the plan's latest
+// conflict observations say of the place, worst grade first.
 func judgeRelease(candidate holder, holders []holder, seen *observations) (ReleaseJudgement, error) {
 	j := ReleaseJudgement{Rule: RuleIndependent}
 	var rows []BasisRow
@@ -253,11 +250,9 @@ func judgeRelease(candidate holder, holders []holder, seen *observations) (Relea
 		worst := ""
 		switch {
 		case candidate.Unknown:
-			worst = GradeExclusive
-			rows = append(rows, BasisRow{Holder: h.NodeID, Grade: GradeExclusive, Undeclared: "candidate"})
+			rows = append(rows, BasisRow{Holder: h.NodeID, Undeclared: "candidate"})
 		case h.Unknown:
-			worst = GradeExclusive
-			rows = append(rows, BasisRow{Holder: h.NodeID, Grade: GradeExclusive, Undeclared: "holder"})
+			rows = append(rows, BasisRow{Holder: h.NodeID, Undeclared: "holder"})
 		default:
 			for _, a := range candidate.Regions {
 				for _, b := range h.Regions {
