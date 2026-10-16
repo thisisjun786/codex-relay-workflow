@@ -107,7 +107,6 @@ var tmpGlobs = []tmpGlob{
 
 // The units that move the pending sites (plan-r2 of bundle 1566-tmp-arch).
 const (
-	tmpU7 = "U-A5-7 contracttest temp sites"
 	tmpU8 = "U-A5-8 product implicit MkdirTemp(\"\") sites"
 	tmpU9 = "U-A5-9 the last sites"
 )
@@ -115,11 +114,6 @@ const (
 // tmpPending are the sites still to move, each with the unit that moves it. Each A5 unit deletes its
 // own entries; U-A5-9 deletes the mechanism and adds TestNoPendingTempDecisions.
 var tmpPending = []tmpEntry{
-	{"internal/contracttest/cxc_hookfire.go", `base = os.TempDir()`, tmpU7},
-	{"internal/contracttest/git.go", `root, err := os.MkdirTemp("/dev/shm", "crw-git-contract-")`, tmpU7},
-	{"internal/contracttest/hook.go", `dir, err := os.MkdirTemp("", "crw-hc-standin-")`, tmpU7},
-	{"internal/contracttest/mcp.go", `if err := testsupport.WriteSandboxConfig(filepath.Join(userHome, ".config", "crw", "config.json"), os.TempDir()); err != nil {`, tmpU7},
-	{"internal/contracttest/records.go", `home, err := os.MkdirTemp("", "crw-hc-doc-")`, tmpU7},
 	{"internal/flow/ops/gitsnap.go", `dir, err := os.MkdirTemp("", "crw-snapshot-")`, tmpU8},
 	{"internal/flow/ops/gitsnap.go", `dir, err := os.MkdirTemp("", "crw-restore-")`, tmpU8},
 	{"internal/relay/dagsched/baserefresh_git.go", `dir, err := os.MkdirTemp("", "dag-base-refresh-")`, tmpU8},
@@ -150,7 +144,6 @@ const (
 // tmploc.MkdirTempIn, which refuses an empty or relative parent.
 var tmpNeverEmptyParents = []tmpEntry{
 	{"cmd/crw/repomap.go", `f, err := os.CreateTemp(dir, pattern)`, "the marker seam's one caller passes filepath.Dir(path)"},
-	{"internal/contracttest/cxc_hookfire.go", `dir, err := os.MkdirTemp(base, "crw-config-")`, "base is the scratch directory, or the temporary directory when scratch is \"\" (the line above)"},
 	{"internal/crwconfig/verifier.go", `tmp, err := os.CreateTemp(dir, ".config-*.json")`, "dir is filepath.Dir of the configuration file's link target"},
 	{"internal/dev/ci/local.go", `temp, err := os.MkdirTemp(root, localTempPrefix)`, "root is localWorkRoot's answer, which refuses a work root that is not absolute"},
 	{"internal/dev/ci/local.go", `dir, err := os.MkdirTemp(root, localSocketPattern)`, "root is tmploc.SocketRoot, or a test's socketRoot option when it is not \"\""},
@@ -188,9 +181,7 @@ var tmpNeverEmptyParents = []tmpEntry{
 // tmpPendingParents are the calls whose parent may be "" or relative at run time, so "" would mean
 // TMPDIR decided inside os. Each moves to tmploc.MkdirTempIn or tmploc.MkdirTemp in the unit that owns
 // its file.
-var tmpPendingParents = []tmpEntry{
-	{"internal/contracttest/cxc_hookfire.go", `dir, mkErr := os.MkdirTemp(in.Scratch, "fire-")`, tmpU7},
-}
+var tmpPendingParents = []tmpEntry{}
 
 // tmpGrep runs git grep over the tracked files and answers the hits.
 func tmpGrep(t *testing.T, pattern string, paths ...string) []tmpHit {

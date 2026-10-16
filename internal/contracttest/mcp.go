@@ -21,6 +21,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // runMCP is the `mcp` family of contract/README.md (contract/runner/mcp.py): the built crw is
@@ -213,7 +214,11 @@ func launcherEnvironment(cmd *exec.Cmd, home string, policy any) error {
 	// CRW-1265: the user's crw configuration (the default location below that HOME) names the temporary
 	// directory the case lives in as the sandbox root, as the isolated configuration of the test process does
 	// (testsupport.SandboxConfig), so the bridge judges the case's workspace on every host as it does there.
-	if err := testsupport.WriteSandboxConfig(filepath.Join(userHome, ".config", "crw", "config.json"), os.TempDir()); err != nil {
+	tempDir, err := tmploc.Dir()
+	if err != nil {
+		return err
+	}
+	if err := testsupport.WriteSandboxConfig(filepath.Join(userHome, ".config", "crw", "config.json"), tempDir); err != nil {
 		return err
 	}
 	cmd.Dir = pkg
