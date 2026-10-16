@@ -89,6 +89,12 @@ type Lab struct {
 	Source []byte
 	// Checker is the lab's unit checker, the tool behind crw.unitCheck (CRW-1465): a scenario scripts it with UnitChecks.
 	Checker *LabChecker
+	// LandRoot is the run's directory of the lab (Deps.LandRoot), absolute and under Root: the close's crosscheck writes its receipts
+	// file and makes its checkouts under it. NewLab sets it once, so every rebuild of the lane and every Resume keeps it.
+	LandRoot string
+	// Crosschecker is the lab's crosschecker, the engine of crw.crosscheck (CRW-1473): a scenario scripts it with Crosschecks.
+	Crosschecker *LabCrosschecker
+	crosscheck   *ops.Crosscheck
 }
 
 // hookJournal wraps the run's journal: a process that dies writes no more rows, and a test can look at every row as it is written.
@@ -159,8 +165,9 @@ func writeFile(t *testing.T, path, content string) {
 func NewLab(t *testing.T, nodes ...NodeSpec) *Lab {
 	t.Helper()
 	isolate(t)
-	l := &Lab{t: t, RunID: "run-f08", Policy: engine.FakePolicy(), owner: "proc-1", Nodes: nodes, Checker: newLabChecker()}
+	l := &Lab{t: t, RunID: "run-f08", Policy: engine.FakePolicy(), owner: "proc-1", Nodes: nodes, Checker: newLabChecker(), Crosschecker: newLabCrosschecker()}
 	l.Root = t.TempDir()
+	l.LandRoot = filepath.Join(l.Root, "land")
 	l.Repo = filepath.Join(l.Root, "repo")
 	l.State = filepath.Join(l.Root, "state")
 	for _, n := range nodes {
@@ -234,8 +241,11 @@ func (l *Lab) spawn(owner string) {
 // newLane makes the lane's operations over the lab's journal, relay and verifier (and the reporter, when the lab has one), with the
 // host of the close.
 func (l *Lab) newLane() {
+	if l.crosscheck == nil {
+		l.crosscheck = l.Crosschecker.seam(l.LandRoot)
+	}
 	deps := ops.Deps{RunID: l.RunID, Repo: l.Repo, Journal: l.journal, Relay: l.Relay, Verifier: labVerifier{l}, Decisions: l.decisions, Actor: "parent", Reporter: l.Reporter,
-		Now: func() time.Time { return time.Date(2026, 10, 12, 9, 0, 0, 0, time.UTC) }, UnitCheck: l.Checker.seam()}
+		Now: func() time.Time { return time.Date(2026, 10, 12, 9, 0, 0, 0, time.UTC) }, UnitCheck: l.Checker.seam(), LandRoot: l.LandRoot, Crosscheck: l.crosscheck}
 	deps.Threads = labThreads{BusReader: audit.BusReader{Bus: l.client.Bus()}, backend: l.backend}
 	l.lane = ops.NewLane(deps)
 }
@@ -305,6 +315,11 @@ func (l *Lab) Config(resume bool) engine.Config {
 	laneOps := l.lane.Ops()
 	// the lab's checker is told the round of the check it answers (its rules key on it, as they keyed on a review's label)
 	laneOps[ops.NameUnitCheck] = labCheckOp{laneOps[ops.NameUnitCheck]}
+	// the crosscheck's authors are the run's role pairs, as the cli gives them from the run's role table (FakePolicy: claude)
+	l.crosscheck.Authors = map[string]string{}
+	for _, role := range []string{"architect", "executor", "executor-t1"} {
+		l.crosscheck.Authors[role] = l.Policy.Roles[role].Pair.Model
+	}
 	cfg := engine.Config{Backend: l.backend, Policy: l.Policy, Journal: l.journal, RunID: l.RunID, TokenBudget: l.Budget, Ops: laneOps, InputSnapshot: l.lane.InputSnapshot,
 		Prover: ops.NewProver(), Upward: l.Upward, Now: func() time.Time { return time.Date(2026, 10, 12, 9, 0, 0, 0, time.UTC) }}
 	if resume {
@@ -771,15 +786,6 @@ func Verdict(verified bool, defects ...map[string]any) map[string]any {
 	return map[string]any{"verdict": v, "criteria": []any{map[string]any{"id": "c1", "met": verified, "evidence": "read the head"}}, "defects": defects, "summary": "reviewed"}
 }
 
-// VerdictFinal is the answer of reviewer-final: verified with one criterion met and the alignment of the range with the DESIGN.
-func VerdictFinal(aligned bool) map[string]any {
-	alignment := map[string]any{"verdict": "ALIGNED", "drift": []any{}}
-	if !aligned {
-		alignment = map[string]any{"verdict": "MISALIGNED", "drift": []any{map[string]any{"decision_id": "D1", "observed": "the range departs from D1", "file": "README.md", "line": 1, "affected_nodes": []string{"A"}}}}
-	}
-	return map[string]any{"verdict": "verified", "criteria": []any{map[string]any{"id": "c1", "met": true, "evidence": "read the range"}}, "defects": []any{}, "alignment": alignment, "summary": "reviewed the range"}
-}
-
 // Reflection is the answer of the architect's reflection at the close: ALIGNED, or MISALIGNED with the decision D1 departed from.
 func Reflection(aligned bool) map[string]any {
 	if aligned {
@@ -840,8 +846,6 @@ func (l *Lab) defaultPlan(c *Call) fakehost.TurnPlan {
 		return Say(Reflection(true))
 	case c.Role == "architect":
 		return Say(l.designFor())
-	case c.Role == "reviewer-final":
-		return Say(VerdictFinal(true))
 	case c.Role == "executor" && strings.HasPrefix(c.Label, "qa:"):
 		return Say(QACapture())
 	case c.Role == "executor" && strings.HasPrefix(c.Label, "qa-"):
@@ -1084,4 +1088,116 @@ func TestFixCallNamesTheFailedTestsOfTheVerification(t *testing.T) {
 			t.Errorf("the fix call lacks %q:\n%s", want, fix)
 		}
 	}
+}
+
+// ---- the crosscheck of the close (CRW-1473) ----
+
+// Crosscheck is one answer of the lab's crosschecker to one pass. An empty State is ok, with the verdict verified unless one is given;
+// Do runs before the answer.
+type Crosscheck struct {
+	State    reviewadapter.State
+	Verdict  string
+	Findings []reviewadapter.Finding
+	Do       func()
+}
+
+// CrosscheckCall is one pass the lab's crosschecker was asked: its key (<ms>/r<round>/e<evidence round>/<pass><attempt>), the request
+// and whether its checkout existed during the call.
+type CrosscheckCall struct {
+	Key     string
+	Request reviewadapter.Request
+	Existed bool
+}
+
+// LabCrosschecker is the lab's ops.UnitChecker of crw.crosscheck, with the fake checkout of its passes: a fresh directory
+// <LandRoot>/crosscheck-wt/<ms>-r<round>-e<evidence round>-<pass><attempt> per pass, removed after it.
+type LabCrosschecker struct {
+	mu        sync.Mutex
+	queue     map[string][]Crosscheck
+	calls     []CrosscheckCall
+	checkouts []string
+}
+
+func newLabCrosschecker() *LabCrosschecker { return &LabCrosschecker{queue: map[string][]Crosscheck{}} }
+
+var labCheckoutName = regexp.MustCompile(`^(.+)-r(\d+)-e(\d+)-([AB])(\d+)$`)
+
+// seam is the crosscheck of the lab's lane: this checker, the shipped profiles (astra, then grok) and the fake checkout under the lab's
+// run directory root. Its authors are set from the lab's policy when a run starts (Config).
+func (c *LabCrosschecker) seam(root string) *ops.Crosscheck {
+	checkout := func(_ context.Context, ms string, round, evidenceRound int, pass string, attempt int, _ string) (string, func() error, error) {
+		dir := filepath.Join(root, "crosscheck-wt", fmt.Sprintf("%s-r%d-e%d-%s%d", ms, round, evidenceRound, pass, attempt))
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return "", nil, err
+		}
+		c.mu.Lock()
+		c.checkouts = append(c.checkouts, dir)
+		c.mu.Unlock()
+		return dir, func() error { return os.RemoveAll(dir) }, nil
+	}
+	return &ops.Crosscheck{Checker: c, Limit: time.Minute, Checkout: checkout,
+		Profiles: func(runDir string) ([]reviewadapter.Profile, error) {
+			return []reviewadapter.Profile{reviewadapter.AstraProfile(filepath.Join(runDir, "crosscheck", "answer.strict.json")), reviewadapter.GrokProfile(reviewadapter.AnswerSchema)}, nil
+		}}
+}
+
+// Calls are the passes the crosschecker was asked, in order.
+func (c *LabCrosschecker) Calls() []CrosscheckCall {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Clone(c.calls)
+}
+
+// Checkouts are the directories the fake checkout made, in order.
+func (c *LabCrosschecker) Checkouts() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Clone(c.checkouts)
+}
+
+func (c *LabCrosschecker) Check(ctx context.Context, req reviewadapter.Request) (reviewadapter.Result, error) {
+	key := filepath.Base(req.Worktree)
+	if m := labCheckoutName.FindStringSubmatch(key); m != nil {
+		key = m[1] + "/r" + m[2] + "/e" + m[3] + "/" + m[4] + m[5]
+	}
+	_, statErr := os.Stat(req.Worktree)
+	c.mu.Lock()
+	c.calls = append(c.calls, CrosscheckCall{Key: key, Request: req, Existed: statErr == nil})
+	a := Crosscheck{}
+	if q := c.queue[key]; len(q) > 0 {
+		a, c.queue[key] = q[0], q[1:]
+	}
+	c.mu.Unlock()
+	if a.Do != nil {
+		a.Do()
+	}
+	if a.State == "" {
+		a.State = reviewadapter.StateOK
+	}
+	verdict := ""
+	findings := []reviewadapter.Finding{}
+	if a.State == reviewadapter.StateOK {
+		verdict = a.Verdict
+		if verdict == "" {
+			verdict = reviewadapter.VerdictVerified
+		}
+		for _, f := range a.Findings {
+			if f.ID == "" {
+				f.ID = reviewadapter.FindingID(f.File, f.Text)
+			}
+			findings = append(findings, f)
+		}
+	}
+	sum := sha256.Sum256([]byte(req.Prompt))
+	return reviewadapter.Result{State: a.State, Verdict: verdict, Findings: findings, EngineFamily: req.Profile.Family, Model: req.Profile.Model, Effort: req.Profile.Effort,
+		GuideRev: req.GuideRev, PromptDigest: hex.EncodeToString(sum[:]), ElapsedMS: 1}, nil
+}
+
+// Crosschecks scripts the next answers of one pass of a milestone's crosscheck (round, evidence round, pass, attempt), in order; a
+// pass no script answers is verified with no finding.
+func (l *Lab) Crosschecks(ms string, round, evidenceRound int, pass string, attempt int, answers ...Crosscheck) {
+	l.Crosschecker.mu.Lock()
+	defer l.Crosschecker.mu.Unlock()
+	key := fmt.Sprintf("%s/r%d/e%d/%s%d", ms, round, evidenceRound, pass, attempt)
+	l.Crosschecker.queue[key] = append(l.Crosschecker.queue[key], answers...)
 }

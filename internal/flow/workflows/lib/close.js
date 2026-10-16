@@ -4,20 +4,31 @@
 //   the final gate    crw.finalGate pins the integrated head H and judges the evidence that stands on it (test evidence, and the QA
 //                     receipt when a criterion of the milestone has a driven surface). Evidence that is missing or stale is made at
 //                     H - crw.verify, and the QA calls - and the gate is judged again. A gate that fails or cannot be settled stops
-//                     the close: reviewer-final does not run.
-//   reviewer-final    one reviewer-final call over the range, with the passed gate as its input.
-//   the close         crw.milestoneClose records the tip it judged; a target that moved on after the gate is judged again from
-//                     its new head.
+//                     the close: the crosscheck does not run.
+//   the crosscheck    one round of crw.crosscheck over the range of the passed gate (CRW-1473): two passes (A coverage, B bug hunt) of a
+//                     review engine of another model family than every author of the milestone, run by the host in Go, their findings
+//                     merged into one verdict V by one rule (ops.CrosscheckRule, premerge.Blocks). Only a V of verified (accepts) lets
+//                     the milestone close. A V of needs_changes stops the close as crosscheck_pending with V and the fix packet
+//                     (crosscheckFixPacket), which the 자식 hands to the 부모 (ask crosscheck_pending); a crosscheck that held holds
+//                     the milestone, one that was refused asks for the configuration, and one that failed or gave no verdict asks with
+//                     its own state (crosscheck_failed, crosscheck_no_verdict).
+//   the close         crw.milestoneClose records the tip it judged over {gate, crosscheck: V}, and refuses a close whose V is not a
+//                     verified one of the gate's head and milestone (close_unverified); a target that moved on after the gate is
+//                     judged again from its new head.
 //
-// Then settleReviews audits every acceptance of the milestone against the reviewer threads on the host and archives the threads
-// whose audit passed. A composite takes no position of its own; every position it uses is that of a call or of an operation it
-// makes, so a resume replays it through the journal like any other code of the script. It reads no variable outside its arguments.
+// The close no longer calls reviewer-final: finalReview and its packet stay exported, so the reviewer-final op stays testable on a
+// direct harness, until the role and its op are deleted (CRW-1429).
 //
-// A composite does not stop the milestone itself. It answers {state: 'stop', source, status, reason, call}, and the script halts
-// the milestone as it does for any other call that did not complete.
+// Then reportClose audits every acceptance of the milestone against the reviewer threads on the host (settleReviews), archives the
+// threads whose audit passed, and reports the close up with its gate, its crosscheck V and the reflection of the architect. A
+// composite takes no position of its own; every position it uses is that of a call or of an operation it makes, so a resume replays it
+// through the journal like any other code of the script. It reads no variable outside its arguments.
+//
+// A composite does not stop the milestone itself. It answers {state: 'stop', source, status, reason, call} (with ask, evidence and
+// fix when the stop has them), and the script halts the milestone as it does for any other call that did not complete.
 
 import { QA_CAPTURE, QA_PASS, QA_RECEIPT, VERDICT_FINAL } from 'crw:lib/schemas'
-import { qaCapturePacket, qaPassPacket, qaSynthesisPacket, qaSelfReviewPacket, finalPacket } from 'crw:lib/packets'
+import { qaCapturePacket, qaPassPacket, qaSynthesisPacket, qaSelfReviewPacket, finalPacket, crosscheckPacket, crosscheckFixPacket } from 'crw:lib/packets'
 
 // The rounds the gate makes evidence in before it gives up: the head moves while the evidence is made, and each round judges the
 // head it finds. The attempts the close makes before it gives up on a target that keeps moving.
@@ -25,6 +36,9 @@ export const GATE_ROUNDS = 3
 export const CLOSE_ATTEMPTS = 3
 
 const PASSES = ['A', 'B']
+
+// The two passes of a crosscheck round: A coverage, B bug hunt (ops.CrosscheckPassA, ops.CrosscheckPassB).
+const CROSSCHECK_PASSES = ['A', 'B']
 
 function stop(source, status, reason, call, extra) {
   return Object.assign({ state: 'stop', source, status, reason: reason || status, call: call || null }, extra || {})
@@ -61,8 +75,9 @@ async function qa(ms, g) {
   return crw.qaReceipt(ms.id, g, cap, passes, syn)
 }
 
-// gate judges the evidence of the integrated head and makes what is missing, until the gate passes, fails, or cannot be settled.
-async function gate(ms) {
+// closeGate judges the evidence of the integrated head and makes what is missing, until the gate passes, fails, or cannot be
+// settled. It is exported so the reviewer-final call can be tested on the gate it reads, apart from the close (CRW-1505).
+export async function closeGate(ms) {
   let g = null
   for (let round = 1; round <= GATE_ROUNDS; round++) {
     g = await crw.finalGate(ms.id)
@@ -85,8 +100,9 @@ function gateStop(g) {
 }
 
 // finalReview is the reviewer-final call over the range of the passed gate. A reviewer whose answer is null_model is asked once
-// more on a fresh thread, as a node's reviewer is.
-async function finalReview(ms, g) {
+// more on a fresh thread, as a node's reviewer is. It is exported so the reviewer-final op and its packet stay testable on a
+// direct harness, whatever the close calls (CRW-1505).
+export async function finalReview(ms, g) {
   await crw.spawnDecision('REVF_1', 'spawn', { role: 'reviewer-final', inputs: { milestone: ms.id, head: g.head, gate: g.state } })
   const packet = finalPacket(ms, g)
   let call = await agent.call(packet, { agentType: 'reviewer-final', head: g.head, schema: VERDICT_FINAL, label: 'reviewer-final:' + ms.id })
@@ -98,15 +114,54 @@ async function finalReview(ms, g) {
   return rv
 }
 
-export async function closeMilestone(ms) {
+// accepts says whether a judgement lets the close go on: a verdict, and one whose word is verified. For the crosscheck x.verdict is V,
+// for reviewer-final the raw VERDICT_FINAL answer; both carry the word at .verdict.
+function accepts(x) {
+  return x.state === 'verdict' && !!x.verdict && x.verdict.verdict === 'verified'
+}
+
+// crosscheckRound is one round of the crosscheck over the passed gate: the text of each pass (crosscheckPacket), then crw.crosscheck,
+// which runs both passes in Go and answers X = {state, reason, hold, detail, verdict: V, questions}. This revision runs round 1 only.
+export async function crosscheckRound(ms, g, opts) {
+  const o = opts || {}
+  const prompts = {}
+  for (const p of CROSSCHECK_PASSES) prompts[p] = crosscheckPacket(ms, g, p, { prior: o.prior, evidence: o.evidence })
+  return crw.crosscheck(ms.id, g, { round: 1, evidence_round: o.evidence_round || 0, prompts })
+}
+
+// crosscheckStop is the stop of a crosscheck that did not verify the range. A verdict of needs_changes keeps the milestone open as
+// crosscheck_pending: V goes into the escalation's evidence and the fix packet with it, and the 자식 hands both to the 부모 (ask
+// crosscheck_pending). A crosscheck that held holds the milestone (a resume runs the round again); one that was refused (an author
+// pair that is undecided, no engine of another family) asks for the configuration; one that failed or gave no verdict asks with
+// its state.
+function crosscheckStop(ms, x) {
+  const detail = x.detail || ''
+  switch (x.state) {
+    case 'verdict':
+    case 'evidence':
+      return stop('crosscheck', 'pending', 'crosscheck_pending', null, { ask: 'crosscheck_pending', evidence: { crosscheck: x.verdict }, fix: crosscheckFixPacket(ms, x.verdict), detail })
+    case 'held':
+      return stop('crosscheck', 'held', x.hold || x.reason, null, { detail })
+    case 'refused':
+      return stop('crosscheck', 'refused', x.reason, null, { ask: 'configuration', detail })
+    case 'no_verdict':
+      return stop('crosscheck', 'no_verdict', x.reason, null, { ask: 'crosscheck_no_verdict', detail })
+    default:
+      return stop('crosscheck', 'failed', x.reason || 'crosscheck_' + x.state, null, { ask: 'crosscheck_failed', detail })
+  }
+}
+
+export async function closeMilestone(ms, opts) {
   for (let attempt = 1; attempt <= CLOSE_ATTEMPTS; attempt++) {
-    const g = await gate(ms)
+    const g = await closeGate(ms)
     if (g.state === 'stop') return g
     if (g.state !== 'pass') return gateStop(g)
-    const f = await finalReview(ms, g)
-    if (f.state !== 'verdict') return stop('reviewer_final', f.state, f.reason, f.call.callId)
-    const close = await crw.milestoneClose(ms.id, { gate: g, final: f })
-    if (!close.moved) return { state: 'closed', tip: close.tip, close, gate: g, final: f }
+    const x = await crosscheckRound(ms, g, opts)
+    // a crosscheck that does not verify the range keeps the milestone open; one whose passes read no repository (CRW-1504: both void, or
+    // the one void pass void again on its rerun) is no_verdict, which stops the close with ask crosscheck_no_verdict for the 부모
+    if (!accepts(x)) return crosscheckStop(ms, x)
+    const close = await crw.milestoneClose(ms.id, { gate: g, crosscheck: x.verdict })
+    if (!close.moved) return { state: 'closed', tip: close.tip, close, gate: g, crosscheck: x.verdict }
   }
   return stop('final_gate', 'unsettled', 'close_head_moved', null, {})
 }
@@ -122,4 +177,13 @@ export async function settleReviews(ms) {
   }
   const archived = await crw.archive(ms.id)
   return { audit: audited, archive: archived }
+}
+
+// reportClose is the end of a closed milestone, after the reflection and the re-plan signals and before any re-plan: settleReviews,
+// then the report up with the close's gate, its crosscheck V and the reflection's alignment (ALIGNED, MISALIGNED or NOT_ASSESSED from
+// the project lane). A milestone that is re-planned is audited, archived and reported first.
+export async function reportClose(ms, closed, reflection) {
+  const settled = await settleReviews(ms)
+  const report = await crw.reportUp(ms.id, Object.assign({}, closed.close, { audit: settled.audit, crosscheck: closed.crosscheck, reflection }))
+  return { audit: settled.audit, archive: settled.archive, report }
 }

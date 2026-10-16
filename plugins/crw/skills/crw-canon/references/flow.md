@@ -137,9 +137,9 @@ An issue that [crw-dev](../../crw-dev/SKILL.md) classifies as C4 runs in the flo
 1. One background explorer for each node of the milestone, at the design head, then the architect DESIGN of the milestone over their findings.
 2. The pre-build design audit, by the critic, a role of its own of another model family than the architect, before any executor starts. `needs_changes` returns to the architect on its own thread, and a replan is audited again. Only an approved DESIGN reaches an executor.
 3. The candidate review of each issue: the unit check of the executor's uncommitted work, by a review tool of another model family than the issue's authors (a Codex review by default, Bugbot on a Codex quota), before the run commits it, with at most two fix round trips on the same executor thread; the committed head then needs its passing verification.
-4. After the issues are integrated, the final gate with full verification and the risk record, then reviewer-final over the integrated range.
+4. After the issues are integrated, the final gate with full verification and the risk record, then the crosscheck over the integrated range: two passes (coverage and a bug hunt) of a review engine of another model family than every author of the milestone, run by the run itself with no reviewer agent; the milestone closes only on a verified crosscheck.
 
-Reviewer-final does not replace the pre-build design audit: it rules on a range that is already built, and step 2 exists to stop a flawed design before any executor writes it. Neither does it replace step 3.
+The crosscheck does not replace the pre-build design audit: it rules on a range that is already built, and step 2 exists to stop a flawed design before any executor writes it. Neither does it replace step 3.
 
 ## The preview and the five facts
 

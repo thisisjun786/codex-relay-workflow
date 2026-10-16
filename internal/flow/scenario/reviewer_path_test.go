@@ -181,7 +181,7 @@ func TestReviewerNullModelRetriesFreshReviewerThenEscalates(t *testing.T) {
 		if got.State != "closed" {
 			t.Fatalf("state %q", got.State)
 		}
-		if labels := l.Labels(); !slices.Equal(labels, []string{"architect", "design-audit:r1", "build:A:executor", "review:A:r1", "review:A:r1:retry", "reviewer-final:M1", "reflection:M1"}) {
+		if labels := l.Labels(); !slices.Equal(labels, []string{"architect", "design-audit:r1", "build:A:executor", "review:A:r1", "review:A:r1:retry", "reflection:M1"}) {
 			t.Fatalf("calls %v", labels)
 		}
 		noTierStep(t, l)
@@ -276,7 +276,7 @@ func TestRoundCapStepsTier(t *testing.T) {
 	if got.State != "closed" {
 		t.Fatalf("state %q: %+v", got.State, got)
 	}
-	want := []string{"architect", "design-audit:r1", "build:A:executor", "review:A:r1", "fix:A:executor:r1", "review:A:r2", "fix:A:executor:r2", "review:A:r3", "fix:A:executor:r3", "review:A:r4", "build:A:executor-t1", "review:A:r5", "reviewer-final:M1", "reflection:M1"}
+	want := []string{"architect", "design-audit:r1", "build:A:executor", "review:A:r1", "fix:A:executor:r1", "review:A:r2", "fix:A:executor:r2", "review:A:r3", "fix:A:executor:r3", "review:A:r4", "build:A:executor-t1", "review:A:r5", "reflection:M1"}
 	if labels := l.Labels(); !slices.Equal(labels, want) {
 		t.Fatalf("calls %v, want %v", labels, want)
 	}

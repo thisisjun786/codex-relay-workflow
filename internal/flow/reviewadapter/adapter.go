@@ -15,13 +15,17 @@
 //	invalid           the answer is not exactly one JSON value valid against the request's schema, has a field the answer does not
 //	                  know, a severity no grade word reads, or an impact outside premerge.Impacts, or its verdict is verified over a
 //	                  finding that premerge.Blocks (the adapter's form of verdict_invalid)
+//	not_read          the answer would be ok, but the profile sets a floor (Profile.MinElapsed, MinCacheRead, MinCommands) and the
+//	                  call ran shorter, its output reports no usage (Profile.Usage), or it read fewer cached tokens or ran fewer
+//	                  commands than the floor: a pass that read no repository gives no verdict
 //	ok                otherwise: verdict and findings are kept
 //
 // An answer that merely quotes a quota text on a successful call is not quota. Only an ok record carries a verdict and findings;
 // every record names the engine family (in canonical form: trimmed, lower case, as execution.ModelFamily gives an author's), model,
-// effort, guide revision, prompt digest and both fingerprints. The prompt digest names the bytes the tool was given: the prompt
-// when the profile's arguments hold it (PromptSent), else none, the empty string's digest (a tool whose Args leave the prompt out,
-// such as one that takes no prompt). Findings are graded
+// effort, guide revision, prompt digest and both fingerprints, and keeps, whatever its state, the call's elapsed time and the usage
+// its output reports (cached tokens read and commands run; zero when it reports none). The prompt digest names the bytes the tool was
+// given: the prompt when the profile's arguments hold it (PromptSent), else none, the empty string's digest (a tool whose Args leave
+// the prompt out, such as one that takes no prompt). Findings are graded
 // P0-P3 (review.NormalizeGrade) and carry an id that ignores the line (FindingID); findings of one id collapse into one.
 //
 // The adapter reaches the outside only through its seams (Run, Fingerprint), so it imports no store and no flow op.
@@ -39,6 +43,7 @@ import (
 	"os"
 	"os/exec"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -65,6 +70,7 @@ const (
 	StateInvalid         State = "invalid"
 	StateWorktreeChanged State = "worktree_changed"
 	StateToolFailed      State = "tool_failed"
+	StateNotRead         State = "not_read"
 )
 
 // The verdicts of an ok record.
@@ -140,6 +146,10 @@ type Result struct {
 	FingerprintBefore string    `json:"fingerprint_before"`
 	FingerprintAfter  string    `json:"fingerprint_after"`
 	ElapsedMS         int64     `json:"elapsed_ms"`
+	// CacheReadTokens and Commands are the usage the tool's output reports (Profile.Usage): the cached input tokens it read and the
+	// commands it ran; both zero when it reports none.
+	CacheReadTokens int64 `json:"cache_read_tokens"`
+	Commands        int   `json:"commands"`
 }
 
 // RunFunc runs the profile's tool once under ctx (which carries the time limit). err is set when the tool did not start (wrapping
@@ -182,6 +192,9 @@ type call struct {
 	err            error
 	timedOut       bool
 	changed        bool
+	elapsed        time.Duration // from the start of the run to its end
+	usage          Usage         // what the output reports it read (Profile.Usage), when usageOK
+	usageOK        bool
 }
 
 // Check validates the request, runs the tool between two fingerprints of the worktree, and returns the record. A Go error means
@@ -210,7 +223,14 @@ func (a Adapter) Check(ctx context.Context, req Request) (Result, error) {
 	c.stdout, c.stderr, c.exit, c.err = a.Run(rctx, req.Profile, req)
 	c.timedOut = c.err != nil && (errors.Is(c.err, context.DeadlineExceeded) || errors.Is(rctx.Err(), context.DeadlineExceeded))
 	cancel()
-	res.ElapsedMS = now().Sub(start).Milliseconds()
+	c.elapsed = now().Sub(start)
+	res.ElapsedMS = c.elapsed.Milliseconds()
+	if req.Profile.Usage != nil {
+		c.usage, c.usageOK = req.Profile.Usage(c.stdout)
+	}
+	if c.usageOK {
+		res.CacheReadTokens, res.Commands = c.usage.CacheRead, c.usage.Commands
+	}
 	if err := ctx.Err(); err != nil {
 		return Result{}, fmt.Errorf("reviewadapter: the caller ended the call: %w", err)
 	}
@@ -330,8 +350,41 @@ func classify(req Request, schema *jsonschema.Resolved, c call) (State, string, 
 	if err != nil {
 		return StateInvalid, err.Error(), "", nil
 	}
+	if detail, void := shallow(req.Profile, c); void {
+		return StateNotRead, detail, "", nil
+	}
 	return StateOK, "", verdict, findings
 }
+
+// shallow reports whether a call whose answer would be ok read no repository under the profile's floors, and says why: it ran
+// shorter than MinElapsed, its output reports no usage, or it read fewer cached tokens than MinCacheRead or ran fewer commands than
+// MinCommands. A profile with no floor is never shallow.
+func shallow(p Profile, c call) (string, bool) {
+	var floors []string
+	if p.MinCacheRead > 0 {
+		floors = append(floors, fmt.Sprintf("%d tokens", p.MinCacheRead))
+	}
+	if p.MinCommands > 0 {
+		floors = append(floors, fmt.Sprintf("%d commands", p.MinCommands))
+	}
+	if p.MinElapsed > 0 {
+		floors = append(floors, seconds(p.MinElapsed)+" s")
+	}
+	if len(floors) == 0 {
+		return "", false
+	}
+	minimum := strings.Join(floors, ", ")
+	if !c.usageOK {
+		return fmt.Sprintf("the tool reported no usage in %s s (min %s); the pass read no repository", seconds(c.elapsed), minimum), true
+	}
+	if c.elapsed < p.MinElapsed || c.usage.CacheRead < p.MinCacheRead || c.usage.Commands < p.MinCommands {
+		return fmt.Sprintf("read %d tokens and %d commands in %s s (min %s); the pass read no repository", c.usage.CacheRead, c.usage.Commands, seconds(c.elapsed), minimum), true
+	}
+	return "", false
+}
+
+// seconds is d in seconds without trailing zeros ("20", "59.6").
+func seconds(d time.Duration) string { return strconv.FormatFloat(d.Seconds(), 'f', -1, 64) }
 
 // quotaText returns the first quota text found, case-insensitively, in any of outs. A text counts only where no letter or digit
 // borders it, so "429" is not found in "1429" or "4290".
@@ -436,16 +489,14 @@ func onlyValue(dec *json.Decoder) error {
 	}
 }
 
-// normalize applies the impact rules of the flow (CRW-1438) and collapses findings that share an id into the first of them,
-// keeping the most severe grade and the first blocking impact (else the first non-empty one), so ids are unique inside a record. security[i] is the security
-// flag review.NormalizeGrade read from the severity of findings[i]. In order:
+// normalize applies the impact rules of the flow (CRW-1438) and collapses findings that share an id (MergeFindings), so ids are
+// unique inside a record. security[i] is the security flag review.NormalizeGrade read from the severity of findings[i]. In order:
 //   - an impact that is not empty and not one of premerge.Impacts is an error;
 //   - a security finding without an impact gets safety_or_data;
 //   - after the collapse, a verified verdict over a finding that premerge.Blocks is an error naming the finding (the adapter's
 //     form of verdict_invalid).
 func normalize(verdict string, findings []Finding, security []bool) ([]Finding, error) {
-	out := make([]Finding, 0, len(findings))
-	at := map[string]int{}
+	checked := make([]Finding, 0, len(findings))
 	for k, f := range findings {
 		if f.Impact != "" && !slices.Contains(premerge.Impacts, f.Impact) {
 			return nil, fmt.Errorf("finding %s at %s:%d has an impact outside the closed set: %q", f.ID, f.File, f.Line, f.Impact)
@@ -453,25 +504,41 @@ func normalize(verdict string, findings []Finding, security []bool) ([]Finding, 
 		if f.Impact == "" && k < len(security) && security[k] {
 			f.Impact = impactSafetyOrData
 		}
-		i, seen := at[f.ID]
-		if !seen {
-			at[f.ID] = len(out)
-			out = append(out, f)
-			continue
-		}
-		if f.Severity < out[i].Severity { // "P0" < "P1" < "P2" < "P3"
-			out[i].Severity = f.Severity
-		}
-		if out[i].Impact == "" || (out[i].Impact == premerge.MinorSeparable && f.Impact != "" && f.Impact != premerge.MinorSeparable) {
-			out[i].Impact = f.Impact // a blocking impact of any duplicate is never hidden by a non-blocking one
-		}
+		checked = append(checked, f)
 	}
+	out := MergeFindings(checked)
 	if verdict == VerdictVerified {
 		if f, ok := firstBlocking(out); ok {
 			return nil, fmt.Errorf("the answer is verified over the blocking finding %s at %s:%d (severity %s, impact %q)", f.ID, f.File, f.Line, f.Severity, f.Impact)
 		}
 	}
 	return out, nil
+}
+
+// MergeFindings merges the findings of lists, in order, into one finding per id: the first copy's id, file, line and text, the
+// most severe grade of all copies ("P0" before "P3"), and a blocking impact of any copy over a non-blocking (minor_separable) or
+// empty one (else the first non-empty impact), whichever list holds which copy, so a blocking judgment is never hidden by the copy
+// that came first. Findings keep the order of their first copies. The lists are not changed, and the result is never nil.
+func MergeFindings(lists ...[]Finding) []Finding {
+	out := []Finding{}
+	at := map[string]int{}
+	for _, list := range lists {
+		for _, f := range list {
+			i, seen := at[f.ID]
+			if !seen {
+				at[f.ID] = len(out)
+				out = append(out, f)
+				continue
+			}
+			if f.Severity < out[i].Severity { // "P0" < "P1" < "P2" < "P3"
+				out[i].Severity = f.Severity
+			}
+			if out[i].Impact == "" || (out[i].Impact == premerge.MinorSeparable && f.Impact != "" && f.Impact != premerge.MinorSeparable) {
+				out[i].Impact = f.Impact
+			}
+		}
+	}
+	return out
 }
 
 // firstBlocking returns the first of findings that premerge.Blocks, the finding a verified verdict may not stand over.

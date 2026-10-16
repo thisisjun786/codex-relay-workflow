@@ -447,3 +447,181 @@ func TestLandHeadOfANodeAnotherRunHolds(t *testing.T) {
 	}
 	l.effectsOnce("A-1")
 }
+
+// landArgsRound are the args of a land-head run of a fix round (CRW-1490): landArgs with fix_round.
+func landArgsRound(l *laneLab, key, head string, round int, authors ...string) string {
+	raw, _ := json.Marshal(map[string]any{"plan": l.plan, "milestone": "M1", "issue": key, "head": head, "authors": authors, "fix_round": round})
+	return string(raw)
+}
+
+// landFixValue is the value of a land-head run whose unit check needed changes: the fix round it ran as, the findings it carries and
+// the fix packet it hands the child.
+type landFixValue struct {
+	State, Reason, Escalation, Head, Fix string
+	FixRound                             *int `json:"fix_round"`
+	Carried                              []string
+}
+
+// landEscalationOf is the escalation row of a node with a reason in the current process's journal.
+func (l *laneLab) landEscalationOf(node, reason string) (map[string]any, bool) {
+	l.t.Helper()
+	var row map[string]any
+	for _, e := range l.events() {
+		if e.Kind == engine.KindFlow && e.Event == engine.EvEscalation && str(e.Data, "node") == node && str(e.Data, "reason") == reason {
+			row = e.Data
+		}
+	}
+	return row, row != nil
+}
+
+// TestLandHeadNeedsChangesHandsTheChildAFixPacketWithTheCarriedFindings (CRW-1490): a land-head run of fix round 0 (no fix_round given)
+// whose committed-mode unit check needs changes ends escalated land_review_needs_changes with no ask - the child acts, not the 부모 -
+// with fix_round 0 and the ids of the findings on the escalation and in the value, gives the node's release back, and hands the child
+// a fix packet: the findings by id with their file, line and text, the range as a git diff command, and the route of the fix (a new
+// executor subagent fixes the head, and a new land-head run of the node lands it with fix_round 1).
+func TestLandHeadNeedsChangesHandsTheChildAFixPacketWithTheCarriedFindings(t *testing.T) {
+	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+	carried := l.needsChanges("A-1")
+	head := l.outsideHead("A-1", "outside-a1")
+	author := l.authorThread("claude-fake-sonnet", "high")
+	spec := l.start("start", "land-head", "--args", landArgs(l, "A-1", "outside-a1", author), "--handoff", l.file)
+	res := l.runToEnd(spec.RunID)
+	var v landFixValue
+	if res.Status != engine.RunCompleted || json.Unmarshal(res.Value, &v) != nil || v.State != "escalated" || v.Reason != "land_review_needs_changes" || v.Head != head {
+		t.Fatalf("a land whose unit check needs changes: %s %s %s\n%s", res.Status, res.ErrorKind, res.Error, res.Value)
+	}
+	if v.FixRound == nil || *v.FixRound != 0 || strings.Join(v.Carried, ",") != strings.Join(carried, ",") {
+		t.Errorf("the land's value: fix_round %v carried %q, want 0 and %q", v.FixRound, v.Carried, carried)
+	}
+	node := l.nodeOf["A-1"]
+	row, ok := l.landEscalationOf(node, "land_review_needs_changes")
+	if !ok {
+		t.Fatalf("no escalation land_review_needs_changes of %s", node)
+	}
+	ev, _ := row["evidence"].(map[string]any)
+	if str(row, "ask") != "" || ev["fix_round"] != float64(0) || len(ev["carried"].([]any)) != len(carried) {
+		t.Errorf("the escalation: ask %q evidence %v, want no ask, fix_round 0 and %d carried", str(row, "ask"), ev, len(carried))
+	}
+	rels := l.releaseRowsOf(node)
+	if len(rels) != 1 {
+		t.Fatalf("the land release rows: %+v", rels)
+	}
+	base := str(rels[0].Data, "base")
+	for _, want := range []string{
+		"[high] " + carried[0] + " node-A-1.txt:1 the work is incomplete",
+		"[low] " + carried[1] + " node-A-1.txt:1 the line has no full stop",
+		"git diff " + base + ".." + head,
+		"a new executor subagent",
+		"crw flow start land-head",
+		`"issue":"A-1"`,
+		`"fix_round":1`,
+		`"authors":["` + author + `","<the fixer subagent thread>"]`,
+		"--handoff <the plan's handoff file>",
+	} {
+		if !strings.Contains(v.Fix, want) {
+			t.Errorf("the fix packet lacks %q:\n%s", want, v.Fix)
+		}
+	}
+	if n := l.count("SELECT COUNT(*) FROM dag_agent_closures WHERE subject_kind = 'execution' AND state = 'cancelled' AND reason = 'land_ended'"); n != 1 {
+		t.Errorf("the land gave its release back %d times, want 1", n)
+	}
+	if n := l.count("SELECT COUNT(*) FROM dag_agent_acceptances"); n != 0 {
+		t.Errorf("%d acceptances after a check that needs changes", n)
+	}
+}
+
+// TestLandHeadLandsAfterTheFixRunAndAVerifiedRecheck (CRW-1490): after a land of fix round 0 that needed changes, the child's fix - a
+// new head made outside a run (l.outsideFix) - lands through a second land-head run of the same node with the fix_round and the authors
+// the fix packet names (the first head's author and the fixer's thread): a new release of the node, a unit check of the fixed head that
+// verifies it, the acceptance and the integration.
+func TestLandHeadLandsAfterTheFixRunAndAVerifiedRecheck(t *testing.T) {
+	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+	l.needsChanges("A-1")
+	l.outsideHead("A-1", "outside-a1")
+	author := l.authorThread("claude-fake-sonnet", "high")
+	run1 := l.start("start", "land-head", "--args", landArgs(l, "A-1", "outside-a1", author), "--handoff", l.file)
+	var v1 landFixValue
+	if res := l.runToEnd(run1.RunID); json.Unmarshal(res.Value, &v1) != nil || v1.State != "escalated" || v1.Reason != "land_review_needs_changes" || !strings.Contains(v1.Fix, `"fix_round":1`) {
+		t.Fatalf("the first land: %s", res.Value)
+	}
+	second := l.outsideFix("A-1", "outside-a1-fix", "the work of A-1, fixed after the unit check\n")
+	// the fix packet's route: the authors of the first head and the fixer's thread
+	run2 := l.start("start", "land-head", "--args", landArgsRound(l, "A-1", "outside-a1-fix", 1, author, l.authorThread("claude-fake-opus", "high")), "--handoff", l.file)
+	v := landValueOf(t, l.runToEnd(run2.RunID))
+	if v.State != "landed" || v.Head != second || v.Acceptance == "" {
+		t.Fatalf("the fix run of the node did not land: %+v", v)
+	}
+	node := l.nodeOf["A-1"]
+	checks := l.unitCheckRowsOf(node)
+	if len(checks) != 1 || str(checks[0].Data, "verdict") != "verified" || str(checks[0].Data, "commit") != second {
+		t.Errorf("the recheck of the fixed head: %+v", checks)
+	}
+	var accepted string
+	if err := l.w.st.DB.QueryRow("SELECT head FROM dag_agent_acceptances WHERE node_id = ?", node).Scan(&accepted); err != nil || accepted != second {
+		t.Errorf("the acceptance: head %q, want %s: %v", accepted, second, err)
+	}
+	if out := l.git(l.repo, "merge-base", "--is-ancestor", second, "integration"); out != "" {
+		t.Errorf("merge-base: %s", out)
+	}
+}
+
+// TestLandHeadEscalatesWhenTheFixRoundsPassTheCap (CRW-1490): a land-head run of fix round LAND_FIX_ROUNDS (2) whose unit check needs
+// changes again ends escalated land_fix_rounds with ask land_fix_rounds - a Question for the 부모 - with the carried findings and no
+// fix packet, and gives the node's release back.
+func TestLandHeadEscalatesWhenTheFixRoundsPassTheCap(t *testing.T) {
+	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+	carried := l.needsChanges("A-1")
+	head := l.outsideHead("A-1", "outside-a1")
+	spec := l.start("start", "land-head", "--args", landArgsRound(l, "A-1", "outside-a1", 2, l.authorThread("claude-fake-sonnet", "high")), "--handoff", l.file)
+	res := l.runToEnd(spec.RunID)
+	var v landFixValue
+	if res.Status != engine.RunCompleted || json.Unmarshal(res.Value, &v) != nil || v.State != "escalated" || v.Reason != "land_fix_rounds" || v.Head != head || v.Escalation == "" {
+		t.Fatalf("a land past the fix rounds: %s %s %s\n%s", res.Status, res.ErrorKind, res.Error, res.Value)
+	}
+	if v.Fix != "" || v.FixRound == nil || *v.FixRound != 2 || strings.Join(v.Carried, ",") != strings.Join(carried, ",") {
+		t.Errorf("the land's value: fix %q fix_round %v carried %q, want no fix packet, 2 and %q", v.Fix, v.FixRound, v.Carried, carried)
+	}
+	node := l.nodeOf["A-1"]
+	row, ok := l.landEscalationOf(node, "land_fix_rounds")
+	if !ok {
+		t.Fatalf("no escalation land_fix_rounds of %s", node)
+	}
+	if ev, _ := row["evidence"].(map[string]any); str(row, "ask") != "land_fix_rounds" || ev["fix_round"] != float64(2) {
+		t.Errorf("the escalation: ask %q evidence %v, want ask land_fix_rounds and fix_round 2", str(row, "ask"), ev)
+	}
+	if _, ok := l.landEscalationOf(node, "land_review_needs_changes"); ok {
+		t.Errorf("a land past the fix rounds escalated land_review_needs_changes too")
+	}
+	if n := l.count("SELECT COUNT(*) FROM dag_agent_closures WHERE subject_kind = 'execution' AND state = 'cancelled' AND reason = 'land_ended'"); n != 1 {
+		t.Errorf("the land gave its release back %d times, want 1", n)
+	}
+}
+
+// TestLandHeadRefusesAFixRoundThatIsNotANonNegativeInteger (CRW-1490): args.fix_round is the round of the child's fix, 0 when not
+// given and otherwise a non-negative integer. A land-head run given the string "1", -1, 1.5 or null refuses at its start
+// (fix_round_invalid): it reads no milestone, releases nothing, runs no gate and hands no fix packet, so a fix round that is not a
+// count cannot change the cap of the fix rounds.
+func TestLandHeadRefusesAFixRoundThatIsNotANonNegativeInteger(t *testing.T) {
+	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+	l.needsChanges("A-1")
+	l.outsideHead("A-1", "outside-a1")
+	author := l.authorThread("claude-fake-sonnet", "high")
+	for _, round := range []any{"1", -1, 1.5, nil} {
+		raw, _ := json.Marshal(map[string]any{"plan": l.plan, "milestone": "M1", "issue": "A-1", "head": "outside-a1", "authors": []string{author}, "fix_round": round})
+		spec := l.start("start", "land-head", "--args", string(raw), "--handoff", l.file)
+		res := l.runToEnd(spec.RunID)
+		var v struct{ State, Reason, Detail, Fix string }
+		if res.Status != engine.RunCompleted || json.Unmarshal(res.Value, &v) != nil || v.State != "refused" || v.Reason != "fix_round_invalid" || v.Fix != "" {
+			t.Errorf("fix_round %#v: %s %s %s\n%s", round, res.Status, res.ErrorKind, res.Error, res.Value)
+			continue
+		}
+		for _, e := range l.events() {
+			if e.Kind == engine.KindCall && strings.HasPrefix(e.Op, "crw.") || e.Kind == engine.KindFlow && e.Event == engine.EvEscalation {
+				t.Errorf("fix_round %#v: the refused run has the row %s %s %s", round, e.Kind, e.Op, e.Event)
+			}
+		}
+	}
+	if n := l.count("SELECT COUNT(*) FROM dag_agent_closures"); n != 0 {
+		t.Errorf("%d closures after runs that refused at their start", n)
+	}
+}

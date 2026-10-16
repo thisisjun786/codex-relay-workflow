@@ -30,7 +30,7 @@ type replanResult struct {
 	Reasons    []string `json:"reasons"`
 	Escalation string   `json:"escalation"`
 	Reflection string   `json:"reflection"`
-	Final      string   `json:"final"`
+	Crosscheck any      `json:"crosscheck"`
 	Source     string   `json:"source"`
 	Reason     string   `json:"reason"`
 }
@@ -139,16 +139,20 @@ func architectThread(t *testing.T, l *Lab) string {
 	return turns[0].Thread
 }
 
-// The close judges the range: reviewer-final MISALIGNED is a reason to re-plan whatever the reflection says, and the re-plan is the next
-// turn of the architect's thread - the turn after its reflection - audited again before any revision is recorded.
-func TestReviewerFinalMisalignedReplansSameArchitect(t *testing.T) {
+// The close judges the range with the crosscheck, which verifies it, and the reflection's MISALIGNED is the reason to re-plan (CRW-1473:
+// reviewer-final, whose alignment was the close's other reason, is not called): the re-plan is the next turn of the architect's thread -
+// the turn after its reflection - audited again before any revision is recorded, after the closed milestone was reported.
+func TestMisalignedCloseReplansSameArchitect(t *testing.T) {
 	l := NewLab(t, twoNodes()...)
-	l.On("^reviewer-final:M1$", func(*Call) *fakehostPlan { p := Say(VerdictFinal(false)); return &p })
+	l.On("^reflection:M1$", func(*Call) *fakehostPlan { p := Say(Reflection(false)); return &p })
 	got := runReplan(t, l)
-	if got.State != "replanned" || got.Revision != "r1" || !slices.Equal(got.Reasons, []string{"reviewer_final_misaligned"}) || got.Reflection != "ALIGNED" || got.Final != "MISALIGNED" {
+	if got.State != "replanned" || got.Revision != "r1" || !slices.Equal(got.Reasons, []string{"reflection_misaligned"}) || got.Reflection != "MISALIGNED" || got.Crosscheck != "verified" {
 		t.Fatalf("%+v; calls %v", got, l.Labels())
 	}
-	want := []string{"architect", "design-audit:r1", "build:A:executor", "build:B:executor", "reviewer-final:M1", "reflection:M1", "replan:close", "design-audit:replan-close:r1"}
+	if n := len(l.Rows("crw.reportUp")); n != 1 {
+		t.Errorf("%d crw.reportUp rows, want the report of the closed milestone before its re-plan", n)
+	}
+	want := []string{"architect", "design-audit:r1", "build:A:executor", "build:B:executor", "reflection:M1", "replan:close", "design-audit:replan-close:r1"}
 	if labels := l.Labels(); !slices.Equal(labels, want) {
 		t.Fatalf("calls %v, want %v", labels, want)
 	}
@@ -202,7 +206,7 @@ func TestReflectionMisalignedReplans(t *testing.T) {
 	l := NewLab(t, twoNodes()...)
 	l.On("^reflection:M1$", func(*Call) *fakehostPlan { p := Say(Reflection(false)); return &p })
 	got := runReplan(t, l)
-	if got.State != "replanned" || !slices.Equal(got.Reasons, []string{"reflection_misaligned"}) || got.Reflection != "MISALIGNED" || got.Final != "ALIGNED" {
+	if got.State != "replanned" || !slices.Equal(got.Reasons, []string{"reflection_misaligned"}) || got.Reflection != "MISALIGNED" || got.Crosscheck != "verified" {
 		t.Fatalf("%+v; calls %v", got, l.Labels())
 	}
 	replanTurnResumes(t, l, "replan:close", "reflection:M1")
@@ -254,7 +258,7 @@ func TestReplanSeesReflectionTurn(t *testing.T) {
 	}
 }
 
-// A reflection, a re-plan or a reviewer-final call that did not complete is not ALIGNED: held and unknown hold the milestone, refused
+// A reflection or a re-plan call that did not complete is not ALIGNED: held and unknown hold the milestone, refused
 // and null_model escalate, and nothing re-plans on a verdict that was never given.
 func TestReflectionFailureNotAligned(t *testing.T) {
 	t.Run("held", func(t *testing.T) {
@@ -329,30 +333,24 @@ func TestReflectionFailureNotAligned(t *testing.T) {
 	})
 }
 
-// reviewer-final that did not complete halts the milestone: held holds it (a resume asks the same call again, as a new turn on its
-// thread), and the architect is not asked to reflect on a range nobody judged.
-func TestReviewerFinalHeldHaltsMilestone(t *testing.T) {
+// A crosscheck that gave no judgment halts the milestone: a pass that answered quota holds it (crosscheck_quota; a resume runs the round
+// again, since a held crosscheck proves nothing), and the architect is not asked to reflect on a range nobody judged.
+func TestCrosscheckHeldHaltsMilestone(t *testing.T) {
 	l := NewLab(t, oneNode()...)
-	l.On("^reviewer-final:M1$", func(c *Call) *fakehostPlan {
-		if c.N > 1 {
-			return nil
-		}
-		p := Fail("serverOverloaded")
-		return &p
-	})
+	l.Crosschecks("M1", 1, 0, "A", 1, Crosscheck{State: "quota"})
 	got := runReplan(t, l)
-	if got.State != "held" || got.Source != "reviewer_final" || got.Reason != "host_infra_serverOverloaded" {
+	if got.State != "held" || got.Source != "crosscheck" || got.Reason != "crosscheck_quota" {
 		t.Fatalf("%+v; calls %v", got, l.Labels())
 	}
 	noCallLabelled(t, l, "reflection")
 	noCallLabelled(t, l, "replan")
-	if rows := l.Rows("crw.hold"); len(rows) != 1 || str(rows[0].Data, "node") != "milestone:M1" || str(rows[0].Data, "source") != "reviewer_final" {
+	if rows := l.Rows("crw.hold"); len(rows) != 1 || str(rows[0].Data, "node") != "milestone:M1" || str(rows[0].Data, "source") != "crosscheck" {
 		t.Errorf("hold rows %+v", rows)
 	}
 	if len(l.Rows("crw.milestoneClose")) != 0 || len(l.Rows("crw.reportUp")) != 0 {
-		t.Errorf("the milestone closed over a final review nobody gave")
+		t.Errorf("the milestone closed over a crosscheck nobody gave")
 	}
-	// the cause is gone: the resume asks the same call again, as the next turn of its thread, and the milestone closes
+	// the cause is gone: the resume runs the round again, and the milestone closes
 	before := l.LastSeq()
 	l.NewProcess("proc-2")
 	res := l.Resume()
@@ -364,8 +362,11 @@ func TestReviewerFinalHeldHaltsMilestone(t *testing.T) {
 	for _, ts := range turnsSince(l, before) {
 		sent = append(sent, fmt.Sprintf("%s%s", labelOf(l, ts.call), ts.op[strings.LastIndex(ts.op, "/"):]))
 	}
-	if !slices.Equal(sent, []string{"reviewer-final:M1/t2", "reflection:M1/t1"}) {
-		t.Errorf("live turns %v, want the held final review as its next turn, and the reflection after it", sent)
+	if !slices.Equal(sent, []string{"reflection:M1/t1"}) {
+		t.Errorf("live turns %v, want only the reflection after the crosscheck ran again", sent)
+	}
+	if calls := l.Crosschecker.Calls(); len(calls) != 4 {
+		t.Errorf("%d crosscheck passes, want two before the hold and two after the resume", len(calls))
 	}
 }
 

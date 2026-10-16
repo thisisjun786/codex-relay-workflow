@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/review"
 )
@@ -35,9 +36,27 @@ type Profile struct {
 	Args func(req Request) ([]string, error)
 	// Ranged is set for a profile that judges a committed range: Check refuses a request that names no range (Base and Head).
 	Ranged bool
+	// Usage reads what the call read from the tool's stdout (Usage); ok is false when the output reports no usage. Nil: the tool
+	// reports none, and the record's usage is zero.
+	Usage func(stdout []byte) (u Usage, ok bool)
+	// MinCacheRead, MinCommands and MinElapsed are the floors of a pass that read the repository: an answer that would be ok is
+	// not_read when any floor is set and the call ran shorter than MinElapsed, its output reports no usage, or it read fewer cached
+	// tokens than MinCacheRead or ran fewer commands than MinCommands. A zero floor is no check, and a profile with none is never
+	// voided (Bugbot).
+	MinCacheRead int64
+	MinCommands  int
+	MinElapsed   time.Duration
 }
 
-// JSONProfile is a tool that prints the answer document itself.
+// Usage is what one call of a tool reports it read: the input tokens it read from the cache (the repository context it took in)
+// and the commands it ran in the worktree.
+type Usage struct {
+	CacheRead int64
+	Commands  int
+}
+
+// JSONProfile is a tool that prints the answer document itself. It has no usage reader and no floors, so its checks are never
+// not_read.
 func JSONProfile(name string, argv []string, model, effort string) Profile {
 	return Profile{Name: name, Argv: argv, Model: model, Effort: effort, Answer: func(stdout []byte, _ Request) ([]byte, error) { return stdout, nil }}
 }

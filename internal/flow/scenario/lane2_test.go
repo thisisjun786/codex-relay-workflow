@@ -331,7 +331,7 @@ func TestUnitCheckInvalidRetriesOnceThenEscalates(t *testing.T) {
 		if got.State != "closed" {
 			t.Fatalf("state %q", got.State)
 		}
-		if labels := l.Labels(); !slices.Equal(labels, []string{"architect", "design-audit:r1", "build:A:executor", "reviewer-final:M1", "reflection:M1"}) {
+		if labels := l.Labels(); !slices.Equal(labels, []string{"architect", "design-audit:r1", "build:A:executor", "reflection:M1"}) {
 			t.Fatalf("calls %v", labels)
 		}
 		if rows := l.Rows(ops.OpUnitCheck); len(rows) != 1 || rows[0].Data["retried"] != true || str(rows[0].Data, "first_state") != "invalid" {
@@ -462,7 +462,7 @@ func TestUnreleasedNodeIsReleasedOnResume(t *testing.T) {
 	}
 	for _, ts := range turnsSince(l, before) {
 		// the lane of the node that was waiting, and the close of the milestone it lets go on: the final review
-		if label := labelOf(l, ts.call); !strings.Contains(label, ":"+waiting+":") && label != "reviewer-final:M1" && label != "reflection:M1" {
+		if label := labelOf(l, ts.call); !strings.Contains(label, ":"+waiting+":") && label != "reflection:M1" {
 			t.Errorf("the resume ran %q: only the lane of the node that was waiting runs, and the close after it", label)
 		}
 	}
@@ -701,7 +701,7 @@ func TestUnitCheckCarriedFindingSurvivesAVerificationFix(t *testing.T) {
 	if id := reviewadapter.FindingID(minor.File, minor.Text); !slices.Equal(got.Lanes[0].Carried, []string{id}) {
 		t.Errorf("the landed lane carries %v, want [%s]", got.Lanes[0].Carried, id)
 	}
-	want := []string{"architect", "design-audit:r1", "build:A:executor", "fix:A:executor:r1", "fix:A:executor:r2", "fix:A:executor:r3", "reviewer-final:M1", "reflection:M1"}
+	want := []string{"architect", "design-audit:r1", "build:A:executor", "fix:A:executor:r1", "fix:A:executor:r2", "fix:A:executor:r3", "reflection:M1"}
 	if labels := l.Labels(); !slices.Equal(labels, want) {
 		t.Errorf("calls %v, want %v", labels, want)
 	}
@@ -769,7 +769,7 @@ func TestRebuildPacketCarriesTheLastFindingsAndCI(t *testing.T) {
 		if got := mustRun(t, l); got.State != "closed" {
 			t.Fatalf("state %q; calls %v", got.State, l.Labels())
 		}
-		want := []string{"architect", "design-audit:r1", "build:A:executor", "fix:A:executor:r1", "fix:A:executor:r2", "rebuild:A:executor:r3", "reviewer-final:M1", "reflection:M1"}
+		want := []string{"architect", "design-audit:r1", "build:A:executor", "fix:A:executor:r1", "fix:A:executor:r2", "rebuild:A:executor:r3", "reflection:M1"}
 		if labels := l.Labels(); !slices.Equal(labels, want) {
 			t.Fatalf("calls %v, want %v", labels, want)
 		}
@@ -808,7 +808,7 @@ func TestRebuildPacketCarriesTheLastFindingsAndCI(t *testing.T) {
 		if got := mustRun(t, l); got.State != "closed" {
 			t.Fatalf("state %q; calls %v", got.State, l.Labels())
 		}
-		want := []string{"architect", "design-audit:r1", "build:A:executor", "fix:A:executor:r1", "fix:A:executor:r2", "build:A:executor-t1", "reviewer-final:M1", "reflection:M1"}
+		want := []string{"architect", "design-audit:r1", "build:A:executor", "fix:A:executor:r1", "fix:A:executor:r2", "build:A:executor-t1", "reflection:M1"}
 		if labels := l.Labels(); !slices.Equal(labels, want) {
 			t.Fatalf("calls %v, want %v", labels, want)
 		}

@@ -1,5 +1,6 @@
 import { install } from 'crw:lib/lane'
-export const meta = { name: 'land-head', description: 'Land a head made outside a project-lane run through the gates of a run: the verification of its tree, a unit check of its committed range by another model family than its authors, the relay acceptance and the integration', phases: ['land'], args: { plan: 'string', milestone: 'string', issue: 'string', head: 'string', authors: 'object' } }
+import { landFixPacket } from 'crw:lib/packets'
+export const meta = { name: 'land-head', description: 'Land a head made outside a project-lane run through the gates of a run: the verification of its tree, a unit check of its committed range by another model family than its authors, the relay acceptance and the integration', phases: ['land'], args: { plan: 'string', milestone: 'string', issue: 'string', head: 'string', authors: 'object', fix_round: 'number' } }
 
 // The gate-only lane (CRW-1354). The child decides how the work of an issue is made - a project-lane run, or its own subagents outside any
 // run - and CRW enforces the order, the gates and the record of its landing (CRW-1316 §18.3). This workflow lands a head the child made
@@ -18,7 +19,19 @@ export const meta = { name: 'land-head', description: 'Land a head made outside 
 // the run). A hold (a verifier the host cannot run now, or a check the tool gave no judgment for its quota or no answer: crw.hold with
 // source unit_check) keeps the release: the run is resumed (crw flow resume), which asks the tool again, or cancelled (crw flow cancel,
 // which gives the release up). Findings of a verified check that block nothing land as premerge defects.
+// The fix rounds (CRW-1490): args.fix_round (0 when not given) is the round of the child's fix this land is, a non-negative integer:
+// any other value (a string, a negative or fractional number, null) refuses the run at its start, fix_round_invalid, before the
+// milestone is read, the node released or a fix packet made. A check that needs changes at a round under LAND_FIX_ROUNDS ends
+// land_review_needs_changes with no ask - the child acts - with the round and the carried ids on the escalation and in the value, and
+// the value hands the child a fix packet (landFixPacket): the findings, the range, the criteria and the land of the fix with fix_round
+// one more. At LAND_FIX_ROUNDS it ends land_fix_rounds with ask land_fix_rounds, a Question for the 부모, and no fix packet.
 install(crw)
+
+const LAND_FIX_ROUNDS = 2
+const fixRound = args.fix_round === undefined ? 0 : args.fix_round
+if (!Number.isInteger(fixRound) || fixRound < 0) {
+  return { state: 'refused', reason: 'fix_round_invalid', detail: 'args.fix_round is ' + JSON.stringify(args.fix_round) + ', not a non-negative integer (the round of the fix, 0 when not given)' }
+}
 
 const EPOCH_LOST = 'epoch_lost'
 const epochLost = (e) => /refused:epoch_lost:/.test((e && e.message) || '')
@@ -62,8 +75,15 @@ async function landHead(n) {
   const findings = uc.findings || []
   if (uc.verdict !== 'verified') {
     const carried = findings.map((f) => f.id)
-    return endLand(node, { reason: 'land_review_needs_changes', call: uc.check_id, detail: findings.map((f) => f.id + ' ' + f.file + ' ' + f.text).join('\n'), evidence: { carried } },
-      { head: head.commit, call: uc.check_id, carried })
+    const detail = findings.map((f) => f.id + ' ' + f.file + ' ' + f.text).join('\n')
+    const evidence = { carried, fix_round: fixRound }
+    if (fixRound >= LAND_FIX_ROUNDS) {
+      return endLand(node, { reason: 'land_fix_rounds', call: uc.check_id, detail, evidence, ask: 'land_fix_rounds' },
+        { head: head.commit, call: uc.check_id, carried, fix_round: fixRound })
+    }
+    const fix = landFixPacket(n, findings, head, { plan: args.plan, milestone: ms.id, fix_round: fixRound + 1, authors: args.authors || [] })
+    return endLand(node, { reason: 'land_review_needs_changes', call: uc.check_id, detail, evidence },
+      { head: head.commit, call: uc.check_id, carried, fix_round: fixRound, fix })
   }
   const landed = await crw.land(node, { head, ci })
   if (landed.state === 'landed') return landed

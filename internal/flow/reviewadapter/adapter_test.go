@@ -344,7 +344,7 @@ func TestAdapterRecordsTheEngineFamilyAndGuideRev(t *testing.T) {
 	if err := json.Unmarshal(raw, &keys); err != nil {
 		t.Fatal(err)
 	}
-	for _, k := range []string{"state", "detail", "verdict", "findings", "engine_family", "model", "effort", "guide_rev", "prompt_digest", "fingerprint_before", "fingerprint_after", "elapsed_ms"} {
+	for _, k := range []string{"state", "detail", "verdict", "findings", "engine_family", "model", "effort", "guide_rev", "prompt_digest", "fingerprint_before", "fingerprint_after", "elapsed_ms", "cache_read_tokens", "commands"} {
 		if _, ok := keys[k]; !ok {
 			t.Fatalf("the record has no %q: %s", k, raw)
 		}
@@ -1049,5 +1049,194 @@ func TestBugbotCommittedReaderTakesOnlyTheRequestedRange(t *testing.T) {
 			!strings.Contains(err.Error(), "names none") {
 			t.Fatalf("Check of a committed profile with no range: %v", err)
 		}
+	})
+}
+
+// TestMergeFindingsKeepsTheHigherSeverityAndTheBlockingImpact: MergeFindings merges the findings of several lists (the two passes of
+// a crosscheck round) into one finding per id: the first copy's file, line and text, the higher severity, and a blocking impact over
+// a non-blocking or empty one, whichever list holds which copy. Findings of other ids keep their order, and the inputs are not changed.
+func TestMergeFindingsKeepsTheHigherSeverityAndTheBlockingImpact(t *testing.T) {
+	id := FindingID("a.go", "The loop never ends")
+	minor := Finding{ID: id, Severity: "P3", Impact: "minor_separable", File: "a.go", Line: 3, Text: "The loop never ends"}
+	core := Finding{ID: id, Severity: "P1", Impact: "core_function", File: "a.go", Line: 40, Text: "the loop  never ends"}
+	other := Finding{ID: FindingID("b.go", "naming"), Severity: "P3", File: "b.go", Line: 1, Text: "naming"}
+	for _, c := range []struct {
+		name  string
+		a, b  []Finding
+		first Finding
+	}{
+		{"the minor copy first", []Finding{minor}, []Finding{core, other}, minor},
+		{"the blocking copy first", []Finding{core, other}, []Finding{minor}, core},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			a, b := slices.Clone(c.a), slices.Clone(c.b)
+			got := MergeFindings(a, b)
+			merged := c.first
+			merged.Severity, merged.Impact = "P1", "core_function"
+			want := []Finding{merged, other}
+			if !slices.Equal(got, want) {
+				t.Fatalf("merged = %+v\nwant %+v", got, want)
+			}
+			if !slices.Equal(a, c.a) || !slices.Equal(b, c.b) {
+				t.Fatalf("MergeFindings changed its inputs: %+v %+v", a, b)
+			}
+		})
+	}
+	t.Run("an empty impact takes the other copy's", func(t *testing.T) {
+		bare := Finding{ID: id, Severity: "P2", File: "a.go", Line: 3, Text: "The loop never ends"}
+		got := MergeFindings([]Finding{bare}, []Finding{minor})
+		if len(got) != 1 || got[0].Severity != "P2" || got[0].Impact != "minor_separable" || got[0].Line != 3 {
+			t.Fatalf("merged = %+v", got)
+		}
+		got = MergeFindings([]Finding{minor}, []Finding{bare})
+		if len(got) != 1 || got[0].Severity != "P2" || got[0].Impact != "minor_separable" {
+			t.Fatalf("merged = %+v", got)
+		}
+	})
+	t.Run("no findings is an empty list", func(t *testing.T) {
+		if got := MergeFindings(nil, []Finding{}); got == nil || len(got) != 0 {
+			t.Fatalf("merged = %#v, want an empty list", got)
+		}
+	})
+}
+
+// meteredProfile is a tool that prints {"answer": <document or null>, "usage": {"cache": N, "commands": M}} (usage absent when the
+// tool reports none), with a usage reader and the floors 100000 cached tokens, 3 commands and 60 s.
+func meteredProfile() Profile {
+	return Profile{
+		Name: "metered", Argv: []string{"fake-tool"}, Model: "gpt-6-astra", Effort: "high", QuotaTexts: []string{"usage limit"},
+		Answer: func(stdout []byte, _ Request) ([]byte, error) {
+			var out struct {
+				Answer json.RawMessage `json:"answer"`
+			}
+			if err := json.Unmarshal(stdout, &out); err != nil {
+				return nil, err
+			}
+			if string(out.Answer) == "null" {
+				return nil, nil
+			}
+			return out.Answer, nil
+		},
+		Usage: func(stdout []byte) (Usage, bool) {
+			var out struct {
+				Usage *struct {
+					Cache    int64 `json:"cache"`
+					Commands int   `json:"commands"`
+				} `json:"usage"`
+			}
+			if json.Unmarshal(stdout, &out) != nil || out.Usage == nil {
+				return Usage{}, false
+			}
+			return Usage{CacheRead: out.Usage.Cache, Commands: out.Usage.Commands}, true
+		},
+		MinCacheRead: 100000, MinCommands: 3, MinElapsed: 60 * time.Second,
+	}
+}
+
+// meteredOutput is what meteredProfile's tool prints: answer (a JSON document, or "null" for a blank one) and, when cache >= 0, the
+// usage it reports.
+func meteredOutput(answer string, cache int64, commands int) string {
+	if cache < 0 {
+		return `{"answer":` + answer + `}`
+	}
+	return fmt.Sprintf(`{"answer":%s,"usage":{"cache":%d,"commands":%d}}`, answer, cache, commands)
+}
+
+// checkFor runs one check of p on f whose call takes d on a fake clock.
+func checkFor(t *testing.T, p Profile, f fakeRun, d time.Duration) Result {
+	t.Helper()
+	clock := time.Date(2026, 10, 16, 4, 0, 0, 0, time.UTC)
+	calls := 0
+	now := func() time.Time {
+		calls++
+		if calls == 1 {
+			return clock
+		}
+		return clock.Add(d)
+	}
+	res, err := Adapter{Run: f.run, Fingerprint: hashFiles, Now: now}.Check(t.Context(), request(t, p))
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	return res
+}
+
+// TestAdapterVoidsAPassThatReadNoRepository: a profile with floors (cached tokens, commands, elapsed time) turns an answer that would
+// be ok into not_read when the call ran shorter than its floor, reported no usage, read fewer cached tokens or ran fewer commands
+// than the floor: such a pass read no repository and has no verdict. The record keeps the elapsed time and the usage the tool
+// reported in every state; a profile without floors is never voided, and the states before ok keep their order.
+func TestAdapterVoidsAPassThatReadNoRepository(t *testing.T) {
+	valid := `{"verdict":"verified","findings":[]}`
+	t.Run("a shallow pass is not read", func(t *testing.T) {
+		res := checkFor(t, meteredProfile(), fakeRun{stdout: meteredOutput(valid, 2304, 1)}, 20*time.Second)
+		wantState(t, res, StateNotRead)
+		if res.ElapsedMS != 20000 || res.CacheReadTokens != 2304 || res.Commands != 1 {
+			t.Fatalf("elapsed %d ms, cache read %d, commands %d; want 20000, 2304, 1", res.ElapsedMS, res.CacheReadTokens, res.Commands)
+		}
+		for _, n := range []string{"2304 tokens", "1 commands", "20 s"} {
+			if !strings.Contains(res.Detail, n) {
+				t.Fatalf("detail %q does not name %q", res.Detail, n)
+			}
+		}
+		if res.Verdict != "" || res.Findings != nil {
+			t.Fatalf("a void pass carries a verdict: %+v", res)
+		}
+	})
+	t.Run("a pass over every floor is ok", func(t *testing.T) {
+		res := checkFor(t, meteredProfile(), fakeRun{stdout: meteredOutput(valid, 150000, 4)}, 70*time.Second)
+		wantState(t, res, StateOK)
+		if res.ElapsedMS != 70000 || res.CacheReadTokens != 150000 || res.Commands != 4 || res.Verdict != VerdictVerified {
+			t.Fatalf("result = %+v", res)
+		}
+	})
+	t.Run("each floor alone voids the pass", func(t *testing.T) {
+		for name, c := range map[string]struct {
+			cache    int64
+			commands int
+			d        time.Duration
+		}{
+			"too few cached tokens": {99999, 4, 70 * time.Second},
+			"too few commands":      {150000, 2, 70 * time.Second},
+			"too short":             {150000, 4, 59 * time.Second},
+		} {
+			t.Run(name, func(t *testing.T) {
+				res := checkFor(t, meteredProfile(), fakeRun{stdout: meteredOutput(valid, c.cache, c.commands)}, c.d)
+				wantState(t, res, StateNotRead)
+				if res.CacheReadTokens != c.cache || res.Commands != c.commands || res.ElapsedMS != c.d.Milliseconds() {
+					t.Fatalf("result = %+v", res)
+				}
+			})
+		}
+	})
+	t.Run("no usage is not read", func(t *testing.T) {
+		res := checkFor(t, meteredProfile(), fakeRun{stdout: meteredOutput(valid, -1, 0)}, 70*time.Second)
+		wantState(t, res, StateNotRead)
+		if res.CacheReadTokens != 0 || res.Commands != 0 || res.ElapsedMS != 70000 || !strings.Contains(res.Detail, "no usage") {
+			t.Fatalf("result = %+v", res)
+		}
+	})
+	t.Run("a profile without floors is never voided and still records the usage", func(t *testing.T) {
+		p := meteredProfile()
+		p.MinCacheRead, p.MinCommands, p.MinElapsed = 0, 0, 0
+		res := checkFor(t, p, fakeRun{stdout: meteredOutput(valid, 2304, 1)}, 20*time.Second)
+		wantState(t, res, StateOK)
+		if res.ElapsedMS != 20000 || res.CacheReadTokens != 2304 || res.Commands != 1 {
+			t.Fatalf("result = %+v", res)
+		}
+		res = checkFor(t, p, fakeRun{stdout: meteredOutput(valid, -1, 0)}, 20*time.Second)
+		wantState(t, res, StateOK)
+	})
+	t.Run("the states before ok keep their order and record the usage", func(t *testing.T) {
+		res := checkFor(t, meteredProfile(), fakeRun{stdout: meteredOutput("null", 2304, 1)}, 20*time.Second)
+		wantState(t, res, StateNoAnswer)
+		if res.ElapsedMS != 20000 || res.CacheReadTokens != 2304 || res.Commands != 1 {
+			t.Fatalf("result = %+v", res)
+		}
+		res = checkFor(t, meteredProfile(), fakeRun{stdout: meteredOutput(`{"verdict":"approve","findings":[]}`, 2304, 1)}, 20*time.Second)
+		wantState(t, res, StateInvalid)
+		res = checkFor(t, meteredProfile(), fakeRun{stdout: meteredOutput(valid, 2304, 1), touch: "x.go"}, 20*time.Second)
+		wantState(t, res, StateWorktreeChanged)
+		res = checkFor(t, meteredProfile(), fakeRun{exit: 1, stderr: "usage limit"}, 20*time.Second)
+		wantState(t, res, StateQuota)
 	})
 }

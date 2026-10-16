@@ -61,7 +61,8 @@ func flowOwnershipProblems(section string) []string {
 	for _, p := range wordingMissing(flat, []string{
 		`(?i)the executor and an oversized (issue )?child start no PABCD state machine`,
 		`(?i)the standalone PABCD rules are unchanged`,
-		`(?i)reviewer-final does not replace the pre-build design audit`,
+		`(?i)the crosscheck does not replace the pre-build design audit`,
+		`(?i)crosscheck[^.]*another (model|engine) family than (every|each|the) author`,
 		`(?i)another model family than the architect`,
 		`(?i)before any executor starts`,
 		`(?i)needs_changes[^.]*returns to the architect`,
@@ -70,14 +71,14 @@ func flowOwnershipProblems(section string) []string {
 		problems = append(problems, "the section lacks "+p)
 	}
 	// The order of the C4 procedure is the order of its numbered steps: DESIGN, then the audit, then the candidate review of each issue,
-	// then the final gate with reviewer-final.
+	// then the final gate with the crosscheck (CRW-1473: the milestone close runs the crosscheck in place of reviewer-final).
 	var steps []string
 	for _, line := range lines(section) {
 		if numberedStep.MatchString(line) {
 			steps = append(steps, normalized(line))
 		}
 	}
-	wantSteps := [][]string{{"architect DESIGN"}, {"pre-build design audit"}, {"candidate review"}, {"final gate", "reviewer-final"}}
+	wantSteps := [][]string{{"architect DESIGN"}, {"pre-build design audit"}, {"candidate review"}, {"final gate", "crosscheck"}}
 	if len(steps) != len(wantSteps) {
 		problems = append(problems, "the high-risk procedure has "+strconv.Itoa(len(steps))+" numbered steps, want 4")
 	} else {
@@ -99,7 +100,7 @@ func TestFlowControlOwnershipTableWording(t *testing.T) {
 	}
 	// The skill that classifies the work carries the same order for a C4 issue, so the two readers agree.
 	dev := normalized(readRepoText(t, "plugins/crw/skills/crw-dev/SKILL.md"))
-	for _, want := range []string{"independent pre-build design audit by the critic, of a different model family than the architect, before any executor starts", "reviewer-final does not replace the pre-build design audit"} {
+	for _, want := range []string{"independent pre-build design audit by the critic, of a different model family than the architect, before any executor starts", "the crosscheck does not replace the pre-build design audit"} {
 		if !strings.Contains(dev, want) {
 			t.Errorf("crw-dev/SKILL.md lacks %q", want)
 		}
@@ -124,7 +125,7 @@ func TestFlowControlOwnershipTableWording(t *testing.T) {
 		good := "## Who owns control in a flow-managed run\n\n| Control | Owner |\n|---|---|\n| Phases | the run |\n| Audit | the run |\n| Evidence | the run |\n\n" +
 			"The executor and an oversized child start no PABCD state machine. The standalone PABCD rules are unchanged.\n\n" +
 			"1. The architect DESIGN.\n2. The pre-build design audit, by the critic, of another model family than the architect, before any executor starts; needs_changes returns to the architect and a replan is audited again.\n" +
-			"3. The candidate review of each issue.\n4. After integration the final gate and reviewer-final. Reviewer-final does not replace the pre-build design audit.\n"
+			"3. The candidate review of each issue.\n4. After integration the final gate, then the crosscheck over the integrated range by a review engine of another model family than every author. The crosscheck does not replace the pre-build design audit.\n"
 		if p := flowOwnershipProblems(sectionOf(good, "Who owns control in a flow-managed run")); len(p) > 0 {
 			t.Fatalf("the good text is reported: %v", p)
 		}
@@ -137,7 +138,10 @@ func TestFlowControlOwnershipTableWording(t *testing.T) {
 				return strings.Replace(s, "start no PABCD state machine", "start the PABCD state machine", 1)
 			},
 			"final replaces": func(s string) string {
-				return strings.Replace(s, "Reviewer-final does not replace", "Reviewer-final replaces", 1)
+				return strings.Replace(s, "The crosscheck does not replace", "The crosscheck replaces", 1)
+			},
+			"crosscheck of the authors' family": func(s string) string {
+				return strings.Replace(s, "of another model family than every author", "of the authors' model family", 1)
 			},
 			"audit after run": func(s string) string {
 				return strings.Replace(s, "before any executor starts", "after the executors", 1)

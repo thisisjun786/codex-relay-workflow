@@ -79,6 +79,9 @@ type LaneOptions struct {
 	Reporter ops.Reporter
 	// UnitCheck is what crw.unitCheck runs a node's unit check with (CRW-1463); nil is shippedUnitCheck.
 	UnitCheck *ops.UnitCheck
+	// Crosscheck is what crw.crosscheck runs a milestone's crosscheck with (CRW-1473); nil is shippedCrosscheck. Its Authors, when nil,
+	// are the author pairs of the run's role table (laneCrosscheck).
+	Crosscheck *ops.Crosscheck
 }
 
 // SchedulerLane is the OpsFor of the shipped binary.
@@ -167,7 +170,8 @@ func BuildLane(ctx context.Context, req LaneRequest, opt LaneOptions) (LaneWorld
 		}
 	}
 	lane := ops.NewLane(ops.Deps{RunID: spec.RunID, Repo: req.Repo, Journal: journal, Relay: seam, Verifier: verifier, Decisions: ops.StoreDecisions{DB: req.Store.DB},
-		Threads: req.Threads, Reporter: reporter, Actor: spec.Thread, LandRoot: RunDir(req.State, spec.RunID), UnitCheck: unitCheck})
+		Threads: req.Threads, Reporter: reporter, Actor: spec.Thread, LandRoot: RunDir(req.State, spec.RunID), UnitCheck: unitCheck,
+		Crosscheck: laneCrosscheck(opt.Crosscheck, req.Policy)})
 	out := LaneWorld{Ops: lane.Ops(), Prover: ops.NewProver(), InputSnapshot: lane.InputSnapshot, Journal: journal}
 	if plan := planOf(spec.Args); plan != "" && ref.Path != "" {
 		out.Base = func(string) (string, error) { return relay.IntegrationTip(ctx, plan) }
@@ -225,6 +229,63 @@ func shippedUnitCheck(getenv func(string) (string, bool)) (*ops.UnitCheck, error
 		},
 		Limit: shippedUnitCheckLimit,
 	}, nil
+}
+
+// shippedCrosscheckLimit is the time limit of one pass of the shipped crosscheck's engine.
+const shippedCrosscheckLimit = 40 * time.Minute
+
+// crosscheckAuthorRoles are the roles whose pairs author a milestone: the engine of its crosscheck is of another family than each.
+var crosscheckAuthorRoles = []string{"architect", "executor", "executor-t1"}
+
+// laneCrosscheck is the crosscheck of a run's lane: the option's (the shipped one when nil), with the author pairs of the run's role
+// table when it names none - the model of architect, executor and executor-t1 as the table gives them, "" for a pair the table leaves
+// undecided (crw.crosscheck refuses on it). A resumed run's table holds the pairs it pinned, so its authors are those of its start.
+func laneCrosscheck(opt *ops.Crosscheck, policy *engine.Policy) *ops.Crosscheck {
+	cc := opt
+	if cc == nil {
+		cc = shippedCrosscheck()
+	}
+	if cc.Authors != nil {
+		return cc
+	}
+	out := *cc
+	out.Authors = map[string]string{}
+	for _, role := range crosscheckAuthorRoles {
+		model := ""
+		if policy != nil {
+			model = policy.Roles[role].Pair.Model
+		}
+		out.Authors[role] = model
+	}
+	return &out
+}
+
+// shippedCrosscheck is the crosscheck of the shipped lane (CRW-1473): the review adapter over the tool runner (reviewadapter.ExecRun) with
+// ops.Snapshot as its fingerprint, the engines astra (gpt-6-astra, family gpt) then grok (grok-4.7, family grok), and the shipped
+// checkout (nil: Lane.crosscheckWorktree under the run's directory). Astra answers under the strict form of the answer schema, which
+// Profiles writes to <run dir>/crosscheck/answer.strict.json when the op first asks for the profiles; nothing is written when the lane
+// is built. Each profile carries the floors of a pass that read the repository (CRW-1504: astra 3 commands and 45 s, grok 100000 cached
+// tokens and 60 s), so a shallow pass is not_read, which crw.crosscheck reruns once or turns into no verdict.
+func shippedCrosscheck() *ops.Crosscheck {
+	git := ops.ExecGit("git")
+	return &ops.Crosscheck{
+		Checker: reviewadapter.Adapter{Run: reviewadapter.ExecRun, Fingerprint: func(ctx context.Context, dir string) (string, error) { return ops.Snapshot(ctx, git, dir) }},
+		Profiles: func(runDir string) ([]reviewadapter.Profile, error) {
+			strict, err := reviewadapter.StrictSchema(reviewadapter.AnswerSchema)
+			if err != nil {
+				return nil, err
+			}
+			file := filepath.Join(runDir, "crosscheck", "answer.strict.json")
+			if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
+				return nil, err
+			}
+			if err := os.WriteFile(file, strict, 0o600); err != nil {
+				return nil, err
+			}
+			return []reviewadapter.Profile{reviewadapter.AstraProfile(file), reviewadapter.GrokProfile(reviewadapter.AnswerSchema)}, nil
+		},
+		Limit: shippedCrosscheckLimit,
+	}
 }
 
 // ShippedRunnableCommand says why the shipped lane's verifier cannot run a required command of a milestone ("" when it can): the

@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -845,4 +846,314 @@ func TestUnitCheckStopsAfterTwoRoundTripsAndCarriesTheRest(t *testing.T) {
 			t.Errorf("the premerge record does not carry %s:\n%s", id3, pm)
 		}
 	})
+}
+
+// ---- the crosscheck of the milestone close (CRW-1473) ----
+
+// labRows are the completed rows of an op of the lab's last process, in order, with their index in the journal.
+func labRows(l *laneLab, op string) ([]engine.Event, []int) {
+	var out []engine.Event
+	var at []int
+	for i, e := range l.events() {
+		if e.Kind == engine.KindCall && e.Op == op && e.Event == engine.EvCompleted {
+			out = append(out, e)
+			at = append(at, i)
+		}
+	}
+	return out, at
+}
+
+// bodyLine is the value of the line of a report body that starts with prefix ("" when there is none).
+func bodyLine(body, prefix string) string {
+	for _, line := range strings.Split(body, "\n") {
+		if v, ok := strings.CutPrefix(line, prefix); ok {
+			return v
+		}
+	}
+	return ""
+}
+
+// TestCloseDoesNotCloseWhenTheCrosscheckHasAP1Finding (CRW-1473): the crosscheck's pass A finds a P1 core_function finding in the
+// integrated range of M1. The milestone does not close: no crw.milestoneClose and no crw.reportUp row, no reviewer-final call, and the run
+// ends escalated crosscheck_pending with ask crosscheck_pending (the 자식 hands it to the 부모). The verdict V is handed on as the op
+// recorded it: the run's value carries it as crosscheck, JSON-equal to the crw.crosscheck row's verdict and to the escalation's
+// evidence.crosscheck, and the fix packet in the value names the finding by its id and the route of the fix (a correction node landed
+// through land-head, then the verdict reported up), not a second crosscheck run.
+func TestCloseDoesNotCloseWhenTheCrosscheckHasAP1Finding(t *testing.T) {
+	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+	f := reviewadapter.Finding{Severity: "P1", Impact: "core_function", File: "node-A-1.txt", Line: 1, Text: "the file breaks the criterion of the milestone"}
+	id := reviewadapter.FindingID(f.File, f.Text)
+	l.Crosschecks("M1", 1, 0, "A", 1, reviewadapter.Result{State: reviewadapter.StateOK, Verdict: reviewadapter.VerdictNeedsChanges, Findings: []reviewadapter.Finding{f}})
+	_, v := unitCheckRun(t, l)
+	if v["state"] != "escalated" || v["source"] != "crosscheck" || v["reason"] != "crosscheck_pending" || v["ask"] != "crosscheck_pending" {
+		t.Fatalf("the run's value %v, want escalated crosscheck_pending with ask crosscheck_pending", v)
+	}
+	rows, _ := labRows(l, ops.OpCrosscheck)
+	if len(rows) != 1 || str(rows[0].Data, "state") != ops.CrosscheckStateVerdict {
+		t.Fatalf("crosscheck rows %+v", rows)
+	}
+	recorded := rows[0].Data["verdict"]
+	if rv, _ := recorded.(map[string]any); rv["verdict"] != reviewadapter.VerdictNeedsChanges {
+		t.Fatalf("the crosscheck row's verdict %v", recorded)
+	}
+	if !jsonEqualCLI(t, v["crosscheck"], recorded) {
+		t.Errorf("the run's value carries the crosscheck %v, want the row's verdict %v", v["crosscheck"], recorded)
+	}
+	var esc map[string]any
+	for _, e := range l.events() {
+		if e.Kind == engine.KindFlow && e.Event == engine.EvEscalation && str(e.Data, "reason") == "crosscheck_pending" {
+			esc = e.Data
+		}
+	}
+	if esc == nil || str(esc, "ask") != "crosscheck_pending" {
+		t.Fatalf("no escalation crosscheck_pending asking crosscheck_pending: %v", esc)
+	}
+	evidence, _ := esc["evidence"].(map[string]any)
+	if !jsonEqualCLI(t, evidence["crosscheck"], recorded) {
+		t.Errorf("the escalation's evidence.crosscheck %v, want the row's verdict %v", evidence["crosscheck"], recorded)
+	}
+	fix, _ := v["fix"].(string)
+	for _, want := range []string{id, "crw flow start land-head", "crw flow report-up", "부모"} {
+		if !strings.Contains(fix, want) {
+			t.Errorf("the fix packet lacks %q:\n%s", want, fix)
+		}
+	}
+	if strings.Contains(fix, "start crosscheck") {
+		t.Errorf("the fix packet starts a second crosscheck run:\n%s", fix)
+	}
+	for _, op := range []string{ops.OpMilestoneClose, ops.OpReportUp, ops.OpReviewerFinal} {
+		if got, _ := labRows(l, op); len(got) != 0 {
+			t.Errorf("%d %s rows: the milestone closed over a crosscheck that needs changes", len(got), op)
+		}
+	}
+	for _, c := range labCalls(l) {
+		if c.Role == "reviewer-final" || strings.HasPrefix(c.Label, "reviewer-final:") || strings.HasPrefix(c.Label, "reflection:") {
+			t.Errorf("the close made the call %s (%s)", c.Label, c.Role)
+		}
+	}
+}
+
+// TestReportBodyCarriesTheCrosscheckAndReflectionOfTheClose (CRW-1473): a clean close of M1 reports up the crosscheck it closed over and
+// the reflection of the architect. The body the shipped Reporter stores (report.MilestoneBody of the ops.Report the op built) holds a
+// Crosscheck: line whose V is verified at the gate's head, and Reflection: ALIGNED.
+func TestReportBodyCarriesTheCrosscheckAndReflectionOfTheClose(t *testing.T) {
+	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+	res, v := unitCheckRun(t, l)
+	l.closed(res)
+	if v["crosscheck"] != reviewadapter.VerdictVerified || v["reflection"] != "ALIGNED" {
+		t.Errorf("the run's value %v", v)
+	}
+	gates, _ := labRows(l, ops.OpGate)
+	if len(gates) == 0 {
+		t.Fatal("no gate row")
+	}
+	head := str(gates[len(gates)-1].Data, "head")
+	l.mu.Lock()
+	bodies := append([]string(nil), l.reportBodies...)
+	l.mu.Unlock()
+	if len(bodies) != 1 {
+		t.Fatalf("%d report bodies", len(bodies))
+	}
+	var cc map[string]any
+	if err := json.Unmarshal([]byte(bodyLine(bodies[0], "Crosscheck: ")), &cc); err != nil {
+		t.Fatalf("the body's Crosscheck: line is no V: %v\n%s", err, bodies[0])
+	}
+	if cc["verdict"] != reviewadapter.VerdictVerified || cc["head"] != head || head == "" || cc["guide_rev"] != ops.CrosscheckGuideRev {
+		t.Errorf("the body's crosscheck %v, want a verified V at the gate head %s", cc, head)
+	}
+	if got := bodyLine(bodies[0], "Reflection: "); got != "ALIGNED" {
+		t.Errorf("the body's Reflection: %q\n%s", got, bodies[0])
+	}
+}
+
+// TestReplannedCloseRunsEveryFinalStepFirst (CRW-1473): a close whose reflection is MISALIGNED is due for a re-plan, and the closed
+// milestone is audited, archived and reported before the re-plan: the crw.audit, crw.archive and crw.reportUp rows come before the
+// replan:close call, and the report body says Reflection: MISALIGNED.
+func TestReplannedCloseRunsEveryFinalStepFirst(t *testing.T) {
+	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+	l.turn = func(c labCall, r fakehost.TurnRequest) (fakehost.TurnPlan, bool) {
+		if c.Role == "architect" && strings.HasPrefix(c.Label, "reflection:") {
+			return labSay(map[string]any{"verdict": "MISALIGNED", "misaligned": []any{map[string]any{"decision_id": "D1", "observed": "the range departs from D1",
+				"affected_nodes": []string{l.nodeOf["A-1"]}, "evidence": []string{"README.md"}}}}), true
+		}
+		return fakehost.TurnPlan{}, false
+	}
+	_, v := unitCheckRun(t, l)
+	replanAt := -1
+	for i, e := range l.events() {
+		if e.Kind == engine.KindCall && e.Op == "agent" && e.Event == engine.EvPrepared && e.Label == "replan:close" {
+			replanAt = i
+			break
+		}
+	}
+	if replanAt < 0 {
+		t.Fatalf("no replan:close call; the run's value %v", v)
+	}
+	for _, op := range []string{ops.OpAudit, ops.OpArchive, ops.OpReportUp} {
+		_, at := labRows(l, op)
+		if len(at) != 1 || at[0] > replanAt {
+			t.Errorf("the %s rows at %v, want one before the replan:close call at %d", op, at, replanAt)
+		}
+	}
+	l.mu.Lock()
+	bodies := append([]string(nil), l.reportBodies...)
+	l.mu.Unlock()
+	if len(bodies) != 1 || bodyLine(bodies[0], "Reflection: ") != "MISALIGNED" {
+		t.Errorf("the report bodies %q, want one that says Reflection: MISALIGNED", bodies)
+	}
+}
+
+// TestCrosscheckRerunsAVoidPassOnceAndGivesNoVerdictWhenBothAreVoid (CRW-1504): a pass that answered but read no repository (not_read)
+// is void. When exactly one pass of the round is void and the other is ok, only the void pass runs once more, on a fresh checkout
+// (attempt 2), and the first attempt stays in V.passes as voided; a rerun that reads the repository gives the verdict. When both passes
+// are void, the round gives no verdict at once (two checks, no rerun), and so does a rerun that is void again: the run ends escalated
+// crosscheck_no_verdict with ask crosscheck_no_verdict (the 자식 hands it to the 부모) and the milestone does not close.
+func TestCrosscheckRerunsAVoidPassOnceAndGivesNoVerdictWhenBothAreVoid(t *testing.T) {
+	void := reviewadapter.Result{State: reviewadapter.StateNotRead, Verdict: reviewadapter.VerdictVerified, Detail: "read 2304 tokens and 1 commands in 20 s (min 3 commands, 45 s)"}
+	ok := reviewadapter.Result{State: reviewadapter.StateOK, Verdict: reviewadapter.VerdictVerified}
+	keys := func(l *laneLab) []string {
+		var out []string
+		for _, c := range l.cc.requests() {
+			out = append(out, c.Key)
+		}
+		return out
+	}
+	crosscheckRow := func(t *testing.T, l *laneLab) engine.Event {
+		t.Helper()
+		rows, _ := labRows(l, ops.OpCrosscheck)
+		if len(rows) != 1 {
+			t.Fatalf("%d crosscheck rows", len(rows))
+		}
+		return rows[0]
+	}
+	passesOf := func(t *testing.T, row engine.Event) []ops.CrosscheckPass {
+		t.Helper()
+		raw, _ := json.Marshal(row.Data["passes"])
+		var out []ops.CrosscheckPass
+		if err := json.Unmarshal(raw, &out); err != nil {
+			t.Fatalf("the row's passes %s: %v", raw, err)
+		}
+		return out
+	}
+	noVerdict := func(t *testing.T, l *laneLab, v map[string]any) {
+		t.Helper()
+		if v["state"] != "escalated" || v["source"] != "crosscheck" || v["reason"] != "crosscheck_no_verdict" || v["ask"] != "crosscheck_no_verdict" {
+			t.Fatalf("the run's value %v, want escalated crosscheck_no_verdict with ask crosscheck_no_verdict", v)
+		}
+		row := crosscheckRow(t, l)
+		if str(row.Data, "state") != ops.CrosscheckStateNoVerdict || str(row.Data, "reason") != "crosscheck_no_verdict" || row.Data["verdict"] != nil {
+			t.Errorf("the crosscheck row %v, want no_verdict crosscheck_no_verdict with no V", row.Data)
+		}
+		var esc map[string]any
+		for _, e := range l.events() {
+			if e.Kind == engine.KindFlow && e.Event == engine.EvEscalation && str(e.Data, "reason") == "crosscheck_no_verdict" {
+				esc = e.Data
+			}
+		}
+		if esc == nil || str(esc, "ask") != "crosscheck_no_verdict" {
+			t.Errorf("no escalation crosscheck_no_verdict asking crosscheck_no_verdict: %v", esc)
+		}
+		for _, op := range []string{ops.OpMilestoneClose, ops.OpReportUp} {
+			if got, _ := labRows(l, op); len(got) != 0 {
+				t.Errorf("%d %s rows: the milestone closed over a crosscheck that gave no verdict", len(got), op)
+			}
+		}
+	}
+
+	t.Run("one void pass reruns once and the rerun gives the verdict", func(t *testing.T) {
+		l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+		l.Crosschecks("M1", 1, 0, "A", 1, void)
+		l.Crosschecks("M1", 1, 0, "B", 1, ok)
+		l.Crosschecks("M1", 1, 0, "A", 2, ok)
+		res, v := unitCheckRun(t, l)
+		l.closed(res)
+		if v["crosscheck"] != reviewadapter.VerdictVerified {
+			t.Errorf("the run's value %v", v)
+		}
+		if got := keys(l); len(got) != 3 || !slices.Contains(got, "M1/r1/e0/A1") || !slices.Contains(got, "M1/r1/e0/B1") || got[2] != "M1/r1/e0/A2" {
+			t.Fatalf("the checks %v, want A1 and B1, then A2", got)
+		}
+		dirs := map[string]bool{}
+		for _, c := range l.cc.requests() {
+			if !c.Existed || dirs[c.Request.Worktree] {
+				t.Errorf("check %s ran in %q (existed %v): each attempt has a fresh checkout of its own", c.Key, c.Request.Worktree, c.Existed)
+			}
+			dirs[c.Request.Worktree] = true
+		}
+		row := crosscheckRow(t, l)
+		rv, _ := row.Data["verdict"].(map[string]any)
+		if str(row.Data, "state") != ops.CrosscheckStateVerdict || rv["verdict"] != reviewadapter.VerdictVerified {
+			t.Fatalf("the crosscheck row %v", row.Data)
+		}
+		raw, _ := json.Marshal(rv["passes"])
+		var vpasses []ops.CrosscheckPass
+		_ = json.Unmarshal(raw, &vpasses)
+		for name, passes := range map[string][]ops.CrosscheckPass{"the row": passesOf(t, row), "V": vpasses} {
+			if len(passes) != 3 {
+				t.Fatalf("%s's passes %+v", name, passes)
+			}
+			want := []struct {
+				pass    string
+				attempt int
+				state   string
+				voided  bool
+			}{{"A", 1, string(reviewadapter.StateNotRead), true}, {"B", 1, string(reviewadapter.StateOK), false}, {"A", 2, string(reviewadapter.StateOK), false}}
+			for i, w := range want {
+				p := passes[i]
+				if p.Pass != w.pass || p.Attempt != w.attempt || p.State != w.state || p.Voided != w.voided {
+					t.Errorf("%s's pass %d: %+v, want %+v", name, i, p, w)
+				}
+			}
+		}
+	})
+
+	t.Run("both void passes give no verdict at once", func(t *testing.T) {
+		l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+		l.Crosschecks("M1", 1, 0, "A", 1, void)
+		l.Crosschecks("M1", 1, 0, "B", 1, void)
+		_, v := unitCheckRun(t, l)
+		if got := keys(l); len(got) != 2 {
+			t.Errorf("the checks %v, want exactly A1 and B1", got)
+		}
+		noVerdict(t, l, v)
+		passes := passesOf(t, crosscheckRow(t, l))
+		if len(passes) != 2 || !passes[0].Voided || !passes[1].Voided {
+			t.Errorf("the row's passes %+v, want both attempts voided", passes)
+		}
+	})
+
+	t.Run("a rerun that is void again gives no verdict", func(t *testing.T) {
+		l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+		l.Crosschecks("M1", 1, 0, "A", 1, void)
+		l.Crosschecks("M1", 1, 0, "B", 1, ok)
+		l.Crosschecks("M1", 1, 0, "A", 2, void)
+		_, v := unitCheckRun(t, l)
+		if got := keys(l); len(got) != 3 || got[2] != "M1/r1/e0/A2" {
+			t.Errorf("the checks %v, want A1 and B1, then A2", got)
+		}
+		noVerdict(t, l, v)
+		passes := passesOf(t, crosscheckRow(t, l))
+		if len(passes) != 3 || !passes[0].Voided || passes[1].Voided || !passes[2].Voided || passes[2].Attempt != 2 {
+			t.Errorf("the row's passes %+v, want A1 and A2 voided beside B1", passes)
+		}
+	})
+}
+
+// jsonEqualCLI says whether two values are the same JSON.
+func jsonEqualCLI(t *testing.T, a, b any) bool {
+	t.Helper()
+	ra, err := json.Marshal(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rb, err := json.Marshal(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var x, y any
+	_ = json.Unmarshal(ra, &x)
+	_ = json.Unmarshal(rb, &y)
+	na, _ := json.Marshal(x)
+	nb, _ := json.Marshal(y)
+	return a != nil && b != nil && string(na) == string(nb)
 }

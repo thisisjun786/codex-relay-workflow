@@ -277,11 +277,14 @@ type CloseRange struct {
 }
 
 // CloseOutcome is what the milestone close judged: the final gate over the integrated head, the review of reviewer-final that took
-// the gate as its input, and the audit of the nodes' reviews that ran before the reviewer threads were archived.
+// the gate as its input (a close made before the crosscheck), the audit of the nodes' reviews that ran before the reviewer threads
+// were archived, the crosscheck's verdict V (CRW-1473) and the alignment the reflection of the close answered.
 type CloseOutcome struct {
-	Gate  json.RawMessage `json:"gate"`
-	Final json.RawMessage `json:"final"`
-	Audit json.RawMessage `json:"audit"`
+	Gate       json.RawMessage `json:"gate"`
+	Final      json.RawMessage `json:"final"`
+	Audit      json.RawMessage `json:"audit"`
+	Crosscheck json.RawMessage `json:"crosscheck"`
+	Reflection string          `json:"reflection"`
 }
 
 // Threads is the host as the close reads and archives the reviewer threads of the nodes (CRW-1206): thread/turns/list and
