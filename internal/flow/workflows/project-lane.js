@@ -240,6 +240,12 @@ async function nodeLane(n, rel, sig) {
     const esc = await crw.escalate(node, { reason: 'size_split', detail: 'child_retired', evidence: { size_reason: plan.size_reason } })
     return { node, state: 'escalated', reason: 'size_split', escalation: esc.id }
   }
+  if (plan.size_fit === 'bundle_split') {
+    // a node too big for one node goes up to the parent as a bundle split request (CRW-1437): the size_split escalation closes its
+    // execution and returns its slot before any executor call, and no decision is waited for
+    const esc = await crw.escalate(node, { reason: 'size_split', detail: plan.size_reason, ask: 'bundle_split_request', evidence: { size_reason: plan.size_reason } })
+    return { node, state: 'escalated', reason: 'size_split', escalation: esc.id }
+  }
   if (plan.size_fit === 'split') {
     const esc = await crw.escalate(node, { reason: 'size_split', detail: plan.size_reason })
     return { node, state: 'escalated', reason: 'size_split', escalation: esc.id }
