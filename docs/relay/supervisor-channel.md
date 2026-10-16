@@ -977,7 +977,19 @@ for a direct message's cap word, which its re-address keeps (below) while its ro
 A statement is what the message says, not its bytes (`statementKey`): its obligation, event and
 submission and the content fields of its packet. Seat, scope, sender and observation time are routing
 and never make a new statement, so the daemon's pass, a restart, the direct sender repeating its
-report and a rotated sender session all stage the same statement again.
+report and a rotated sender session all stage the same statement again. A direct message's statement
+is what its sender gave. The channel records in the packet's `origin` the values it generated itself:
+whether the evidence is the default `supervisor-show --message` pointer (`channel`, which names the
+executable and state directory that composed it) or the sender's list (`sender`), report-up's
+attribution line (`preface`), and the digest of the sender's whole text before the body's 6000-byte
+cut (`text`). A row that carries the record is compared through it, so another executable or another
+reporting thread is the same statement, while a change anywhere in the sender's text, its evidence
+list, or an explicit pointer later omitted is a new one. A row staged before the record existed is
+compared the fields way on both sides until this build writes it: another executable or reporter
+releases its park once, and an explicit pointer equal to the same channel's default pointer text that
+is later omitted reads as the same statement. A row without the record whose stored body reached the
+cut cannot show what the cut dropped, so its next staging releases its park once and writes the
+record. An unchanged replay of an old row writes nothing.
 
 | entry | none | other | derived | acknowledged | notice |
 | --- | --- | --- | --- | --- | --- |
