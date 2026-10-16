@@ -127,7 +127,7 @@ func newRunSpec(tip string, issues ...string) runSpec {
 func crosscheckRow(milestone, head, state, verdict string, followUps ...string) engine.Event {
 	v := map[string]any{"verdict": verdict, "findings": []any{}, "carried": []any{}, "follow_ups": toAny(followUps), "guide_rev": "crw-crosscheck/1",
 		"engine_family": "gpt", "model": "gpt-6-astra", "round": 1, "milestone": milestone, "plan": "plan-1", "head": head}
-	return engine.Event{Kind: engine.KindCall, Op: opCrosscheck, Event: engine.EvCompleted,
+	return engine.Event{Kind: engine.KindCall, Op: ops.OpCrosscheck, Event: engine.EvCompleted,
 		Data: map[string]any{"milestone": milestone, "head": head, "round": 1, "state": state, "verdict": v}}
 }
 

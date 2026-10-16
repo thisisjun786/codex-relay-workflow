@@ -44,8 +44,8 @@ func (l Leak) Short() string {
 	return l.Kind + " " + string(m)
 }
 
-// pathPattern finds /home, /state and /scratch as the root of a path. The left side is the start of the text or of a line, or a
-// character that cannot end a path segment (so `file:///home/x`, a backticked, quoted or bracketed path and `x=/scratch/y` match,
+// pathPattern finds the top directories home, state and scratch as the root of a path. The left side is the start of the text or of
+// a line, or a character that cannot end a path segment (so `file:///home/x`, a backticked, quoted or bracketed path and `x=/state/y` match,
 // and `docs/state/x.md`, `a/home/b` and `.../home/` do not). The right side is a slash, the end of the line or a closing character.
 var pathPattern = regexp.MustCompile(pathLeft + "(/(?:home|state|scratch))" + pathRight)
 

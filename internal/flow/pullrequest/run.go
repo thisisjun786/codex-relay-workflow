@@ -15,10 +15,6 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/tracking"
 )
 
-// opCrosscheck is the op of the crosscheck call (R3, CRW-1442): its completed rows are the crosscheck this package reads. The name is
-// local so the package compiles on a dev that does not hold the op yet; ops/lane_pr.go keeps the same literal.
-const opCrosscheck = "crw.crosscheck"
-
 // The reasons `open --run` refuses with (exit 2), each printed as the first word of the refusal.
 const (
 	reasonRunUnknown         = "run_unknown"
@@ -225,7 +221,7 @@ func crosscheckOf(events []engine.Event, milestone, head string) (Crosscheck, st
 	anyOfMilestone := false
 	for i := len(events) - 1; i >= 0; i-- {
 		e := events[i]
-		if e.Kind != engine.KindCall || e.Op != opCrosscheck || e.Event != engine.EvCompleted || str(e.Data, "milestone") != milestone {
+		if e.Kind != engine.KindCall || e.Op != ops.OpCrosscheck || e.Event != engine.EvCompleted || str(e.Data, "milestone") != milestone {
 			continue
 		}
 		anyOfMilestone = true

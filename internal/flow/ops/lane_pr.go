@@ -12,10 +12,6 @@ import (
 
 // ---- crw.mergeRequest ----
 
-// opCrosscheck is the op of the crosscheck call (R3, CRW-1442): its completed rows are the crosscheck this op reads. The name is local so
-// the package compiles on a dev that does not hold the op yet; flow/pullrequest/run.go keeps the same literal.
-const opCrosscheck = "crw.crosscheck"
-
 // The reasons a merge request is refused with (the result's reason; the script decides what to do).
 const (
 	mergeReasonNotOpen           = "pr_not_open"
@@ -181,7 +177,7 @@ func (o *mergeRequestOp) Proven(ctx context.Context, ev []engine.Event, row engi
 // head that moved. The MergeCrosscheck is filled only when the reason is empty.
 func mergeCrosscheckOf(r rows, milestone, head string) (MergeCrosscheck, string) {
 	anyOfMilestone := false
-	cc := r.opRows(opCrosscheck)
+	cc := r.opRows(OpCrosscheck)
 	for i := len(cc) - 1; i >= 0; i-- {
 		e := cc[i]
 		if dataStr(e, "milestone") != milestone {

@@ -47,7 +47,7 @@ merge is done by the dev queue (crw manage integrate --enqueue-pr REF, then its 
          the milestone nodes' OWNER:NAME:N keys (--issue, when given, must name the same; a milestone whose keys are not of that form
          takes --issue as given). --run needs --push DIR and pushes exactly the crosschecked tip, never forced: the checkout's --head
          branch must be at that tip. --body and --body-file are not taken. --state DIR and --socket PATH select the relay store the run
-         is read from (read-only). The title and the body are refused (exit 2) when they hold a path under /home, /state or /scratch,
+         is read from (read-only). The title and the body are refused (exit 2) when they hold a path under the host's home, state or scratch roots,
          the host's name, a thread, call or run id or a secret; this check also runs on --body.
   show   reads the pull request: state, merged, head commit, head and base branch, the issues it carries; --checks adds the check
          runs and commit statuses of its head and their judgment (none, pending, success, failure).

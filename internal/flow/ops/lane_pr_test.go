@@ -316,3 +316,49 @@ func TestMergeRequestFailedSendIsAnErrorAndRecordsNothing(t *testing.T) {
 		t.Errorf("a failed send left %d row(s)", len(got))
 	}
 }
+
+// TestMergeRequestReadsTheRowTheCrosscheckOpWrites (CRW-1451, D-0 gate): the row the landed crw.crosscheck op writes is the row
+// mergeCrosscheckOf reads, and the shared fixture the readers of the bundle's pull request are tested with has no member the op's row
+// lacks. A verified round at the gate head is accepted with its engine and round; the same milestone at another head is head_moved.
+func TestMergeRequestReadsTheRowTheCrosscheckOpWrites(t *testing.T) {
+	w := newCCWorld(t)
+	_, row := w.crosscheck(ccHead, nil)
+	if row.Op != OpCrosscheck {
+		t.Fatalf("the row's op is %q, not %q", row.Op, OpCrosscheck)
+	}
+	got, reason := mergeCrosscheckOf(rows(w.j.Events()), "M1", ccHead)
+	if reason != "" || got.Verdict != "verified" || got.Head != ccHead || got.EngineFamily != "gpt" || got.Model != "gpt-6-astra" || got.Round != 1 {
+		t.Errorf("mergeCrosscheckOf %+v, reason %q", got, reason)
+	}
+	if _, reason := mergeCrosscheckOf(rows(w.j.Events()), "M1", prHeadB); reason != mergeReasonHeadMoved {
+		t.Errorf("another head: reason %q, want %q", reason, mergeReasonHeadMoved)
+	}
+
+	raw, err := os.ReadFile("../pullrequest/testdata/crosscheck_rows.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture []struct {
+		Data map[string]any `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	real, ok := row.Data["verdict"].(map[string]any)
+	if !ok {
+		t.Fatalf("the row's verdict is %T, not an object", row.Data["verdict"])
+	}
+	for i, f := range fixture {
+		for k := range f.Data {
+			if _, ok := row.Data[k]; !ok && k != "hold" { // hold is a member of a held row only
+				t.Errorf("fixture row %d has the member %q, which the crw.crosscheck row does not carry", i, k)
+			}
+		}
+		fv, _ := f.Data["verdict"].(map[string]any)
+		for k := range fv {
+			if _, ok := real[k]; !ok {
+				t.Errorf("fixture row %d has the verdict member %q, which V does not carry", i, k)
+			}
+		}
+	}
+}
