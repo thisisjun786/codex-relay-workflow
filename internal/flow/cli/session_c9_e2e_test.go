@@ -306,6 +306,13 @@ func TestC9(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(s.k.repo, ".crw", "evidence")); !os.IsNotExist(err) {
 			t.Fatalf("the hook looked in or wrote the owner's native evidence directory: %v", err)
 		}
+		// the live acceptance is read while P still holds the receipt: finish removes it
+		sum := sha256.Sum256([]byte(body))
+		digest := hex.EncodeToString(sum[:])
+		got, ok := evidence.AcceptedReceipt(s.k.repo, s.k.owner, s.id)
+		if !ok || string(got.Bytes) != body || got.Digest != digest || got.AgentID != s.agent || got.TurnID != s.turn {
+			t.Fatalf("AcceptedReceipt = %+v, %v", got, ok)
+		}
 		s.finish()
 
 		if got := s.events(); !strings.HasPrefix(got, "prepared,step_published,") || !strings.HasSuffix(got, "thread_started,turn_started,completed") {
@@ -316,8 +323,6 @@ func TestC9(t *testing.T) {
 			t.Fatalf("thread_started: %v", started)
 		}
 		receipt, _ := s.row("completed")["evidence_receipt"].(map[string]any)
-		sum := sha256.Sum256([]byte(body))
-		digest := hex.EncodeToString(sum[:])
 		bus := engine.NewFileStepBus(RunDir(s.k.w.state, s.run))
 		copyPath := bus.FilePath(s.st.Call, "evidence-"+s.id+".md")
 		if receipt["state"] != "accepted" || receipt["assignment"] != s.id || receipt["path"] != s.receipt || receipt["sha256"] != digest ||
@@ -329,9 +334,9 @@ func TestC9(t *testing.T) {
 		if raw, err := os.ReadFile(copyPath); err != nil || string(raw) != body {
 			t.Fatalf("the bus copy: %q %v", raw, err)
 		}
-		got, ok := evidence.AcceptedReceipt(s.k.repo, s.k.owner, s.id)
-		if !ok || string(got.Bytes) != body || got.Digest != digest || got.AgentID != s.agent || got.TurnID != s.turn {
-			t.Fatalf("AcceptedReceipt = %+v, %v", got, ok)
+		recorded, ok := evidence.RecordedAssignment(s.k.repo, s.k.owner, s.id)
+		if !ok || recorded.Status != evidence.AssignmentClaimed || recorded.ReceiptDigest != digest || recorded.AgentID != s.agent || recorded.TurnID != s.turn {
+			t.Fatalf("the durable claimed assignment was lost: %+v %v", recorded, ok)
 		}
 		if res, ok := ReadResult(s.k.w.state, s.run); !ok || res.Status != engine.RunCompleted {
 			t.Fatalf("the result: %+v %v", res, ok)
@@ -349,10 +354,6 @@ func TestC9(t *testing.T) {
 		if err := os.WriteFile(s.receipt, []byte("$ go test ./x\nFAIL\n$ go test ./x\nok\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if out := s.stop(c9Receipt); out != "" {
-			t.Fatalf("the receipt was not accepted: %q", out)
-		}
-		s.finish()
 		rel := filepath.ToSlash(filepath.Join(".crw", "evidence", s.id+".md"))
 		files := func(dir, tree string) []string {
 			out, err := exec.Command("git", "-C", dir, "ls-tree", "-r", "--name-only", tree).CombinedOutput()
@@ -361,15 +362,11 @@ func TestC9(t *testing.T) {
 			}
 			return strings.Fields(string(out))
 		}
-		pending, _ := s.row("completed")["pending_tree"].(string)
-		if pending == "" {
-			t.Fatalf("the completed row has no pending tree: %v", s.row("completed"))
+		if out := s.stop(c9Receipt); out != "" {
+			t.Fatalf("the receipt was not accepted: %q", out)
 		}
-		got := files(s.k.repo, pending)
-		if !slices.Contains(got, "parser.go") || slices.ContainsFunc(got, func(f string) bool { return strings.HasPrefix(f, ".crw/") }) {
-			t.Fatalf("the pending tree %s holds %v: want parser.go and nothing under .crw/ (the receipt is %s)", pending, got, rel)
-		}
-		// a commit of P stages everything git does not ignore, as the run's commit does
+		// a commit of P stages everything git does not ignore, as the run's commit does: it must run while P and the
+		// receipt actually exist, before finish removes the worktree
 		commit := exec.Command("git", "-C", s.st.Workspace, "add", "--all")
 		if out, err := commit.CombinedOutput(); err != nil {
 			t.Fatalf("git add: %v\n%s", err, out)
@@ -379,9 +376,22 @@ func TestC9(t *testing.T) {
 		if out, err := commit.CombinedOutput(); err != nil {
 			t.Fatalf("git commit: %v\n%s", err, out)
 		}
-		got = files(s.st.Workspace, "HEAD")
+		committedFiles := files(s.st.Workspace, "HEAD")
+		if !slices.Contains(committedFiles, "parser.go") || slices.ContainsFunc(committedFiles, func(f string) bool { return strings.HasPrefix(f, ".crw/") }) {
+			t.Fatalf("the commit of P holds %v: want parser.go and nothing under .crw/", committedFiles)
+		}
+		committed := strings.TrimSpace(cleanupTestGit(t, s.st.Workspace, "rev-parse", "HEAD"))
+		s.finish()
+		pending, _ := s.row("completed")["pending_tree"].(string)
+		if pending == "" {
+			t.Fatalf("the completed row has no pending tree: %v", s.row("completed"))
+		}
+		got := files(s.k.repo, pending)
 		if !slices.Contains(got, "parser.go") || slices.ContainsFunc(got, func(f string) bool { return strings.HasPrefix(f, ".crw/") }) {
-			t.Fatalf("the commit of P holds %v: want parser.go and nothing under .crw/", got)
+			t.Fatalf("the pending tree %s holds %v: want parser.go and nothing under .crw/ (the receipt is %s)", pending, got, rel)
+		}
+		if got := files(s.k.repo, committed); !slices.Equal(got, committedFiles) {
+			t.Fatalf("cleanup lost the executor commit: %v, want %v", got, committedFiles)
 		}
 	})
 

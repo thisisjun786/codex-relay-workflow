@@ -25,6 +25,7 @@ const Usage = `usage: crw flow start WORKFLOW [--args JSON | --args-file FILE] [
        crw flow answer --decision D --run RUN --node N --question Q --revision V [--wait S] [--no-resume]
        crw flow pause RUN
        crw flow cancel RUN
+       crw flow cleanup-worktrees [RUN] [--apply]
        crw flow resume RUN [SCRIPT] [--detach]
        crw flow recover [--run RUN] CALL (--adopt THREAD|TURN | --absent)
        crw flow status-line --thread T
@@ -42,7 +43,7 @@ const Usage = `usage: crw flow start WORKFLOW [--args JSON | --args-file FILE] [
 // commands of Commands (report.go) run over an Environment (RunEnv).
 var commands = map[string]bool{"start": true, "ps": true, "show": true, "watch": true, "answer": true, "pause": true, "cancel": true,
 	"status-line": true, "digest": true, "resume": true, "recover": true, "audit": true, ProcessCommand: true, "next": true, "dispatched": true,
-	"report-up": true, "reports": true, "report-ack": true, "report-delivered": true}
+	"report-up": true, "reports": true, "report-ack": true, "report-delivered": true, "cleanup-worktrees": true}
 
 // Commands are the `crw flow` commands that work on the relay store's flow rows over an Environment: report-up, reports, report-ack
 // and report-delivered reach up from a run (CRW-1204, F11), and audit (CRW-1206, F13, audit.go) reads the reviews behind the
@@ -107,6 +108,8 @@ func RunWith(ctx context.Context, d *Deps, args []string, stdin io.Reader, stdou
 		return c.control(args[1:], "pause")
 	case "cancel":
 		return c.control(args[1:], "cancel")
+	case "cleanup-worktrees":
+		return c.cleanupWorktrees(args[1:])
 	case "status-line":
 		return c.statusLine(args[1:])
 	case "digest":
