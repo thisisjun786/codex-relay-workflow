@@ -189,7 +189,7 @@ func TreeVersion(ctx context.Context, run GitRunner, commit string) (version, re
 }
 
 // VersionOfTree is the version that names the plugin payload of a commit's tree: the version
-// crw-dev ci plugin computes for that commit's work tree and --record-version writes.
+// the source check computes for that commit's work tree and --stage stamps into installation artifacts.
 func VersionOfTree(ctx context.Context, repo, commit string) (string, error) {
 	version, reason, err := TreeVersion(ctx, repoRunner(repo), commit)
 	if err != nil {

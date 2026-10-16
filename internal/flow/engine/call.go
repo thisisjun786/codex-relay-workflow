@@ -442,6 +442,13 @@ func (c *callRun) prepare() {
 		// a call a resumed run prepares again: the flow evidence records of its ended attempts go with them, before the new prepared
 		// row (an open attempt is superseded, and releases its records, once its subagents run nothing: endOpenCalls)
 		if rows := c.e.prior.rowsOf(c.id, "agent"); len(rows) > 0 {
+			// A re-prepared call keeps its call ID. Reserve a fresh host attempt so
+			// marker lookup cannot adopt a subagent of an earlier generation (CRW-1592).
+			for _, row := range rows {
+				if row.Event == EvPrepared || row.Event == EvStepPublished {
+					c.sess.attempt = max(c.sess.attempt, rowInt(row.Data, "attempt")+1)
+				}
+			}
 			if st := stateOf(c.id, rows); st.terminal != "" && st.terminal != EvOutcomeUnknown {
 				c.e.evidenceRelease(rows)
 			}
@@ -456,6 +463,9 @@ func (c *callRun) prepare() {
 	}
 	if c.sess != nil {
 		d["backend"] = BackendSession
+		// Persist the reservation before any step or evidence record is written.
+		// Recovery and orphan-record derivation read this same starting attempt.
+		d["attempt"] = c.sess.attempt
 		if c.evidenceGated() {
 			// the directories the call's flow evidence records are written under, for a resumed run started elsewhere or one whose
 			// owner read fails: EvidenceCwd, and the owner thread's cwd when the host reports one that differs (CRW-1482)

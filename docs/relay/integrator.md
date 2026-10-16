@@ -46,7 +46,7 @@ verification or the review stays in `pending/` with the new head (`head-moved:<s
    order: its last output line must start with `PASS` and its status must be 0. In solo mode the pass takes the first head that passes.
    A gate that ran and did not say `PASS` blocks the head. A gate that could not start or was killed is no verdict: the pass ends with
    status 2 (`error`) and the head and those behind it stay in `pending/`. A termination signal (`--watch` turns SIGINT and SIGTERM into a
-   cancelled context) at any point of a pass, in the gates, the merges, the record command, the verification, or the second fetch and
+   cancelled context) at any point of a pass, in the gates, the merges, the verification, or the second fetch and
    the push after a verification that passed, ends it as `cancelled` (status 2): what was decided before stays, nothing else is moved,
    retried or blocked, and no failed verification is counted. A push that had already landed when the signal came makes those heads
    `already-in-dev` on the next pass.
@@ -55,13 +55,10 @@ verification or the review stays in `pending/` with the new head (`head-moved:<s
    `work_root/run-<tag>` on `refs/remotes/<remote>/<branch>`, and merges the heads in order with `merge --no-ff`.
    - A head that is an ancestor of the branch is `already-in-dev`; a commit missing from the checkout is `head-not-in-checkout`.
    - A head that conflicts is abandoned (`merge --abort`) and left out as `conflict`; the rest go on.
-   - A conflict that is **only** the `version` line of the plugin manifest (`plugin_manifest`) is the one automatic resolution: every
-     conflict block must have exactly one line on each side and both must be `"version"` lines; the current side is kept and the merge is
-     committed. Any other conflict, in that file or beside it, is a plain conflict. Further generated files are not resolved here; a
+   - The plugin manifest's release version is a human choice; conflicting edits are ordinary conflicts and go back to their owner.
+     The integration run makes no version-derivation commit. Digest suffixes are generated when installation artifacts are built.
+     Any other conflict, in that file or beside it, is a plain conflict. Further generated files are not resolved here; a
      resolver for one is a separate, explicitly scoped and tested change.
-   - When a version conflict was resolved, or the merged tree differs from the base under `plugin_dir`, `record_version_command` re-derives
-     the manifest's version line in the worktree and the change is committed as `integration <tag>: re-derive the plugin version line ...`.
-     A change that cannot be added or committed (a refusing hook, for example) ends the run with status 2 before the verification.
    - What is verified is what is pushed: before the verification the worktree must be clean (`git status --porcelain` empty, so no
      uncommitted or untracked change beside the commit); otherwise the run ends with status 2, nothing is verified or pushed, and the heads
      stay in `pending/`. The same holds after the verification: `verify_command` is a program the operator configures, and a HEAD it
@@ -69,10 +66,9 @@ verification or the review stays in `pending/` with the new head (`head-moved:<s
      the tree it judged is no longer the commit that would be pushed.
    - The run's private temporary directory `work_root/tmp-<tag>` is created by the run itself (`mkdir`, not `mkdir -p`) and only a
      directory the run created is removed with it; a name that already exists ends the run with status 2 and is left untouched.
-5. `record_version_command`, `verify_command` and the gate run with the inherited environment cleaned of Git routing variables
+5. `verify_command` and the gate run with the inherited environment cleaned of Git routing variables
    (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and the others `gitprobe.Sanitize` removes), so a command that asks Git for its
-   repository finds the private worktree, never the shared checkout. `record_version_env` is the operator's explicit word and is applied
-   after that cleanup.
+   repository finds the private worktree, never the shared checkout.
    `verify_command` runs in the worktree with `CRW_VERIFY_HEAD`, `CRW_VERIFY_BASE` and `CRW_VERIFY_RECORD` set; its status is the
    verdict, and its output is `runs_dir/<tag>.verify.log`.
 6. The remote is fetched again. If the branch is no longer at the base the run ends `dev-moved:<sha>`. Otherwise the merged head is
@@ -93,7 +89,7 @@ never a pass result.
 | Status | Result | Meaning |
 |---|---|---|
 | 0 | `pushed`, `landed-before-record`, `comment-reposted`, `idle`, `stopped` | the merged heads were pushed, a pull request whose head was already in the branch got its landing record after the fact, a landing comment an earlier pass did not get to was posted, or there was nothing to do |
-| 2 | `locked`, `error`, `cancelled` | usage, configuration, fetch or lock failure, a gate that could not run, the worktree already exists, a re-derived version line that could not be committed, a worktree not clean before the verification, or a termination signal; no head was judged by it |
+| 2 | `locked`, `error`, `cancelled` | usage, configuration, fetch or lock failure, a gate that could not run, the worktree already exists, a worktree not clean before the verification, or a termination signal; no head was judged by it |
 | 3 | `verification-failed(rc=N)` | the merged tree failed verification; nothing was pushed |
 | 4 | `dev-moved:<sha>`, `push-failed`, `head-moved:<sha>`, `pull-request-changed` | the branch moved during the run or the push was refused; for a pull request, its head moved, or it was closed, retargeted or could not be read again, between the merge and the move of the branch; nothing was pushed and the entry stays pending |
 | 5 | `nothing-merged`, `nothing-to-integrate` | no head could be merged, or no head passed the gate |
@@ -208,7 +204,7 @@ default.
 | `queue_dir`, `lock_file`, `runs_dir`, `work_root` | absolute paths |
 | `gate_command` | argv with `{issue}` (e.g. `CRW-1038`) and `{head}` |
 | `verify_command` | argv; the merged-tree verification |
-| `record_version_command`, `record_version_env` | argv and extra environment; `{tmpdir}` is the run's private directory below `work_root` |
+| `record_version_command`, `record_version_env` | retired (CRW-1582): accepted for compatibility, ignored; no version line is re-derived |
 | `remote`, `branch`, `git`, `key_prefix`, `tag_prefix`, `plugin_dir`, `plugin_manifest`, `interval_seconds` | defaults: `origin`, `dev`, `git`, `CRW`, `cc-q`, `plugins/crw`, `plugins/crw/.codex-plugin/plugin.json`, `60` |
 | `pull_request_repo` | `owner/name` of the repository whose pull requests the queue lands; empty: none (the token is `GH_TOKEN`, `GITHUB_TOKEN` or `gh auth token`) |
 | `review_command` | argv; the review of a pull request's merged tree (placeholders above); empty: `review not configured`, warned and recorded. The review tool reads its criteria from the key the argv gives it (Argon V5: `/state/crw/crw-<N>/criteria.json` for `CRW-<N>`), so the configured key must name a criteria file |

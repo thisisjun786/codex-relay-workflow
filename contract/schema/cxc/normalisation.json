@@ -59,9 +59,9 @@
     },
     {
       "name": "crw-plugin-version",
-      "regex": "0\\.4\\.0\\+[0-9a-f]{12}",
+      "regex": "\\b0\\.4\\.0(?:\\+[0-9a-f]{12})?\\b",
       "replace": "<VERSION>",
-      "why": "the version of the crw plugin manifest (0.4.0+ and 12 hex digits of its payload digest, which every change to the payload moves); the oracle never prints it, a Go replay prints its own"
+      "why": "the crw source manifest release (0.4.0) or an artifact version with its 12-hex payload digest; the oracle never prints these, a Go replay prints its own"
     },
     {
       "name": "iso-timestamp",

@@ -168,6 +168,52 @@ func (h *turnsSignal) Turns(ctx context.Context, id string, limit int, full bool
 	return h.fakeSessionHost.Turns(ctx, id, limit, full)
 }
 
+// lookupBeforeSpawnHost lets the next spawn wait until the engine has searched the
+// host for its published marker. The search reads the real host before releasing
+// the owner, so a previous generation with the same marker cannot be hidden by a
+// faster dispatch report (CRW-1592).
+type lookupBeforeSpawnHost struct {
+	*fakeSessionHost
+	published func() bool
+	looked    chan struct{}
+	once      sync.Once
+}
+
+func (h *lookupBeforeSpawnHost) FindByMarker(ctx context.Context, owner, marker string) (string, bool, error) {
+	id, found, err := h.fakeSessionHost.FindByMarker(ctx, owner, marker)
+	if h.published() {
+		h.once.Do(func() { close(h.looked) })
+	}
+	return id, found, err
+}
+
+func (k *evidenceKit) lookupBeforeNextSpawn(t *testing.T) {
+	t.Helper()
+	before := len(rowsNamed(k.rowsOf("exe"), EvStepPublished))
+	h := &lookupBeforeSpawnHost{fakeSessionHost: k.host, looked: make(chan struct{}), published: func() bool {
+		return len(rowsNamed(k.rowsOf("exe"), EvStepPublished)) > before
+	}}
+	priorHost := k.cfg.Host
+	k.cfg.Host = h
+	t.Cleanup(func() { k.cfg.Host = priorHost })
+	k.orch.mu.Lock()
+	answer := k.orch.answer
+	k.orch.answer = func(st Step, packet string, n int) orchAnswer {
+		if st.Action == StepSpawn {
+			select {
+			case <-h.looked:
+			case <-t.Context().Done():
+				return orchAnswer{skip: true}
+			}
+		}
+		if answer != nil {
+			return answer(st, packet, n)
+		}
+		return orchAnswer{}
+	}
+	k.orch.mu.Unlock()
+}
+
 // afterRecovery runs f once the resumed process has read the turns of its bound subagent agent (its recovery is done), or after a
 // deadline when it never does.
 func (k *evidenceKit) afterRecovery(t *testing.T, agent string, f func()) {
@@ -209,6 +255,9 @@ func evidenceLifetimeRows() []evidenceLifetimeRow {
 				body = evidenceExeAgain
 			}
 			accepted := k.claimAtHost(t, host)
+			if resumed == "preparedAgain" {
+				k.lookupBeforeNextSpawn(t)
+			}
 			res := k.h.run(body)
 			if got := value[[]any](t, res); got[0] != "completed" {
 				t.Fatalf("resumed %v: rows %s", got, eventsOf(k.rowsOf("exe")))
@@ -845,6 +894,9 @@ func TestSessionEvidenceRefreshGitFailureLeavesTheHeldSnapshot(t *testing.T) {
 				k.placer.setTree(dir, tc.tree)
 			}
 			k.setOrch(func(Step, string, int) orchAnswer { return orchAnswer{} }, nil)
+			if tc.tree != "" {
+				k.lookupBeforeNextSpawn(t)
+			}
 			if got := value[[]any](t, k.h.run(evidenceExe)); got[0] != "completed" {
 				t.Fatalf("the next resume %v, want completed (rows %s)", got, eventsOf(k.rowsOf("exe")))
 			}
@@ -913,4 +965,35 @@ func TestSessionEvidenceHoldsLeaveTheHeldSnapshot(t *testing.T) {
 		}
 		k.resumedInPlace(t, false)
 	})
+}
+
+// A crash after a new prepared row but before its step must preserve the fresh
+// marker reservation, including when the old thread still exists (CRW-1592).
+func TestSessionEvidenceRepreparedIntentSurvivesCrash(t *testing.T) {
+	k := newEvidenceKit(t, true, ".crw/\n")
+	if got := value[[]any](t, k.h.run(evidenceExe)); got[0] != "completed" {
+		t.Fatalf("first run %v", got)
+	}
+	first := rowsNamed(k.rowsOf("exe"), EvStepPublished)[0]
+	k.jr = k.h.journal
+	k.h.cfg.Resume = &ResumeOptions{}
+	k.resumeDyingAt(t, func(e Event) bool { return e.Kind == KindCall && e.Event == EvPrepared }, evidenceExeAgain)
+	prepared := rowsNamed(k.rowsOf("exe"), EvPrepared)
+	reserved := rowInt(prepared[len(prepared)-1].Data, "attempt")
+	if reserved <= rowInt(first.Data, "attempt") {
+		t.Fatalf("re-prepared attempt %d reused prior attempt %v", reserved, first.Data["attempt"])
+	}
+	accepted := k.claimAtHost(t, k.evCwd)
+	k.lookupBeforeNextSpawn(t)
+	if got := value[[]any](t, k.h.run(evidenceExeAgain)); got[0] != "completed" {
+		t.Fatalf("resumed %v: rows %s", got, eventsOf(k.rowsOf("exe")))
+	}
+	steps := rowsNamed(k.rowsOf("exe"), EvStepPublished)
+	last := steps[len(steps)-1]
+	if rowInt(last.Data, "attempt") != reserved || rowStr(last.Data, "marker") == rowStr(first.Data, "marker") {
+		t.Errorf("resumed step %v did not preserve fresh prepared attempt %d", last.Data, reserved)
+	}
+	if accepted.Load() != 1 {
+		t.Errorf("accepted %d receipts, want the new generation's one receipt", accepted.Load())
+	}
 }

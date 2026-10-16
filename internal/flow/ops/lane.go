@@ -193,6 +193,7 @@ func (l *Lane) Ops() map[string]engine.Op {
 		NameRegionsOverlap:   &regionsOverlapOp{l},
 		NameAdmissionRegions: &admissionRegionsOp{l},
 		NameMergeRequest:     &mergeRequestOp{l},
+		NameReuseIntegrated:  &reuseIntegratedOp{l},
 	}
 }
 
