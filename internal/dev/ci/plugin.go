@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/url"
 	"os"
 	"os/exec"
@@ -230,9 +231,27 @@ func versionErrors(m map[string]any, p payload, label string) []string {
 	if version == expected {
 		return nil
 	}
-	return []string{fmt.Sprintf("%s manifest: version %q does not name this payload. Record %q; `--record-version` writes it into the working"+
-		" tree manifest. The suffix is this payload's own digest, because two packages"+
-		" that ship different bytes may not offer one version", label, version, expected)}
+	return []string{fmt.Sprintf("%s manifest: version %q does not name this payload. Expected %q; rebuild the installation artifact with --stage", label, version, expected)}
+}
+
+// sourceVersionErrors is the version policy of a source manifest (CRW-1582): it names a fixed
+// release - never the derived installation version, which is what a staged artifact carries -
+// and the payload it stamps must pass the artifact's version rules.
+func sourceVersionErrors(m map[string]any, p payload, label string) []string {
+	version := manifestVersion(m)
+	if !semverPattern.MatchString(version) {
+		return nil // manifestErrors owns syntax
+	}
+	if strings.Contains(version, "+") {
+		return []string{fmt.Sprintf("%s manifest: committed version %q must be a fixed release without build metadata; use --stage for installation artifacts", label, version)}
+	}
+	stamped, derived, err := pluginversion.StampedPayload(sharedPayload(p))
+	if err != nil {
+		return []string{label + " manifest: " + err.Error()}
+	}
+	artifactManifest := maps.Clone(m)
+	artifactManifest["version"] = derived
+	return versionErrors(artifactManifest, ciPayload(stamped), label)
 }
 
 func readManifest(p payload, label string) (map[string]any, error) {
@@ -694,8 +713,6 @@ func manifestErrors(m map[string]any, rootName, label string, p payload) []strin
 	}
 	if !semverPattern.MatchString(manifestVersion(m)) {
 		add("version " + show(m["version"]) + " is not a semantic version")
-	} else if p != nil {
-		errs = append(errs, versionErrors(m, p, label)...)
 	}
 	if _, err := declaredSkillsPath(m); err != nil {
 		add(err.Error())
@@ -1025,52 +1042,12 @@ func checkInstalled(path string) ([]string, report, error) {
 		return nil, nil, err
 	}
 	errs = append(errs, manifestErrors(m, "", "installed", p)...)
+	if semverPattern.MatchString(manifestVersion(m)) {
+		errs = append(errs, versionErrors(m, p, "installed")...)
+	}
 	errs = append(errs, hygiene(p, m, "installed")...)
 	skillErrs, found := skillSet(p, m, "installed")
 	return append(errs, skillErrs...), reportPayload(p, m, found, report{"source": "payload", "path": path}), nil
-}
-
-func (c *pluginChecker) recordVersion(stdout, stderr io.Writer) int {
-	pluginRoot := filepath.Join(c.root, pluginRelative)
-	p, errs := directoryPayload(pluginRoot)
-	m, err := readManifest(p, "working tree")
-	if err != nil {
-		return failf(stderr, "%s", err)
-	}
-	version := manifestVersion(m)
-	if !semverPattern.MatchString(version) {
-		errs = append(errs, fmt.Sprintf("working tree manifest: version %q is not a semantic version, so no payload suffix can be recorded under it", version))
-	}
-	if len(errs) > 0 {
-		return failf(stderr, "%s", strings.Join(sortedSet(errs), "\n"))
-	}
-	expected, err := payloadVersion(p, version)
-	if err != nil {
-		return failf(stderr, "working tree manifest: %s", err)
-	}
-	path := filepath.Join(pluginRoot, manifestPath)
-	document, err := readText(path)
-	if err != nil {
-		return failf(stderr, "%s", err)
-	}
-	recorded := show(version)
-	if count := strings.Count(document, recorded); count != 1 {
-		return failf(stderr, "%s spells %q %d times; exactly one of them is the version to rewrite", manifestPath, version, count)
-	}
-	if version != expected {
-		info, err := os.Stat(path)
-		if err != nil {
-			return failf(stderr, "%s", err)
-		}
-		if err := os.WriteFile(path, []byte(strings.ReplaceAll(document, recorded, show(expected))), info.Mode().Perm()); err != nil {
-			return failf(stderr, "%s", err)
-		}
-		fmt.Fprintf(stdout, "Version %s in %s, recorded from %d shipped files. Commit it: the release payload is read from the revision, not from this tree\n",
-			expected, manifestPath, len(p))
-		return 0
-	}
-	fmt.Fprintf(stdout, "Version %s in %s: already recorded\n", expected, manifestPath)
-	return 0
 }
 
 func (c *pluginChecker) checkRevision(revision string) ([]string, report, error) {
@@ -1089,6 +1066,7 @@ func (c *pluginChecker) checkRevision(revision string) ([]string, report, error)
 	}
 	pluginName := filepath.Base(pluginRelative)
 	errs = append(errs, manifestErrors(m, pluginName, "release", release)...)
+	errs = append(errs, sourceVersionErrors(m, release, "release")...)
 	errs = append(errs, hygiene(release, m, "release")...)
 	skillErrs, found := skillSet(release, m, "release")
 	errs = append(errs, skillErrs...)
@@ -1114,6 +1092,7 @@ func (c *pluginChecker) checkRevision(revision string) ([]string, report, error)
 	errs = append(errs, hygiene(working, hygieneManifest, "working tree")...)
 	if workingManifest != nil {
 		errs = append(errs, manifestErrors(workingManifest, pluginName, "working tree", working)...)
+		errs = append(errs, sourceVersionErrors(workingManifest, working, "working tree")...)
 		workingSkillErrs, workingFound := skillSet(working, workingManifest, "working tree")
 		errs = append(errs, workingSkillErrs...)
 		for _, name := range sortedKeys(found) {
@@ -1155,8 +1134,13 @@ func (c *pluginChecker) checkRevision(revision string) ([]string, report, error)
 		}
 	}
 	sort.Strings(drift)
+	derived, err := payloadVersion(release, manifestVersion(m))
+	if err != nil {
+		return nil, nil, err
+	}
 	return errs, reportPayload(release, m, found, report{"source": "revision", "revision": revision,
-		"resolved": resolved, "worktreeDigest": payloadDigest(working), "worktreeDrift": nonNil(drift)}), nil
+		"resolved": resolved, "worktreeDigest": payloadDigest(working), "worktreeDrift": nonNil(drift),
+		"version": derived, "sourceVersion": manifestVersion(m)}), nil
 }
 
 // catalogErrors reads a marketplace document (text, or the error reading it) and appends
@@ -1181,13 +1165,20 @@ func Plugin(args []string, stdout, stderr io.Writer) int {
 	flags := newFlags("plugin")
 	revision := flags.String("revision", "HEAD", "check the package as this Git revision ships it")
 	payloadDir := flags.String("payload", "", "check an installed plugin directory instead of a revision")
-	record := flags.Bool("record-version", false, "write the payload's version suffix into the working tree manifest")
+	stage := flags.String("stage", "", "write a local marketplace of this revision's stamped payload to a new directory")
+	record := flags.Bool("record-version", false, "obsolete: the source keeps a fixed release")
 	asJSON := flags.Bool("json", false, "print the report as JSON")
 	if code := parseFlags(flags, "Validate the Codex plugin package this repository publishes.", args, stdout, stderr); code >= 0 {
 		return code
 	}
+	if *record {
+		return failf(stderr, "--record-version no longer rewrites source; use --stage <new-directory> to build an installation artifact")
+	}
+	if given(flags, "stage") && (*stage == "" || given(flags, "payload")) {
+		return failf(stderr, "--stage needs a new directory and cannot be combined with --payload")
+	}
 	checker := &pluginChecker{}
-	if *record || !given(flags, "payload") {
+	if !given(flags, "payload") {
 		out, err := runGit(".", "rev-parse", "--show-toplevel")
 		if err != nil {
 			return failf(stderr, "plugin: not inside a Git checkout: %s", err)
@@ -1198,8 +1189,8 @@ func Plugin(args []string, stdout, stderr io.Writer) int {
 	var result report
 	var err error
 	switch {
-	case *record:
-		return checker.recordVersion(stdout, stderr)
+	case given(flags, "stage"):
+		errs, result, err = checker.stageRevision(*revision, *stage)
 	case given(flags, "payload"):
 		errs, result, err = checkInstalled(resolve(*payloadDir))
 	default:
@@ -1216,8 +1207,8 @@ func Plugin(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	where := result["path"]
-	if resolved, ok := result["resolved"]; ok {
-		where = resolved
+	if where == nil {
+		where = result["resolved"]
 	}
 	fmt.Fprintf(stdout, "Package %s at %s: %d files, digest %s. The version's suffix is these same files digested with that suffix elided\n",
 		text(result["version"]), where, result["files"], result["digest"].(string)[:16])

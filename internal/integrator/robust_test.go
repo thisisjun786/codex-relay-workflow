@@ -131,8 +131,9 @@ func TestPassCancelledDuringMergeKeepsTheHeadPending(t *testing.T) {
 	w.requireAllPending("1")
 }
 
-// The record and verify commands run in the private worktree whatever Git routing the process
-// inherited: GIT_DIR and GIT_WORK_TREE of the shared checkout must not reach them.
+// The verify command runs in the private worktree whatever Git routing the process
+// inherited: GIT_DIR and GIT_WORK_TREE of the shared checkout must not reach it. The retired
+// version recorder is never invoked at all (CRW-1582).
 func TestPassHooksDoNotInheritGitRouting(t *testing.T) {
 	w := newWorld(t)
 	w.pend("1", w.head("a", map[string]string{"plugins/crw/skills/a.txt": "a\n"}, true))
@@ -140,9 +141,6 @@ func TestPassHooksDoNotInheritGitRouting(t *testing.T) {
 	before := w.git(w.checkout, "status", "--porcelain")
 	w.write(filepath.Join(w.root, "scripts", "record.sh"), `#!/bin/sh
 git rev-parse --show-toplevel > "$CTL_DIR/record-top" || exit 1
-root=$(git rev-parse --show-toplevel)
-n=$(ls plugins/crw/skills | wc -l | tr -d ' ')
-sed "s/\"version\": \"[^\"]*\"/\"version\": \"v-$n\"/" "$root/plugins/crw/.codex-plugin/plugin.json" > "$root/plugins/crw/.codex-plugin/plugin.json.new" && mv "$root/plugins/crw/.codex-plugin/plugin.json.new" "$root/plugins/crw/.codex-plugin/plugin.json"
 `)
 	w.write(filepath.Join(w.root, "scripts", "verify.sh"), `#!/bin/sh
 git rev-parse --show-toplevel > "$CTL_DIR/verify-top" || exit 1
@@ -150,32 +148,33 @@ echo '{"ok":true}' > "$CRW_VERIFY_RECORD"
 `)
 	rep := w.pass()
 	requireExit(t, rep, ExitPushed, "pushed")
-	for _, f := range []string{"record-top", "verify-top"} {
-		top := strings.TrimSpace(w.ctlRead(f))
-		if !strings.HasPrefix(top, w.cfg.WorkRoot+string(filepath.Separator)+"run-") {
-			t.Fatalf("%s ran against %q, not the private worktree", f, top)
-		}
+	top := strings.TrimSpace(w.ctlRead("verify-top"))
+	if !strings.HasPrefix(top, w.cfg.WorkRoot+string(filepath.Separator)+"run-") {
+		t.Fatalf("verify-top ran against %q, not the private worktree", top)
+	}
+	if w.ctlRead("record-top") != "" {
+		t.Fatalf("the retired version recorder ran: %q", w.ctlRead("record-top"))
 	}
 	if after := w.git(w.checkout, "status", "--porcelain"); after != before {
 		t.Fatalf("the shared checkout changed:\n%s", after)
 	}
-	if got := w.fileAt("dev", manifestPath); !strings.Contains(got, `"version": "v-2"`) {
-		t.Fatalf("the record command did not re-derive the pushed manifest: %s", got)
+	if got := w.fileAt("dev", manifestPath); got != strings.TrimSpace(manifest("0.4.0")) {
+		t.Fatalf("the pushed manifest is %q, want the fixed release", got)
 	}
 }
 
-// Configured record_version_env is the operator's explicit word and is applied after the
-// inherited environment is cleaned.
-func TestRecordVersionEnvIsAppliedAfterTheCleanup(t *testing.T) {
+// A populated legacy record_version_command/record_version_env is accepted for compatibility
+// and ignored: the command would write a sentinel, and the sentinel is never written
+// (CRW-1582).
+func TestRecordVersionConfigIsAcceptedAndNeverInvoked(t *testing.T) {
 	w := newWorld(t)
 	w.pend("1", w.head("a", map[string]string{"plugins/crw/skills/a.txt": "a\n"}, true))
-	w.r.Env = append(append([]string(nil), w.env...), "GIT_DIR="+filepath.Join(w.checkout, ".git"))
-	w.write(filepath.Join(w.root, "scripts", "record.sh"), "#!/bin/sh\necho \"git_dir=${GIT_DIR-unset} extra=$EXTRA\" > \"$CTL_DIR/record-env\"\n")
+	w.write(filepath.Join(w.root, "scripts", "record.sh"), "#!/bin/sh\necho ran > \"$CTL_DIR/record-env\"\n")
 	w.r.Cfg.RecordVersionEnv = map[string]string{"EXTRA": "{tag}"}
-	w.pass()
-	got := w.ctlRead("record-env")
-	if !strings.Contains(got, "git_dir=unset") || !strings.Contains(got, "extra=cc-q") {
-		t.Fatalf("record environment %q", got)
+	rep := w.pass()
+	requireExit(t, rep, ExitPushed, "pushed")
+	if got := w.ctlRead("record-env"); got != "" {
+		t.Fatalf("the retired version recorder ran: %q", got)
 	}
 }
 
@@ -244,23 +243,21 @@ func TestPassSoloStateDropsHeadsThatLeftThePending(t *testing.T) {
 	}
 }
 
-// The re-derived version line is verified only as the commit that is pushed: a commit the
-// repository refuses (a pre-commit hook here) ends the run with status 2 before the
-// verification, nothing is pushed and the head stays pending.
-func TestPassRefusedVersionCommitPushesNothing(t *testing.T) {
+// No commit but the merge happens: a pre-commit hook that would refuse a commit is irrelevant
+// now that nothing re-derives a version line, and the plugin change lands on the fixed release
+// (CRW-1582).
+func TestPassNoCommitBeyondTheMerge(t *testing.T) {
 	w := newWorld(t)
 	w.pend("1", w.head("a", map[string]string{"plugins/crw/skills/a.txt": "a\n"}, true))
-	// git merge runs no pre-commit hook, so only the re-derivation commit meets this one.
 	w.write(filepath.Join(w.checkout, ".git", "hooks", "pre-commit"), "#!/bin/sh\necho refused >&2\nexit 1\n")
-	base := w.remoteDev()
 	rep := w.pass()
-	requireExit(t, rep, ExitUsage, "error")
-	w.mustWhere("1", "pending")
-	if w.remoteDev() != base {
-		t.Fatalf("pushed although the version commit was refused: remote manifest %s", w.fileAt("dev", manifestPath))
+	requireExit(t, rep, ExitPushed, "pushed")
+	w.mustWhere("1", "done")
+	if got := w.fileAt("dev", manifestPath); got != strings.TrimSpace(manifest("0.4.0")) {
+		t.Fatalf("remote manifest %s", got)
 	}
-	if w.ctlRead("verify-calls") != "" {
-		t.Fatal("the verification ran on a tree that is not the commit to push")
+	if calls := w.ctlRead("record-calls"); calls != "" {
+		t.Fatalf("the version recorder ran:\n%s", calls)
 	}
 }
 
@@ -269,7 +266,16 @@ func TestPassRefusedVersionCommitPushesNothing(t *testing.T) {
 func TestPassDirtyWorktreeBeforeVerifyPushesNothing(t *testing.T) {
 	w := newWorld(t)
 	w.pend("1", w.head("a", map[string]string{"plugins/crw/skills/a.txt": "a\n"}, true))
-	w.write(filepath.Join(w.root, "scripts", "record.sh"), recordScript+"echo stray >> README.md\n")
+	delegate := w.r.Exec
+	w.r.Exec = func(ctx context.Context, c Cmd) (int, error) {
+		rc, err := delegate(ctx, c)
+		if err == nil && rc == 0 && len(c.Argv) > 3 && c.Argv[3] == "merge" {
+			if werr := os.WriteFile(filepath.Join(c.Argv[2], "README.md"), []byte("stray\n"), 0o644); werr != nil {
+				return 1, werr
+			}
+		}
+		return rc, err
+	}
 	base := w.remoteDev()
 	rep := w.pass()
 	requireExit(t, rep, ExitUsage, "error")

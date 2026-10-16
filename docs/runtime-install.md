@@ -293,8 +293,8 @@ build work directory, not the module cache: a sealed run keeps its own, see [CI]
 `crw-dev ci validate` (`go mod tidy -diff`), the `merge-build-check` skill command (the build work
 directory holds the run's owned temporary directory, and is never removed itself) and the audit
 package expansion of `crw manage` (`go list`), every child `crw manage` starts (the relay, the audit
-and pre-merge grader, the bridge the deliveries dial, the commands an upgrade runs and the record-version
-and verification commands of the integration queue (`crw manage integrate`); a configuration
+and pre-merge grader, the bridge the deliveries dial, the commands an upgrade runs and the verification
+commands of the integration queue (`crw manage integrate`); a configuration
 named with `--config` is handed to each as `CRW_CONFIG`), the jobs `crw relay` runs in the background
 and the commands the relay's evidence reads run. A job is started with the roots the relay process's
 own configuration names, so a host that moves the roots names them in the file the relay reads.

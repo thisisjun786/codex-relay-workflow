@@ -458,7 +458,7 @@ return [r.status, r.reason]`, "completed"},
 	})
 
 	// ClaimedNotReusedAcrossPrepare: an executor call whose subagent claimed its receipt is held and then prepared again with another
-	// input: the new attempt 1 has its own assignment, so its new subagent's receipt is accepted, never refused as another agent's.
+	// input: the new generation's attempt has its own assignment, so its new subagent's receipt is accepted, never refused as another agent's.
 	t.Run("ClaimedNotReusedAcrossPrepare", func(t *testing.T) {
 		k := newEvidenceKit(t, true, ".crw/\n")
 		ctl := &Control{}
@@ -549,6 +549,19 @@ func TestSessionEvidenceDerivedIDsBounded(t *testing.T) {
 		if !slices.Contains(ids, next) {
 			t.Fatalf("the next step's id %s of generation %s is not among the derived %v", next, key, ids)
 		}
+	}
+	for _, reserved := range []int{0, 7} {
+		t.Run(fmt.Sprintf("prepared-attempt-%d", reserved), func(t *testing.T) {
+			prep := Event{Seq: 1, CallID: call, Event: EvPrepared, Data: map[string]any{"attempt": reserved}}
+			want := max(1, reserved)
+			if got := sessionStageOf([]Event{prep}).attempt; got != want {
+				t.Fatalf("prepared recovery attempt %d, want %d", got, want)
+			}
+			id := evidence.FlowAssignmentID(sessionOwner, e.runID, call, sessionOp(call+"/t1", want))
+			if ids := e.evidenceDerivedIDs([]Event{prep}); !slices.Contains(ids, id) {
+				t.Fatalf("orphan record %s for prepared attempt %d is absent from %v", id, want, ids)
+			}
+		})
 	}
 }
 

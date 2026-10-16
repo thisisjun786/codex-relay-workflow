@@ -27,7 +27,7 @@ func TestConfigResolvedFillsOnlyNonHostDefaults(t *testing.T) {
 }
 
 func TestConfigEveryHostPathAndCommandIsRequired(t *testing.T) {
-	for _, field := range []string{"checkout", "queue_dir", "lock_file", "runs_dir", "work_root", "gate_command", "verify_command", "record_version_command"} {
+	for _, field := range []string{"checkout", "queue_dir", "lock_file", "runs_dir", "work_root", "gate_command", "verify_command"} {
 		c := validConfig()
 		switch field {
 		case "checkout":
@@ -44,8 +44,6 @@ func TestConfigEveryHostPathAndCommandIsRequired(t *testing.T) {
 			c.GateCommand = nil
 		case "verify_command":
 			c.VerifyCommand = []string{""}
-		case "record_version_command":
-			c.RecordVersionCommand = nil
 		}
 		if _, err := c.Resolved(); err == nil || !strings.Contains(err.Error(), field+" is required") {
 			t.Errorf("%s: %v", field, err)
@@ -77,5 +75,16 @@ func TestConfigRefusesWhatCouldEscapeOrInject(t *testing.T) {
 		if _, err := c.Resolved(); err == nil {
 			t.Errorf("%s accepted", name)
 		}
+	}
+}
+
+// The version recorder is a legacy knob, not a requirement (CRW-1582): the committed manifest
+// carries the release, so a config that never names one resolves, and one that still does
+// resolves too.
+func TestConfigDoesNotRequireVersionRecorder(t *testing.T) {
+	c := validConfig()
+	c.RecordVersionCommand, c.RecordVersionEnv = nil, nil
+	if _, err := c.Resolved(); err != nil {
+		t.Fatalf("a config without a version recorder does not resolve: %v", err)
 	}
 }

@@ -221,12 +221,16 @@ func TestSessionEvidence(t *testing.T) {
 		var mu sync.Mutex
 		var rec evidence.Assignment
 		var found, dirMade bool
-		k.setOrch(nil, func(st Step, _ string) {
+		// Inspect the published assignment while the child still runs. A marker
+		// lookup can bind it before its dispatch report, so an already completed
+		// child could have its unclaimed record removed before this callback.
+		k.setOrch(func(Step, string, int) orchAnswer { return orchAnswer{hang: true} }, func(st Step, agent string) {
 			mu.Lock()
 			defer mu.Unlock()
 			rec, found = evidence.RecordedAssignment(k.evCwd, sessionOwner, messageAssignment(st.Message))
 			info, err := os.Lstat(filepath.Join(st.Workspace, ".crw", "evidence"))
 			dirMade = err == nil && info.IsDir()
+			k.complete(agent, st)
 		})
 		res := k.h.run(evidenceExe)
 		if got := value[[]any](t, res); got[0] != "completed" {

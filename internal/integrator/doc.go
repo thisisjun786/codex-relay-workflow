@@ -5,8 +5,8 @@
 // A head is a 40-hex commit named by one file of the queue's pending directory. One pass
 // takes the integration lock, re-checks the pre-merge gate of every pending head, merges the
 // passing heads in issue-number order with merge commits in a private detached worktree
-// (resolving only a conflict that is nothing but the plugin manifest's version line, then
-// re-deriving that line), runs the verification command on the merged tree and pushes it
+// (a conflict on the plugin manifest's version line is an ordinary conflict, left to the queue),
+// runs the verification command on the merged tree and pushes it
 // fast-forward only. It never forces a push and never touches the relay.
 //
 // A pull request is the other kind of pending entry (PR-unit landing, CRW-1355): a file pr-<N> holds the head of pull request N
