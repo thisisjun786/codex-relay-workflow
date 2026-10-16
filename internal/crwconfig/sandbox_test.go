@@ -1,13 +1,16 @@
 package crwconfig
 
 import (
+	"fmt"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 )
 
-// CRW-1265: sandbox_root is the base path a sandboxed Codex runs in. Its default is /scratch/crw, the
+// CRW-1265: sandbox_root is the base path a sandboxed Codex runs in. Its default is the
+// crw sandbox directory below the user's XDG state directory (CRW-1593), the
 // configuration's paths section moves it, and the sandbox section lists the project roots.
 func TestSandboxRootDefaultAndOverride(t *testing.T) {
 	home, env := rootsHome(t)
@@ -15,16 +18,25 @@ func TestSandboxRootDefaultAndOverride(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := roots[RootSandbox]; got.Path != "/scratch/crw" || got.Source != SourceDefault {
-		t.Fatalf("the default sandbox_root is %+v, want /scratch/crw from the default", got)
+	want := filepath.Join(home, ".local", "state", "crw", "sandbox")
+	if got := roots[RootSandbox]; got.Path != want || got.Source != SourceDefault {
+		t.Fatalf("the default sandbox_root is %+v, want %q from the default", got, want)
 	}
-	// No environment variable and no other root moves it.
+	// Other XDG roots and TMPDIR do not move the sandbox base.
 	moved := rootsEnv("HOME", home, "XDG_CACHE_HOME", filepath.Join(home, "c"), "TMPDIR", filepath.Join(home, "t"), "XDG_DATA_HOME", filepath.Join(home, "d"))
-	if roots, err = Resolve(moved, nil); err != nil || roots[RootSandbox].Path != "/scratch/crw" {
+	if roots, err = Resolve(moved, nil); err != nil || roots[RootSandbox].Path != want {
 		t.Fatalf("an environment moved sandbox_root: %+v %v", roots[RootSandbox], err)
 	}
+	state := filepath.Join(home, "state")
+	stateEnv := rootsEnv("HOME", home, "XDG_STATE_HOME", state)
+	if roots, err = Resolve(stateEnv, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := roots[RootSandbox]; got.Path != filepath.Join(state, "crw", "sandbox") || got.Source != SourceEnv {
+		t.Fatalf("the XDG state default is %+v", got)
+	}
 	override := filepath.Join(home, "sandbox")
-	if roots, err = Resolve(env, map[string]string{RootSandbox: override}); err != nil {
+	if roots, err = Resolve(stateEnv, map[string]string{RootSandbox: override}); err != nil {
 		t.Fatal(err)
 	}
 	if got := roots[RootSandbox]; got.Path != override || got.Source != SourceConfig {
@@ -97,5 +109,71 @@ func TestSandboxProjectRootsLoad(t *testing.T) {
 		if got, err := file.SandboxProjectRoots(); err != nil || len(got) != 0 {
 			t.Fatalf("%s: %v %v", document, got, err)
 		}
+	}
+}
+
+// CRW-1593: a clean host has a writable home but no machine scratch mount. Map the
+// resolved absolute path into a temporary host tree before using the same path
+// probe as config check, so this test never observes the real host's scratch root.
+func TestSandboxRootCreatableWithoutHostScratch(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root writes everywhere")
+	}
+	for _, row := range []struct {
+		name, state, override string
+		refuse                bool
+	}{
+		{name: "home_default"},
+		{name: "xdg_state", state: "/home/runner/state"},
+		{name: "configured", state: "/home/runner/state", override: "/home/runner/custom-sandbox"},
+		{name: "uncreatable_configured_root", override: "/host-only/sandbox", refuse: true},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			host := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(host, "home", "runner"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(host, 0o555); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if err := os.Chmod(host, 0o700); err != nil {
+					t.Error(err)
+				}
+			})
+			env := rootsEnv("HOME", "/home/runner", "XDG_STATE_HOME", row.state)
+			overrides := map[string]string{}
+			if row.override != "" {
+				overrides[RootSandbox] = row.override
+			}
+			roots, err := Resolve(env, overrides)
+			if err != nil {
+				t.Fatal(err)
+			}
+			root := roots[RootSandbox]
+			selected := root.Path
+			root.Path = filepath.Join(host, strings.TrimPrefix(root.Path, "/"))
+			at, exists := existingPart(root.Path)
+			var report Report
+			checkUsable(root, RootSandbox, at, exists, func(level Level, name, check, format string, args ...any) {
+				report.Findings = append(report.Findings, Finding{Level: level, Root: name, Check: check, Message: fmt.Sprintf(format, args...)})
+			})
+			if err := report.Refusal(); (err != nil) != row.refuse {
+				t.Fatalf("sandbox_root %q on a host without a scratch mount: refusal=%v, want refusal=%t", selected, err, row.refuse)
+			}
+		})
+	}
+}
+
+// The state base's raw spelling is kept in the resolved path, as for the other XDG roots.
+func TestSandboxRootKeepsStatePathSpelling(t *testing.T) {
+	home, _ := rootsHome(t)
+	state := home + "/link/../state/"
+	roots, err := Resolve(rootsEnv("HOME", home, "XDG_STATE_HOME", state), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := roots[RootSandbox]; got.Path != home+"/link/../state/crw/sandbox" || got.Source != SourceEnv {
+		t.Fatalf("the sandbox root lost the state's path spelling: %+v", got)
 	}
 }

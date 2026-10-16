@@ -24,10 +24,8 @@ const (
 	RootTemp     = "temp_root"
 	RootData     = "data_root"
 	RootManage   = "manage_state"
-	// RootSandbox is the base path the sandbox-root rule counts as dedicated (CRW-1265,
-	// internal/sandboxroot); a sandboxed Codex outside it runs with a recorded warning (CRW-1308). It is
-	// a directory the product names, not one it derives from the cache root: moving scratch_root would
-	// move every harness that uses it.
+	// RootSandbox is the dedicated base for sandboxed Codex runs (internal/sandboxroot).
+	// It defaults below XDG state and is independent of scratch_root and cache_root.
 	RootSandbox = "sandbox_root"
 
 	// RootBuildCache is Go's build cache (GOCACHE), RootModuleCache its module cache
@@ -44,11 +42,6 @@ const (
 	// sidecars. It is separate from manage_state, which is the management tool's own state.
 	RootRelayState = "relay_state"
 )
-
-// DefaultSandboxRoot is sandbox_root's default. It is outside the account home, decision C names
-// the host's scratch disk, and the coordinator's sandboxed runs already work below it. It is the one
-// host path product code names (TestNoHostPathOrDeviceNameInProduct allows exactly this line).
-const DefaultSandboxRoot = "/scratch/crw"
 
 // rootOrder is every root, in the order the decided layout lists them: the order
 // Resolve checks them in and the order a caller that prints them walks.
@@ -173,7 +166,7 @@ func resolve(getenv func(string) string, overrides map[string]string, strict boo
 		{RootTemp, rootJoin(temp, "crw"), tempEnv},
 		{RootData, rootJoin(data, "crw", "data"), dataEnv},
 		{RootManage, rootJoin(state, "crw", "manage"), stateEnv},
-		{RootSandbox, DefaultSandboxRoot, false},
+		{RootSandbox, rootJoin(state, "crw", "sandbox"), stateEnv},
 		{RootLog, rootJoin(state, "crw", "logs"), stateEnv},
 		{RootRelayState, rootJoin(state, "codex-session-relay"), stateEnv},
 	} {
