@@ -63,6 +63,14 @@ func (r *flowTestRig) recordPath(id string) string {
 	return filepath.Join(r.cwd, ".crw", AssignmentsSubdir, sessionRecordDir(flowTestOwner), id+".json")
 }
 
+// unchanged fails t unless the record id still holds exactly the bytes raw.
+func (r *flowTestRig) unchanged(t *testing.T, id string, raw []byte) {
+	t.Helper()
+	if now, err := os.ReadFile(r.recordPath(id)); err != nil || string(now) != string(raw) {
+		t.Fatalf("the record changed (%v):\n%s\nwant\n%s", err, now, raw)
+	}
+}
+
 func (r *flowTestRig) record(id string) Assignment {
 	r.t.Helper()
 	a, ok := readAssignment(r.recordPath(id), id)
@@ -767,12 +775,6 @@ func TestFlowAssignment(t *testing.T) {
 			t.Cleanup(func() { probeGit = real })
 			return failed
 		}
-		unchanged := func(t *testing.T, r *flowTestRig, id string, raw []byte) {
-			t.Helper()
-			if now, err := os.ReadFile(r.recordPath(id)); err != nil || string(now) != string(raw) {
-				t.Fatalf("the record changed (%v):\n%s\nwant\n%s", err, now, raw)
-			}
-		}
 		t.Run("new record", func(t *testing.T) {
 			r, old, _ := setup(t)
 			failGit(t, 1)
@@ -791,12 +793,12 @@ func TestFlowAssignment(t *testing.T) {
 			if *failed != 1 {
 				t.Fatalf("%d git runs failed, want 1", *failed)
 			}
-			unchanged(t, r, old.ID, raw)
+			r.unchanged(t, old.ID, raw)
 			// git answers again: the record is the contract still, and is kept
 			if got, err := EnsureFlowAssignment(r.cwd, fresh); err != nil || got != old {
 				t.Fatalf("EnsureFlowAssignment once git answers = %+v, %v; want %+v", got, err, old)
 			}
-			unchanged(t, r, old.ID, raw)
+			r.unchanged(t, old.ID, raw)
 		})
 		t.Run("ensure during an outage", func(t *testing.T) {
 			// the record NewFlowAssignment made before the fix while git failed: no head
@@ -807,11 +809,11 @@ func TestFlowAssignment(t *testing.T) {
 			if got, err := EnsureFlowAssignment(r.cwd, headless); err == nil {
 				t.Fatalf("EnsureFlowAssignment with git failing = %+v, want the error", got)
 			}
-			unchanged(t, r, old.ID, raw)
+			r.unchanged(t, old.ID, raw)
 			if _, err := headless.replaceOpen(r.cwd); err == nil {
 				t.Fatal("replaceOpen with git failing replaced the record")
 			}
-			unchanged(t, r, old.ID, raw)
+			r.unchanged(t, old.ID, raw)
 		})
 		t.Run("no head over a head", func(t *testing.T) {
 			// the tree is no checkout any more (same inode): git answers that it has no HEAD, the record no longer matches, and its
@@ -826,8 +828,107 @@ func TestFlowAssignment(t *testing.T) {
 			if got, err := EnsureFlowAssignment(r.cwd, fresh); err == nil {
 				t.Fatalf("EnsureFlowAssignment replaced a record with a head by one without: %+v", got)
 			}
-			unchanged(t, r, old.ID, raw)
+			r.unchanged(t, old.ID, raw)
 		})
+	})
+
+	// A commit whose object is there but cannot be read (its bytes hash to another id) is no answer either (CRW-1561): git reads it
+	// as no commit, but it is neither the commit a rewritten history no longer has nor the HEAD of a repository with no commit yet.
+	// Neither the HEAD of a new record nor the ancestry of a recorded one is read from it.
+	t.Run("CorruptRecordedHeadIsAnError", func(t *testing.T) {
+		r := newFlowTestRig(t)
+		flowGitRepo(t, r.tree)
+		first := flowGitCommit(t, r.tree, "first")
+		old := r.mint(flowTestOp, time.Now().Add(-time.Minute))
+		if old.Head != first {
+			t.Fatalf("the minted record's head %q, want %q", old.Head, first)
+		}
+		raw, err := os.ReadFile(r.recordPath(old.ID))
+		assignMust(t, err)
+		second := flowGitCommit(t, r.tree, "second")
+		flowCorruptObject(t, r.tree, first, second)
+		fresh, err := NewFlowAssignment(flowTestOwner, old.ID, r.tree, flowTestOp, time.Now())
+		assignMust(t, err)
+		if fresh.Head != second {
+			t.Fatalf("the new record's head %q, want %q", fresh.Head, second)
+		}
+		if got, err := EnsureFlowAssignment(r.cwd, fresh); err == nil {
+			t.Fatalf("EnsureFlowAssignment over a recorded head that cannot be read = %+v, want the error", got)
+		}
+		r.unchanged(t, old.ID, raw)
+		if rec := r.record(old.ID); rec.Head != first {
+			t.Fatalf("the record's head %q, want %q", rec.Head, first)
+		}
+	})
+
+	t.Run("CorruptHeadIsAnError", func(t *testing.T) {
+		t.Run("new record", func(t *testing.T) {
+			r := newFlowTestRig(t)
+			flowGitRepo(t, r.tree)
+			first := flowGitCommit(t, r.tree, "first")
+			second := flowGitCommit(t, r.tree, "second")
+			flowCorruptObject(t, r.tree, second, first)
+			id := FlowAssignmentID(flowTestOwner, flowTestRun, flowTestCall, flowTestOp)
+			if a, err := NewFlowAssignment(flowTestOwner, id, r.tree, flowTestOp, time.Now()); err == nil {
+				got, eerr := EnsureFlowAssignment(r.cwd, a)
+				t.Fatalf("NewFlowAssignment at a HEAD that cannot be read = %+v (EnsureFlowAssignment then: %+v, %v), want the error", a, got, eerr)
+			}
+			if _, err := os.Lstat(r.recordPath(id)); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("a record was written for a HEAD that cannot be read (%v)", err)
+			}
+		})
+		t.Run("recorded contract", func(t *testing.T) {
+			r := newFlowTestRig(t)
+			flowGitRepo(t, r.tree)
+			flowGitCommit(t, r.tree, "first")
+			old := r.mint(flowTestOp, time.Now().Add(-time.Minute))
+			raw, err := os.ReadFile(r.recordPath(old.ID))
+			assignMust(t, err)
+			second := flowGitCommit(t, r.tree, "second")
+			flowCorruptObject(t, r.tree, second, old.Head)
+			if got, err := EnsureFlowAssignment(r.cwd, old); err == nil {
+				t.Fatalf("EnsureFlowAssignment at a HEAD that cannot be read = %+v, want the error", got)
+			}
+			r.unchanged(t, old.ID, raw)
+		})
+	})
+
+	// The two no-commit answers that stay answers: a recorded head this history does not have (rewritten, its object gone) no longer
+	// matches and the open record is replaced, and a repository with no commit yet records no head.
+	t.Run("AbsentRecordedHeadReplacesOpenRecord", func(t *testing.T) {
+		r := newFlowTestRig(t)
+		flowGitRepo(t, r.tree)
+		first := flowGitCommit(t, r.tree, "first")
+		old := r.mint(flowTestOp, time.Now().Add(-time.Minute))
+		branch := flowGit(t, r.tree, "symbolic-ref", "-q", "HEAD")
+		flowGit(t, r.tree, "checkout", "-q", "--orphan", "rewritten")
+		rewritten := flowGitCommit(t, r.tree, "rewritten")
+		flowGit(t, r.tree, "update-ref", "-d", branch)
+		assignMust(t, os.Remove(flowObjectPath(r.tree, first)))
+		fresh, err := NewFlowAssignment(flowTestOwner, old.ID, r.tree, flowTestOp, time.Now())
+		assignMust(t, err)
+		got, err := EnsureFlowAssignment(r.cwd, fresh)
+		if err != nil {
+			t.Fatalf("Ensure after the history was rewritten: %v", err)
+		}
+		if got.Head != rewritten || got.CreatedAt != fresh.CreatedAt {
+			t.Fatalf("Ensure after the history was rewritten returned %+v; want head %s", got, rewritten)
+		}
+		if rec := r.record(old.ID); rec != got {
+			t.Fatalf("the file holds %+v, Ensure returned %+v", rec, got)
+		}
+	})
+
+	t.Run("UnbornHeadRecordsNoHead", func(t *testing.T) {
+		r := newFlowTestRig(t)
+		flowGitRepo(t, r.tree)
+		a := r.mint(flowTestOp, time.Now().Add(-time.Minute))
+		if a.Head != "" {
+			t.Fatalf("the head of a repository with no commit: %q", a.Head)
+		}
+		if got, err := EnsureFlowAssignment(r.cwd, a); err != nil || got != a {
+			t.Fatalf("Ensure of the minted record = %+v, %v; want %+v", got, err, a)
+		}
 	})
 
 	t.Run("ReceiptIgnored", func(t *testing.T) {
@@ -993,6 +1094,22 @@ func flowGitRepo(t *testing.T, dir string) {
 		t.Skip("no git")
 	}
 	flowGit(t, dir, "init", "-q")
+}
+
+// flowObjectPath is the loose object file of id in the checkout dir.
+func flowObjectPath(dir, id string) string {
+	return filepath.Join(dir, ".git", "objects", id[:2], id[2:])
+}
+
+// flowCorruptObject overwrites the loose object of id in dir with the bytes of donor's: the file is there and inflates to a commit,
+// but one whose bytes hash to donor, so git finds id and cannot read it as a commit.
+func flowCorruptObject(t *testing.T, dir, id, donor string) {
+	t.Helper()
+	body, err := os.ReadFile(flowObjectPath(dir, donor))
+	assignMust(t, err)
+	path := flowObjectPath(dir, id)
+	assignMust(t, os.Chmod(path, 0o644)) // loose objects are read-only
+	assignMust(t, os.WriteFile(path, body, 0o444))
 }
 
 // flowGitCommit records an empty commit in dir and returns its id.
