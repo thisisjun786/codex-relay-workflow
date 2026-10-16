@@ -1166,3 +1166,51 @@ func TestFlowClaimRechecksHeadAfterJudgement(t *testing.T) {
 		t.Error("refused claim has an accepted receipt")
 	}
 }
+
+// CRW-1596: an ancestry answer need not have read both commit objects. Neither a
+// yes nor a no may hide an unreadable commit and reuse or replace its contract.
+func TestFlowAssignmentChecksReadabilityBeforeAncestry(t *testing.T) {
+	for _, row := range []struct {
+		name         string
+		current      bool
+		ancestryCode int
+	}{
+		{name: "recorded_ancestor"},
+		{name: "recorded_not_ancestor", ancestryCode: 1},
+		{name: "current_ancestor", current: true},
+		{name: "current_not_ancestor", current: true, ancestryCode: 1},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			r := newFlowTestRig(t)
+			flowGitRepo(t, r.tree)
+			first := flowGitCommit(t, r.tree, "first")
+			old := r.mint(flowTestOp, time.Now().Add(-time.Minute))
+			raw, err := os.ReadFile(r.recordPath(old.ID))
+			assignMust(t, err)
+			second := flowGitCommit(t, r.tree, "second")
+			candidate := old
+			if row.current {
+				flowCorruptObject(t, r.tree, second, first)
+			} else {
+				flowCorruptObject(t, r.tree, first, second)
+				candidate, err = NewFlowAssignment(flowTestOwner, old.ID, r.tree, flowTestOp, time.Now())
+				assignMust(t, err)
+			}
+			real := probeGit
+			probeGit = func(dir string, opts source.ProbeOptions, args ...string) ([]byte, error) {
+				if len(args) > 0 && args[0] == "merge-base" {
+					if row.ancestryCode == 0 {
+						return nil, nil
+					}
+					return nil, &source.ExitError{Code: row.ancestryCode}
+				}
+				return real(dir, opts, args...)
+			}
+			t.Cleanup(func() { probeGit = real })
+			if got, err := EnsureFlowAssignment(r.cwd, candidate); err == nil {
+				t.Fatalf("ancestry exit %d hid an unreadable commit: %+v", row.ancestryCode, got)
+			}
+			r.unchanged(t, old.ID, raw)
+		})
+	}
+}
