@@ -17,6 +17,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc/tmploctest"
 )
 
 // declaredPluginHookArgs is what the shipped Stop declaration passes to the runtime after
@@ -58,6 +59,7 @@ func countingControl(t *testing.T, home string) (stop func() int) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		t.Fatal(err)
 	}
+	tmploctest.CheckSocket(t, socketRootOf(t, path), path)
 	listener, err := net.Listen("unix", path)
 	if err != nil {
 		t.Fatal(err)

@@ -13,6 +13,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc/tmploctest"
 )
 
 func controlPair(t *testing.T) (net.Conn, net.Conn) {
@@ -22,6 +24,7 @@ func controlPair(t *testing.T) (net.Conn, net.Conn) {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		t.Fatal(err)
 	}
+	tmploctest.CheckSocket(t, socketRootOf(t, path), path)
 	listener, err := net.Listen("unix", path)
 	if err != nil {
 		t.Fatal(err)

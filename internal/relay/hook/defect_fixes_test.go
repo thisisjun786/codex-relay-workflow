@@ -20,6 +20,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc/tmploctest"
 )
 
 // D1: identities that decode to lone surrogates, through the real native hook, journal and
@@ -185,6 +186,7 @@ func fillBacklog(t *testing.T, state, endpoint string) {
 		return fd
 	}
 	listener := socket()
+	tmploctest.CheckSocket(t, socketRootOf(t, endpoint), endpoint)
 	if err := syscall.Bind(listener, &syscall.SockaddrUnix{Name: endpoint}); err != nil {
 		t.Fatal(err)
 	}

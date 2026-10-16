@@ -20,6 +20,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc/tmploctest"
 )
 
 // runHook drives the real binary and a control.sock peer. The peer supplies the
@@ -51,15 +53,10 @@ func runHook(t *testing.T, s Scenario) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	home, err := os.MkdirTemp("", "crw-hc-")
-	if err != nil {
-		return nil, err
-	}
-	t.Cleanup(func() {
-		if err := os.RemoveAll(home); err != nil {
-			t.Error(err)
-		}
-	})
+	// The product derives the control socket from this home's state directory (or the fixture's
+	// dbPath below it), so the home is a socket directory: below tmploc.SocketRoot, never below TMPDIR
+	// (CRW-1568).
+	home := tmploctest.SocketDir(t, "crw-hc-")
 	expand := func(v string) string { return strings.ReplaceAll(v, "${HOME}", home) }
 	config := map[string]any{"configVersion": 1, "event": "Stop", "relayExecutable": home + "/codex-session-relay", "markerRoot": home + "/marker", "dbPath": nil, "mode": "observe", "timeoutSeconds": float64(5), "journalRoot": home + "/journal", "journalPolicy": "every_invocation", "installedBy": "CRW-37", "isolationAssertedBy": nil}
 	if hasRelay {
@@ -131,6 +128,7 @@ func runHook(t *testing.T, s Scenario) (map[string]any, error) {
 		if err = os.MkdirAll(state, 0700); err != nil {
 			return nil, err
 		}
+		tmploctest.CheckSocket(t, home, state+"/control.sock")
 		listener, err = net.Listen("unix", state+"/control.sock")
 		if err != nil {
 			return nil, err
