@@ -18,6 +18,12 @@ optional integrations. Use actual configuration and recent execution evidence;
 old bot comments, a nested workflow file, or repository visibility alone do not
 establish the active review setup. Lack of access leaves configuration unknown.
 
+Make the commit message and delivery record a handoff a fresh reader can use: the problem, durable
+change, reason for the chosen approach, scope, observed verification and any unresolved decision.
+Follow the repository's log convention, fold supporting edits into the change they serve, and
+give one next action with its owner and observable completion condition. Pin the candidate;
+a recorded local close does not establish remote landing, installation or release.
+
 Where the delivery is a pull request, record `isDraft` with the base and head. A pull request that is open for review has
 entered review, which is not the same as being ready to merge: the gates below decide
 that. A draft candidate is not merge-ready, and the fix is to publish it for review as
@@ -660,6 +666,12 @@ proof they invalidate. A relevant unresolved finding still matters even if its
 author is an optional reviewer. Use the repository's merge method and the host's
 expected-head guard; preserve required base-update or merge-queue behavior.
 
+When the parent integrates an external contribution, preserve contributor authorship and existing
+credit, including attribution trailers. Keep maintainer corrections distinguishable in separate
+commits and explain them and the integration disposition in the existing record. Message cleanup
+does not authorize shared-history rewrites, date changes, mandatory signing or changes to the
+flow's fixed commit metadata; use the repository's existing integration method and verifier.
+
 For an in-flight pull request, `merge-evidence --restate <record>` is that re-read: it takes a fresh reading of its
 own and grades the `child` session's record against it, rather than reading the `child` session's own
 numbers back. A thread that arrived on the same head and is not in the record's
@@ -1227,6 +1239,16 @@ infrastructure failure before the code ran, or undetermined. Those three are rep
 count and are not in it; so are a landing not yet landed (`pending`) and one not read (`unread`),
 and none of them is ever counted as zero.
 
+
+## Bundle retrospective
+
+After a bundle's delivery is established, its owner adds a short Retrospective to the existing
+milestone coordination record, or the already-authorized task report when there is no such record.
+Connect observed evidence to a reusable lesson or concrete anti-pattern, then to one next check
+with its owner and expected observation. Preserve links to failed-path evidence; keep sensitive raw
+receipts local. Say no new lesson when the evidence supports none. A helper or read-only auditor
+returns a proposed entry to the record's writer instead of publishing it. This adds no new issue,
+product-document diary, execution loop or verification gate.
 
 ## In-flight pull requests (transition)
 

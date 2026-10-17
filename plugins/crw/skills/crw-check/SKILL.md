@@ -108,7 +108,7 @@ Classify each result as ahead, on plan, at risk, late, or undecidable, deciding 
 
 [Schedule judgment](references/schedule-judgment.md) holds the decision order, the date and timezone arithmetic, the closed list of risks with their wait classes, the aggregation rule, predecessor-based impact, the reusable judgment record, the full routing of a mismatch by the level that owns it, and the judgment cases. Read it before routing anything the two sentences above do not plainly cover.
 
-Lead a progress or interim report with the schedule: the overall verdict with the query and judgment times, then the notable lead and delay with baseline dates and actual evidence, then the affected next steps, then internal coordination waits and user decisions. A completion check keeps the lead described below and places that block immediately after it.
+Use the order in [Report the result](#report-the-result) for progress, interim and completion reports. In What changed, place the schedule after the verification result: the overall verdict with query and judgment times, then notable lead or delay with baseline dates and actual evidence. Put decisions in the first block and the affected next action in the last.
 
 Judging the schedule by default neither widens nor narrows this skill's authority. Return needed schedule changes to [crw-plan](../crw-plan/SKILL.md) and already accepted corrections to the existing owner; do not move a date, change a Done state, take over execution or a merge, build a second path that resumes work, or repeat a notification. A passed or approaching deadline never lowers a completion criterion or a review requirement. Equally, a checkpoint inside an approved initiative or project execution keeps the parent confirmation and already-approved successor work that approval covers, so being called here does not turn an approved continuation into an independent read-only audit: route the mismatch to the level that owns the ordering and settle continuation there, within the approval it already holds: a mismatch contained in one project goes to that project's parent, while one that orders work across projects goes through the supervisor owning both, or, where the projects share no supervisor or answer to different ones, through direct coordination between the parents with the unsettled pair-level decision raised to the user, because a project parent never decides whether another project proceeds and no supervisor acquires authority over a pair it does not own. Explicit report-only, read-only, pause, and no-contact limits still win. In the report, keep the correction request sent, the parent actually resuming, and a result actually verified as three separate facts.
 
@@ -116,13 +116,13 @@ Judging the schedule by default neither widens nor narrows this skill's authorit
 
 A standalone check without an established execution assignment is read-only. It returns findings and a proposed record; it does not create a worker, assume permission to change code, or rewrite requirements. Explicit read-only, report-only or no-contact instructions take precedence. Route authorized roadmap changes to [crw-plan](../crw-plan/SKILL.md), and verified delivery to the coordinator's [delivery and integration](../crw-canon/references/delivery.md#default-dev-integration). A passing audit alone does not authorize requirement changes, issue closure or deployment.
 
-Use a separate audit document only when prior authorization or an explicit recording request covers that document. Keep sensitive raw evidence local and link a suitable summary. Lead the report with the verification result, add a concise criterion/evidence table when useful, and finish with the checks in [Report the result](#report-the-result).
+Use a separate audit document only when prior authorization or an explicit recording request covers that document. Keep sensitive raw evidence local and link a suitable summary. Follow [Report the result](#report-the-result), placing the verification result first within What changed and adding a concise criterion/evidence table when useful.
 
 ## In-workflow auditor
 
 For a completion check in an established execution workflow, send evidence-backed in-scope corrections to the existing responsible task through [crw-run](../crw-run/SKILL.md#return-corrections-to-the-existing-task). Include the violated criterion, reviewed revision, reproducible evidence, required outcome and recheck. Do not make Jun relay the packet or ask again whether to send it. A finding is returned by the caller's own level to the level below it, per [scope of each level](../crw-canon/references/hierarchy.md#scope-of-each-level): the parent carries a project's finding in the [coordination message](../crw-run/references/task-packet.md#coordination-message) to that project's child and never to its `child` sessions (a code id, not a layer), a standalone issue keeps its existing owner, and a check never sends a correction into another project's `child` sessions.
 
-Recheck the corrected revision against the original criteria and the reproduced failure. Missing evidence calls for a scoped verification request, not an invented defect or a speculative fix. Reuse valid evidence and keep the same correction scope until verified or a concrete blocker requires a decision. Lead the report with the verification result and the action actually taken: correction sent, awaiting delivery, recheck passed, integrated, or blocked.
+Recheck the corrected revision against the original criteria and the reproduced failure. Missing evidence calls for a scoped verification request, not an invented defect or a speculative fix. Reuse valid evidence and keep the same correction scope until verified or a concrete blocker requires a decision. In What changed, lead with the verification result and the action actually taken: correction sent, awaiting delivery, recheck passed, integrated, or blocked.
 
 Under an existing management assignment, write the audit summary to the coordination issue of the milestone and read it back; a separate audit issue needs prior authorization or an explicit recording request, and authorization already granted is not asked for again. Where a relay holds the assignment, the summary is queued, the verdicts are recorded against its registered criteria and a quiet child is not a finding: all of that is in [Check records in a relay store](../crw-run/references/check-records.md).
 
@@ -131,6 +131,17 @@ Under an existing management assignment, write the audit summary to the coordina
 A sub-task or bounded helper called from here writes no tracking record itself: it returns the issue ref, the revision it read, the reason, the smallest sufficient change and its evidence, and this assignment's own writer applies and reads it back, under [record writes and returned proposals](../crw-canon/references/tracking-model.md#record-writes-and-returned-proposals). A bounded helper returns the correction packet to the coordinator, which owns dispatch, and returns its findings to its caller rather than contacting an owner itself.
 
 ## Report the result
+
+Use the same order for an audit or a progress check:
+
+1. **Decisions needed.** Name the unresolved choice, its owner and the evidence that makes
+   it necessary, or say none. Separate internal coordination waits from decisions only Jun can make.
+2. **What changed.** Give the verification result at the reviewed revision, the action actually
+   taken and its evidence, then the schedule verdict. Compare with an established baseline;
+   without one, state the current result. Keep unverified criteria and delivery levels visible.
+3. **Next action.** Name one correction, missing observation or existing owner's next step,
+   with its owner, reason and observable completion condition. When all obligations are met,
+   say complete rather than inventing work. This report adds no execution or recording authority.
 
 Before finishing, verify every verdict has a source, accepted changes were considered, deferrals remain distinct from completion, and unverified delivery levels are explicit.
 
