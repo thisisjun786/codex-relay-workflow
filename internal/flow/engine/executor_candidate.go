@@ -54,6 +54,22 @@ func (c *callRun) prepareExecutorCandidate() {
 	p.prompt += "\nCurrent acceptance criteria:\n" + string(criteria)
 }
 
+// executorCandidateDigest binds a review's replay key to the controller's
+// collected execution even when its visible packet and checkout are unchanged.
+// Calls without an external candidate keep their existing input digest verbatim.
+func (c *callRun) executorCandidateDigest(input string) string {
+	b := c.executorCandidate
+	if b == nil {
+		return input
+	}
+	return digestJSON(mustJSON(map[string]any{
+		"input_digest":          input,
+		"execution_id":          b.ExecutionID,
+		"task_digest":           b.Admission.TaskDigest,
+		"receipt_result_digest": b.Receipt.ResultDigest,
+	}))
+}
+
 func (c *callRun) executorCandidateStands(ctx context.Context) error {
 	if c.executorCandidate == nil {
 		return nil

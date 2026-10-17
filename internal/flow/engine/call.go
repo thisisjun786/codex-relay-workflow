@@ -447,6 +447,7 @@ func (c *callRun) prepare() {
 	c.prepareExecutorCandidate()
 	var ctxb map[string]any
 	c.digest, ctxb = c.inputDigest()
+	c.digest = c.executorCandidateDigest(c.digest)
 	c.snapshot = c.readSnapshot()
 	if c.e.cfg.Resume != nil && c.resumePrior() {
 		return
