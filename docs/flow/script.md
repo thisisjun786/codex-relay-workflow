@@ -400,9 +400,11 @@ overlaps every other. So the lane never admits together two nodes the relay woul
 every pair of nodes neither of which waits for the other once, in the order of the nodes and before it admits the first, keeps the
 answers by the content of the two lists, and reads them without an operation of its own while it schedules; a pair it has no answer
 for overlaps. The judgments are positions of the caller's path (and of the signal path, below) whose order and arguments only the plan,
-the DESIGN and the signals' results decide, so a resume replays them. The relay is told the same regions before the release, each once by its cleaned
-path, and a DESIGN region that repeats a planned one in another spelling (blanks around it, `./path`) is that planned region, with
-the plan's change and exclusive flag. A node whose predecessor did not land is
+the DESIGN and the signals' results decide, so a resume replays them. The relay is told the same regions before the release, each once by its
+normal form. A planned region is declared from its fields. A request text, the milestone's handoff spelling or a DESIGN edit, names every
+planned region that one of its readings equals: the whole text read as a path (a tree when it ends in `/`), or a symbol at each `#`. Those
+regions get the plan's change and exclusive flag. A text that names no planned region is read as an edit region (`RegionOf`), and a planned
+file and a planned symbol with the same text are both declared (CRW-1411). A node whose predecessor did not land is
 `blocked`. Each node runs on a path of its own (its id), and its first position is `crw.release`, which asks the relay for the
 slot and records the design revision and digest the node is released under. The lane builds its packet from that revision
 (`crw.issuePlan` reads the journal and nothing the script holds), and every call of the node carries the revision, the node's slice
@@ -431,9 +433,11 @@ Before the relay is asked for the slot, `crw.release` declares the node's admiss
 `dag-region-declare` does; CRW-1391), because the relay's release judgment reads only declarations and an undeclared node overlaps
 every other: without it the second of two nodes `crw.dag` admitted together was held back `defer:edit_overlap`. It declares the
 admission regions of the milestone's other designed nodes that have none as well, since the judgment counts a ready node ranked before
-the released one as a holder. A plan region is declared as the plan states it, its path, kind and symbol taken from the plan's fields
-and never read from its text again (a planned file or tree whose path holds `#` stays one, CRW-1408); an `edit_regions` entry is a file, a tree when it ends in
-`/` and a symbol after `#`. A node with a declaration in force keeps it (the parent's graded declaration made before the run, or one an
+the released one as a holder. A plan region is declared from its fields, its path, kind and symbol as the plan holds them, and never read
+from its text again (a planned file or tree whose path holds `#` stays one, CRW-1408). A request text names every planned region that one of
+its readings equals (CRW-1411), so a planned region spelled unclean (`./path`, a doubled slash, a `#` in its path) is that region with the
+plan's change and exclusive flag. A text that names no planned region is an `edit_regions` entry: a file, a tree when it ends in `/` and a
+symbol after `#`. A node with a declaration in force keeps it (the parent's graded declaration made before the run, or one an
 earlier release made), and a node with no regions on either side is left undeclared. A declaration the relay refuses is a warning, never
 a refusal: the release row records `regions`, `regions_declared` (`declared`, `kept` or `failed`) and the warning `regions_not_declared`
 with the relay's reason, and the release goes on as for an undeclared node.

@@ -108,6 +108,163 @@ func TestReleaseDeclaresAPlannedPathWithAHashAsThePlanStatesIt(t *testing.T) {
 	}
 }
 
+// CRW-1411: a planned region is matched by its normal form, and a request text names every planned region one of its readings
+// (ops.RegionReadings) is. A path spelled unclean with "#" in it (./pkg/a#b.go, gen#1//, pkg/a#b//c.go) is the planned file or tree it
+// names, and a text that is both a planned file and a planned symbol declares both.
+
+// TestReleaseDeclaresAPlannedHashPathInAnUncleanSpelling (CRW-1411): the plan holds a file and a tree whose paths hold "#" and a file
+// "pkg/a#b/c.go"; the request names them unclean, sent as they are and through AdmissionRegions beside the plan's clean texts. The node
+// declares exactly the three planned regions with the plan's flags.
+func TestReleaseDeclaresAPlannedHashPathInAnUncleanSpelling(t *testing.T) {
+	planned := []compile.Region{
+		{Path: "pkg/a#b.go", Kind: "file", Change: "rename", Exclusive: true},
+		{Path: "gen#1", Kind: "tree", Exclusive: true},
+		{Path: "pkg/a#b/c.go", Kind: "file", Change: "delete"},
+	}
+	plan := []string{"pkg/a#b.go", "gen#1/", "pkg/a#b/c.go"}
+	edit := []string{"./pkg/a#b.go", "gen#1//", "pkg/a#b//c.go"}
+	for _, c := range []struct {
+		name    string
+		regions []string
+	}{
+		{"as sent", edit},
+		{"admission", ops.AdmissionRegions(plan, edit)},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1", Regions: planned})
+			r := l.buildLane("run-unclean00001", l.handoffBytes(nil), LaneOptions{})
+			node := l.nodeOf["A-1"]
+			got, err := r.Release(ctx, ops.ReleaseRequest{Plan: l.plan, Node: node, RunID: r.RunID, RequestID: "req-unclean", Regions: c.regions})
+			if err != nil || !got.Released || got.RegionsDeclared != "declared" || got.RegionsWarning != "" {
+				t.Fatalf("the release with the regions %q: %+v %v", c.regions, got, err)
+			}
+			held, found, err := r.Sched.NodeRegions(ctx, l.plan, node)
+			if err != nil || !found {
+				t.Fatalf("the node's declaration: %v %v", found, err)
+			}
+			want := map[string]dagsched.Region{
+				"file pkg/a#b.go":   {Path: "pkg/a#b.go", Kind: "file", Change: "rename", Exclusive: true},
+				"tree gen#1":        {Path: "gen#1", Kind: "tree", Change: "edit", Exclusive: true},
+				"file pkg/a#b/c.go": {Path: "pkg/a#b/c.go", Kind: "file", Change: "delete"},
+			}
+			if len(held) != len(want) {
+				t.Errorf("the node declares %+v, want the %d planned regions", held, len(want))
+			}
+			for _, rg := range held {
+				w, ok := want[rg.Kind+" "+rg.Path]
+				if !ok || rg.Key != w.Key || rg.Change != w.Change || rg.Exclusive != w.Exclusive {
+					t.Errorf("the node declares %+v, want %+v", rg, w)
+				}
+			}
+		})
+	}
+}
+
+// TestReleaseDeclaresTheMilestoneTextsOfAPlannedHashPath (CRW-1411): the handoff's regions as they are written, a file "./pkg/a#b.go"
+// (rename, exclusive), a tree "gen#1/" (exclusive) and a region with no kind "pkg/a#b//c.go" (delete). The release takes the texts the
+// milestone gives them, through AdmissionRegions, and declares the file "pkg/a#b.go", the tree "gen#1" and the file "pkg/a#b/c.go" with
+// their flags. The region with no kind is the kind-default case: ops.RegionFormOf reads it as a file.
+func TestReleaseDeclaresTheMilestoneTextsOfAPlannedHashPath(t *testing.T) {
+	planned := []compile.Region{
+		{Path: "./pkg/a#b.go", Kind: "file", Change: "rename", Exclusive: true},
+		{Path: "gen#1/", Kind: "tree", Exclusive: true},
+		{Path: "pkg/a#b//c.go", Change: "delete"},
+	}
+	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1", Regions: planned})
+	r := l.buildLane("run-milestxt0001", l.handoffBytes(nil), LaneOptions{})
+	node := l.nodeOf["A-1"]
+	m, err := r.Milestone(ctx, l.plan, "M1")
+	if err != nil || len(m.Nodes) != 1 {
+		t.Fatalf("the nodes of M1: %+v %v", m.Nodes, err)
+	}
+	regions := ops.AdmissionRegions(m.Nodes[0].Regions, nil)
+	got, err := r.Release(ctx, ops.ReleaseRequest{Plan: l.plan, Node: node, RunID: r.RunID, RequestID: "req-milestxt", Regions: regions})
+	if err != nil || !got.Released || got.RegionsDeclared != "declared" || got.RegionsWarning != "" {
+		t.Fatalf("the release with the regions %q: %+v %v", regions, got, err)
+	}
+	held, found, err := r.Sched.NodeRegions(ctx, l.plan, node)
+	if err != nil || !found {
+		t.Fatalf("the node's declaration: %v %v", found, err)
+	}
+	want := map[string]dagsched.Region{
+		"file pkg/a#b.go":   {Path: "pkg/a#b.go", Kind: "file", Change: "rename", Exclusive: true},
+		"tree gen#1":        {Path: "gen#1", Kind: "tree", Change: "edit", Exclusive: true},
+		"file pkg/a#b/c.go": {Path: "pkg/a#b/c.go", Kind: "file", Change: "delete"},
+	}
+	if len(held) != len(want) {
+		t.Errorf("the node declares %+v, want the %d planned regions", held, len(want))
+	}
+	for _, rg := range held {
+		w, ok := want[rg.Kind+" "+rg.Path]
+		if !ok || rg.Key != w.Key || rg.Change != w.Change || rg.Exclusive != w.Exclusive {
+			t.Errorf("the node declares %+v, want %+v", rg, w)
+		}
+	}
+}
+
+// TestReleaseDeclaresAPlannedFileAndSymbolOfOneText (CRW-1411): the plan holds a file "pkg/a#b.go" (exclusive) and the symbol "b.go" of
+// "pkg/a" (delete), which have one text. Both are declared with their own flags, whichever the plan lists first, and through the
+// milestone's texts.
+func TestReleaseDeclaresAPlannedFileAndSymbolOfOneText(t *testing.T) {
+	file := compile.Region{Path: "pkg/a#b.go", Kind: "file", Exclusive: true}
+	symbol := compile.Region{Path: "pkg/a", Kind: "symbol", Key: "b.go", Change: "delete"}
+	for _, c := range []struct {
+		name    string
+		planned []compile.Region
+	}{
+		{"file first", []compile.Region{file, symbol}},
+		{"symbol first", []compile.Region{symbol, file}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1", Regions: c.planned})
+			r := l.buildLane("run-sametext0001", l.handoffBytes(nil), LaneOptions{})
+			node := l.nodeOf["A-1"]
+			m, err := r.Milestone(ctx, l.plan, "M1")
+			if err != nil || len(m.Nodes) != 1 {
+				t.Fatalf("the nodes of M1: %+v %v", m.Nodes, err)
+			}
+			regions := ops.AdmissionRegions(m.Nodes[0].Regions, nil)
+			got, err := r.Release(ctx, ops.ReleaseRequest{Plan: l.plan, Node: node, RunID: r.RunID, RequestID: "req-sametext", Regions: regions})
+			if err != nil || !got.Released || got.RegionsDeclared != "declared" || got.RegionsWarning != "" {
+				t.Fatalf("the release with the regions %q: %+v %v", regions, got, err)
+			}
+			held, found, err := r.Sched.NodeRegions(ctx, l.plan, node)
+			if err != nil || !found {
+				t.Fatalf("the node's declaration: %v %v", found, err)
+			}
+			want := map[string]dagsched.Region{
+				"file pkg/a#b.go": {Path: "pkg/a#b.go", Kind: "file", Change: "edit", Exclusive: true},
+				"symbol pkg/a":    {Path: "pkg/a", Kind: "symbol", Key: "b.go", Change: "delete"},
+			}
+			if len(held) != len(want) {
+				t.Errorf("the node declares %+v, want the file and the symbol of the one text", held)
+			}
+			for _, rg := range held {
+				w, ok := want[rg.Kind+" "+rg.Path]
+				if !ok || rg.Key != w.Key || rg.Change != w.Change || rg.Exclusive != w.Exclusive {
+					t.Errorf("the node declares %+v, want %+v", rg, w)
+				}
+			}
+		})
+	}
+}
+
+// TestRegionFormOfReadsNoKindAsAFile (CRW-1411): a planned region with no kind is a file. ops.RegionFormOf takes the path field by
+// field, so a "#" in it never makes a symbol.
+func TestRegionFormOfReadsNoKindAsAFile(t *testing.T) {
+	for _, c := range []struct {
+		path string
+		want ops.RegionForm
+	}{
+		{"pkg/k.go", ops.RegionForm{Path: "pkg/k.go", Kind: "file"}},
+		{"gen#1/", ops.RegionForm{Path: "gen#1", Kind: "file"}},
+	} {
+		if got := ops.RegionFormOf(c.path, "", ""); got != c.want {
+			t.Errorf("RegionFormOf(%q, no kind) = %+v, want %+v", c.path, got, c.want)
+		}
+	}
+}
+
 // TestReleaseOfAnotherRunsReplayNamesItsState: a release the relay answers with the replay of an execution another run holds (the
 // fallback of a land, CRW-1397) carries that run's state as the first answer of land_node_held does, so a land told of a run that has
 // ended names its cancel.

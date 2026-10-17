@@ -12,7 +12,8 @@ import (
 
 // PlanNode is a node of the plan as the relay reads it for the lane: the issue it carries, the nodes it waits for (a dependency
 // or an order edge compile put there; a group's members are chained by order edges), the edit regions it declares and the digest
-// of its slice of the plan revision.
+// of its slice of the plan revision. Its Regions are the issue's planned regions as the handoff spells them (compile.Region.String,
+// which may hold "#" or an unclean path); the release declares each by its normal form, read from the plan's fields (CRW-1411).
 type PlanNode struct {
 	ID             string   `json:"id"`
 	Issue          string   `json:"issue"`
