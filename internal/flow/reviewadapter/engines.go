@@ -3,6 +3,7 @@ package reviewadapter
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"slices"
@@ -58,7 +59,7 @@ func GrokProfile(schema []byte) Profile {
 // non-zero of cache_read_input_tokens, cacheReadInputTokens, input_tokens and inputTokens (the input tokens stand in when the cache
 // read is absent), zero when each it has is zero. grok reports no commands. Output that is not exactly one envelope, an envelope
 // without a usage object, or a usage object with none of the four names, reports no usage.
-func grokUsage(stdout []byte, _ Request) (Usage, bool) {
+func grokUsage(_ context.Context, stdout []byte, _ Request) (Usage, bool) {
 	var env struct {
 		Usage map[string]json.RawMessage `json:"usage"`
 	}
@@ -133,9 +134,10 @@ func AstraProfile(schemaFile string) Profile {
 // astraUsage reads codex's JSONL event stream: the commands are the item.completed events whose item is a command_execution that
 // succeeded (status completed and exit_code 0; a failed one is status failed with its exit code, and one with no exit code is not
 // counted), so commands that read nothing do not pass the floor, and the cached tokens are the cached_input_tokens of the last
-// turn.completed event's usage. A line that is not a JSON event is skipped; a stream with no turn.completed event that has a usage
-// object reports no usage.
-func astraUsage(stdout []byte, req Request) (Usage, bool) {
+// turn.completed event's usage. A command counts only when commandReadsCheckout proves that it reads the checkout, and the git
+// lookups it runs stop when ctx (the caller's) ends. A line that is not a JSON event is skipped; a stream with no turn.completed
+// event that has a usage object reports no usage.
+func astraUsage(ctx context.Context, stdout []byte, req Request) (Usage, bool) {
 	var u Usage
 	ok := false
 	sc := bufio.NewScanner(bytes.NewReader(stdout))
@@ -158,7 +160,7 @@ func astraUsage(stdout []byte, req Request) (Usage, bool) {
 		}
 		switch {
 		case ev.Type == "item.completed" && ev.Item.Type == "command_execution":
-			if ev.Item.Status == "completed" && ev.Item.ExitCode != nil && *ev.Item.ExitCode == 0 && commandReadsCheckout(ev.Item.Command, req.Worktree) {
+			if ev.Item.Status == "completed" && ev.Item.ExitCode != nil && *ev.Item.ExitCode == 0 && commandReadsCheckout(ctx, ev.Item.Command, req.Worktree) {
 				u.Commands++
 			}
 		case ev.Type == "turn.completed" && ev.Usage != nil:

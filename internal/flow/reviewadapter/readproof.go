@@ -1,11 +1,14 @@
 package reviewadapter
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"mvdan.cc/sh/v3/syntax"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/gitprobe"
 )
 
 const (
@@ -13,7 +16,7 @@ const (
 	readProofMaxDepth = 8
 )
 
-func commandReadsCheckout(command, worktree string) bool {
+func commandReadsCheckout(ctx context.Context, command, worktree string) bool {
 	if strings.TrimSpace(worktree) == "" {
 		return false
 	}
@@ -29,10 +32,10 @@ func commandReadsCheckout(command, worktree string) bool {
 	if !ok {
 		return false
 	}
-	return checkoutProgramReads(command, root, root, 0, true, proofInput{})
+	return checkoutProgramReads(ctx, command, root, root, 0, true, proofInput{})
 }
 
-func checkoutProgramReads(command, cwd, root string, depth int, succeeded bool, input proofInput) bool {
+func checkoutProgramReads(ctx context.Context, command, cwd, root string, depth int, succeeded bool, input proofInput) bool {
 	if depth > readProofMaxDepth || len(command) > readProofMaxLen || strings.TrimSpace(command) == "" {
 		return false
 	}
@@ -40,7 +43,7 @@ func checkoutProgramReads(command, cwd, root string, depth int, succeeded bool, 
 	if err != nil {
 		return false
 	}
-	st := &proofState{root: root, cwd: cwd, depth: depth}
+	st := &proofState{ctx: ctx, root: root, cwd: cwd, depth: depth}
 	return st.stmtsRead(f.Stmts, input, succeeded)
 }
 
@@ -50,6 +53,7 @@ type proofInput struct {
 }
 
 type proofState struct {
+	ctx     context.Context
 	root    string
 	cwd     string
 	depth   int
@@ -356,7 +360,7 @@ func (st *proofState) shellScriptReads(args []string, input proofInput, succeede
 		if i+1 >= len(args) {
 			return false
 		}
-		return checkoutProgramReads(args[i+1], st.cwd, st.root, st.depth+1, succeeded, input)
+		return checkoutProgramReads(st.ctx, args[i+1], st.cwd, st.root, st.depth+1, succeeded, input)
 	}
 	return false
 }
@@ -610,13 +614,16 @@ func (st *proofState) gitPatchOpt(args []string, i *int) bool {
 }
 
 func (st *proofState) gitShowReads(args []string, repo string) bool {
-	proved, sawObject := false, false
+	proved, sawObject, sawRevPath, sawOther := false, false, false, false
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
 		case a == "--":
 			if i == len(args)-1 {
 				return proved || !sawObject
+			}
+			if sawRevPath && !sawOther && !proved {
+				return false
 			}
 			for _, p := range args[i+1:] {
 				if st.pathspecInside(p, repo) {
@@ -633,12 +640,12 @@ func (st *proofState) gitShowReads(args []string, repo string) bool {
 			if path == "" {
 				return false
 			}
-			sawObject = true
-			if st.repoPathInside(path, repo) {
+			sawObject, sawRevPath = true, true
+			if st.repoPathInside(path, repo) && objectIsBlob(st.ctx, repo, a, filepath.Dir(st.root)) {
 				proved = true
 			}
 		default:
-			sawObject = true
+			sawObject, sawOther = true, true
 			if resolved, ok := st.pathOperand(a, repo); ok {
 				if !insideRoot(resolved, st.root) {
 					return false
@@ -716,11 +723,20 @@ func (st *proofState) repoPathInside(p, repo string) bool {
 		return false
 	}
 	clean := filepath.Clean(raw)
-	if !insideRoot(clean, st.root) {
+	return insideRoot(clean, st.root)
+}
+
+// objectIsBlob says whether git names a blob for object, a <rev>:<path> operand exactly as the command recorded it, in repo. The
+// lookup runs under ctx, the caller's, and within gitprobe.Timeout, and it is refused at once when ctx has ended. A failed call, a
+// timeout, a missing git binary and any other object type (tree, commit, tag) are not a blob, so the read is not counted.
+func objectIsBlob(ctx context.Context, repo, object, ceiling string) bool {
+	if ctx.Err() != nil {
 		return false
 	}
-	info, err := os.Lstat(clean)
-	return err != nil || info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0
+	probe, cancel := context.WithTimeout(ctx, gitprobe.Timeout)
+	defer cancel()
+	out, err := gitprobe.Command(probe, repo, []string{"GIT_CEILING_DIRECTORIES=" + ceiling}, "cat-file", "-t", object).Output()
+	return err == nil && strings.TrimSpace(string(out)) == "blob"
 }
 
 func looksLikeHex(s string) bool {
