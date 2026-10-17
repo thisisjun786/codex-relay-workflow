@@ -4,11 +4,11 @@
     "commit": "3c1459acadeb1906d97c00a598e1457327ae372d",
     "skills_listing_sha256": "79d9580f39ca27221cb9c24337080e3fe4a1e71f76338c7329fca63f76a32e89"
   },
-  "table_sha256": "fd84a8db22c3838ba6bb2ae0804ca58f9e81dbbd121b18e62da4b27d4eb70769",
+  "table_sha256": "8a34c4ce12981ae3823355a015b6c9453201b3faa5a282e2b48167f0ef420a9f",
   "from": "dev-scaffolding",
   "files": {
     "SKILL.md": {
-      "original": "de5fe5694312ed6c6621734c5bf11235ec8c60ecb0d96e6360c3708d3d197832"
+      "original": "5513e7e19cc49864ea7d3dd32c077f21e8d34361708f9a9b28b7adb2c3aac51e"
     },
     "agents/openai.yaml": {
       "original": "702104195657930e45915560deafd40ab1f836f63359487e254b7b76477a6c43"
@@ -33,7 +33,7 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "CRW-1344: Linear wording became tracking wording (a tracking issue, the tracking repository, a milestone), and the skill catalog no longer lists a Linear skill",
+      "reason": "CRW-1634: name table maps cxc-pabcd/cxc-loop to crw-work/crw-continue",
       "hunks": [
         {
           "line": 3,
@@ -99,7 +99,7 @@
           ],
           "new": [
             "The numbered plan documents of a C2+ unit are workspace-local execution evidence owned by\n",
-            "[Implementation units](../crw-pabcd/references/implementation-units.md); scaffolding does not\n",
+            "[Implementation units](../crw-work/references/implementation-units.md); scaffolding does not\n",
             "create or number them. C0/C1 record exemptions are owned by crw-dev §0.1. Propose the\n",
             "`docs/`/`plans/` architecture docs when:\n"
           ]
@@ -121,6 +121,15 @@
           ]
         },
         {
+          "line": 104,
+          "old": [
+            "the SoT doc in the SAME unit (C gate, `pabcd` C phase). If the repo has no SoT doc,\n"
+          ],
+          "new": [
+            "the SoT doc in the SAME unit (task validation, `crw-work` references/phase-check.md). If the repo has no SoT doc,\n"
+          ]
+        },
+        {
           "line": 108,
           "old": [
             "Implementation-unit devlog method:\n",
@@ -134,7 +143,7 @@
           "new": [
             "Keep diff-level plans in files, not chat; keep chat summaries short: explain the phase,\n",
             "show a compact tree/change map, then link the plan file. Phase naming is owned by\n",
-            "[Implementation units](../crw-pabcd/references/implementation-units.md) (LEXICO-SPLIT-01).\n"
+            "[Implementation units](../crw-work/references/implementation-units.md) (LEXICO-SPLIT-01).\n"
           ]
         },
         {
@@ -158,13 +167,22 @@
           ]
         },
         {
+          "line": 165,
+          "old": [
+            "If the task is ambiguous or cross-cutting, route through the `pabcd` skill flow before scaffolding.\n"
+          ],
+          "new": [
+            "If the task is ambiguous or cross-cutting, route through the `crw-work` skill flow before scaffolding.\n"
+          ]
+        },
+        {
           "line": 207,
           "old": [
             "| Plan folders        | `YYMMDD_slug/`        | `260510_feature_bootstrap/`  |\n",
             "| Phase docs          | decade-prefixed `NNN_slug.md`, `000_*` is the index (LEXICO-SPLIT-01) | `000_plan.md`, `010_phase1_build.md` |\n"
           ],
           "new": [
-            "| Plan documents      | owned by [Implementation units](../crw-pabcd/references/implementation-units.md) | |\n"
+            "| Plan documents      | owned by [Implementation units](../crw-work/references/implementation-units.md) | |\n"
           ]
         },
         {
@@ -173,7 +191,7 @@
             "1. Follow decade numbering (../pabcd/references/implementation-units.md, LEXICO-SPLIT-01): 000-009 research, 010-019 phase 1, etc.\n"
           ],
           "new": [
-            "1. Follow decade numbering ([Implementation units](../crw-pabcd/references/implementation-units.md), LEXICO-SPLIT-01): 000-009 research, 010-019 phase 1, etc.\n"
+            "1. Follow decade numbering ([Implementation units](../crw-work/references/implementation-units.md), LEXICO-SPLIT-01): 000-009 research, 010-019 phase 1, etc.\n"
           ]
         }
       ]

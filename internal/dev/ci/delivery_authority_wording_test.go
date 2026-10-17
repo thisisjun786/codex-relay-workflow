@@ -10,7 +10,7 @@ import (
 )
 
 // The delivery authority (CRW-1102): crw-dev holds the one definition of when a push is allowed (an applicable user grant, the
-// repository's standing grant, or a scope packet carrying one), and crw-pabcd, crw-run and crw-plan point at it. The delivery
+// repository's standing grant, or a scope packet carrying one), and crw-work, crw-run and crw-plan point at it. The delivery
 // path of the repository is chosen before a PR stack is. These checks pin the wording the definition rests on; the behaviour
 // itself is read from the scenario review recorded in the issue handoff, because a text test shows only that the text is there.
 
@@ -72,13 +72,13 @@ func TestDeliveryAuthority_StackFollowsTheDeliveryPath(t *testing.T) {
 }
 
 func TestDeliveryAuthority_OtherSkillsPointNotRestate(t *testing.T) {
-	line := deliveryAuthorityLine(t, "plugins/crw/skills/crw-pabcd/SKILL.md", "3. **B — Build**")
+	line := deliveryAuthorityLine(t, "plugins/crw/skills/crw-work/SKILL.md", "**Implementation and delivery authority:**")
 	if !strings.Contains(line, "Push only as `crw-dev` DEV-GIT-PUSH-01 defines") {
-		t.Errorf("PABCD B does not point at the crw-dev definition: %s", line)
+		t.Errorf("task implementation does not point at the crw-dev definition: %s", line)
 	}
 	for _, rel := range []string{
-		"plugins/crw/skills/crw-pabcd/SKILL.md",
-		"plugins/crw/skills/crw-pabcd/references/phase-plan.md",
+		"plugins/crw/skills/crw-work/SKILL.md",
+		"plugins/crw/skills/crw-work/references/phase-plan.md",
 		"plugins/crw/skills/crw-canon/references/delivery.md",
 		"plugins/crw/skills/crw-run/references/task-packet.md",
 	} {

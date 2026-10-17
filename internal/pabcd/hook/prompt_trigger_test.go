@@ -325,7 +325,7 @@ func TestPromptTriggerMode2InjectsTheFullDirective(t *testing.T) {
 	if got != want {
 		t.Errorf("answer\n got %q\nwant %q", got, want)
 	}
-	for _, marker := range []string{"$crw:crw-pabcd", "$crw:crw-dev-code-reviewer"} {
+	for _, marker := range []string{"$crw:crw-work", "$crw:crw-dev-code-reviewer"} {
 		if !strings.Contains(got, marker) {
 			t.Errorf("the directive is missing %q", marker)
 		}

@@ -4,7 +4,7 @@
     "commit": "3c1459acadeb1906d97c00a598e1457327ae372d",
     "skills_listing_sha256": "79d9580f39ca27221cb9c24337080e3fe4a1e71f76338c7329fca63f76a32e89"
   },
-  "table_sha256": "fd84a8db22c3838ba6bb2ae0804ca58f9e81dbbd121b18e62da4b27d4eb70769",
+  "table_sha256": "8a34c4ce12981ae3823355a015b6c9453201b3faa5a282e2b48167f0ef420a9f",
   "from": "qa",
   "files": {
     "SKILL.md": {
@@ -29,7 +29,7 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "CRW-1344: Linear wording became tracking wording (a tracking issue, the tracking repository, a milestone), and the skill catalog no longer lists a Linear skill",
+      "reason": "CRW-1526: rename task work skills and references; preserve source provenance and stored hook/state contracts",
       "hunks": [
         {
           "line": 3,
@@ -78,6 +78,15 @@
           ],
           "new": [
             "  faithful channels, evidence contract, adversarial classes, reviewer passes,\n"
+          ]
+        },
+        {
+          "line": 38,
+          "old": [
+            "- Both feed PABCD C. Neither replaces the other: a green suite without a\n"
+          ],
+          "new": [
+            "- Both feed task validation. Neither replaces the other: a green suite without a\n"
           ]
         },
         {
@@ -134,6 +143,15 @@
           ],
           "new": [
             "  the same reviewer (DISPATCH-ACTOR-01), and the final C gate gets a fresh one.\n"
+          ]
+        },
+        {
+          "line": 182,
+          "old": [
+            "## 7. Binding to PABCD C\n"
+          ],
+          "new": [
+            "## 7. Binding to task validation\n"
           ]
         },
         {

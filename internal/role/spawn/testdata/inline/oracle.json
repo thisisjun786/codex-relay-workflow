@@ -6,8 +6,8 @@
     "crw-dev": "---\nname: crw-dev\ndescription: \"Synthetic dev skill for direct oracle tests.\"\n---\n# dev\nUse $crw-search only if the task calls for it.\n",
     "crw-search": "---\nname: crw-search\ndescription: \"Synthetic search skill for direct oracle tests.\"\n---\n# search\nUse $crw-search only if the task calls for it.\n",
     "crw-dev-testing": "---\nname: crw-dev-testing\ndescription: \"Synthetic dev-testing skill for direct oracle tests.\"\n---\n# dev-testing\nUse $crw-search only if the task calls for it.\n",
-    "crw-loop": "---\nname: crw-loop\ndescription: \"Synthetic loop skill for direct oracle tests.\"\n---\n# loop\nUse $crw-search only if the task calls for it.\n",
-    "crw-pabcd": "---\nname: crw-pabcd\ndescription: \"Synthetic pabcd skill for direct oracle tests.\"\n---\n# pabcd\nUse $crw-search only if the task calls for it.\n"
+    "crw-continue": "---\nname: crw-continue\ndescription: \"Synthetic loop skill for direct oracle tests.\"\n---\n# loop\nUse $crw-search only if the task calls for it.\n",
+    "crw-work": "---\nname: crw-work\ndescription: \"Synthetic pabcd skill for direct oracle tests.\"\n---\n# pabcd\nUse $crw-search only if the task calls for it.\n"
   },
   "groups": [
     {
@@ -263,9 +263,9 @@
           "op": "inlineSkillBodies",
           "classification": "intentionally-changed",
           "reason": "CRW skill/namespace/folder, inline tag and marker substitutions.",
-          "input": "<skill name=\"crw-dev\">\nouter body\n<skill name=\"crw-search\">\ninner body mentioning $crw-loop\n</skill>\nouter tail also mentioning $crw-loop\n</skill>\nno outside mentions",
+          "input": "<skill name=\"crw-dev\">\nouter body\n<skill name=\"crw-search\">\ninner body mentioning $crw-continue\n</skill>\nouter tail also mentioning $crw-continue\n</skill>\nno outside mentions",
           "oracle": "<skill name=\"cxc-dev\">\nouter body\n<skill name=\"cxc-search\">\ninner body mentioning $cxc-loop\n</skill>\nouter tail also mentioning $cxc-loop\n</skill>\nno outside mentions",
-          "expected": "<skill name=\"crw-dev\">\nouter body\n<skill name=\"crw-search\">\ninner body mentioning $crw-loop\n</skill>\nouter tail also mentioning $crw-loop\n</skill>\nno outside mentions"
+          "expected": "<skill name=\"crw-dev\">\nouter body\n<skill name=\"crw-search\">\ninner body mentioning $crw-continue\n</skill>\nouter tail also mentioning $crw-continue\n</skill>\nno outside mentions"
         }
       ]
     },

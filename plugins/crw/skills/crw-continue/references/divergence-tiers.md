@@ -1,17 +1,24 @@
 # Divergence Tiers
 
+This reference describes existing standalone task-goal/state contracts.
+The current development flow is defined by [Task work](../../crw-work/SKILL.md#work-through-the-current-flow).
+I/P/A/B/C/D below are compatibility record values, not current flow stages.
+Use only the operations authorized for the selected task and installed runtime;
+do not start another state machine inside a flow-managed node. A renamed skill
+does not migrate hooks, state files, attestations or goalplan schemas.
+
 This reference owns the detailed DIVERGE-TIER-01 cost tiers and operational rules.
 
 ## Emergence / Divergence Layer
 
-PABCD is convergence-first. Activate divergence deliberately during HITL I/P when intent
+task work is convergence-first. Activate divergence deliberately during HITL I/P when intent
 is open, the approach is uncertain, the objective is maximize/deceptive, or the user asks
 to compare alternatives. In goal mode, non-improving maximize metrics may prompt it via
 the Stop hook. Pause semantics remain: hooks neither build candidates nor move phases.
 
 When divergence is ON:
 
-- Record mode explicitly: `crw pabcd divergence mode --session <id> on --collapse P|D --reason <why>`.
+- Record mode explicitly: `crw work divergence mode --session <id> on --collapse P|D --reason <why>`.
 - Select the cost tier under DIVERGE-TIER-01: Tier 0 inline concepts, Tier 1 conceptual
   candidate docs (default), or Tier 2 isolated executable races only for load-bearing
   conflicts that paper analysis cannot resolve.
@@ -20,7 +27,7 @@ When divergence is ON:
   candidates in isolated worktrees, run the same `evaluate.sh`, then keep/discard by
   the recorded metric.
 - After the plateau is broken or a candidate is kept/discarded, turn divergence off:
-  `crw pabcd divergence mode --session <id> off --reason resolved`, then return to the
+  `crw work divergence mode --session <id> off --reason resolved`, then return to the
   normal N=1 loop.
 
 ## Tier Selection
@@ -43,7 +50,7 @@ evidence only. The MAIN session writes the candidate document, or assigns it to 
 scoped WORKER whose write scope is the devlog unit or `.crw/divergence/`.
 Explorers never write files.
 
-The front-matter lives in the candidate document. `crw pabcd divergence candidate add`
+The front-matter lives in the candidate document. `crw work divergence candidate add`
 records its archive row (kind, title, rationale, and `--source`). The MAIN session is
 the collapse owner and critiques and triages candidates directly; a separate
 cross-critique round is not a gate condition.
@@ -61,10 +68,10 @@ Exchange is file-mediated through `.crw/divergence/` and the devlog unit.
 
 Every candidate carries `crw-search` provenance: `strong-1` should be Tier 2 proven,
 and `add-1` must be at least Tier 1 discovered. Record provenance with
-`crw pabcd divergence candidate add ... --source <url>`.
+`crw work divergence candidate add ... --source <url>`.
 
 When candidate work uses a git worktree, write archive entries to the owner worktree.
-From child worktrees, run `crw pabcd divergence ... --cwd <owner-repo-root>` so the collapse
+From child worktrees, run `crw work divergence ... --cwd <owner-repo-root>` so the collapse
 owner sees every candidate.
 
 ## Collapse And Evaluation
@@ -76,7 +83,7 @@ metric.
 
 For maximize goals, build or validate `evaluate.sh` before candidate implementation. It
 must be deterministic, use fixed seeds or folds, and emit `METRIC name=value`; ingest
-results with `crw pabcd metric ingest --session <id>`.
+results with `crw work metric ingest --session <id>`.
 
 If local metrics improve while holdout or true metrics stall or fall, treat that as an
 overfitting stop signal and re-plan before keeping the candidate.

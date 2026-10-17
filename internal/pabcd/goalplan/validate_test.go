@@ -149,7 +149,7 @@ func TestValidateGoalplanFailsAnEmptyPlan(t *testing.T) {
 		t.Fatal("an empty plan: ok = true, want false")
 	}
 	validateReasonsEqual(t, verdict.Reasons,
-		"plan is empty: no workPhases[] and no criteria[] registered — fill the goalplan (schema in $crw-loop) before the E8 gate can certify completion")
+		"plan is empty: no workPhases[] and no criteria[] registered — fill the goalplan (schema in $crw-continue) before the E8 gate can certify completion")
 
 	// Registering EITHER a criterion or a work phase lifts the empty-plan failure.
 	withCriterion := BuildGoalplan(NewGoalplanInput{Objective: "with criterion",

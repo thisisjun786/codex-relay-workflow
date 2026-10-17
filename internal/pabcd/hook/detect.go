@@ -21,7 +21,7 @@ const (
 	// JavaScript's non-unicode \s; RE2's built-in class is narrower.
 	jsSpaceChars = `\t\n\v\f\r \x{00a0}\x{1680}\x{2000}-\x{200a}\x{2028}\x{2029}\x{202f}\x{205f}\x{3000}\x{feff}`
 	negatedLead  = `^(?:(?:please|좀)\s+)?(?:(?:i|we)\s+(?:do\s+not|don't|dont)\s+(?:want|need)\b|(?:i'd|i\s+would|we'd|we\s+would)\s+(?:rather|prefer)\s+(?:not|you\s+not|you\s+didn't)\b|(?:can|could|would|will)\s+you\s+(?:not|please\s+not)\b|do\s+not|don't|dont|never|no\s+need\s+to|avoid|stop)\b`
-	negatedTail  = `(?:crw-?(?:loop|pabcd)|pabcd)\S*\s*(?:을|를|은|는)?\s*(?:(?:돌리|쓰|사용하|실행하|켜|하)지\s*(?:마|말)|말고|금지)`
+	negatedTail  = `(?:crw-?(?:loop|pabcd|continue|work)|cxc(?:-|\s)+loop|pabcd)\S*\s*(?:을|를|은|는)?\s*(?:(?:돌리|쓰|사용하|실행하|켜|하)지\s*(?:마|말)|말고|금지)`
 )
 
 // detectorRE preserves JS whitespace; callers fold only ASCII for the oracle's
@@ -88,7 +88,7 @@ func stripQuotes(s string) string {
 
 func stripBackticks(line string, explanatory bool) string {
 	re := detectorRE("`([^`]*)`")
-	allowed := detectorRE(`^(?:\$?(?:crw:)?crw-(?:loop|pabcd)|orchestrate\s+[ipabc])$`)
+	allowed := detectorRE(`^(?:\$?(?:crw:)?crw-(?:loop|pabcd|continue|work)|cxc(?:-|\s)+loop|orchestrate\s+[ipabc])$`)
 	beforeVerb := detectorRE(`^(?:(?:please|좀)\s+)?(?:run|use|start|invoke|실행|돌려)\s*$`)
 	beforeParticle := detectorRE(`^(?:(?:please|좀)\s*)?$`)
 	afterParticle := detectorRE(`^\s*(?:로|으로|써서)`)
@@ -199,7 +199,7 @@ func requestLines(prompt string) []string {
 // explicit commands I..C or named PABCD requests are recognized, in source order.
 func DetectTrigger(prompt string) (state.Phase, bool) {
 	command := detectorRE(`^orchestrate\s+([ipabc])(?:\s|$)`)
-	marker := detectorRE(`(?:\bcrw-pabcd\b|\bcrw:crw-pabcd\b|\[\$?crw-pabcd\]\(skill://[^)]+\)|\bpabcd\s*(?:로|phase\b))`)
+	marker := detectorRE(`(?:\bcrw-(?:pabcd|work)\b|\bcrw:crw-(?:pabcd|work)\b|\[\$?crw-(?:pabcd|work)\]\(skill://[^)]+\)|\bpabcd\s*(?:로|phase\b))`)
 	requested := detectorRE(`(?:\b(?:use|run|start|invoke|enter|apply)\b|(?:시작|진행|적용|실행|돌려|써서|으로|들어가))`)
 	phases := []struct {
 		pattern string
@@ -210,7 +210,7 @@ func DetectTrigger(prompt string) (state.Phase, bool) {
 		{`\baudit\b|\bphase\s*a\b|감사`, state.PhaseA},
 		{`\bbuild\b|\bphase\s*b\b|구현`, state.PhaseB},
 		{`\bcheck\b|\bphase\s*c\b|검증`, state.PhaseC},
-		{`pabcd\s*로|\bcrw-pabcd\b`, state.PhaseP},
+		{`pabcd\s*로|\bcrw-(?:pabcd|work)\b`, state.PhaseP},
 	}
 	for _, line := range requestLines(prompt) {
 		line = foldASCII(line)
@@ -243,7 +243,7 @@ func DetectAgbrowseSearchRequest(prompt string) bool {
 
 // DetectLoopArmRequest requires both a named mode and an action in an eligible clause.
 func DetectLoopArmRequest(prompt string) bool {
-	marker := detectorRE(`\bcrw-?loop\b|\bcrw:crw-loop\b|\[\$?crw-loop\]\(skill://[^)]+\)|\bgoal\s*plan\b|\bgoalplan\b|골플랜|\bhotl\b`)
+	marker := detectorRE(`\bcrw-?(?:loop|continue)\b|\bcxc(?:-|\s)+loop\b|\bcrw:crw-(?:loop|continue)\b|\[\$?crw-(?:loop|continue)\]\(skill://[^)]+\)|\bgoal\s*plan\b|\bgoalplan\b|골플랜|\bhotl\b`)
 	bare := detectorRE(`i?pabcd\b`)
 	action := detectorRE(`\b(?:use|run|start|invoke|arm|create|init|repeat|cycle|resume|continue)\b|(?:실행|돌려|돌리|써서|으로|시작|등록|진행|적용|해줘|이어서|재개)`)
 	for _, line := range requestLines(prompt) {

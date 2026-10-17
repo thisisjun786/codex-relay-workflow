@@ -223,7 +223,11 @@ func checkEnvelope(region any) error {
 // loopWorkflowNames are the product words that name the loop in a policy's workflow, with the name each
 // refusal quotes: crw-loop is what the skills give a child's loop, and CXC Loop is what the recorded
 // packets and the CXC hosts still carry. The rename adds a name and takes no check away.
-var loopWorkflowNames = []struct{ product, quoted string }{{"crw", "crw-loop"}, {"cxc", "CXC Loop"}}
+var loopWorkflowNames = []struct{ product, workflow, quoted string }{
+	{"crw", "continue", "crw-continue"},
+	{"crw", "loop", "crw-loop"},
+	{"cxc", "loop", "CXC Loop"},
+}
 
 // checkLoopWorkflowMode refuses a policy whose workflow names the loop under another mode: the loop
 // arms a goalplan, so its mode is loop. The workflow is read as words, so crw-loop, CRW Loop, cxc-loop
@@ -232,7 +236,7 @@ func checkLoopWorkflowMode(p any) error {
 	words := strings.FieldsFunc(strings.ToLower(pyjson.Text(Get(p, "workflow"))), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
 	for i := 0; i+1 < len(words); i++ {
 		for _, n := range loopWorkflowNames {
-			if words[i] == n.product && words[i+1] == "loop" && Get(p, "mode") != "loop" {
+			if words[i] == n.product && words[i+1] == n.workflow && Get(p, "mode") != "loop" {
 				return malformed("the workflow names %s and the policy says %s; the loop arms a goalplan, so its mode is loop", n.quoted, quote.Value(Get(p, "mode")))
 			}
 		}

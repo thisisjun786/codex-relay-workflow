@@ -281,7 +281,7 @@ func TestSpawnPolicyIsPointedAt(t *testing.T) {
 	for _, file := range []string{
 		"plugins/crw/skills/crw-canon/SKILL.md",
 		"plugins/crw/skills/crw-run/SKILL.md",
-		"plugins/crw/skills/crw-pabcd/SKILL.md",
+		"plugins/crw/skills/crw-work/SKILL.md",
 		"plugins/crw/skills/crw-canon/references/flow/overview.md",
 	} {
 		data, err := os.ReadFile(filepath.Join(repoRoot(), filepath.FromSlash(file)))

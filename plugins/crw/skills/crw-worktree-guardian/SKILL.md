@@ -48,7 +48,7 @@ belongs to the Codex task. A subagent spawned with `spawn_agent` inherits this
 same directory: same path, same branch, same HEAD, and its writes appear in this
 worktree's `git status`. It never gets a worktree of its own, so spawning agents
 is not a way to parallelize branch work — that needs one task per lane, each with
-its own worktree. See [Dispatch surfaces](../crw-pabcd/references/dispatch-surfaces.md).
+its own worktree. See [Dispatch surfaces](../crw-work/references/dispatch-surfaces.md).
 
 ## 3. Never-list (WG-NEVER-01)
 

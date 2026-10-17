@@ -25,7 +25,7 @@ func DispatchHelp() string {
 		`  {"action":"report","outcome":"created","sessionId":"<main-id>","dispatchId":"<task-id>","attemptId":"<attempt-id>","agentId":"<child-id>"}`,
 		`  {"action":"report","outcome":"complete|failed|task_failed|unavailable|stopped", ...the ids, "agentId", "executionState", "reconciliation"...}`,
 		`  {"action":"status","sessionId":"<main-id>","dispatchId":"<task-id>"}`, "",
-		"The protocol is the crw-pabcd skill's delegation reference (Configured first fallback).",
+		"The protocol is the crw-work skill's delegation reference (Configured first fallback).",
 	}, "\n")
 }
 

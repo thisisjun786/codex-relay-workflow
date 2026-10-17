@@ -126,7 +126,7 @@ func TestDefaultFlowRaisesDecisionRequests(t *testing.T) {
 	if uiux := splitRead(t, uiuxSkillFile); !strings.Contains(uiux, ladder) || !strings.Contains(uiux, "Optional deepening") {
 		t.Errorf("%s does not keep the intent ladder as its optional path", uiuxSkillFile)
 	}
-	for _, skill := range []string{"crw-run", "crw-pabcd", "crw-dev"} {
+	for _, skill := range []string{"crw-run", "crw-work", "crw-dev"} {
 		err := filepath.WalkDir(filepath.Join(repoRoot(), "plugins/crw/skills", skill), func(path string, d fs.DirEntry, err error) error {
 			if err != nil || d.IsDir() {
 				return err

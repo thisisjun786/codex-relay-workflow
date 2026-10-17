@@ -23,7 +23,7 @@ claiming anything.
   packaging and distribution rows even when no code changed.
 
 When a goalplan tracks this work, register each criterion on a session-bound
-plan with `crw pabcd loop add-criterion --session <id> --criterion <text> --surface
+plan with `crw work continue add-criterion --session <id> --criterion <text> --surface
 desktop [--presented native]` (`init` refuses `--surface`). Use `--presented
 native` only when the criterion needs inspection of a presented native surface.
 It activates a soft, fail-open C-phase Stop advisory requesting an explicit

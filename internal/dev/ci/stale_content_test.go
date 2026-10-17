@@ -114,6 +114,11 @@ func rowScanErrors(root string, m inventoryMap, test string, patterns []scanPatt
 				}
 			nextLine:
 				for number, line := range lines(string(data)) {
+					// CRW-1526 permits this single old-name explanation in the
+					// renamed skill's title. Extra prose and other files still fail.
+					if test == "TestNoChangeHistoryNotes" && file == staleSkillsRoot+"crw-work/SKILL.md" && line == "# Task work (formerly PABCD)" {
+						continue
+					}
 					for _, pattern := range patterns {
 						if !pattern.re.MatchString(line) {
 							continue
@@ -224,6 +229,31 @@ func TestNoStaleCxcReferences(t *testing.T) {
 }
 
 func TestNoChangeHistoryNotes(t *testing.T) {
+	t.Run("only the approved task work rename heading is allowed", func(t *testing.T) {
+		for _, row := range []struct {
+			path, line string
+			wantOK     bool
+		}{
+			{"crw-work/SKILL.md", "# Task work (formerly PABCD)", true},
+			{"crw-work/SKILL.md", "# Task work (formerly PABCD), renamed from another skill", false},
+			{"crw-work/SKILL.md", "Task work (formerly PABCD)", false},
+			{"crw-work/references/notes.md", "# Task work (formerly PABCD)", false},
+			{"crw-continue/SKILL.md", "# Task work (formerly PABCD)", false},
+		} {
+			root, m := scanFixture(t, "TestNoChangeHistoryNotes", "done", staleSkillsRoot+row.path)
+			p := filepath.Join(root, staleSkillsRoot+row.path)
+			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(p, []byte(row.line+"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			errs := rowScanErrors(root, m, "TestNoChangeHistoryNotes", changeHistoryPatterns, nil)
+			if (len(errs) == 0) != row.wantOK {
+				t.Errorf("%s: %q: errors %v, want clean %v", row.path, row.line, errs, row.wantOK)
+			}
+		}
+	})
 	t.Run("a removal note for the jaw registry fails, its name as a live source does not", func(t *testing.T) {
 		re := changeHistoryPatterns[2].re
 		for line, want := range map[string]bool{

@@ -109,7 +109,7 @@ RepoMap stores derived tag cache data under:
 ```
 
 Set `CRW_REPOMAP_CACHE` to override the location. The cache is rebuildable
-derived data. It is wiped only by `crw pabcd reset --all`.
+derived data. It is wiped only by `crw work reset --all`.
 
 ## Verification tiers
 

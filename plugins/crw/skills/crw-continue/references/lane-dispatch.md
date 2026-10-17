@@ -6,14 +6,14 @@ than one wait can hold. A tracking issue or DAG node is a flow executor call of 
 recorded in the relay, whose step the child spawns as a role subagent (the default path), or a
 `child` session (a code id, not a layer) started through `crw-run` (the exception), and is not handed to a
 `create_thread` lane by this file; apply
-[DISPATCH-MANAGED-01](../../crw-pabcd/references/dispatch-surfaces.md#dispatch-managed-01-strict--start-from-the-binding-not-from-the-mechanism)
-first. [Dispatch surfaces](../../crw-pabcd/references/dispatch-surfaces.md) owns
+[DISPATCH-MANAGED-01](../../crw-work/references/dispatch-surfaces.md#dispatch-managed-01-strict--start-from-the-binding-not-from-the-mechanism)
+first. [Dispatch surfaces](../../crw-work/references/dispatch-surfaces.md) owns
 the choice between a thread and a subagent; this file owns what a lane is handed and what
 it is allowed to do with it.
 
 The numbers below were read from the Codex desktop bundle and the `codex-rs` sources on
 2026-09-20 and are recorded as data in `examples/host-thread-bounds.json`. Re-derive
-them with `node "<crw-loop skill directory>/scripts/check-host-bounds.mjs"` rather
+them with `node "<crw-continue skill directory>/scripts/check-host-bounds.mjs"` rather
 than trusting this prose. Resolve the skill directory from the loaded SKILL.md;
 the example keeps the recorded values but omits the original personal source
 locator. Supply available artifacts through `checkBounds(fixture, options)`;
@@ -22,8 +22,8 @@ missing artifacts remain NOT_RUN.
 ## LANE-LOOP-AUTH-01 (STRICT) — a lane may loop; a leaf never may
 
 A subagent has no session state, no host goal and no FSM: it must not call `create_goal`
-or `crw pabcd orchestrate`. A dispatched task does own both, because crw keys them to the
-task. Ownership is not authority, though. A lane runs a PABCD loop only when its packet
+or `crw work state`. A dispatched task does own both, because crw keys them to the
+task. Ownership is not authority, though. A lane runs a task work loop only when its packet
 grants an objective, criteria and a completion condition; with no such grant it does the
 stated work and reports. The coordinator never advances a lane's FSM and a lane never
 advances the coordinator's — messaging a task is not commanding it.
@@ -77,7 +77,7 @@ Offsets, normalized impossible dates and local timestamps are rejected. For exam
 
 This fragment accompanies the packet's required lane, work and reporting fields.
 
-Validate with `node "<crw-loop skill directory>/scripts/check-lane-packet.mjs" <packet.json>
+Validate with `node "<crw-continue skill directory>/scripts/check-lane-packet.mjs" <packet.json>
 [--mode dispatch|pending|bound] [--json]`. Options may precede or follow the single file;
 missing values, duplicate options, unknown flags/modes and extra files are rejected.
 Single-packet JSON includes `resolved.mode`, and successful text output prints `mode=...`.
@@ -158,7 +158,7 @@ leave the only copy in a worktree nobody owns.
 ## Known limitation
 
 `check-lane-packet.mjs` decides packets; it does not police this document. The
-authorization in [crw-loop](../SKILL.md) is prose, and no test fails when prose is
+authorization in [crw-continue](../SKILL.md) is prose, and no test fails when prose is
 deleted — an independent reviewer raised exactly that, and closing it properly means
 enforcing the packet at the orchestration boundary, which is a runtime change this
 contract does not make. Treat the validator as the enforceable half and the skill text as

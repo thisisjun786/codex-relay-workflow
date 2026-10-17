@@ -181,7 +181,7 @@ func TestLoopArmRecipeRoutesProjectCoordinationFirst(t *testing.T) {
 func TestLoopScopePointerNamesTheOwnersAndNoRecipeStep(t *testing.T) {
 	for _, parent := range []bool{false, true} {
 		d := LoopScopeDirective(parent)
-		for _, want := range []string{"$crw:crw-run", "$crw:crw-loop", "$crw:crw-pabcd", "no-goal", "mention or quoted example alone is not authorization"} {
+		for _, want := range []string{"$crw:crw-run", "$crw:crw-continue", "$crw:crw-work", "no-goal", "mention or quoted example alone is not authorization"} {
 			if !strings.Contains(d, want) {
 				t.Errorf("parent=%v: the pointer lacks %q", parent, want)
 			}

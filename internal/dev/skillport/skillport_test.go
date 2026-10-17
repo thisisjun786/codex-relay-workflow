@@ -3,6 +3,7 @@
 package skillport
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -57,9 +58,22 @@ Last line
   default_prompt: "Use $cxc-kwrite to demo."
 `
 	blob = "\x00cxc\xff"
-	// the staged SKILL.md as decided by hand: the names, the verb and the plugin form change, the upstream
-	// address and the text of a rewrite rule keep their spelling
-	wantSkillSHA = "238d45dde7c838743387edf23ea8adaaffe2b4fd1e4759e921d4795133fde7e9"
+	// The expected bytes are independent of the substitution implementation. Keep the
+	// original fixture above intact, including its CXC skill names.
+	wantSkillMD = `---
+name: crw-kwrite
+description: "Demo skill for $crw-work"
+---
+
+# Demo
+
+Run crw pabcd orchestrate P after $crw:crw-continue.
+Upstream: https://github.com/lidge-jun/codexclaw
+Install record: .codexclaw-install.json
+See [reference](references/a.md).
+Last line
+`
+	wantSkillSHA = "ea89cbd172ab7c8b6e75068499b08a4d9d4f45d64716409092a849f502d9bb8f"
 )
 
 type fixture struct {
@@ -139,6 +153,9 @@ func TestStageCleanSkill(t *testing.T) {
 		t.Fatalf("Stage = %v, %v", names, err)
 	}
 	staged := slurp(t, f.path("SKILL.md"))
+	if staged != wantSkillMD {
+		t.Errorf("staged SKILL.md = %q, want %q", staged, wantSkillMD)
+	}
 	if got := sum([]byte(staged)); got != wantSkillSHA {
 		t.Errorf("the staged SKILL.md is not the expected text:\n%s", staged)
 	}
@@ -150,6 +167,55 @@ func TestStageCleanSkill(t *testing.T) {
 	}
 	f.expectClean(t, "offline", nil)
 	f.expectClean(t, "with the source", &f.src)
+}
+
+func TestInstalledNameKeepsSourceProvenance1526(t *testing.T) {
+	for _, row := range []struct {
+		name, as string
+		wantOK   bool
+	}{
+		{"explicit installed name", "work", true},
+		{"missing installed name", "", false},
+		{"different installed name", "continue", false},
+		{"unsafe installed name", "../work", false},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			f := newFixture(t)
+			f.stage(t)
+			oldRecord := recordPath(f.root, "crw-kwrite")
+			var record map[string]any
+			must(t, json.Unmarshal([]byte(slurp(t, oldRecord)), &record))
+			if row.as != "" {
+				record["as"] = row.as
+			}
+			data, err := json.Marshal(record)
+			must(t, err)
+			put(t, oldRecord, string(data), 0o644)
+			must(t, os.Rename(oldRecord, recordPath(f.root, "crw-work")))
+			must(t, os.Rename(filepath.Join(f.root, SkillsRoot, "crw-kwrite"), filepath.Join(f.root, SkillsRoot, "crw-work")))
+			for _, src := range []*Source{nil, &f.src} {
+				if row.wantOK {
+					f.expectClean(t, row.name, src)
+				} else if got := f.problems(src); got == "" {
+					t.Error("a renamed record without a matching installed name was accepted")
+				}
+			}
+			if !row.wantOK {
+				return
+			}
+			// Recording later edits must still render the original kwrite folder.
+			p := filepath.Join(f.root, SkillsRoot, "crw-work", "SKILL.md")
+			put(t, p, strings.ReplaceAll(slurp(t, p), "crw-kwrite", "crw-work"), 0o644)
+			_, err = RecordEdits(f.root, f.src, "crw-work", "rename installed skill")
+			must(t, err)
+			f.expectClean(t, "edited installed skill with original source", &f.src)
+			s, err := load(f.root, "crw-work")
+			must(t, err)
+			if s.From != "kwrite" || s.Origin != f.src.Origin {
+				t.Fatal("installed rename changed source provenance")
+			}
+		})
+	}
 }
 
 func TestCheckNamesUnrecordedDifferences(t *testing.T) {

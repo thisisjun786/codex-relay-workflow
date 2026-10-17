@@ -410,7 +410,7 @@ func TestOrchestrateTransitionOrdinaryWrite(t *testing.T) {
 	orchestrateTransitionPut(t, renderPath, `{"kind":"artifact-modified"}`+"\n")
 	got := orchestrateTransitionRun(t, cwd, "P", "--session", id)
 	if got.Code != 0 || !strings.Contains(got.Output, "orchestrate P: current=IDLE -> P (IDLE → P, session "+id+")") ||
-		!strings.HasSuffix(got.Output, "[formal P: architect proposal -> main executable plan -> same-architect reflection before A (crw-pabcd phase-plan)]") {
+		!strings.HasSuffix(got.Output, "[formal P: architect proposal -> main executable plan -> same-architect reflection before A (crw-work phase-plan)]") {
 		t.Fatalf("IDLE>P: %+v", got)
 	}
 	after := state.ReadState(cwd, id)

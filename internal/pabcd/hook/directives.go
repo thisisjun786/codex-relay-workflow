@@ -28,34 +28,34 @@ const interviewDirectiveHead = "[crw: INTERVIEW]\n" +
 const interviewDecisionRequestBody = "CRW holds no synchronous user interview (CRW-1340): do not ask the user here and do not wait for an answer. Do not implement.\n" +
 	"Settle what the repository and the issue already answer; write the rest into the plan as OPEN ASSUMPTIONS with source, confidence and the consequence if wrong.\n" +
 	"An open question that changes scope or design is a decision request to the session above the project session: lift it with `crw flow report-up` and the evidence file, and continue the work it does not block.\n" +
-	"An issue too unclear to plan goes back to its registration through that session. Leave I for P as $crw:crw-pabcd phase control states."
+	"An issue too unclear to plan goes back to its registration through that session. Leave I for P as $crw:crw-work phase control states."
 
 const phasePDirective = "[crw: PLAN]\n" +
 	"Apply this pointer and its owners within exact user limits and permissions. No-delegation means no dispatch.\n" +
-	"Load $crw:crw-pabcd for P and C2+ plan-output; $crw:crw-dev selects class and relevant surfaces. No implementation yet.\n" +
-	"Formal P, including C2 compact and plan-only P: obtain the configured read-only architect proposal BEFORE the executable plan, send that concrete plan to the SAME architect for reflection BEFORE A, and record the consultation per $crw:crw-pabcd phase-plan/plan-output. The C0/C1 fast path needs none.\n" +
+	"Load $crw:crw-work for P and C2+ plan-output; $crw:crw-dev selects class and relevant surfaces. No implementation yet.\n" +
+	"Formal P, including C2 compact and plan-only P: obtain the configured read-only architect proposal BEFORE the executable plan, send that concrete plan to the SAME architect for reflection BEFORE A, and record the consultation per $crw:crw-work phase-plan/plan-output. The C0/C1 fast path needs none.\n" +
 	"Plan-only ends with the plan. Forbidden checks: NOT RUN; naming an artifact grants no write permission."
 
 const phaseADirective = "[crw: AUDIT]\n" +
 	"Apply this pointer and its owners within exact user limits and permissions. No-delegation means no dispatch.\n" +
-	"Load $crw:crw-dev-code-reviewer for review and $crw:crw-dev for relevant surfaces; authorized PABCD A uses $crw:crw-pabcd's audit owner. Do not build yet.\n" +
+	"Load $crw:crw-dev-code-reviewer for review and $crw:crw-dev for relevant surfaces; authorized PABCD A uses $crw:crw-work's audit owner. Do not build yet.\n" +
 	"Authorized dispatch follows the owner's named-skill, same-reviewer and verdict contracts; main synthesizes. Report unmet independent review; inline review is not its proof. Do not bypass gates.\n" +
-	"An amendment changing a module-responsibility, data-structure, interface or execution-flow decision needs reflection from the SAME architect before A completes ($crw:crw-pabcd phase-audit); text/test clarification alone does not. The reviewer stays independent."
+	"An amendment changing a module-responsibility, data-structure, interface or execution-flow decision needs reflection from the SAME architect before A completes ($crw:crw-work phase-audit); text/test clarification alone does not. The reviewer stays independent."
 
 const phaseBDirective = "[crw: BUILD]\n" +
 	"Apply this pointer and its owners within exact user limits and permissions. No-delegation means no dispatch.\n" +
-	"Use $crw:crw-dev for class/surfaces; authorized PABCD B uses $crw:crw-pabcd. Implement only authorized scope.\n" +
+	"Use $crw:crw-dev for class/surfaces; authorized PABCD B uses $crw:crw-work. Implement only authorized scope.\n" +
 	"Forbidden checks: NOT RUN; no invented proof."
 
 const phaseCDirective = "[crw: CHECK]\n" +
 	"Apply this pointer and its owners within exact user limits and permissions. No-delegation means no dispatch.\n" +
-	"Use $crw:crw-dev and $crw:crw-dev-testing; authorized PABCD C uses $crw:crw-pabcd's check owner, including C-RENDER-GROUNDING-01.\n" +
+	"Use $crw:crw-dev and $crw:crw-dev-testing; authorized PABCD C uses $crw:crw-work's check owner, including C-RENDER-GROUNDING-01.\n" +
 	"No-tests forbids tests, not separately authorized build/typecheck. No-goal/no-FSM restrict creation/mutations, not read-only inspection.\n" +
 	"Independent review needs owner applicability and dispatch permission. Report unmet review; inline review is not its proof. Forbidden checks: NOT RUN. No pass or gate bypass without real evidence."
 
 const phaseDDirective = "[crw: DONE]\n" +
 	"Apply this pointer and its owners within exact user limits and permissions. No-delegation means no dispatch.\n" +
-	"For authorized D closure load $crw:crw-pabcd; report evidence and unmet work, then IDLE. Remaining authorized work follows $crw:crw-loop from disk.\n" +
+	"For authorized D closure load $crw:crw-work; report evidence and unmet work, then IDLE. Remaining authorized work follows $crw:crw-continue from disk.\n" +
 	"A header or budget/time stop is not completion; never fabricate attestations/receipts."
 
 // QuestionShapeDirective is QUESTION_SHAPE_DIRECTIVE (hook.ts:428-437).
@@ -85,7 +85,7 @@ const AgbrowseSearchDirective = "[crw: SEARCH — agbrowse requested]\n" +
 	"Verify inspect -> act -> re-inspect, read captured evidence, and confirm the actual source claim or interaction."
 
 // TriggerAuthorityNote is TRIGGER_AUTHORITY_NOTE (hook.ts:467-474).
-const TriggerAuthorityNote = "[crw: PHASE UNCHANGED — TRIGGER-AUTHORITY-01] A lexical phase hint is not execution authority. The phase on disk is unchanged; no-goal/no-FSM restrict creation/mutations, not read-only get_goal or orchestrate status. Do not start orchestration for ordinary work. Preserve adjacency, attestations and ledger checks. Only if a phase transition is authorized, use the crw-pabcd phase-control owner and `crw pabcd orchestrate <I|P|A|B|C|D> --session <id>` — work edges carry --attest."
+const TriggerAuthorityNote = "[crw: PHASE UNCHANGED — TRIGGER-AUTHORITY-01] A lexical phase hint is not execution authority. The phase on disk is unchanged; no-goal/no-FSM restrict creation/mutations, not read-only get_goal or orchestrate status. Do not start orchestration for ordinary work. Preserve adjacency, attestations and ledger checks. Only if a phase transition is authorized, use the crw-work phase-control owner and `crw pabcd orchestrate <I|P|A|B|C|D> --session <id>` — work edges carry --attest."
 
 // PAAttestExample is the shared compact P-to-A example (hook.ts:488-489).
 const PAAttestExample = "{\"from\":\"P\",\"to\":\"A\",\"did\":\"...\",\"planUnit\":\"devlog/_plan/YYMMDD_slug\",\"workPhaseId\":\"wp1\"}"
@@ -94,10 +94,10 @@ const PAAttestExample = "{\"from\":\"P\",\"to\":\"A\",\"did\":\"...\",\"planUnit
 const loopArmProjectBranch = "Project coordination first (CRW-1084): a request to coordinate a Linear project belongs to $crw:crw-run in goal mode when a native goal for the 자식 was asked for. The 자식 (project session) creates no implementation goalplan or FSM and runs none of steps 1-5 for itself. Continue below only for a dispatched task session or an explicit request to implement a task in this session.\n"
 
 const loopArmBefore = "[crw: LOOP — orchestrate arming mandate (ORCH-MANDATE-01)]\n" +
-	"Scope first: explicit interview-only, plan-only, HITL, read-only, no-goal, no-FSM, no-tests and no-delegation limits override the bare crw-loop default.\n" +
+	"Scope first: explicit interview-only, plan-only, HITL, read-only, no-goal, no-FSM, no-tests and no-delegation limits override the bare crw-continue default.\n" +
 	"A mention or quoted example alone is not authorization. This pointer and its referenced procedures never override those limits.\n" +
 	loopArmProjectBranch +
-	"Load $crw:crw-loop and $crw:crw-pabcd for an actual loop request; bare crw-loop execution means scoped HOTL.\n" +
+	"Load $crw:crw-continue and $crw:crw-work for an actual loop request; bare crw-continue execution means scoped HOTL.\n" +
 	"No-delegation means no dispatch. No-tests does not forbid separately authorized build/typecheck. Report required but forbidden actions as unmet.\n" +
 	"Only for authorized loop execution, apply steps 1-5 within scope. No-goal/no-FSM restrict creation/mutations, not read-only inspection. Narration is not persisted progress:\n" +
 	"1. Session id: use the current SessionStart binding, corroborated by `crw relay session current` when native CODEX_THREAD_ID is available.\n" +
@@ -144,8 +144,8 @@ const loopScopeParentLine = "This session is registered as a 자식 (project ses
 const loopScopeBefore = "[crw: LOOP — scope choice (ORCH-MANDATE-01)]\n" +
 	"This request names a project or a coordination. Settle the scope before any loop step; this pointer itself starts no goal, goalplan or FSM.\n"
 
-const loopScopeAfter = "- Coordinating a Linear project (independent `child` sessions, parallel delivery, verification): $crw:crw-run, which creates or reuses a native goal for the 자식 only where one was asked for and follows its goal-mode lifecycle. The 자식 (project session) never follows the crw-loop or crw-pabcd procedure: it creates no implementation goalplan or FSM and enters no PABCD phase for itself, and its `child` sessions run crw-loop.\n" +
-	"- Implementing one task in THIS session, when the user says so explicitly (or this session is a dispatched task that owns its goalplan): $crw:crw-loop and $crw:crw-pabcd. Say which task, and the arming steps come with that request.\n" +
+const loopScopeAfter = "- Coordinating a Linear project (independent `child` sessions, parallel delivery, verification): $crw:crw-run, which creates or reuses a native goal for the 자식 only where one was asked for and follows its goal-mode lifecycle. The 자식 (project session) never follows the crw-continue or crw-work procedure: it creates no implementation goalplan or FSM and enters no PABCD phase for itself, and its `child` sessions run crw-continue.\n" +
+	"- Implementing one task in THIS session, when the user says so explicitly (or this session is a dispatched task that owns its goalplan): $crw:crw-continue and $crw:crw-work. Say which task, and the arming steps come with that request.\n" +
 	"- Unclear: ask once, or take the smaller scope. A project link or the word project is not a role and does not make this session a 자식.\n" +
 	"Explicit interview-only, plan-only, HITL, read-only, no-goal, no-FSM, no-tests and no-delegation limits still win. A mention or quoted example alone is not authorization."
 

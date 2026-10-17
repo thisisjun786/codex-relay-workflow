@@ -96,11 +96,13 @@ type Edit struct {
 
 // Skill is the record of one staged skill.
 type Skill struct {
-	Origin Origin               `json:"origin"`
-	Table  string               `json:"table_sha256"`
-	From   string               `json:"from"`
-	Files  map[string]FileEntry `json:"files"`
-	Edits  []Edit               `json:"edits,omitempty"`
+	Origin Origin `json:"origin"`
+	Table  string `json:"table_sha256"`
+	From   string `json:"from"`
+	// As is the installed folder suffix when it differs from the source folder.
+	As    string               `json:"as,omitempty"`
+	Files map[string]FileEntry `json:"files"`
+	Edits []Edit               `json:"edits,omitempty"`
 }
 
 func sum(b []byte) string {
@@ -194,7 +196,14 @@ func save(root, name string, s *Skill) error {
 
 // validate refuses a record whose names cannot be trusted as paths.
 func (s *Skill) validate(name string) error {
-	if !validFolder(s.From) || name != prefix+s.From {
+	installed := s.From
+	if s.As != "" {
+		if !validFolder(s.As) || s.As == s.From {
+			return fmt.Errorf("installed folder %q must be a valid name different from source %q", s.As, s.From)
+		}
+		installed = s.As
+	}
+	if !validFolder(s.From) || name != prefix+installed {
 		return fmt.Errorf("record name %q does not match its folder %q", name, s.From)
 	}
 	for p := range s.Files {

@@ -9,10 +9,10 @@ runs goal-free by default: it ends its turn when only waiting remains and a deli
 it. Loading this reference does not make the goal the default again, and an ordinary project execution
 request is Run's, not goal mode's.
 
-Two terms are kept apart throughout. A **loop** is the PABCD completion loop of one task, owned by
-`crw-loop` and `crw-pabcd`. **Goal mode** is this
+Two terms are kept apart throughout. A **loop** is the task work completion loop of one task, owned by
+`crw-continue` and `crw-work`. **Goal mode** is this
 mode of the project session. A request that says "loop" and names a milestone to coordinate is
-goal mode's, not a loop's, and the answer says so: `$crw-loop` with a project scope and coordination
+goal mode's, not a loop's, and the answer says so: `$crw-continue` with a project scope and coordination
 intent starts no loop and hands the request to Run goal mode. A request that asks for goal mode in
 other words, such as a child goal for the project, is the same request. The loop skills also say
 "goal mode" of a task whose own host goal is active; that is a task's goal, a different thing from
@@ -21,19 +21,19 @@ this mode, which belongs to the project session.
 Three rules follow, and every section below keeps them.
 
 1. **Explicit request only.** A child goal exists only where the user asked for one: a submitted
-   goal-mode request, the `$crw-loop` handoff above, or the restoration of a goal the child already
+   goal-mode request, the `$crw-continue` handoff above, or the restoration of a goal the child already
    holds. Binding-only, status, explanation, quoted examples, automatic skill discovery and unsubmitted
    UI prompts authorize neither a goal nor an execution.
 2. **The child never follows the loop procedure.** While acting as the project session, it does
-   not follow the crw-loop or crw-pabcd procedure, with or without a goal: it creates no implementation goalplan or FSM, enters no
-   PABCD phase, and runs no `crw pabcd orchestrate` or `crw pabcd loop init` for itself. The child's
+   not follow the crw-continue or crw-work procedure, with or without a goal: it creates no implementation goalplan or FSM, enters no
+   task work phase, and runs no `crw work state` or `crw work continue init` for itself. The child's
    native goal tracks verified results and integrations for the agreed scope and needs no source diff in
    the child checkout. The one exception is a user's explicit request to implement a task in the
    current session: for that task the session acts as its implementer rather than the project session, runs
    the loop with its own goalplan, creates no `child` session and starts no goal mode, and a session that holds an
    active child goal cannot take it up under that goal (see task creation in [crw-run](../SKILL.md)).
-3. **A `child` session's workflow is named `crw-loop`.** `child` sessions keep their own implementation workflow, the
-   PABCD loop, and a packet names it `crw-loop`. The child coordinates `child` sessions; it does not adopt a
+3. **A `child` session's workflow is named `crw-continue`.** `child` sessions keep their own implementation workflow, the
+   task work loop, and a packet names it `crw-continue`. The child coordinates `child` sessions; it does not adopt a
    `child` session's goal or FSM.
 
 One child coordinates one project; one independent `child` session owns one issue and its delivery, one issue per
@@ -49,7 +49,7 @@ another coordinator or recursively invoke skills.
 
 ## Enter or resume
 
-A submitted `$crw-run <milestone link>` execution request that asks for a goal, or the `$crw-loop`
+A submitted `$crw-run <milestone link>` execution request that asks for a goal, or the `$crw-continue`
 handoff above, establishes the project session's native goal and automatic execution of the agreed scope.
 That request is what opens the goal, since the child opens none by default, and it is also the only
 occasion for one. Designate or restore the fixed child using
@@ -177,10 +177,10 @@ transfers to initiative scope; the roles themselves are in
    exposing `get_goal`, `create_goal` and `update_goal`, use those tools in this child. A bridge's
    read-only goal API is not goal-write support. A hook that prevents a goal from activating at all is a
    compatibility blocker even for a fresh child. A hook that lets it activate and then directs an
-   active goal into PABCD implementation phases is the measured goal-idle case instead: activation
+   active goal into task work implementation phases is the measured goal-idle case instead: activation
    stands, the directive is declined, and [Record the start adjudication](#record-the-start-adjudication)
    holds that narrowing. Record the installed version and path, the observed rule and the required
-   supported fix. Do not disable the hook, replay hook events, create fake PABCD evidence or initialize
+   supported fix. Do not disable the hook, replay hook events, create fake task work evidence or initialize
    a placeholder implementation cycle.
 3. Verify the observation and continuation path for this run under OPS-8.1 before dispatch. Keep goal
    activation, direct task waits, host automatic continuation and relay delivery and resume as separate
@@ -217,7 +217,7 @@ issue that owns it, and no `child` session is created first. For the goal and St
 CRW-29 of the archive; its resolution is what clears the blocker, and until it
 is recorded there the blocker still stands.
 
-Disabling a hook, replaying hook events, manufacturing PABCD evidence and force-completing an existing
+Disabling a hook, replaying hook events, manufacturing task work evidence and force-completing an existing
 goal are forbidden above. They are also not offered to the user as options, because presenting one as a
 choice is how it becomes an approved plan.
 
@@ -236,7 +236,7 @@ A goal still exists where the user explicitly asks for one. It opens on no compl
 unapproved backlog item, it never closes on a fabricated source change, and an explicit user no-goal
 limit now agrees with the default rather than fighting it.
 
-Preflight above classifies a hook that routes an active native goal into PABCD implementation phases as a
+Preflight above classifies a hook that routes an active native goal into task work implementation phases as a
 compatibility blocker. For the measured goal-idle behaviour that rule is narrowed rather than ignored,
 because activation and continuation fail differently: the goal does activate and reads back active, and
 what the block degrades is durable continuation, which is recorded as a bounded nudge. So this behaviour
@@ -245,7 +245,7 @@ declined without violating this contract, remains a blocker under that step. Ste
 same split, so the two are read together rather than against each other.
 
 Activation is not continuation. On the measured installation the goal activates, and the
-Stop-continuation that follows is a bounded nudge carrying an unconditional PABCD directive that a
+Stop-continuation that follows is a bounded nudge carrying an unconditional task work directive that a
 coordination child declines. [Start policy](start-policy.md) records that mechanism and its budget, the
 three compatibility facts including approval-policy compatibility, the five pieces of evidence that must
 stay separate, and what is returned to CRW-29 when the host cannot support the goal at all. The table
@@ -276,7 +276,7 @@ supplies a token budget, with exactly that value, and let the host validate the 
 With no budget requested the goal is unlimited. A host whose `create_goal` does not accept `token_budget`
 is a reported capability conflict, not a reason to create the goal unlimited or to discard the limit. Record the returned identity and status where
 available and verify the objective and active status. Wording in a document is not a created goal. Do not
-call `crw pabcd loop init` or enter PABCD merely to support this child goal. A `child` session's loop setup remains
+call `crw work continue init` or enter task work merely to support this child goal. A `child` session's loop setup remains
 separate.
 
 ## Retiring a goal a parent already holds

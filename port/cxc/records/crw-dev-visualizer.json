@@ -4,7 +4,7 @@
     "commit": "3c1459acadeb1906d97c00a598e1457327ae372d",
     "skills_listing_sha256": "79d9580f39ca27221cb9c24337080e3fe4a1e71f76338c7329fca63f76a32e89"
   },
-  "table_sha256": "fd84a8db22c3838ba6bb2ae0804ca58f9e81dbbd121b18e62da4b27d4eb70769",
+  "table_sha256": "8a34c4ce12981ae3823355a015b6c9453201b3faa5a282e2b48167f0ef420a9f",
   "from": "dev-visualizer",
   "files": {
     "SKILL.md": {

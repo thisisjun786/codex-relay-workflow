@@ -211,7 +211,7 @@ func TestPabcdOrchestrateReadAndDelegate(t *testing.T) {
 		if code != 0 || errOut != "" {
 			t.Fatalf("got %d %q %q", code, out, errOut)
 		}
-		want := "orchestrate P: current=IDLE -> P (IDLE \u2192 P, session cli) [formal P: architect proposal -> main executable plan -> same-architect reflection before A (crw-pabcd phase-plan)]\n"
+		want := "orchestrate P: current=IDLE -> P (IDLE \u2192 P, session cli) [formal P: architect proposal -> main executable plan -> same-architect reflection before A (crw-work phase-plan)]\n"
 		if out != want {
 			t.Fatalf("stdout %q, want %q", out, want)
 		}

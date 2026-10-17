@@ -11,7 +11,7 @@ A flow-managed node is an issue node that the child's run released to an executo
 | The step exchange of a session run | the run publishes each step; the child spawns its role subagent and reports it | `crw flow next` hands the child the steps and `crw flow dispatched` reports the subagent each was spawned as. The run binds the subagent after it reads it on the host, reads its answer from the host and records it; the child never copies a subagent's answer, edits no node's directory and spawns a step's subagent only for a step it was handed |
 | Escalations and decisions | the child; Jun for what only Jun takes | The run raises an escalation and waits; `crw flow answer` applies the answer. The thread does not release, accept or integrate a node the run owns |
 | Acceptance and integration | the run, through the relay's DAG scheduler | The run holds the plan's coordinator epoch, so a transition written by another hand is refused by the epoch fence (`stale_coordinator_epoch`) and raised as an escalation, and the run does not take it over |
-| The PABCD state machine | nobody in a flow-managed node | The executor and an oversized child start no PABCD state machine. The standalone PABCD rules are unchanged: a task that is not a flow-managed node keeps its own phases |
+| The task work state machine | nobody in a flow-managed node | The executor and an oversized child start no task work state machine. The standalone task work rules are unchanged: a task that is not a flow-managed node keeps its own phases |
 
 ### The high-risk procedure of a C4 issue
 

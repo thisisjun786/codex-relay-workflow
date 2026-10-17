@@ -1,5 +1,13 @@
 ### Implementation-Unit Documents
 
+The current development flow is defined by [Task work](../SKILL.md#work-through-the-current-flow).
+The letters I/P/A/B/C/D below name existing standalone task-state records and
+their compatibility operations, not current flow stages. Reuse the applicable
+planning, review and evidence guidance within the requested scope; do not start
+this state machine for a flow-managed node. CLI examples use the public
+`crw work` namespace and require its supporting runtime. Hook registrations,
+stored enum values and existing evidence formats are unchanged here.
+
 The numbered plan documents of a unit are workspace-local execution evidence: the plan as it
 is carried out in this checkout. Where the work has a tracking issue, each one quotes the tracking issue and documents it implements
 (the ref and the revision read), which stay canonical under
@@ -56,23 +64,23 @@ Rules:
 - This repo uses 3-digit prefixes (`000_`, `010_`, `020_`). Do not mix with 2-digit.
 
 **Loop / multi-pass tasks**: a "loop"/"루프" request (or work too large for one cycle) runs
-as MULTIPLE PABCD passes — one per work-phase. Pre-plan the full slice map and WRITE
+as MULTIPLE task work passes — one per work-phase. Pre-plan the full slice map and WRITE
 all per-phase decade docs (010_phase1, 020_phase2, ...) to diff-level up front
 (DIFFLEVEL-ROADMAP-01) — scaffolding empty files is not pre-planning. Each
 later cycle's P re-verifies its pre-written doc against the current codebase and
-amends it before building. The first pass MAY be a design-only PABCD pass (Phase 0):
+amends it before building. The first pass MAY be a design-only task work pass (Phase 0):
 a code-free whole-system design/documentation cycle that produces exactly this
-difflevel roadmap before the first implementation work-phase. Under a `crw-loop`
+difflevel roadmap before the first implementation work-phase. Under a `crw-continue`
 multi-cycle entry this Phase-0 docs-only pass is the DEFAULT first work-phase, and
-STRICT for HOTL goal loops (LOOP-DOCS-FIRST-01, `crw-loop`) — there the roadmap
+STRICT for HOTL goal loops (LOOP-DOCS-FIRST-01, `crw-continue`) — there the roadmap
 cycle's D locks the goalplan work-phase map before any implementation cycle starts.
 The slice map is APPEND-friendly (LOOP-UNIT-CHAIN-01): an independent unit discovered
 mid-loop — including a feature unrelated to the current slice — becomes a NEW
 work-phase appended to the map/goalplan via a P-phase amendment, then runs as the next
-cycle in the same session. "This needs its own PABCD" is a plan statement, never a
+cycle in the same session. "This needs its own task work" is a plan statement, never a
 reason to close the goal or wait for a new session.
 
-HITL and goal PABCD may both use `crw-loop` divergence/collapse. In HITL, the agent
+HITL and goal task work may both use `crw-continue` divergence/collapse. In HITL, the agent
 may choose divergence deliberately during I/P when intent is open, algorithmic direction
 is uncertain, the objective is maximize/deceptive, or the user asks for alternatives.
 In goal mode, the shipped automatic entry is the plateau Stop directive after recorded
@@ -82,4 +90,4 @@ keep all candidate provenance in `.crw/divergence/`. The agent still owns every
 phase transition; no hook builds or races candidates automatically, and HITL P/A/B
 pauses remain real confirmation points.
 
-Faithful execution and PLAN-TRACK-01 remain in [Work-phase loop](../SKILL.md#work-phase-loop-multi-pass-tasks).
+Perform the actual work and record its evidence under [Task work](../SKILL.md#work-through-the-current-flow). PLAN-TRACK-01: when available, the native update_plan surface mirrors progress; the durable plan remains the source of truth.

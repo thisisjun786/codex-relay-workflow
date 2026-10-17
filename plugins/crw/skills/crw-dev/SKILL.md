@@ -24,8 +24,8 @@ label does not justify retaining independent source areas in main.
 | C0 | Trivial Text | Typo, comment, copy, log string — zero behavior change | Direct fix + smallest proof (§0.1) |
 | C1 | Single-File Local | One file, local behavior, no new abstractions | Fast path (§0.1) + targeted check |
 | C2 | Ordinary Product Slice | Conventional endpoint, form, table, model, list/detail screen, integration touchpoint | Compact plan + adjacent convention search + focused tests + micro-audit |
-| C3 | Cross-Domain Feature/Refactor | Multiple modules, public API, shared types, broad behavior | Compact or full PABCD depending on persistence/risk; add subagent audit when scope or risk warrants |
-| C4 | High-Risk | Auth, payments, data deletion, migration, release, permission model, security boundary | Full PABCD (mandatory) + full relevant gates + durable risk/evidence record; in a flow-managed run the run's high-risk lane is this process (one background explorer for each node of the milestone, then the architect DESIGN over their findings, the critic's separate review execution for its pre-build design review, before any executor starts, then the unit check of each node's work before its commit, final gate with full verification and risk record, then the crosscheck of the integrated range in a separate tool invocation, the acceptance audit and the milestone report). Model family is provenance only; an actually observed same-thread review is warning-only and recorded; the run continues. Tool reviews have no agent thread id. The crosscheck does not replace the critic's design check, and the executor starts no FSM |
+| C3 | Cross-Domain Feature/Refactor | Multiple modules, public API, shared types, broad behavior | Compact or full task work depending on persistence/risk; add subagent audit when scope or risk warrants |
+| C4 | High-Risk | Auth, payments, data deletion, migration, release, permission model, security boundary | Full task work (mandatory) + full relevant gates + durable risk/evidence record; in a flow-managed run the run's high-risk lane is this process (one background explorer for each node of the milestone, then the architect DESIGN over their findings, the critic's separate review execution for its pre-build design review, before any executor starts, then the unit check of each node's work before its commit, final gate with full verification and risk record, then the crosscheck of the integrated range in a separate tool invocation, the acceptance audit and the milestone report). Model family is provenance only; an actually observed same-thread review is warning-only and recorded; the run continues. Tool reviews have no agent thread id. The crosscheck does not replace the critic's design check, and the executor starts no FSM |
 | C5 | Research/Ambiguous | Unclear requirements, ambiguous user value, unknown territory after one §0 clarification round | No interview: back to its registration ([crw-define](../crw-define/SKILL.md)) or, in a run, a decision request to the session above the project session ([the level table](../crw-canon/references/hierarchy.md#the-levels)); then reclassify |
 
 **C5 is temporary** — it cannot enter implementation until the registration step or the
@@ -33,7 +33,7 @@ answer to the decision request resolves the ambiguity and the task is reclassifi
 of C0 through C4.
 
 In a flow-managed run, the crosscheck does not replace the critic's design check. The executor and an
-oversized child start no PABCD state machine; the standalone PABCD rules above are unchanged.
+oversized child start no task work state machine; the standalone task work rules above are unchanged.
 
 **Tie-break (DEFAULT):** when signals match two classes, the higher class wins. A
 conventional route→service→storage slice still counts as C2 even though it spans files;
@@ -55,7 +55,7 @@ in-place edit is an example, not a limit):
   §7 type/static checks when applicable. C0 changes with zero behavior impact are exempt
   from numbered implementation-unit records. C1 patches leave a short change/reason/proof
   record only when an owning unit already exists; do not create a unit just for C0/C1.
-  Security, data-loss, or new-abstraction changes are not this fast path. This exception applies (UNIT-RESIDENCE-01, `pabcd` Implementation-Unit Documents).
+  Security, data-loss, or new-abstraction changes are not this fast path. This exception applies (UNIT-RESIDENCE-01, `crw-work` Implementation-Unit Documents).
 - Role skills: read only the `SKILL.md` routing table — skip references unless the table explicitly routes to one
 
 This is scope guidance, not an exemption. Conventions visible in the touched file still
@@ -103,23 +103,23 @@ Read selected references only; do not preload every overlay's owners.
 ## §0.4 Workflow Modes
 
 The same rules flex by execution mode — know which one you are in:
-ordinary chat (direct work, C0-C2 typical) · PABCD mode (`pabcd` skill) ·
+ordinary chat (direct work, C0-C2 typical) · task work mode (`crw-work` skill) ·
 goal mode (`create_goal`, evidence-backed checkpoints) · subagent
 (scoped writes when explicitly delegated) · read-only review (no mutation,
 findings only) · docs-only work (no code gates, docs consistency checks instead).
 
-PABCD, goal, divergence, and repeated work-phase mechanics are canonical in
-`pabcd` and `crw-loop`. Load those skills when the selected process requires
+task work, goal, divergence, and repeated work-phase mechanics are canonical in
+`crw-work` and `crw-continue`. Load those skills when the selected process requires
 them; classify each work-phase independently.
 Settling a milestone and its issues before registration, goal decomposition, delivery
 checks and project coordination route to crw-define, crw-plan, crw-check and crw-run
 respectively.
-The PABCD and task host-goal modes above govern a task's implementation; crw-run
+The task work and task host-goal modes above govern a task's implementation; crw-run
 parent goal mode creates no implementation goalplan or FSM.
 
 Multi-cycle loops (2+ work-phases) enter docs-first: the first work-phase is a
-docs-only PABCD that locks the diff-level roadmap before any implementation cycle
-(LOOP-DOCS-FIRST-01, `crw-loop`).
+docs-only task work that locks the diff-level roadmap before any implementation cycle
+(LOOP-DOCS-FIRST-01, `crw-continue`).
 
 **Production surface (shared definition):** a surface is production when it is deployed
 for real users beyond the author; prototypes, spikes, and internal demos are not. Skills
@@ -166,7 +166,7 @@ numbered, contiguous, non-overlapping chunks through EOF and verify no gaps.
 
 | Caller | Loads | Does not load |
 |---|---|---|
-| executor of a flow-managed run | `crw-dev` and the classified surface owners of the table above (`crw-dev-backend`, `crw-dev-frontend`, `crw-dev-data`, `crw-dev-testing`, `crw-dev-security`, `crw-dev-architecture`, `crw-dev-debugging`, `crw-dev-devops`, `crw-dev-scaffolding`, `crw-dev-uiux-design`, `crw-dev-visualizer`, `crw-dev-code-reviewer`) | the loop and PABCD skills: the run owns the process, so the executor starts no FSM |
+| executor of a flow-managed run | `crw-dev` and the classified surface owners of the table above (`crw-dev-backend`, `crw-dev-frontend`, `crw-dev-data`, `crw-dev-testing`, `crw-dev-security`, `crw-dev-architecture`, `crw-dev-debugging`, `crw-dev-devops`, `crw-dev-scaffolding`, `crw-dev-uiux-design`, `crw-dev-visualizer`, `crw-dev-code-reviewer`) | the loop and task work skills: the run owns the process, so the executor starts no FSM |
 
 The run's overlay names the `crw-dev-*` skill to read; the executor reads that skill's routing table and the
 references the change needs, nothing else.
@@ -184,7 +184,7 @@ metadata remains canonical in each skill's `agents/openai.yaml`.
 
 For authorized investigation, decide who owns discovery before loading a broad
 set of source files or logs. Read-only feature assessment, debugging and source
-comparison can use explorer without implementation or a full PABCD cycle.
+comparison can use explorer without implementation or a full task work cycle.
 
 Begin with the smallest orientation needed to name a concrete question and its
 read scope. When that question is independently answerable and main can progress
@@ -196,7 +196,7 @@ Discovery is subagent work: an explorer is a leaf in this session's own working
 directory, and read-only lanes cannot collide because they write nothing. That is
 not a template for parallel write work. Anything needing its own branch, checkout
 or merge/CI lane is a separate Codex task, one per lane — see
-[Dispatch surfaces](../crw-pabcd/references/dispatch-surfaces.md).
+[Dispatch surfaces](../crw-work/references/dispatch-surfaces.md).
 
 Keep a narrow lookup local when its result immediately determines the next step,
 or when the work cannot be separated without duplicating the investigation.
@@ -209,7 +209,7 @@ requires broad rereading, or produces truncated output. Reclassify when scope
 changes. If delegation is unavailable, record the observed limitation and continue
 with bounded local reads.
 
-Use a bounded [discovery packet](../crw-pabcd/references/delegation.md#discovery-packet)
+Use a bounded [discovery packet](../crw-work/references/delegation.md#discovery-packet)
 with findings, source anchors and uncertainties, not full file dumps. Main checks
 only the spans needed to settle a cited claim, not every returned file by default.
 If a broader read is necessary, name the evidence gap and reassign that question
@@ -228,7 +228,7 @@ CI/merge collision, subject to host permissions and wake checks in
 [peer collaboration](references/peer-collaboration.md). No routine discovery,
 unsolicited progress notifications or follow-ups. Authorized subagent work uses
 its own scoped delegation tools.
-Use `dev` plus repo tools for local facts; load `search`, `pabcd`, `loop`, `recall`,
+Use `dev` plus repo tools for local facts; load `search`, `crw-work`, `crw-continue`, `recall`,
 `crw-qa`, or the matching `dev-*` owner for their named domains.
 
 ### Native execution
@@ -446,7 +446,7 @@ architecture. Respond with the verified result and avoid performative agreement.
 - **Handle all async errors explicitly** — surface failures at a clear boundary. In JS/TS backend code, the Result pattern (`neverthrow`) may replace per-call `try/catch` when failures are surfaced at a verified boundary (see `dev-backend/SKILL.md` §3). In other cases, use `try/catch` and log with context (`console.error('[module]', error.message)`).
 - **Confirm before destructive operations (ESCALATE)** — deleting files, dropping tables, resetting state, or clearing caches require explicit user approval.
 - **Commit incrementally (DEV-GIT-COMMIT-01, DEFAULT)** — commit working progress as you go during implementation. Each logically complete step (passing test, wired feature, fixed bug) gets its own commit so that progress is checkpointed on disk and recoverable after compaction or failure. Do not accumulate an entire feature as uncommitted changes.
-- **Delivery authority: push only under an applicable grant (DEV-GIT-PUSH-01, ESCALATE)** — this is the one definition of when a push is allowed; `crw-pabcd`, `crw-run` and `crw-plan` point here and do not restate it. Committing locally is autonomous; pushing to a remote is an external state change that needs a grant that applies to this repository and this branch: the user's explicit approval for it in the current session, a standing grant of the repository (CRW's `AGENTS.md` and `POLICY.md` grant the push of a verified CRW task branch), or a scope packet that carries one of the two in its delivery line. A packet is evidence that a grant applies, never a new consent: it cannot widen a grant, and a packet that excludes publication, or a user's no-push instruction, outranks every grant. A branch push grant covers the verified task branch only; force-push, a tag, a push to an integration branch (`dev`, `main`), a release and a deployment keep their own authorization, and a grant given for one repository is no grant for another. Where no grant applies, do not push, even at D/completion, and report what was not published.
+- **Delivery authority: push only under an applicable grant (DEV-GIT-PUSH-01, ESCALATE)** — this is the one definition of when a push is allowed; `crw-work`, `crw-run` and `crw-plan` point here and do not restate it. Committing locally is autonomous; pushing to a remote is an external state change that needs a grant that applies to this repository and this branch: the user's explicit approval for it in the current session, a standing grant of the repository (CRW's `AGENTS.md` and `POLICY.md` grant the push of a verified CRW task branch), or a scope packet that carries one of the two in its delivery line. A packet is evidence that a grant applies, never a new consent: it cannot widen a grant, and a packet that excludes publication, or a user's no-push instruction, outranks every grant. A branch push grant covers the verified task branch only; force-push, a tag, a push to an integration branch (`dev`, `main`), a release and a deployment keep their own authorization, and a grant given for one repository is no grant for another. Where no grant applies, do not push, even at completion, and report what was not published.
 - **Keep client and personal data out of the repository (DEV-PRIVACY-01, STRICT)** — devlog evidence, fixtures and skill sample assets never carry raw client material or personal data: message transcripts, copies of a client's documents or figures, named private conversations, credentials. Such evidence stays in the task's workspace outside the checkout; the devlog keeps the file name, date and a summary. Before the first push of a branch, the task lists the identifiers that would betray the client or person (company, product, people, distinctive numbers) and greps the push range for them (DEFAULT self-check; the list is the task's, the rule does not fix one). A hit is fixed by rewriting the unpushed commits, not by a follow-up commit, because a public remote keeps history.
 - **Choose the repository's delivery path first, then stack only where it uses pull requests (DEV-STACK-01, DEFAULT)** — CRW internal work is a verified task branch that the integrator fast-forwards onto `dev` (`AGENTS.md`, `POLICY.md`): it opens no pull request, so it is never stacked; a large dependent change is sequenced as ordered commits or task branches for the integrator. An external contribution or an in-flight pull request keeps the pull-request path: when a change there splits into 2+ dependency-ordered parts and one PR would be too large to review, publish a bottom-up stack: each branch based on the one below, each PR's base pointing at its parent. Editing a lower layer means cascading the rebase to every layer above before pushing (`DEV-STACK-02`, STRICT). Merging a stack is bottom-up and stays user-authorized (`DEV-STACK-04`, ESCALATE). Canonical rules, depth guidance, anti-patterns, review scope, and tooling: `references/stacked-prs.md`.
 
@@ -487,8 +487,8 @@ typically use the same credentials and the same external API allowance, so polli
 competes with the work being polled. Before sustained observation, read the actual
 budget and reserve headroom for the workers; [the child](../crw-canon/references/hierarchy.md#the-levels) (project session) owns that
 aggregate ([account for the resources](../crw-run/SKILL.md#account-for-the-resources-this-run-leaves-behind)).
-Rules: `crw-pabcd` `references/dispatch-surfaces.md` (DISPATCH-POLL-BUDGET-01) and
-`crw-loop` `references/waiting.md`.
+Rules: `crw-work` `references/dispatch-surfaces.md` (DISPATCH-POLL-BUDGET-01) and
+`crw-continue` `references/waiting.md`.
 
 ---
 

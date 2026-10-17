@@ -12,6 +12,10 @@ func TestPolicyNamingTheLoopMustSayLoopMode(t *testing.T) {
 	for _, c := range []struct {
 		name, workflow, mode, names string // names is the name the refusal quotes; empty when the policy passes
 	}{
+		{"crw-continue under loop", "crw-continue with crw-work", "loop", ""},
+		{"crw-continue under another mode", "crw-continue", "non_loop", "crw-continue"},
+		{"new name spaced and capitalised", "CRW Continue", "non_loop", "crw-continue"},
+		{"new name longer word", "crw-continueback", "non_loop", ""},
 		{"crw-loop under loop", "crw-loop", "loop", ""},
 		{"crw-loop under another mode", "crw-loop", "non_loop", "crw-loop"},
 		{"spaced and capitalised", "CRW Loop with crw-pabcd", "non_loop", "crw-loop"},

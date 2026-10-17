@@ -1,5 +1,13 @@
 # Optimization-loop meta-rules
 
+The current development flow is defined by [Task work](../SKILL.md#work-through-the-current-flow).
+The letters I/P/A/B/C/D below name existing standalone task-state records and
+their compatibility operations, not current flow stages. Reuse the applicable
+planning, review and evidence guidance within the requested scope; do not start
+this state machine for a flow-managed node. CLI examples use the public
+`crw work` namespace and require its supporting runtime. Hook registrations,
+stored enum values and existing evidence formats are unchanged here.
+
 ### Optimization-Loop Meta-Rules (plateau discipline)
 
 | Rule | Trigger | Required action |

@@ -5,10 +5,10 @@ The sessions in this document are named by [the level table](../../crw-canon/ref
 A dispatch can fail in four different places, and the four are routinely read as one.
 This reference holds the judgment cases that keep them apart: which fact establishes
 which verdict, what the recorded regression cases already decided, and what a missing
-`crw-loop` looks like when it is real rather than assumed.
+`crw-continue` looks like when it is real rather than assumed.
 [Prepare and dispatch](../SKILL.md#prepare-and-dispatch) owns the dispatch itself and
 [Observe and verify](../SKILL.md#observe-and-verify) owns the evidence table these cases
-apply. Loop mechanics belong to the `child` session's own `crw-loop`/`crw-pabcd`; nothing here
+apply. Loop mechanics belong to the `child` session's own `crw-continue`/`crw-work`; nothing here
 restates them, and nothing here adds a preparation turn before the work starts.
 
 ## Four verdicts, judged separately
@@ -55,7 +55,7 @@ the contrast cases below.
 | L0 | The invocation was never in the assignment | The assignment message for this dispatch, selected by its marker or receipt and read from that task, carries no installed-skill invocation and no agreed alternative |
 | L1 | The invocation was sent, the skill was never loaded or never invoked | Assignment carries it; no session binding, no orchestration entry, no goalplan |
 | L2 | It was invoked, but own-session binding or goalplan/FSM initialization failed | Binding or orchestration attempted and refused, or bound to the wrong session; the refusal itself is the evidence |
-| L3 | A native goal is active and no `crw-loop` exists | Host goal present; no bound goalplan and no persisted phase transitions |
+| L3 | A native goal is active and no `crw-continue` exists | Host goal present; no bound goalplan and no persisted phase transitions |
 | L4 | Activation succeeded, then was lost on resume or compaction | Earlier goalplan/FSM evidence exists; the later turn runs without it, or against a second goal for the same assignment |
 | L5 | Running correctly | The `child` session's own bound goalplan identifier, current phase, and persisted transitions for this assignment |
 | L6 | Insufficient evidence | Nothing readable yet distinguishes the classes above |
@@ -523,10 +523,11 @@ arming normally. The honest verdict here is L6 and the repair is to read again.
 
 ## Contrast cases
 
-**C1 — a normal Loop child. L5.** Effective workflow is `crw-loop`, the first full
-assignment carries the invocation with the applicable skills, and the child's first
-execution leaves a bound goalplan and persisted transitions it can name in its report.
-This needs no coordinator turn beyond reading what the child returns. The four children of
+**C1 — a normal continuation child. L5.** The current skill is
+`$crw:crw-continue`. In the measured case, the first full
+assignment carried the then-current invocation with the applicable skills, and the child's first
+execution left a bound goalplan and persisted transitions it could name in its report.
+This needed no coordinator turn beyond reading what the child returned. The four children of
 the measured batch are this case, each arming within about two and a half minutes of its
 own first turn.
 

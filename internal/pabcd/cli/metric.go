@@ -41,7 +41,7 @@ Usage:
 
 Notes:
   Two non-improving rows on the same metric switch the Stop block to
-  "step back and re-plan with divergence" (crw-loop objective plateau).
+  "step back and re-plan with divergence" (crw-continue objective plateau).
   --source records HOW the number was obtained; an operator-entered value and
   an evaluate.sh value are not interchangeable evidence.`
 

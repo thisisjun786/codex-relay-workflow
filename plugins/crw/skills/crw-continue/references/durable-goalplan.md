@@ -1,5 +1,12 @@
 # Durable goalplan
 
+This reference describes existing standalone task-goal/state contracts.
+The current development flow is defined by [Task work](../../crw-work/SKILL.md#work-through-the-current-flow).
+I/P/A/B/C/D below are compatibility record values, not current flow stages.
+Use only the operations authorized for the selected task and installed runtime;
+do not start another state machine inside a flow-managed node. A renamed skill
+does not migrate hooks, state files, attestations or goalplan schemas.
+
 Read when creating, registering, amending, or inspecting a goalplan.
 Mode selection and external permission scope remain in ../SKILL.md.
 
@@ -28,12 +35,12 @@ goal is unlimited. The host validates the field and its value. A host whose
 do not create the goal without the limit the user asked for. The `create_goal`
 hook does not refuse the field, and `update_goal` is not a budget API.
 
-After `create_goal`, run `crw pabcd loop init --objective "<same text>"
+After `create_goal`, run `crw work continue init --objective "<same text>"
 --session <id>` to create the durable local plan bound to the session.
 
 After `loop init`, REGISTER the plan: fill `workPhases[]` (with tasks) and
 `criteria[]` in the goalplan file before the first work-phase. An init-only
-empty plan now FAILS `crw pabcd loop validate` (E8), and `update_goal
+empty plan now FAILS `crw work continue validate` (E8), and `update_goal
 {status:"complete"}` is hook-denied while the bound goalplan fails that gate
 (GOAL-COMPLETE-GATE-01) — an unregistered plan cannot certify completion.
 
@@ -91,34 +98,34 @@ This is the on-disk shape under `.crw/goalplans/<slug>/goalplan.json`
 
 ### CLI surface
 
-- `crw pabcd loop init --objective <text> [--session <id>] [--criterion <text>]... [--schema-version <n>] [--cwd <path>]` —
+- `crw work continue init --objective <text> [--session <id>] [--criterion <text>]... [--schema-version <n>] [--cwd <path>]` —
   creates the local artifact and binds it to the session when a session id is
   supplied; it never writes the host goal DB. Repeat `--criterion` once per
   criterion to register them at init.
-- `crw pabcd loop show (--slug <slug> | --objective <text> | --session <id>) [--cwd <path>]` — renders the current plan summary.
-- `crw pabcd loop validate (--slug <slug> | --objective <text> | --session <id>) [--cwd <path>]` — runs the E8 quality gate; it FAILS
+- `crw work continue show (--slug <slug> | --objective <text> | --session <id>) [--cwd <path>]` — renders the current plan summary.
+- `crw work continue validate (--slug <slug> | --objective <text> | --session <id>) [--cwd <path>]` — runs the E8 quality gate; it FAILS
   unless the plan is complete and every `met` criterion carries `capturedEvidence`.
-- `crw pabcd loop steer --session <id> --batch-json <path-or-json> [--cwd <path>]` — applies one
+- `crw work continue steer --session <id> --batch-json <path-or-json> [--cwd <path>]` — applies one
   batch once per `idempotencyKey`. Sending the same batch again under the same key applies nothing
   and records any ledger row the first attempt could not write; a different batch under a recorded
   key is refused, so give different content a new key. The goalplan keeps each batch's ops, an
   `annotate` note included, and `show` lists the notes.
-- `crw pabcd loop add-criterion --session <id> --criterion <text> [--surface logic|web|tui|desktop] [--presented native] [--cwd <path>]` —
+- `crw work continue add-criterion --session <id> --criterion <text> [--surface logic|web|tui|desktop] [--presented native] [--cwd <path>]` —
   registers a criterion whose scenario is the `--criterion` text. There is no `--id`:
   ids are assigned as `c-1`, `c-2`, ... (max existing `c-N` + 1, in registration
   order). A duplicate scenario text is rejected. `--presented native` requires `--surface desktop`.
-- `crw pabcd loop add-work-phase --session <id> --id <id> --title <text> [--depends-on <id>]... [--cwd <path>]`
-- `crw pabcd loop ready (--slug <slug> | --objective <text> | --session <id>) [--json] [--cwd <path>]`
-- `crw pabcd loop add-task --session <id> --work-phase <id> --id <id> --title <text> [--depends-on <task-id>]... [--cwd <path>]`
-- `crw pabcd loop complete-task --session <id> --work-phase <id> --id <id> --outcome <text> [--cwd <path>]`
-- `crw pabcd loop ask --session <id> --id <id> --question <text> [--recommendation <text>] [--option <text>]... [--work-phase <id>]... [--cwd <path>]` — record a question after sending it through the host. It never sends a message. Name each dependent phase.
-- `crw pabcd loop decide --session <id> --id <id> --answer <text> [--cwd <path>]` — record the user reply. This changes only the decision record; phase status and blockedReason stay as they were.
-- `crw pabcd loop meet-criterion --session <id> --id <id> --evidence <text> [--cwd <path>]` — `--id` takes
-  a generated `c-N` id; read it from `crw pabcd loop show` or the goalplan file.
-- `crw pabcd loop unbind --session <id> [--cwd <path>]` — release the goalplan slug the session is bound to, for a plan bound by mistake. It
+- `crw work continue add-work-phase --session <id> --id <id> --title <text> [--depends-on <id>]... [--cwd <path>]`
+- `crw work continue ready (--slug <slug> | --objective <text> | --session <id>) [--json] [--cwd <path>]`
+- `crw work continue add-task --session <id> --work-phase <id> --id <id> --title <text> [--depends-on <task-id>]... [--cwd <path>]`
+- `crw work continue complete-task --session <id> --work-phase <id> --id <id> --outcome <text> [--cwd <path>]`
+- `crw work continue ask --session <id> --id <id> --question <text> [--recommendation <text>] [--option <text>]... [--work-phase <id>]... [--cwd <path>]` — record a question after sending it through the host. It never sends a message. Name each dependent phase.
+- `crw work continue decide --session <id> --id <id> --answer <text> [--cwd <path>]` — record the user reply. This changes only the decision record; phase status and blockedReason stay as they were.
+- `crw work continue meet-criterion --session <id> --id <id> --evidence <text> [--cwd <path>]` — `--id` takes
+  a generated `c-N` id; read it from `crw work continue show` or the goalplan file.
+- `crw work continue unbind --session <id> [--cwd <path>]` — release the goalplan slug the session is bound to, for a plan bound by mistake. It
   clears only the session's slug (and the Stop guard's work-phase pointer for it), leaves the goalplan file and its ledger untouched, and
   appends one `unbound` row to the transition ledger; afterwards `update_goal` complete no longer reads a bound goalplan. It runs from IDLE only
-  and a repeat is a no-op. A session stranded in a phase is first closed with `crw pabcd orchestrate reset --session <id>` (which keeps the
+  and a repeat is a no-op. A session stranded in a phase is first closed with `crw work state reset --session <id>` (which keeps the
   slug), then released with this verb. The chat command `orchestrate unbind` is the same release. This verb is not listed in `loop --help`.
 
 The parser rejects unknown flags, stray positionals, missing values, and flags belonging to another verb before dispatch. Every value flag also accepts `--flag=value`, which is the way to pass a value that starts with `--`.

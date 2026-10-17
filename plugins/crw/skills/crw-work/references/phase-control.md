@@ -1,30 +1,39 @@
 ## Phase Control / Orchestrate
 
+The current development flow is defined by [Task work](../SKILL.md#work-through-the-current-flow).
+The letters I/P/A/B/C/D below name existing standalone task-state records and
+their compatibility operations, not current flow stages. Reuse the applicable
+planning, review and evidence guidance within the requested scope; do not start
+this state machine for a flow-managed node. CLI examples use the public
+`crw work` namespace and require its supporting runtime. Hook registrations,
+stored enum values and existing evidence formats are unchanged here.
+
 ### Chat Surface
 
 The chat command grammar is:
 
 ```text
-orchestrate <I|P|A|B|C|D|status|reset> [--attest <json> | --attest-file <path>]
+orchestrate <I|P|A|B|C|D|status|reset> [--attest <json>]
 ```
 
-**On Windows use `--attest-file`.** PowerShell strips the quotes from inline JSON
+**For the terminal CLI on Windows use `--attest-file`.** PowerShell strips the quotes from inline JSON
 and, once you escape them, splits the value at its first space — and every gated
 edge needs a `did` narrative, which has spaces. Write the JSON first, then attest:
 
 ```powershell
 '<json>' | Set-Content -Encoding utf8 .crw/attest.json
-crw pabcd orchestrate A --session <id> --attest-file .crw/attest.json
+crw work state A --session <id> --attest-file .crw/attest.json
 ```
 
-Accepted prefixes include `$crw-pabcd`,
-`crw pabcd orchestrate`, `/orchestrate`, and bare `orchestrate`.
+Chat accepts line-anchored `orchestrate <verb>` and `/orchestrate <verb>`.
+`crw work state` is the terminal CLI; loading `crw-work` does not change the
+chat parser or migrate its existing prefixes.
 
 ### Semantics
 
 - Chat-submitted commands are the human path.
 - Human path can advance legal adjacent phases without attestation.
-- Agent/terminal path is the live `crw pabcd orchestrate` CLI and is attest-gated:
+- Agent/terminal path is the live `crw work state` CLI and is attest-gated:
   forward edges (P>A, A>B, B>C, C>D) require `--attest` evidence.
 - `D` is a closing action that returns to `IDLE`; it is not a resting badge.
 - `status` is read-only.
@@ -32,7 +41,7 @@ Accepted prefixes include `$crw-pabcd`,
 
 ### Per-phase artifact obligation (ORCH-ARTIFACT-01)
 
-Advancing a phase is not the same as doing it (see [Faithful execution](../SKILL.md#work-phase-loop-multi-pass-tasks)). Each forward
+Advancing a phase is not the same as doing it (see [Task work](../SKILL.md#work-through-the-current-flow)). Each forward
 edge must carry its real artifact, not just an `--attest` string: P = the actual diff-level plan;
 A = an audit/review verdict that names blockers (`A>B` attest requires a non-empty
 `auditOutput` — the pasted tail of the dispatched reviewer subagent's verdict — plus
@@ -67,7 +76,7 @@ edge — including ungated entry edges — before `did`, `planUnit`, or
 | P->A | `from`, `to`, `did` with plan pointer, `planUnit` | `planUnit` must be a real `devlog/_plan/YYMMDD_slug/` holding numbered docs |
 | A->B | `from`, `to`, `did`, `auditOutput`, `auditVerdict` (`pass`/`near-pass`/`fail`); near-pass adds `auditResidual`; a recorded `GO-WITH-FIXES (blockers=N)` adds `auditBlockers` | FAIL never advances |
 | B->C | `from`, `to`, `did` with implementation delta | |
-| C->D | `from`, `to`, `did`, `checkOutput`, `exitCode` (required, must be 0) | a goalplan-bound session also needs `testReceiptPath` from `crw pabcd receipt test` |
+| C->D | `from`, `to`, `did`, `checkOutput`, `exitCode` (required, must be 0) | a goalplan-bound session also needs `testReceiptPath` from `crw work receipt test` |
 
 **Every gated edge additionally requires `workPhaseId` whenever a goalplan is
 bound to the session** — it must equal the active work-phase (LOOP-UNIT-CHAIN-01).
@@ -92,7 +101,7 @@ the evidence produced by the phase being advanced.
 Chat and CLI control the same persisted FSM and ledger; invocation source selects
 the gate. A line-anchored chat `orchestrate <verb>` is a human free-pass, while
 illegal edges remain refused. Agents use
-`crw pabcd orchestrate <verb> --session <id> --attest <json>` (or `--attest-file <path>`,
+`crw work state <verb> --session <id> --attest <json>` (or `--attest-file <path>`,
 required on Windows) and provide real evidence.
 `A>B` requires `auditOutput` plus `auditVerdict`; near-pass also requires
 `auditResidual`, and a round whose recorded reviewer verdict is `GO-WITH-FIXES (blockers=N)` also requires
@@ -100,7 +109,7 @@ required on Windows) and provide real evidence.
 `C>D` requires `checkOutput` and a passing `exitCode` — omitting it is refused, since a check with no outcome is not a check.
 Mutating verbs require an explicit session; only `status` may use latest-session fallback.
 **SESSION-IDENTITY-01 (STRICT):** use the current SessionStart binding, never a
-parent or transcript-history id; this also governs `crw pabcd loop init` and `crw goalplan`.
+parent or transcript-history id; this also governs `crw work continue init` and `crw goalplan`.
 When native CODEX_THREAD_ID is available, corroborate the binding using
 `crw relay session current` before mutation. Missing, inherited or conflicting binding:
 run `crw relay session current` then explicit `crw relay session bind` from the verified native
@@ -111,7 +120,7 @@ state. A failed verification is not permission to guess. Binding reports
 `hooksVerified:false`: it does not prove hook delivery, enable hooks or arm Stop.
 SessionStart creates missing IDLE state without
 clobbering resumed state; `cli` is terminal-only. Injected directives end with
-`IPABCD: <phase> (<LABEL>)`. Injected footer values are prompt-time snapshots.
+`PABCD: <phase> (<LABEL>)`. Injected footer values are prompt-time snapshots.
 The final status reports the latest verified persisted phase and matching label
 for the current SessionStart-bound session and cwd, including a later authorized
 successful transition. This reporting rule requires no additional calls and grants
@@ -120,7 +129,7 @@ re-entry occurs.
 
 ### Loop / goal activation handoff
 
-Execution intent and HOTL activation belong to [crw-loop](../../crw-loop/SKILL.md).
+Execution intent and HOTL activation belong to [crw-continue](../../crw-continue/SKILL.md).
 This reference owns phase commands and attestations, not permission to execute.
 
 ### Source worktrees
@@ -145,7 +154,7 @@ For QA verdict `sourceSnapshotAt`, reviewer-lane `sourceIdentity` and final-gate
 the entire identity, including `sourceRoot`. Do not copy an old snapshot or
 reconstruct it from native HEAD. Test receipts capture automatically. Rootless
 legacy receipts remain usable for unbound sessions only. Run
-`crw pabcd loop validate --session <id> --slug <slug>` so validation uses the same binding.
+`crw work continue validate --session <id> --slug <slug>` so validation uses the same binding.
 
 An old, unbound B cycle cannot be rebound retroactively: its baseline describes the old
 source. Preserve its evidence, stop any active goal using host-supported controls,

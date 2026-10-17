@@ -15,7 +15,7 @@ Read the shared [tracking model](../crw-canon/references/tracking-model.md) for 
 
 - Use `crw-recall` to recover missing decisions, and brief the product's current state from refreshed sources when it is unclear. Verify old state against current sources.
 - Restate a bundled request to resolve it before splitting it. Ask only about a material fork the evidence cannot settle.
-- Use `crw-dev` to assess development scope, repository boundaries, and meaningful verification. Planning does not start `crw-loop` or execution tasks.
+- Use `crw-dev` to assess development scope, repository boundaries, and meaningful verification. Planning does not start `crw-continue` or execution tasks.
 - If roadmap facts conflict or are duplicated, settle them by [where each document type is canonical](../crw-canon/references/tracking-model.md#where-each-document-type-is-canonical). Check that success criteria cannot reward their own assumptions, and rewrite revised descriptions so they read as the current plan.
 - Hand executable work to [crw-run](../crw-run/SKILL.md). Use [crw-check](../crw-check/SKILL.md) for intent-versus-implementation uncertainty and for contradictions within the proposed plan.
 - Keep tracking writes with this operation. A delegated sub-task returns the issue ref, the revision it read, the reason, the smallest sufficient change and its evidence, under [record writes and returned proposals](../crw-canon/references/tracking-model.md#record-writes-and-returned-proposals).
