@@ -215,10 +215,11 @@ whole verifier re-executes inside a `systemd-run --user --scope` cgroup whose
 `CPUQuota=<N>00%` bounds every descendant — all jobs and steps share the single scope,
 never one quota per job, and descendant Go processes read it themselves. A launcher that
 cannot start the scope (no user manager, no systemd-run) falls back to the Go settings:
-each job gets a share of the budget, and the sealed `GOMAXPROCS` is that share divided by
-the resolved `-parallel`, so jobs × packages × `GOMAXPROCS` stays inside the limit — four
-cores with one job at `-p=4` gives `GOMAXPROCS=1` per test package, `--parallel 1` gives
-it 4. This is an approximation for Go scheduling, not a kernel cap over arbitrary native
+each job gets a share of the budget, and the sealed `GOMAXPROCS` is that share.
+The resolved package parallelism is `-p=1`, so jobs × packages × `GOMAXPROCS` stays
+inside the limit — four cores with one job gives `-p=1` and `GOMAXPROCS=4` per test
+package, even when `--parallel 4` was requested. This is an approximation for Go
+scheduling, not a kernel cap over arbitrary native
 programs (or arbitrary Go process spawning). A heavy step that runs through `CRW_CI_HEAVY_GATE`
 returns to the shared scope before its body: the step's shell writes its own PID back to the
 verification's `cgroup.procs` after the gate and before any workflow command, and so does a

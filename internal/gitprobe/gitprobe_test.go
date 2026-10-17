@@ -28,7 +28,7 @@ func TestProbeEnvRemovesEveryGitVariableAndAppliesOverridesOnce(t *testing.T) {
 }
 
 func TestSanitizeRemovesRoutingAndKeepsTransportAndIdentity(t *testing.T) {
-	var base []string
+	base := []string{"GIT_CONFIG=" + os.DevNull}
 	for _, name := range append(slices.Clone(routing), "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0") {
 		base = append(base, name+"=v")
 	}
