@@ -533,13 +533,23 @@ before it writes a run, the preview included, and a project without `pr_base` is
 `crw flow pr open --run RUN --push DIR` opens the one pull request from the run's journal: it refuses unless the run closed its milestone
 and the milestone's crosscheck is verified at the close tip, it takes the issues from the milestone's nodes, builds the body from the run,
 refuses a title or body that leaks a host path, the host name or a thread, call or run id, and pushes exactly the crosschecked tip, never
-forced; it reads the crosscheck of the close from the run's `crw.crosscheck` rows (CRW-1442), so a run with no such row is refused with `crosscheck_missing` and the pull request is opened from a text with `--issue` as before. A script of the bundle then calls `crw.mergeRequest(milestone, {pr, review: {record}})`, which judges that pull request in order (open and not merged, the
-crosscheck verified at its head, its checks green, no unresolved review comment while the review bots are connected) and either answers
-`{state: "refused", reason}` as a result of the op, writing a row of its own (`pr_not_open`, `crosscheck_missing`, `head_moved`,
-`crosscheck_not_accepted`, `checks_failed`, `checks_pending`, `checks_none`, `comments_unresolved`), or hands a merge request to the
-reporter, which asks the parent to merge. The op is not part of the built-in `project-lane`: a script that calls it needs a lane wired with a pull request reader and a reporter that takes merge requests, and the op is a Go error without them. The request goes once per head: a second call at the same head of the same pull request answers
-again with `repeated` and sends nothing, and a head that moved needs a new crosscheck and a new request. The run never merges the pull
-request; the dev queue does.
+forced; it reads the crosscheck of the close from the run's `crw.crosscheck` rows (CRW-1442), so a run with no such row is refused with `crosscheck_missing` and the pull request is opened from a text with `--issue` as before.
+
+The built-in `project-lane` does the same natively for a bundle: after the milestone's close is reported, `crw.prOpen(milestone)`
+proves the closing acceptance from the journal — the latest unsuperseded `crw.milestoneClose` at the live integration tip, its gate
+a `crw.finalGate` pass recorded before it at the same tip, the closing review's verified verdict (or the legacy Final) bound to the
+tip and the milestone, and the `crw.reportUp` of that close — and opens or reuses the pull request the plan's `pr_base` names
+(`crw flow pr open`'s `OpenBundle`): the close's tip pushed once, never forced, an existing pull request at the same head and base
+reused (a resume after the POST finds it by lookup and never opens a second), and the persisted review record refreshed for the
+head. A plan without `pr_base` answers `not_required` and the run ends `closed` as before; a milestone that did not close, a gate
+that is not the close's pass or a report that did not happen answers `refused` (`milestone_not_closed`,
+`final_gate_not_accepted`, `head_moved`) and opens nothing. The lane then calls `crw.mergeRequest(milestone, {pr, review: {record}})`, which judges that pull request in order (open and not merged, the same closing acceptance at its head, its checks green, no unresolved review comment while the review bots are connected) and either answers
+`{state: "refused", reason}` as a result of the op, writing a row of its own (`pr_not_open`, `milestone_not_closed`,
+`final_gate_not_accepted`, `head_moved`, `checks_failed`, `checks_pending`, `checks_none`, `comments_unresolved`), or hands a merge request to the
+reporter, which asks the parent to merge. The request goes once per head: a second call at the same head of the same pull request answers
+again with `repeated` and sends nothing, and a head that moved needs a new close and a new request. The run never merges the pull
+request; the dev queue does. `open --run` stays the standalone path: it reads a *finished* run's journal, while `crw.prOpen` consumes
+the live journal of the run it is in — a run that has not yet produced its finished row uses the native op, not the command.
 
 `crw flow pr comments --pr REF --head SHA --record PATH --bots connected|not_connected --round 1|2`
 collects Devin and Codex comments from the issue, inline-review and review surfaces. Identical findings share an item key;

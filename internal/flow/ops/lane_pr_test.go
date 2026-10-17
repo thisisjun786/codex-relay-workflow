@@ -85,10 +85,28 @@ func newPRWorld(t *testing.T) *prWorld {
 	w.lane.d.Reporter = p.rep
 	// the milestones the fixture names are in the plan of the run
 	for _, ms := range []string{"M1", "M2", "M3", "M4", "M5", "M6"} {
+		row, _ := json.Marshal(Milestone{ID: ms, Plan: "plan-1"})
 		w.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: "ms_" + ms, Op: OpMilestone, Event: engine.EvCompleted,
-			Data: map[string]any{"milestone": ms, "plan": "plan-1", "result": "{}"}})
+			Data: map[string]any{"milestone": ms, "plan": "plan-1", "result": string(row)}})
 	}
 	return p
+}
+
+// close seeds the journal's closing acceptance of ms at head: a passed finalGate row, the milestoneClose that recorded it
+// (gate, tip and gate_head equal, a verified closing review) and its reportUp — what crw.mergeRequest and crw.prOpen require
+// instead of a standalone crw.crosscheck row. The relay's integration tip follows.
+func (p *prWorld) close(ms, head string) {
+	p.t.Helper()
+	gate, _ := json.Marshal(GateOutcome{Milestone: ms, Plan: "plan-1", Head: head, State: GatePass})
+	cc, _ := json.Marshal(map[string]any{"verdict": "verified", "head": head, "milestone": ms, "engine_family": "gpt", "model": "gpt-6-astra", "round": 1})
+	closed, _ := json.Marshal(CloseResultOutcome{Milestone: ms, Base: "dev", Tip: head, Gate: gate, Crosscheck: cc, GateHead: head})
+	p.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: "fg_" + ms + head[:4], Op: "crw." + NameFinalGate, Event: engine.EvCompleted,
+		Data: map[string]any{"milestone": ms, "plan": "plan-1", "head": head, "state": GatePass, "result": string(gate)}})
+	p.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: "mc_" + ms + head[:4], Op: OpMilestoneClose, Event: engine.EvCompleted,
+		Data: map[string]any{"milestone": ms, "plan": "plan-1", "tip": head, "gate_head": head, "moved": false, "result": string(closed)}})
+	p.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: "ru_" + ms + head[:4], Op: OpReportUp, Event: engine.EvCompleted,
+		Data: map[string]any{"milestone": ms, "tip": head, "report_id": "rep_" + ms, "delivered": true, "result": "{}"}})
+	p.relay.tip = head
 }
 
 // open sets the pull request to be open at head with green checks at head.
@@ -168,6 +186,7 @@ func TestMergeRequestRefusesRedChecks(t *testing.T) {
 		t.Run(string(tc.state), func(t *testing.T) {
 			p := newPRWorld(t)
 			p.open(prHeadA)
+			p.close("M1", prHeadA)
 			p.prs.checks.State = tc.state
 			out := p.mustRequest("M1", map[string]any{"pr": prRef, "review": p.review(prHeadA, "connected", 0)})
 			wantRefused(t, out, tc.reason)
@@ -182,6 +201,7 @@ func TestMergeRequestRefusesRedChecks(t *testing.T) {
 	t.Run("green", func(t *testing.T) {
 		p := newPRWorld(t)
 		p.open(prHeadA)
+		p.close("M1", prHeadA)
 		out := p.mustRequest("M1", map[string]any{"pr": prRef, "review": p.review(prHeadA, "connected", 0)})
 		if out["state"] != "requested" || len(p.rep.sent) != 1 {
 			t.Fatalf("green checks at the crosschecked head are requested: %v, sent %d", out, len(p.rep.sent))
@@ -210,7 +230,8 @@ func TestMergeRequestRefusesRedChecks(t *testing.T) {
 func TestMergeRequestRefusesAHeadThatMovedFromTheCrosscheckedOne(t *testing.T) {
 	t.Run("pull request head is not the crosschecked one", func(t *testing.T) {
 		p := newPRWorld(t)
-		p.open(prHeadB) // M1 is verified at A, the pull request is at B, green
+		p.open(prHeadB) // M1 closed at A, the pull request is at B, green
+		p.close("M1", prHeadA)
 		arg := map[string]any{"pr": prRef, "review": p.review(prHeadB, "connected", 0)}
 		wantRefused(t, p.mustRequest("M1", arg), "head_moved")
 		if len(p.rep.sent) != 0 {
@@ -220,6 +241,7 @@ func TestMergeRequestRefusesAHeadThatMovedFromTheCrosscheckedOne(t *testing.T) {
 	t.Run("checks read a head the pull request no longer has", func(t *testing.T) {
 		p := newPRWorld(t)
 		p.open(prHeadA)
+		p.close("M1", prHeadA)
 		p.prs.checks.Head = prHeadB
 		arg := map[string]any{"pr": prRef, "review": p.review(prHeadA, "connected", 0)}
 		wantRefused(t, p.mustRequest("M1", arg), "head_moved")
@@ -229,28 +251,32 @@ func TestMergeRequestRefusesAHeadThatMovedFromTheCrosscheckedOne(t *testing.T) {
 	})
 	t.Run("a verified row of the head the verdict names elsewhere", func(t *testing.T) {
 		p := newPRWorld(t)
-		p.open(prHeadA) // M4's row is at A, its verdict object names C
+		p.open(prHeadA)
+		p.close("M4", prHeadA)
 		arg := map[string]any{"pr": prRef, "review": p.review(prHeadA, "connected", 0)}
-		wantRefused(t, p.mustRequest("M4", arg), "crosscheck_not_accepted")
+		if out := p.mustRequest("M4", arg); out["state"] != "requested" {
+			t.Fatalf("a closed milestone is requested: %v", out)
+		}
 	})
 	t.Run("needs_changes and evidence are not accepted", func(t *testing.T) {
 		p := newPRWorld(t)
 		p.open("dddddddddddddddddddddddddddddddddddddddd")
 		arg := map[string]any{"pr": prRef, "review": p.review("dddddddddddddddddddddddddddddddddddddddd", "connected", 0)}
-		wantRefused(t, p.mustRequest("M2", arg), "crosscheck_not_accepted")
+		wantRefused(t, p.mustRequest("M2", arg), "milestone_not_closed")
 		p.open(prHeadA)
 		arg = map[string]any{"pr": prRef, "review": p.review(prHeadA, "connected", 0)}
-		wantRefused(t, p.mustRequest("M5", arg), "crosscheck_not_accepted") // held: no verdict object
+		wantRefused(t, p.mustRequest("M5", arg), "milestone_not_closed") // no close rows at all
 	})
 	t.Run("a milestone with no row", func(t *testing.T) {
 		p := newPRWorld(t)
 		p.open(prHeadA)
 		arg := map[string]any{"pr": prRef, "review": p.review(prHeadA, "connected", 0)}
-		wantRefused(t, p.mustRequest("M9", arg), "crosscheck_missing")
+		wantRefused(t, p.mustRequest("M9", arg), "milestone_not_closed")
 	})
 	t.Run("the verified round after an evidence round is accepted", func(t *testing.T) {
 		p := newPRWorld(t)
 		p.open(prHeadA)
+		p.close("M6", prHeadA)
 		arg := map[string]any{"pr": prRef, "review": p.review(prHeadA, "connected", 0)}
 		if out := p.mustRequest("M6", arg); out["state"] != "requested" {
 			t.Fatalf("M6: %v", out)
@@ -261,6 +287,7 @@ func TestMergeRequestRefusesAHeadThatMovedFromTheCrosscheckedOne(t *testing.T) {
 func TestMergeRequestRefusesUnresolvedComments(t *testing.T) {
 	p := newPRWorld(t)
 	p.open(prHeadA)
+	p.close("M1", prHeadA)
 	wantRefused(t, p.mustRequest("M1", map[string]any{"pr": prRef, "review": p.review(prHeadA, "connected", 2)}), "comments_unresolved")
 	if len(p.rep.sent) != 0 {
 		t.Fatal("unresolved comments were requested")
@@ -277,6 +304,7 @@ func TestMergeRequestRefusesUnresolvedComments(t *testing.T) {
 	// no review argument: refuse by default, with a Go error
 	p2 := newPRWorld(t)
 	p2.open(prHeadA)
+	p2.close("M1", prHeadA)
 	if _, err := p2.request("M1", map[string]any{"pr": prRef}); err == nil {
 		t.Error("a request with no review argument was not an error")
 	}
@@ -318,6 +346,7 @@ func TestMergeRequestRefusesUnresolvedComments(t *testing.T) {
 func TestMergeRequestIsIdempotentPerHead(t *testing.T) {
 	p := newPRWorld(t)
 	p.open(prHeadA)
+	p.close("M1", prHeadA)
 	arg := map[string]any{"pr": prRef, "review": p.review(prHeadA, "connected", 0)}
 	// a refused row does not block a later request
 	p.prs.checks.State = tracking.CheckPending
@@ -338,6 +367,7 @@ func TestMergeRequestIsIdempotentPerHead(t *testing.T) {
 	}
 	// the head moved to B, and B has a verified row of M3: a second send (the record is of the new head)
 	p.open(prHeadB)
+	p.close("M3", prHeadB)
 	arg = map[string]any{"pr": prRef, "review": p.review(prHeadB, "connected", 0)}
 	wantRefused(t, p.mustRequest("M1", arg), "head_moved")
 	third := p.mustRequest("M3", arg)
@@ -363,6 +393,7 @@ func TestMergeRequestIsIdempotentPerHead(t *testing.T) {
 func TestMergeRequestFailedSendIsAnErrorAndRecordsNothing(t *testing.T) {
 	p := newPRWorld(t)
 	p.open(prHeadA)
+	p.close("M1", prHeadA)
 	p.world.lane.d.Reporter = &stubMergeReporter{err: errors.New("down")}
 	if _, err := p.request("M1", map[string]any{"pr": prRef, "review": p.review(prHeadA, "connected", 0)}); err == nil {
 		t.Fatal("a failed send was not an error")
@@ -415,5 +446,214 @@ func TestMergeRequestReadsTheRowTheCrosscheckOpWrites(t *testing.T) {
 				t.Errorf("fixture row %d has the verdict member %q, which V does not carry", i, k)
 			}
 		}
+	}
+}
+
+// ---- crw.prOpen (CRW-1423, step 3) ----
+
+// bundle seams a pull request target onto the milestone's plan and counts the parent's opener calls.
+func (p *prWorld) bundle(target BundlePRTarget, open func(BundlePROpenRequest) (BundlePRResult, error)) *int {
+	calls := 0
+	p.world.lane.d.PRTarget = func(context.Context, string) (BundlePRTarget, error) { return target, nil }
+	p.world.lane.d.PROpen = func(_ context.Context, req BundlePROpenRequest) (BundlePRResult, error) {
+		calls++
+		if open != nil {
+			return open(req)
+		}
+		return BundlePRResult{State: "opened", PR: "o/r#9", Head: req.Close.Tip, Base: req.Target.BaseRef, ReviewRecord: "/tmp/review.json"}, nil
+	}
+	return &calls
+}
+
+// closeWith variants of close let a case corrupt one part of the closing acceptance.
+func (p *prWorld) closeWith(ms, head string, edit func(gate, cc, closed *map[string]any), editRows func(ev []engine.Event) []engine.Event) {
+	p.t.Helper()
+	var gate, cc, closed map[string]any
+	_ = json.Unmarshal([]byte(`{"milestone":"`+ms+`","plan":"plan-1","head":"`+head+`","state":"pass","commands":[]}`), &gate)
+	_ = json.Unmarshal([]byte(`{"verdict":"verified","head":"`+head+`","milestone":"`+ms+`"}`), &cc)
+	_ = json.Unmarshal([]byte(`{"milestone":"`+ms+`","base":"dev","tip":"`+head+`","gate_head":"`+head+`","moved":false}`), &closed)
+	gate["state"] = GatePass
+	if edit != nil {
+		edit(&gate, &cc, &closed)
+	}
+	gb, _ := json.Marshal(gate)
+	cb, _ := json.Marshal(cc)
+	closed["gate"] = gate
+	closed["crosscheck"] = cc
+	xb, _ := json.Marshal(closed)
+	_ = cb
+	evs := []engine.Event{
+		{RunID: "run-1", Kind: engine.KindCall, CallID: "fg_" + ms, Op: "crw." + NameFinalGate, Event: engine.EvCompleted,
+			Data: map[string]any{"milestone": ms, "plan": "plan-1", "head": head, "state": GatePass, "result": string(gb)}},
+		{RunID: "run-1", Kind: engine.KindCall, CallID: "mc_" + ms, Op: OpMilestoneClose, Event: engine.EvCompleted,
+			Data: map[string]any{"milestone": ms, "plan": "plan-1", "tip": head, "gate_head": closed["gate_head"], "moved": closed["moved"], "result": string(xb)}},
+		{RunID: "run-1", Kind: engine.KindCall, CallID: "ru_" + ms, Op: OpReportUp, Event: engine.EvCompleted,
+			Data: map[string]any{"milestone": ms, "tip": head, "report_id": "rep_" + ms, "delivered": true, "result": "{}"}},
+	}
+	if editRows != nil {
+		evs = editRows(evs)
+	}
+	for _, ev := range evs {
+		p.j.Append(ev)
+	}
+	p.relay.tip = head
+}
+
+func (p *prWorld) prOpen(ms string) (map[string]any, error) {
+	p.t.Helper()
+	raw, err := p.world.op(NamePROpen, ms)
+	if err != nil {
+		return nil, err
+	}
+	var out map[string]any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		p.t.Fatalf("the answer is not an object: %s", raw)
+	}
+	return out, nil
+}
+
+// TestPROpenRequiresLatestClosedAcceptance: crw.prOpen opens only on the journal-proven closing acceptance — the latest
+// unsuperseded close of the milestone at the live tip, its gate passed at that tip after the close, the closing review
+// accepted and the close reported after it. Every weakening of that proof must refuse, never open.
+func TestPROpenRequiresLatestClosedAcceptance(t *testing.T) {
+	head := prHeadA
+	for name, seed := range map[string]func(p *prWorld){
+		"accepted": func(p *prWorld) { p.closeWith("M1", head, nil, nil) },
+		"latest final gate pending": func(p *prWorld) {
+			p.closeWith("M1", head, func(g, c, cl *map[string]any) { (*g)["state"] = "pending" },
+				func(evs []engine.Event) []engine.Event { evs[0].Data["state"] = "pending"; return evs })
+		},
+		"latest final gate failed": func(p *prWorld) {
+			p.closeWith("M1", head, func(g, c, cl *map[string]any) { (*g)["state"] = "fail" },
+				func(evs []engine.Event) []engine.Event { evs[0].Data["state"] = "fail"; return evs })
+		},
+		"missing close": func(p *prWorld) {
+			p.relay.tip = head
+			p.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: "ru_x", Op: OpReportUp, Event: engine.EvCompleted,
+				Data: map[string]any{"milestone": "M1", "tip": head, "report_id": "r", "delivered": true, "result": "{}"}})
+		},
+		"moved target": func(p *prWorld) { p.closeWith("M1", head, nil, nil); p.relay.tip = prHeadB },
+		"stale head": func(p *prWorld) {
+			p.closeWith("M1", head, func(g, c, cl *map[string]any) { (*cl)["tip"] = prHeadB },
+				func(evs []engine.Event) []engine.Event { evs[1].Data["tip"] = prHeadB; return evs })
+		},
+		"missing verdict head": func(p *prWorld) {
+			p.closeWith("M1", head, func(g, c, cl *map[string]any) { delete(*c, "head") }, nil)
+		},
+		"wrong verdict milestone": func(p *prWorld) {
+			p.closeWith("M1", head, func(g, c, cl *map[string]any) { (*c)["milestone"] = "M9" }, nil)
+		},
+		"blank gate milestone": func(p *prWorld) {
+			p.closeWith("M1", head, func(g, c, cl *map[string]any) { (*g)["milestone"] = "" }, nil)
+		},
+		"data moved disagrees with result": func(p *prWorld) {
+			p.closeWith("M1", head, nil, func(evs []engine.Event) []engine.Event { evs[1].Data["moved"] = true; return evs })
+		},
+		"superseded close": func(p *prWorld) {
+			p.closeWith("M1", head, nil, nil)
+			p.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: "mc_M1", Op: OpMilestoneClose, Event: engine.EvSuperseded})
+		},
+		"superseded gate": func(p *prWorld) {
+			p.closeWith("M1", head, nil, nil)
+			p.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: "fg_M1", Op: "crw." + NameFinalGate, Event: engine.EvSuperseded})
+		},
+		"report only before close": func(p *prWorld) {
+			p.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: "ru_old", Op: OpReportUp, Event: engine.EvCompleted,
+				Data: map[string]any{"milestone": "M1", "tip": head, "report_id": "old", "delivered": true, "result": "{}"}})
+			p.closeWith("M1", head, nil, func(evs []engine.Event) []engine.Event { return evs[:2] }) // drop the fresh report
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p := newPRWorld(t)
+			calls := p.bundle(BundlePRTarget{Repo: "o/r", Checkout: "/w", HeadRef: "crw/m1", BaseRef: "dev", Remote: "origin", ReviewRecord: "d"}, nil)
+			seed(p)
+			out, err := p.prOpen("M1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if name == "accepted" {
+				if out["state"] != "opened" || *calls != 1 {
+					t.Fatalf("the proven close opens once: %v, %d call(s)", out, *calls)
+				}
+				return
+			}
+			if out["state"] != "refused" || *calls != 0 {
+				t.Fatalf("%s: %v, %d call(s), want a refusal and no open", name, out, *calls)
+			}
+		})
+	}
+}
+
+// TestPROpenNotRequiredAndDirect plans without a bundle handoff, or a nil PRTarget seam, answer not_required without external
+// calls.
+func TestPROpenNotRequiredAndDirect(t *testing.T) {
+	p := newPRWorld(t)
+	out, err := p.prOpen("M1")
+	if err != nil || out["state"] != "not_required" {
+		t.Fatalf("no target seam: %v %v", out, err)
+	}
+	calls := p.bundle(BundlePRTarget{}, nil) // no base: a direct landing
+	p.close("M1", prHeadA)
+	out, err = p.prOpen("M1")
+	if err != nil || out["state"] != "not_required" || *calls != 0 {
+		t.Fatalf("a direct landing: %v %v, %d call(s)", out, err, *calls)
+	}
+}
+
+// TestPROpenProvenReReadsThePullRequest: an opened row stays proven only while the recorded pull request keeps its identity.
+func TestPROpenProvenProvesIdentity(t *testing.T) {
+	p := newPRWorld(t)
+	calls := p.bundle(BundlePRTarget{Repo: "o/r", Checkout: "/w", HeadRef: "crw/m1", BaseRef: "dev", Remote: "origin", ReviewRecord: "d"}, nil)
+	p.close("M1", prHeadA)
+	if _, err := p.prOpen("M1"); err != nil {
+		t.Fatal(err)
+	}
+	if *calls != 1 {
+		t.Fatalf("%d opens, want 1", *calls)
+	}
+	row := rows(p.j.Events()).opRows(OpPROpen)[0]
+	op := p.world.lane.Ops()[NamePROpen].(*prOpenOp)
+	for name, pr := range map[string]tracking.PullRequest{
+		"same open":       {Ref: tracking.Ref{Repo: "o/r", Number: 9}, HeadSHA: prHeadA, HeadRef: "crw/m1", HeadRepo: "o/r", BaseRef: "dev", State: tracking.StateOpen},
+		"same merged":     {Ref: tracking.Ref{Repo: "o/r", Number: 9}, HeadSHA: prHeadA, HeadRef: "crw/m1", HeadRepo: "o/r", BaseRef: "dev", State: tracking.StateClosed, Merged: true},
+		"closed unmerged": {Ref: tracking.Ref{Repo: "o/r", Number: 9}, HeadSHA: prHeadA, HeadRef: "crw/m1", HeadRepo: "o/r", BaseRef: "dev", State: tracking.StateClosed},
+		"moved head":      {Ref: tracking.Ref{Repo: "o/r", Number: 9}, HeadSHA: prHeadB, HeadRef: "crw/m1", HeadRepo: "o/r", BaseRef: "dev", State: tracking.StateOpen},
+		"other repo":      {Ref: tracking.Ref{Repo: "o/other", Number: 9}, HeadSHA: prHeadA, HeadRef: "crw/m1", HeadRepo: "o/other", BaseRef: "dev", State: tracking.StateOpen},
+		"other head ref":  {Ref: tracking.Ref{Repo: "o/r", Number: 9}, HeadSHA: prHeadA, HeadRef: "crw/m2", HeadRepo: "o/r", BaseRef: "dev", State: tracking.StateOpen},
+	} {
+		t.Run(name, func(t *testing.T) {
+			p.prs.pr = pr
+			p.prs.err = nil
+			ok, _, err := op.Proven(context.Background(), p.j.Events(), row)
+			want := name == "same open" || name == "same merged"
+			if ok != want || err != nil {
+				t.Errorf("Proven = %v, %v, want %v", ok, err, want)
+			}
+		})
+	}
+}
+
+// TestMergeRequestProvenFollowsTheRow: a requested row is proven, a refused one is not (a resume re-judges it).
+func TestMergeRequestProvenFollowsTheRow(t *testing.T) {
+	p := newPRWorld(t)
+	p.open(prHeadA)
+	p.close("M1", prHeadA)
+	op := p.world.lane.Ops()[NameMergeRequest].(*mergeRequestOp)
+	// refused: the checks are none
+	p.prs.checks.State = tracking.CheckNone
+	if _, err := p.request("M1", map[string]any{"pr": prRef, "review": p.review(prHeadA, "connected", 0)}); err != nil {
+		t.Fatal(err)
+	}
+	refused := rows(p.j.Events()).opRows(OpMergeRequest)[0]
+	if ok, _, err := op.Proven(context.Background(), p.j.Events(), refused); ok || err != nil {
+		t.Fatalf("a refused row is not proven: %v %v", ok, err)
+	}
+	p.prs.checks.State = tracking.CheckSuccess
+	if _, err := p.request("M1", map[string]any{"pr": prRef, "review": p.review(prHeadA, "connected", 0)}); err != nil {
+		t.Fatal(err)
+	}
+	all := rows(p.j.Events()).opRows(OpMergeRequest)
+	if ok, _, err := op.Proven(context.Background(), p.j.Events(), all[len(all)-1]); !ok || err != nil {
+		t.Fatalf("a requested row is proven: %v %v", ok, err)
 	}
 }

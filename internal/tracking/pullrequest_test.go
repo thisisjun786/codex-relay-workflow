@@ -1,9 +1,13 @@
 package tracking
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -524,4 +528,80 @@ func TestReadPRReviewRecordValidatesWhatItReads(t *testing.T) {
 	if _, err := ReadPRReviewRecord(write(t, badNC2), ref, head); err == nil {
 		t.Error("a not_connected record without the note was accepted")
 	}
+}
+
+// TestFindPullRequestPagesFiltersAndPrefersOpen: the lookup paginates the list call, keeps only rows of this repository with
+// the exact head and base refs, prefers one open over a historical one, refuses two opens and answers none/unique history.
+func TestFindPullRequestPagesFiltersAndPrefersOpen(t *testing.T) {
+	head := "crw/m1"
+	newPull := func(n int, state string, merged bool, headRef, baseRef, headRepo string) map[string]any {
+		repo := any(nil)
+		if headRepo != "" {
+			repo = map[string]any{"full_name": headRepo}
+		}
+		return map[string]any{"number": n, "state": state, "merged": merged, "draft": false,
+			"head": map[string]any{"ref": headRef, "sha": fmt.Sprintf("%040x", 100+n), "repo": repo},
+			"base": map[string]any{"ref": baseRef}, "html_url": "https://h/" + itoa(n)}
+	}
+	var queries []string
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/repos/o/r/pulls" {
+			t.Errorf("the lookup hit %s, only the list is read", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		queries = append(queries, r.URL.RawQuery)
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Query().Get("page") {
+		case "", "1":
+			// page 1: noise — a fork's head repo, another base, another head, an unrelated state
+			w.Header().Set("Link", `<`+srv.URL+`/repos/o/r/pulls?page=2>; rel="next"`)
+			json.NewEncoder(w).Encode([]any{
+				newPull(1, "open", false, head, "dev", "o/fork"),
+				newPull(2, "open", false, head, "release", "o/r"),
+				newPull(3, "open", false, "crw/m2", "dev", "o/r"),
+			})
+		case "2":
+			json.NewEncoder(w).Encode([]any{newPull(7, "open", false, head, "dev", "o/r")})
+		default:
+			json.NewEncoder(w).Encode([]any{})
+		}
+	}))
+	defer srv.Close()
+	g := mustGitHub(t, srv.URL, "o/r")
+	pr, found, err := g.FindPullRequest(context.Background(), head, "dev")
+	if err != nil || !found || pr.Ref.Number != 7 {
+		t.Fatalf("the paginated filtered lookup: %v %v %v", pr.Ref, found, err)
+	}
+	if q, err := url.ParseQuery(queries[0]); err != nil || q.Get("head") != "o:"+head || q.Get("base") != "dev" || q.Get("state") != "all" {
+		t.Errorf("the list query: %v %v", q, err)
+	}
+	// a historical match answers it (a closed unmerged pull request refuses the caller to duplicate)
+	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]any{newPull(4, "closed", false, head, "dev", "o/r")})
+	}))
+	defer srv2.Close()
+	pr, found, err = mustGitHub(t, srv2.URL, "o/r").FindPullRequest(context.Background(), head, "dev")
+	if err != nil || !found || pr.Ref.Number != 4 || pr.State != "closed" {
+		t.Fatalf("the unique historical match: %v %v %v", pr.Ref, found, err)
+	}
+	// two opens are an error, never a choice
+	srv3 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode([]any{newPull(8, "open", false, head, "dev", "o/r"), newPull(9, "open", false, head, "dev", "o/r")})
+	}))
+	defer srv3.Close()
+	if _, _, err = mustGitHub(t, srv3.URL, "o/r").FindPullRequest(context.Background(), head, "dev"); err == nil {
+		t.Fatal("two open pull requests are an error, not a pick")
+	}
+}
+
+// mustGitHub is the adapter under test against the httptest base.
+func mustGitHub(t *testing.T, base, repo string) *GitHub {
+	t.Helper()
+	g, err := NewGitHub(repo, StaticToken("t"), WithBaseURL(base))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return g
 }

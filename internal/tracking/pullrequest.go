@@ -629,3 +629,48 @@ func (g *GitHub) ReviewComments(ctx context.Context, ref Ref) ([]PRReviewComment
 	}
 	return out, nil
 }
+
+// FindPullRequest looks up the pull request of head onto base in the repository: the paginated list call
+// /pulls?state=all&head=<owner>:<head>&base=<base>, filtered again on the decoded rows (exact head and base refs and a head
+// repository of this repository — the API's head filter matches a user, not the repository). More than one matching open
+// pull request is an error; one open answers it, else a unique closed or merged one answers that (its existence is a refusal
+// to the caller, never a duplicate to create). The list read is never a patch endpoint.
+func (g *GitHub) FindPullRequest(ctx context.Context, head, base string) (PullRequest, bool, error) {
+	if err := checkBranch("head", head); err != nil {
+		return PullRequest{}, false, fmt.Errorf("tracking: head %q: %w", head, err)
+	}
+	if err := checkBranch("base", base); err != nil {
+		return PullRequest{}, false, fmt.Errorf("tracking: base %q: %w", base, err)
+	}
+	owner, _, _ := strings.Cut(g.repo, "/")
+	query := url.Values{"state": {"all"}, "head": {owner + ":" + head}, "base": {base}, "per_page": {pageSize}}
+	var pulls []apiPull
+	if err := getAll(ctx, g, "tracking: list pull requests of "+g.repo, g.repoURL("/pulls", query), &pulls); err != nil {
+		return PullRequest{}, false, err
+	}
+	var open, other []PullRequest
+	for _, a := range pulls {
+		p := g.pullFrom(a)
+		if p.HeadRef != head || p.BaseRef != base || !strings.EqualFold(p.HeadRepo, g.repo) {
+			continue
+		}
+		if p.State == StateOpen {
+			open = append(open, p)
+		} else {
+			other = append(other, p)
+		}
+	}
+	if len(open) > 1 {
+		return PullRequest{}, false, fmt.Errorf("tracking: %d open pull requests of %s onto %s in %s", len(open), head, base, g.repo)
+	}
+	if len(open) == 1 {
+		return open[0], true, nil
+	}
+	if len(other) > 1 {
+		return PullRequest{}, false, fmt.Errorf("tracking: %d historical pull requests of %s onto %s in %s", len(other), head, base, g.repo)
+	}
+	if len(other) == 1 {
+		return other[0], true, nil
+	}
+	return PullRequest{}, false, nil
+}
