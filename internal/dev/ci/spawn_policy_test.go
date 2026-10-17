@@ -282,14 +282,14 @@ func TestSpawnPolicyIsPointedAt(t *testing.T) {
 		"plugins/crw/skills/crw-canon/SKILL.md",
 		"plugins/crw/skills/crw-run/SKILL.md",
 		"plugins/crw/skills/crw-pabcd/SKILL.md",
-		"plugins/crw/skills/crw-canon/references/flow.md",
+		"plugins/crw/skills/crw-canon/references/flow/overview.md",
 	} {
 		data, err := os.ReadFile(filepath.Join(repoRoot(), filepath.FromSlash(file)))
 		if err != nil {
 			t.Fatal(err)
 		}
 		text := string(data)
-		if !strings.Contains(text, link) && !strings.Contains(text, "](references/spawn-policy.md") && !strings.Contains(text, "](spawn-policy.md") {
+		if !strings.Contains(text, link) && !strings.Contains(text, "](references/spawn-policy.md") && !strings.Contains(text, "](spawn-policy.md") && !strings.Contains(text, "](../spawn-policy.md") {
 			t.Errorf("%s does not link the spawn policy page", file)
 		}
 	}

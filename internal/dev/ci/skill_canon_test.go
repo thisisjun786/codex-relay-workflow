@@ -589,6 +589,9 @@ func TestCanonSkillNeverImplicit(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, e := range entries {
+		if e.IsDir() && e.Name() == "flow" {
+			continue // references/flow/ is the section directory of the flow index
+		}
 		if !strings.Contains(string(skill), "(references/"+e.Name()+")") {
 			t.Errorf("crw-canon/SKILL.md does not link references/%s", e.Name())
 		}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -18,6 +19,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/reviewadapter"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/script"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/workflows"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/workflows/lib"
 )
 
 // The continuity of the architect and the re-plan of a milestone (CRW-1202, F09) on the whole stack of the scenario harness: the real
@@ -1048,6 +1050,16 @@ func TestResumeAfterCompletedRunWithInFlightReplanZeroLive(t *testing.T) {
 	}
 }
 
+// mustReadLib is the embedded text of one helper library module.
+func mustReadLib(t *testing.T, file string) []byte {
+	t.Helper()
+	b, err := fs.ReadFile(lib.FS, file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
 // execEdited runs the project lane with its text edited: the resume of a script that changed since the run.
 func (l *Lab) execEdited(edit func(string) string, resume bool) *engine.Result {
 	l.t.Helper()
@@ -1055,11 +1067,34 @@ func (l *Lab) execEdited(edit func(string) string, resume bool) *engine.Result {
 	if err != nil {
 		l.t.Fatal(err)
 	}
-	edited := edit(string(text))
-	if edited == string(text) {
-		l.t.Fatal("the edit changed nothing")
+	// the edit callback runs against every library module and lands in the one that holds its target (the phase modules of
+	// CRW-1583): nothing changed is the same refusal as before, against the file the text was in
+	changed := map[string]string{}
+	err = fs.WalkDir(lib.FS, ".", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		b, err := fs.ReadFile(lib.FS, p)
+		if err != nil {
+			return err
+		}
+		if edited := edit(string(b)); edited != string(b) {
+			changed[p] = edited
+		}
+		return nil
+	})
+	if err != nil {
+		l.t.Fatal(err)
 	}
-	prog, err := script.Load(script.Source{Name: "project-lane.js", Text: []byte(edited), Dir: workflows.FS})
+	if len(changed) != 1 {
+		l.t.Fatalf("the edit changed %d files, want 1", len(changed))
+	}
+	var file string
+	for name := range changed {
+		file = name
+	}
+	prog, err := script.Load(script.Source{Name: "project-lane.js", Text: text, Dir: workflows.FS,
+		Lib: libWith(l.t, file, string(mustReadLib(l.t, file)), changed[file])})
 	if err != nil {
 		l.t.Fatal(err)
 	}

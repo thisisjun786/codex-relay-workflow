@@ -152,7 +152,10 @@ func libSwap(t *testing.T, base fs.FS, file, start, end, with string) fs.FS {
 		if p == file {
 			s := string(b)
 			i := strings.Index(s, start)
-			j := strings.Index(s, end)
+			j := len(s)
+			if end != "" {
+				j = strings.Index(s, end)
+			}
 			if i < 0 || j < i {
 				t.Fatalf("%s has no %q before %q", file, start, end)
 			}
@@ -170,7 +173,7 @@ func libSwap(t *testing.T, base fs.FS, file, start, end, with string) fs.FS {
 // b0Lib is the helper library with lib/lane.js#explore and lib/packets.js#architectPacket as they were before CRW-1571.
 func b0Lib(t *testing.T) fs.FS {
 	t.Helper()
-	l := libSwap(t, lib.FS, "lane.js", "export async function explore(", "// milestoneHalt takes a call of the design phase", b0Explore)
+	l := libSwap(t, lib.FS, "lane-explore.js", "export async function explore(", "", b0Explore)
 	return libSwap(t, l, "packets.js", "export function architectPacket(", "// The executor contract", b0ArchitectPacket)
 }
 
@@ -293,7 +296,7 @@ func TestTwiceFailedBackgroundExplorerIsNamedInTheArchitectPacket(t *testing.T) 
 	// a run recorded with a library whose explore never attaches the missing member resumes over this one with its background record
 	// replayed (the same arguments) and the architect live (its packet now names the missing exploration)
 	pl := NewLab(t, twoNodes()...)
-	pl.Lib = libSwap(t, lib.FS, "lane.js", markMissing, markMissingEnd, "")
+	pl.Lib = libSwap(t, lib.FS, "lane-explore.js", markMissing, markMissingEnd, "")
 	plainText := architectText(pl)
 	scriptBackground(pl, "B", func(_ int, c *Call) *fakehostPlan { return nullModelTurns(c) })
 	if got := mustRun(t, pl); got.State != "closed" {

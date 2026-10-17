@@ -131,7 +131,7 @@ func TestChildSkillDefaultPathIsTheFlowRun(t *testing.T) {
 // TestFlowPageNamesTheStepExchange: the canon's flow page has the two commands of the step exchange in its command table and the
 // exchange in its ownership table.
 func TestFlowPageNamesTheStepExchange(t *testing.T) {
-	text := readRepoText(t, flowRef)
+	text := readFlowReference(t, flowRef)
 	commands := normalized(sectionOf(text, "The crw flow command table"))
 	for _, want := range []string{"`crw flow next RUN", "`crw flow dispatched RUN CALL"} {
 		if !strings.Contains(commands, want) {
@@ -232,8 +232,8 @@ func TestDispatchSurfacesNameTheAssignedReceiptTree(t *testing.T) {
 // TestScriptPageKeepsTheAppServerBackendForTests: script.md says the App Server backend is the backend of tests and shadow runs,
 // and that a started run runs as session calls.
 func TestScriptPageKeepsTheAppServerBackendForTests(t *testing.T) {
-	section := normalized(sectionOf(readRepoText(t, "docs/flow/script.md"), "The App Server backend"))
-	if !regexp.MustCompile("(?i)`crw flow start` runs a run as session calls[^.]*by default").MatchString(section) || !regexp.MustCompile(`(?i)tests and shadow runs`).MatchString(section) {
+	section := normalized(sectionOf(readFlowReference(t, "docs/flow/script.md"), "The App Server backend"))
+	if !regexp.MustCompile("(?i)`crw flow start` runs a run as session calls[^.]*by default").MatchString(maskLinkTargets(section)) || !regexp.MustCompile(`(?i)tests and shadow runs`).MatchString(section) {
 		t.Errorf("the App Server backend section does not say it is the backend of tests and shadow runs:\n%.400s", section)
 	}
 }
