@@ -236,8 +236,9 @@ func TestDeriveRefusals(t *testing.T) {
 	}
 	colon := deriveReceipt()
 	colon.RelationshipID = "rel:1"
-	if _, err := Derive(colon, nil); !errors.Is(err, ErrAmbiguousField) {
-		t.Fatalf("a relationship id the format cannot carry = %v", err)
+	derived := mustDerive(t, colon, nil)
+	if want := []Blocking{{Kind: BlockingRelationship, Ref: "rel:1"}}; !reflect.DeepEqual(derived.Blocking, want) {
+		t.Fatalf("relationship punctuation changed: %+v", derived.Blocking)
 	}
 	// A repeat needs no decision id: the stored record names it.
 	stored := mustDerive(t, deriveReceipt(), nil)

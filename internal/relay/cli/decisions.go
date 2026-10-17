@@ -754,7 +754,7 @@ func decisionRefusal(err error) error {
 		errors.Is(err, decisions.ErrBadNeededBy), errors.Is(err, decisions.ErrBadRaisedAt),
 		errors.Is(err, decisions.ErrRecommendation), errors.Is(err, decisions.ErrSchema):
 		return decisionBadInvocation(err.Error())
-	case errors.Is(err, decisions.ErrAmbiguousField), errors.Is(err, decisions.ErrControlCharacter):
+	case errors.Is(err, decisions.ErrControlCharacter):
 		return decisionBadInvocation(err.Error())
 	case errors.Is(err, decisions.ErrAnswerState), errors.Is(err, decisions.ErrTransition):
 		return decisionConflict("disposition_conflict", err.Error())

@@ -1154,3 +1154,87 @@ func TestAnswerSaysADrainIsAskedOfAHolderThatNeverLetsGo(t *testing.T) {
 		t.Fatalf("the signals %+v, %d rows, %d processes", got, len(a.appliedRows(t)), len(td.spawned))
 	}
 }
+
+func TestAnswer1636GitHubNodeRoundTrip(t *testing.T) {
+	const node = "owner:repo:53"
+	w := newWorld(t)
+	r := w.newRun("run-x", "thread-owner")
+	r.phase("build")
+	r.call("c_ex", "executor", node, 2, []string{engine.EvPrepared, engine.EvRefused}, map[string]map[string]any{engine.EvRefused: {"reason": "pair_refused"}})
+	r.flow(engine.EvEscalation, map[string]any{"reason": "pair_refused", "class": "configuration_fault", "node": node, "call_id": "c_ex", "escalation_id": "esc_one", "ask": "configuration"})
+	r.finish(engine.RunCompleted, "")
+	r.close()
+	b := Binding{Source: SourceQuestion, Run: "run-x", Node: node, Question: "esc_one", Revision: 1, Attempt: 2, PlanBasis: PlanBasis("plan-1", 3)}
+	rec := decisions.Record{
+		Schema: decisions.Schema, DecisionID: "ud-github-node", Kind: decisions.KindBlockedEscalation, Context: "Choose how to retry the GitHub node",
+		Options:  []decisions.Option{{ID: "retry", Label: "Retry", Effect: "Retry the node"}, {ID: "stop", Label: "Stop", Effect: "Stop the node"}},
+		Blocking: []decisions.Blocking{{Kind: decisions.BlockingPlanNode, Ref: b.Run + "/" + b.Node}},
+		Origin:   decisions.Origin{Project: "P"}, Source: decisions.Source{Kind: b.Source, Ref: BindingRef(b)},
+		Authority: decisions.Authority{Kind: decisions.AuthorityDelegatedManagement}, State: decisions.StateRaised,
+		RaisedAt: "2026-10-12T08:00:00Z", Seen: []decisions.Seen{{At: "2026-10-12T08:00:00Z", Source: "test"}},
+	}
+	rec.Fingerprint = decisions.Fingerprint(rec.Context, rec.Blocking, rec.Options)
+	if _, _, err := w.st.Raise(context.Background(), rec); err != nil {
+		t.Fatal(err)
+	}
+	w.close()
+	w.open()
+	stored, err := w.st.Get(context.Background(), rec.DecisionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stored.Blocking) != 1 || stored.Blocking[0].Ref != "run-x/owner:repo:53" || stored.Fingerprint != rec.Fingerprint {
+		t.Fatalf("stored identity changed: %+v", stored)
+	}
+	bound, err := BindingOf(stored)
+	if err != nil || bound != b {
+		t.Fatalf("binding %+v, %v; want %+v", bound, err, b)
+	}
+	listed, err := w.st.List(context.Background(), store.UserDecisionFilter{})
+	if err != nil || len(listed) != 1 || listed[0].DecisionID != rec.DecisionID || len(listed[0].Blocking) != 1 || listed[0].Blocking[0].Ref != stored.Blocking[0].Ref {
+		t.Fatalf("listed records %+v, %v", listed, err)
+	}
+	if _, err := w.st.Update(context.Background(), rec.DecisionID, func(_ context.Context, record decisions.Record) (decisions.Record, error) {
+		return decisions.ValidateAnswer(record, decisions.Answer{Option: "retry", By: "manager-task", Via: decisions.ViaManagementMessage, Authority: decisions.Authority{Kind: decisions.AuthorityDelegatedManagement}})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteSpec(w.state, Spec{Schema: SpecSchema, RunID: b.Run, Workflow: "project-lane", Thread: "thread-owner", CreatedAt: "2026-10-12T08:00:00Z"}); err != nil {
+		t.Fatal(err)
+	}
+	td := w.deps()
+	answer := func(claimedNode string) (int, AnswerReply, string) {
+		code, out, errOut := td.do("answer", "--state", w.state, "--decision", rec.DecisionID, "--run", b.Run, "--node", claimedNode, "--question", b.Question, "--revision", "1", "--thread", "thread-owner", "--json")
+		var reply AnswerReply
+		if err := json.Unmarshal([]byte(strings.TrimPrefix(out, "<<spawned>>\n")), &reply); err != nil && out != "" {
+			t.Fatalf("answer JSON: %v: %s", err, out)
+		}
+		return code, reply, errOut
+	}
+	if code, reply, errOut := answer("owner:repo:54"); code != 1 || reply.Refusal == nil || reply.Refusal.Code != RefusedOtherNode || reply.Applied || len(td.spawned) != 0 {
+		t.Fatalf("other node accepted: %d %+v %s", code, reply, errOut)
+	}
+	code, reply, errOut := answer(node)
+	if code != 0 || !reply.Applied || reply.Replayed || reply.Resumed != 4242 {
+		t.Fatalf("GitHub node answer: %d %+v %s", code, reply, errOut)
+	}
+	rows, _, err := loadRun(w, b.Run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var applied []engine.Event
+	for _, row := range rows {
+		if row.Kind == engine.KindFlow && row.Event == ops.EvDecisionApplied {
+			applied = append(applied, row)
+		}
+	}
+	if len(applied) != 1 || applied[0].Data["node"] != node || applied[0].Data["run"] != b.Run || applied[0].Data["ask"] != b.Question {
+		t.Fatalf("applied rows: %+v", applied)
+	}
+	if len(td.spawned) != 1 || !td.spawned[0].Resume || td.spawned[0].Spec.RunID != b.Run {
+		t.Fatalf("resume: %+v", td.spawned)
+	}
+	if code, again, errOut := answer(node); code != 0 || !again.Replayed || again.Applied || again.Seq != reply.Seq || len(td.spawned) != 1 {
+		t.Fatalf("answer replay: %d %+v %s", code, again, errOut)
+	}
+}
