@@ -35,7 +35,7 @@ var metricCliTimestamp = regexp.MustCompile(`\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{
 // metricCliNames applies the settled CRW names to a recorded answer: the cli table's metric row, R11's
 // loop-skill name, R25's product name and R26's state directory.
 func metricCliNames(s string) string {
-	return strings.NewReplacer("cxc metric", "crw pabcd metric", "cxc-loop", "crw-loop", "CodexClaw", "CRW", ".codexclaw", ".crw").Replace(s)
+	return strings.NewReplacer("cxc metric", "crw work metric", "cxc-loop", "crw-loop", "CodexClaw", "CRW", ".codexclaw", ".crw").Replace(s)
 }
 
 // metricCliLeft is what the run left under the state directory, by path relative to cwd, timestamps

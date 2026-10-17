@@ -63,7 +63,7 @@ func TestPabcdCLIArgumentsAndStreams(t *testing.T) {
 	}
 	for _, verb := range []string{"plan", "receipt"} {
 		code, out, errOut := pabcdCLITestRun([]string{verb, "--help"}, "")
-		if code != 0 || errOut != "" || !strings.HasPrefix(out, "crw pabcd "+verb+" — ") || !strings.HasSuffix(out, "\n") {
+		if code != 0 || errOut != "" || !strings.HasPrefix(out, "crw work "+WorkVerbName(verb)+" — ") || !strings.HasSuffix(out, "\n") {
 			t.Errorf("%s help: %d %q %q", verb, code, out, errOut)
 		}
 	}
@@ -85,7 +85,7 @@ func TestPabcdCLILoopVerb(t *testing.T) {
 	}
 	code, out, errOut = pabcdCLITestRun([]string{"loop", "frobnicate"}, "")
 	if code != 1 || out != "" || !strings.HasPrefix(errOut, "loop: unknown loop verb 'frobnicate' (expected ") ||
-		!strings.HasSuffix(errOut, "); run crw pabcd loop --help\n") {
+		!strings.HasSuffix(errOut, "); run crw work continue --help\n") {
 		t.Fatalf("loop frobnicate: %d %q %q", code, out, errOut)
 	}
 }

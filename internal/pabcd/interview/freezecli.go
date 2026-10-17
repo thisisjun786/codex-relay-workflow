@@ -22,10 +22,10 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
-const freezeHelp = "crw pabcd freeze \u2014 build or preview the interview freeze manifest\n\nUsage:\n" +
-	"  crw pabcd freeze --session <id> [--cwd <path>]\n" +
-	"  crw pabcd freeze --dry-run --session <id> [--cwd <path>]\n" +
-	"  crw pabcd freeze --help\n\nNotes:\n" +
+const freezeHelp = "crw work freeze \u2014 build or preview the interview freeze manifest\n\nUsage:\n" +
+	"  crw work freeze --session <id> [--cwd <path>]\n" +
+	"  crw work freeze --dry-run --session <id> [--cwd <path>]\n" +
+	"  crw work freeze --help\n\nNotes:\n" +
 	"  Hashes the plan files under .crw/plan/<slug>/ and writes the manifest\n" +
 	"  at .crw/interview/freeze.json, then reports staleness against any\n" +
 	"  existing manifest.\n" +

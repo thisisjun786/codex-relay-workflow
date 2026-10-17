@@ -29,7 +29,7 @@ type finderSource interface {
 // bundleBody makes the body facts the pull request states from the journal-proved close (its gate and its accepted closing
 // review), never from the caller.
 func bundleBody(in ops.BundlePROpenRequest) BodyFacts {
-	f := BodyFacts{Milestone: in.Milestone.ID, Tip: in.Close.Tip}
+	f := BodyFacts{Milestone: in.Milestone.ID, Title: in.Milestone.Title, Criteria: in.Milestone.Criteria, Tip: in.Close.Tip}
 	var gate ops.GateOutcome
 	if json.Unmarshal(in.Close.Gate, &gate) == nil {
 		f.Gate.State = gate.State
@@ -137,7 +137,7 @@ func OpenBundle(ctx context.Context, d *Deps, in ops.BundlePROpenRequest) (ops.B
 		if reason != "" {
 			return ops.BundlePRResult{State: "refused", Reason: message}, nil
 		}
-		body := Body(bundleBody(in), refs)
+		facts := bundleBody(in)
 		pol, err := d.publicationPolicy(refRepo)
 		if err != nil {
 			return ops.BundlePRResult{}, err
@@ -150,7 +150,16 @@ func OpenBundle(ctx context.Context, d *Deps, in ops.BundlePROpenRequest) (ops.B
 			}
 			return r.Text, nil
 		}
-		if body, err = scrub(body); err != nil {
+		// Check raw facts before rendering prefixes or shortened digests can hide a credential shape.
+		raw, err := json.Marshal(facts)
+		if err != nil {
+			return ops.BundlePRResult{}, fmt.Errorf("crw.prOpen: the body facts cannot be encoded: %w", err)
+		}
+		if _, err = scrub(string(raw)); err != nil {
+			return ops.BundlePRResult{}, err
+		}
+		body, err := scrub(Body(facts, refs))
+		if err != nil {
 			return ops.BundlePRResult{}, err
 		}
 		title, err := scrub("Milestone " + in.Milestone.ID)

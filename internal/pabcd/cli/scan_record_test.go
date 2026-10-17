@@ -150,6 +150,11 @@ func TestScanRecordOracle(t *testing.T) {
 			if err := json.Unmarshal([]byte(expected), &want); err != nil {
 				t.Fatal(err)
 			}
+			// Rebrand the CLI answers only; the gate's recorded library result stays unchanged.
+			for _, result := range want.(map[string]any)["results"].([]any) {
+				answer := result.(map[string]any)
+				answer["output"] = workOracleNames(answer["output"].(string))
+			}
 			if !reflect.DeepEqual(have, want) {
 				t.Fatalf("oracle mismatch\ngot: %s\nwant: %s", actual, expected)
 			}

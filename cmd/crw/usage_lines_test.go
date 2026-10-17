@@ -12,10 +12,10 @@ import (
 // or an unknown one listed the engine's commands only (no start, no show) and answered `crw flow status` with
 // five choices. A usage line names the commands that are registered, all of them and no others.
 
-// registeredModes are the words of the mode table: every row that is not an option spelling.
+// registeredModes are the canonical words: exclude option spellings and the one deprecated alias.
 func registeredModes() (names []string) {
 	for _, m := range modes() {
-		if !strings.HasPrefix(m.name, "-") {
+		if !strings.HasPrefix(m.name, "-") && m.name != "pabcd" {
 			names = append(names, m.name)
 		}
 	}

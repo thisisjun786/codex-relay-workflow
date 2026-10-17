@@ -16,6 +16,11 @@ import (
 // its directory, PLUGIN_ROOT, stdin), then runs the script file the scenario's given put in the
 // workspace. Builtins only: a case's PATH holds just its stub and bin directories.
 const fakeCRW = `#!/bin/sh
+if [ "$1" = pabcd ]; then
+  verb=$2
+  case "$verb" in orchestrate) verb=state;; loop) verb=continue;; plan) verb=outline;; review-round) verb=assessment;; esac
+  printf 'warning: crw pabcd is deprecated; use "crw work %s" (alias removed in the next major version)\n' "$verb" >&2
+fi
 for a in "$@"; do printf 'a:%s\n' "$a"; done
 printf 'cwd:%s\n' "$PWD"
 [ -z "$PLUGIN_ROOT" ] || printf 'plugin:%s\n' "$PLUGIN_ROOT"

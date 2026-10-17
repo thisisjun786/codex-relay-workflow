@@ -108,7 +108,7 @@ func reviewRoundRunSetState(t *testing.T, cwd string, mutate func(*state.State))
 }
 
 func TestReviewRoundRunRefusals(t *testing.T) {
-	const tail = " — enter A through `crw pabcd orchestrate A` so P>A records the unit it validated"
+	const tail = " — enter A through `crw work state A` so P>A records the unit it validated"
 	cwd := reviewRoundRunSeed(t)
 	reviewRoundRunPut(t, filepath.Join(cwd, "package.json"), "{}\n")
 	before := reviewRoundRunBytes(t, cwd)
@@ -536,7 +536,7 @@ func TestReviewRoundRunOracle(t *testing.T) {
 	if len(o.Cases) < 25 {
 		t.Fatalf("recorded cases missing: %d", len(o.Cases))
 	}
-	rename := strings.NewReplacer("CXC-ROLE:", "CRW-ROLE:", "cxc orchestrate A", "crw pabcd orchestrate A", "cxc review-round", "crw pabcd review-round",
+	rename := strings.NewReplacer("CXC-ROLE:", "CRW-ROLE:", "cxc orchestrate A", "crw work state A", "cxc review-round", "crw work assessment",
 		// CRW-1116 (port: fixed): the open packet names the GO-WITH-FIXES (blockers=N) line the sign-off parser reads.
 		"VERDICT: PASS | NEAR-PASS | FAIL", "VERDICT: PASS | NEAR-PASS | FAIL | GO-WITH-FIXES (blockers=N)")
 	for _, c := range o.Cases {

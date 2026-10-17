@@ -11,6 +11,8 @@ import (
 // BodyFacts are the facts of a closed milestone the body of its pull request states.
 type BodyFacts struct {
 	Milestone  string
+	Title      string
+	Criteria   []string
 	Tip        string
 	Gate       Gate
 	Crosscheck Crosscheck
@@ -36,8 +38,9 @@ type Crosscheck struct {
 
 const none = "none"
 
-// Body makes the text of the pull request body: five headed parts in a fixed order (Result, Closes, Verification, Crosscheck,
-// Follow-ups), each always present and "none" when empty. It does not write the Carries: line: tracking appends it.
+// Body makes five headed parts in a fixed order: Result, Closes, Verification, Crosscheck and Follow-ups.
+// Result includes the recorded milestone scope, using "not recorded" when absent; empty evidence and follow-up lists say "none".
+// A next-action line leaves the disposition with the integration owner. Tracking appends the Carries: line.
 func Body(f BodyFacts, carried []tracking.Ref) string {
 	var b strings.Builder
 	part := func(heading string, lines ...string) {
@@ -53,7 +56,22 @@ func Body(f BodyFacts, carried []tracking.Ref) string {
 		}
 	}
 
-	part("Result", "Milestone "+oneLine(f.Milestone)+" closed at "+short(f.Tip, 12)+"; gate "+orNone(oneLine(f.Gate.State))+".")
+	title := oneLine(f.Title)
+	if title == "" {
+		title = "not recorded"
+	}
+	result := []string{"Milestone " + oneLine(f.Milestone) + " closed at " + short(f.Tip, 12) + "; gate " + orNone(oneLine(f.Gate.State)) + ".",
+		"Goal: " + title, "Acceptance criteria (recorded scope):"}
+	var criteria []string
+	for i, c := range f.Criteria {
+		if c = oneLine(c); c != "" {
+			criteria = append(criteria, "- c"+strconv.Itoa(i+1)+": "+c)
+		}
+	}
+	if len(criteria) == 0 {
+		criteria = []string{"- not recorded"}
+	}
+	part("Result", append(result, criteria...)...)
 
 	var closes []string
 	for _, r := range carried {
@@ -89,6 +107,7 @@ func Body(f BodyFacts, carried []tracking.Ref) string {
 		}
 	}
 	part("Follow-ups", followUps...)
+	b.WriteString("\nNext action: the integration owner records whether this candidate can land under the existing gates, and the target commit when it lands. Remote landing, installation and release need their own evidence.\n")
 	return b.String()
 }
 

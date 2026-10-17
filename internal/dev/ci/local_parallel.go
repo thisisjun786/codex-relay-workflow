@@ -63,9 +63,11 @@ func localCPUOptions(opts localOptions) (localOptions, error) {
 	}
 	opts.cpu = &recordCPU{Limit: opts.CPUs, Method: method, Jobs: jobs, Parallel: opts.Parallel}
 	if method == localCPUFallback {
-		// Each concurrently running Go package gets its own GOMAXPROCS, so the per-package
-		// share keeps jobs*parallel*GOMAXPROCS inside the budget.
-		opts.cpu.GOMAXPROCS = max(1, perJob/opts.Parallel)
+		// Each Go process gets the job's share. Bound concurrent packages as well:
+		// jobs*parallel*GOMAXPROCS must fit the same verification budget.
+		opts.cpu.GOMAXPROCS = perJob
+		opts.Parallel = min(opts.Parallel, perJob/opts.cpu.GOMAXPROCS)
+		opts.cpu.Parallel = opts.Parallel
 	}
 	return opts, nil
 }

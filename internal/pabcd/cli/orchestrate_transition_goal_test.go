@@ -70,7 +70,7 @@ func TestOrchestrateTransitionRefusesInterviewUnderAnActiveGoal(t *testing.T) {
 		got := orchestrateTransitionRun(t, cwd, "I", "--session", id)
 		if got.Code != 1 || !strings.HasPrefix(got.Output, "orchestrate I: current=IDLE session="+id+"; ") ||
 			!strings.Contains(got.Output, "active host goal") ||
-			!strings.Contains(got.Output, "crw pabcd orchestrate P --session "+id) ||
+			!strings.Contains(got.Output, "crw work state P --session "+id) ||
 			!strings.Contains(got.Output, "The session state was not changed.") {
 			t.Fatalf("refusal: %+v", got)
 		}
@@ -99,7 +99,7 @@ func TestOrchestrateTransitionRefusesInterviewUnderAnActiveGoal(t *testing.T) {
 		cwd := orchestrateGoalWorld(t, id, "garbage")
 		orchestrateTransitionSession(t, cwd, id, `{"phase":"IDLE"}`)
 		got := orchestrateTransitionRun(t, cwd, "I", "--session", id)
-		if got.Code != 1 || !strings.Contains(got.Output, "cannot be read") || !strings.Contains(got.Output, "crw pabcd orchestrate P --session "+id) {
+		if got.Code != 1 || !strings.Contains(got.Output, "cannot be read") || !strings.Contains(got.Output, "crw work state P --session "+id) {
 			t.Fatalf("unreadable: %+v", got)
 		}
 		if state.ReadState(cwd, id).Phase != state.PhaseIdle {
