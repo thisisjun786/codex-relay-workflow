@@ -9,8 +9,9 @@ import (
 	"time"
 )
 
-// CRW-1348 (CRW-1316 §10): the run wakes its owner thread. A step published while the owner is idle or notLoaded stages a wake;
-// while no subagent is dispatched the run notifies again at growing intervals up to RenotifyMax; after UnresponsiveAfter it writes
+// CRW-1348 (CRW-1316 §10): the run wakes its owner thread. A published step stages a wake whatever the owner's status: the relay
+// owns delivery to a busy owner (CRW-1661, steering it into the turn or delivering it after). While no subagent is dispatched the
+// run notifies again at growing intervals up to RenotifyMax; after UnresponsiveAfter it writes
 // one session_unresponsive escalation row and goes on; once the step is dispatched the wakes stop. The logical id of a wake is
 // (run, batch).
 
@@ -120,7 +121,7 @@ return a.status`
 	}
 }
 
-func TestSessionDoesNotWakeABusyOwnerFirst(t *testing.T) {
+func TestSessionWakesABusyOwnerFirst(t *testing.T) {
 	h, orch, rec := wakeKit(t, "active")
 	h.cfg.Session.UnresponsiveAfter = time.Hour
 	body := `const a = await agent.call('look', { agentType: 'explorer', label: 'a' })
@@ -135,13 +136,13 @@ return a.status`
 	deadline := time.Now().Add(10 * time.Second)
 	for {
 		if wakes, _ := rec.got(); len(wakes) > 0 {
-			if wakes[0].Renotify != 1 || wakes[0].OwnerStatus != "active" {
-				t.Fatalf("a busy owner's first wake %+v", wakes[0])
+			if wakes[0].Renotify != 0 || wakes[0].OwnerStatus != "active" {
+				t.Fatalf("a busy owner's first wake is the new step itself: %+v", wakes[0])
 			}
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("no re-notification of a busy owner")
+			t.Fatal("the busy owner was not woken for its new step")
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
@@ -166,9 +167,10 @@ func TestSessionRenotifyScheduleGrowsToTheMax(t *testing.T) {
 	}
 }
 
-// A step can arrive between the owner's empty next answer and the end of its
-// turn. That first busy observation must not postpone the wake for 15 minutes.
-func TestSessionWakesAfterBusyOwnerYields(t *testing.T) {
+// A busy owner still receives each new batch at once (CRW-1661): the relay owns
+// steering it into the current turn or delivering it after. The re-notification
+// schedule is unchanged.
+func TestCRW1661BusyOwnerReceivesEachNewBatch(t *testing.T) {
 	for _, status := range []string{"idle", "notLoaded"} {
 		t.Run(status, func(t *testing.T) {
 			h, _, rec := wakeKit(t, "active")
@@ -176,24 +178,51 @@ func TestSessionWakesAfterBusyOwnerYields(t *testing.T) {
 			now := time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC)
 			h.cfg.Now = func() time.Time { return now }
 			e := &Engine{cfg: h.cfg, j: h.journal, runID: "run-test", sessW: newSessionWaker()}
-			e.sessW.published("c1/t1-a1", now)
+			// lane B publishes while the owner is busy: the wake goes to the relay now
+			e.sessW.published("lane-b/t1-a1", now)
 			e.wakeLook(context.Background())
-			if wakes, _ := rec.got(); len(wakes) != 0 {
-				t.Fatalf("woke a busy owner: %+v", wakes)
+			wakes, _ := rec.got()
+			if len(wakes) != 1 || wakes[0].Renotify != 0 || wakes[0].OwnerStatus != "active" {
+				t.Fatalf("a busy owner's new batch must wake immediately: %+v", wakes)
 			}
+			e.sessW.taken("lane-b/t1-a1", true, now) // B's step is dispatched; its work stays open
+			e.wakeLook(context.Background())
+			if wakes, _ = rec.got(); len(wakes) != 1 {
+				t.Fatalf("a taken step woke again: %+v", wakes)
+			}
+			// lane A publishes while B's work is still open: another immediate wake, its own batch
+			now = now.Add(time.Second)
+			e.sessW.published("lane-a/t2-a1", now)
+			e.wakeLook(context.Background())
+			wakes, _ = rec.got()
+			if len(wakes) != 2 || wakes[1].Renotify != 0 || wakes[1].OwnerStatus != "active" || wakes[1].ID == wakes[0].ID {
+				t.Fatalf("the second lane's step must wake immediately: %+v", wakes)
+			}
+			if len(wakes[1].Ops) != 1 || wakes[1].Ops[0] != "lane-a/t2-a1" {
+				t.Fatalf("the second wake's ops %+v", wakes[1].Ops)
+			}
+			secondID := wakes[1].ID
+			// more looks, even as the owner goes idle, do not duplicate a delivered batch
+			e.wakeLook(context.Background())
 			host := h.cfg.Session.Host.(*fakeSessionHost)
 			host.mu.Lock()
 			host.agents[sessionOwner].Status = status
 			host.mu.Unlock()
-			now = now.Add(time.Second)
 			e.wakeLook(context.Background())
-			wakes, _ := rec.got()
-			if len(wakes) != 1 || wakes[0].Renotify != 0 || wakes[0].OwnerStatus != status {
-				t.Fatalf("owner yielded with an untaken step: want immediate initial wake, got %+v", wakes)
+			if wakes, _ = rec.got(); len(wakes) != 2 {
+				t.Fatalf("a delivered batch woke again: %+v", wakes)
 			}
+			// the re-notification schedule survives: WakeAfter later the same batch re-notifies
+			now = now.Add(15 * time.Minute)
 			e.wakeLook(context.Background())
-			if wakes, _ := rec.got(); len(wakes) != 1 {
-				t.Fatalf("initial wake repeated without a new batch: %+v", wakes)
+			wakes, _ = rec.got()
+			if len(wakes) != 3 || wakes[2].Batch != wakes[1].Batch || wakes[2].Renotify != 1 || wakes[2].ID != secondID+"/r1" {
+				t.Fatalf("re-notification %+v, want %s/r1 of the same batch", wakes, secondID)
+			}
+			e.sessW.taken("lane-a/t2-a1", true, now)
+			e.wakeLook(context.Background())
+			if wakes, _ = rec.got(); len(wakes) != 3 {
+				t.Fatalf("a taken step woke again: %+v", wakes)
 			}
 		})
 	}
