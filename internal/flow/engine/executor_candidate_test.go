@@ -102,3 +102,170 @@ func TestExternalCandidateReviewIsActualEngineCall(t *testing.T) {
 func externalReviewCriteria() []delivery.Criterion {
 	return []delivery.Criterion{{ID: "criterion", Title: "current acceptance title", Required: true}}
 }
+
+// CRW-1667: the replay key of a candidate review binds the collected execution,
+// not only its visible packet. A handover (same checkout, head, prompt and
+// criteria, another execution) must open a fresh review on resume, while an
+// unchanged collection keeps replaying.
+func TestCRW1667CandidateReviewReplayKey(t *testing.T) {
+	const body = `return await agent.call('review it', {agentType:'reviewer',node:'n1',schema:VERDICT,label:'review'})`
+	cases := []struct {
+		name   string
+		change func(t *testing.T, bound *executor.CollectedExecution)
+		fresh  bool
+	}{
+		{"same collection", func(t *testing.T, bound *executor.CollectedExecution) {}, false},
+		{"handover", func(t *testing.T, bound *executor.CollectedExecution) {
+			bound.ExecutionID = "exec-handover" // the controller's successor only; Admission and Receipt stay immutable
+		}, true},
+		{"task digest", func(t *testing.T, bound *executor.CollectedExecution) {
+			task := bound.Admission.Task
+			task.Identity.Revision = "r1"
+			a, err := executor.Freeze(task)
+			if err != nil {
+				t.Fatal(err)
+			}
+			bound.Admission = a
+			bound.Receipt.TaskDigest = a.TaskDigest
+		}, true},
+		{"receipt result digest", func(t *testing.T, bound *executor.CollectedExecution) {
+			bound.Receipt.ResultDigest = executor.Digest([]byte("second authenticated result"))
+		}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			bound := reviewCandidate(t)
+			h.cfg.ExecutorCandidate = func(context.Context, SnapshotRequest) (*ExecutorCandidateReview, error) {
+				return &ExecutorCandidateReview{CollectedExecution: bound, Criteria: externalReviewCriteria()}, nil
+			}
+			h.fake.StartHook = func(spec ThreadSpec) (ThreadInfo, error) {
+				if spec.Cwd != bound.Candidate.Checkout || spec.Head != bound.Candidate.Head {
+					t.Errorf("review did not use collection: %+v", spec)
+				}
+				return ThreadInfo{Pair: spec.Pair, Cwd: spec.Cwd}, nil
+			}
+			res := h.run(body)
+			if res.Status != RunCompleted {
+				t.Fatalf("run: %+v", res)
+			}
+			if got := value[map[string]any](t, res); got["status"] != "completed" {
+				t.Fatalf("call: %v", got)
+			}
+			if n := len(h.fake.Requests()); n != 2 {
+				t.Fatalf("first review used %d requests, want 2", n)
+			}
+			rowsOf := func(label string) (preps, comps []Event) {
+				for _, ev := range h.callRows(label) {
+					switch ev.Event {
+					case EvPrepared:
+						preps = append(preps, ev)
+					case EvCompleted:
+						comps = append(comps, ev)
+					}
+				}
+				return preps, comps
+			}
+			preps, comps := rowsOf("review")
+			if len(preps) != 1 || len(comps) != 1 {
+				t.Fatalf("first review rows: %d prepared, %d completed", len(preps), len(comps))
+			}
+			tc.change(t, &bound)
+			if err := bound.Inspect(context.Background()); err != nil {
+				t.Fatalf("the mutated fixture is not a valid collection: %v", err)
+			}
+			h.cfg.Resume = &ResumeOptions{}
+			res = h.run(body)
+			if res.Status != RunCompleted {
+				t.Fatalf("resumed run: %+v", res)
+			}
+			wantRequests, wantComps := 2, 1
+			if tc.fresh {
+				wantRequests, wantComps = 4, 2
+			}
+			if n := len(h.fake.Requests()); n != wantRequests {
+				t.Fatalf("%s: %d requests, want %d", tc.name, n, wantRequests)
+			}
+			preps, comps = rowsOf("review")
+			if len(preps) != wantComps || len(comps) != wantComps {
+				t.Fatalf("%s: %d prepared, %d completed rows, want %d each", tc.name, len(preps), len(comps), wantComps)
+			}
+			if tc.fresh {
+				last := comps[len(comps)-1]
+				if last.Data["execution_id"] != bound.ExecutionID || last.Data["executor_result_digest"] != bound.Receipt.ResultDigest {
+					t.Fatalf("the fresh review is not bound to the current collection: %+v", last.Data)
+				}
+				lastPrep, firstPrep := preps[len(preps)-1], preps[0]
+				if lastPrep.Data["input_digest"] == firstPrep.Data["input_digest"] {
+					t.Fatalf("the replay key did not change with the collection")
+				}
+				for _, k := range []string{"prompt_digest", "head", "cwd", "criteria_digest"} {
+					if lastPrep.Data[k] != firstPrep.Data[k] {
+						t.Errorf("visible input %s changed: %v vs %v", k, lastPrep.Data[k], firstPrep.Data[k])
+					}
+				}
+			}
+			// An unchanged collection replays again: no more requests or rows.
+			res = h.run(body)
+			if res.Status != RunCompleted {
+				t.Fatalf("second resume: %+v", res)
+			}
+			if n := len(h.fake.Requests()); n != wantRequests {
+				t.Fatalf("%s: unchanged collection made %d requests, want %d", tc.name, n, wantRequests)
+			}
+			if preps, comps = rowsOf("review"); len(preps) != wantComps || len(comps) != wantComps {
+				t.Fatalf("%s: unchanged collection wrote rows %d/%d, want %d", tc.name, len(preps), len(comps), wantComps)
+			}
+		})
+	}
+}
+
+// A review that never carried a candidate keeps the pre-CRW-1667 digest bytes,
+// so a journal a run before the change wrote still replays.
+func TestCRW1667OrdinaryReviewKeepsLegacyDigest(t *testing.T) {
+	const body = `return await agent.call('review it', {agentType:'reviewer',node:'n1',schema:VERDICT,label:'review'})`
+	h := newHarness(t)
+	res := h.run(body)
+	if res.Status != RunCompleted {
+		t.Fatalf("run: %+v", res)
+	}
+	var preps, comps []Event
+	for _, ev := range h.callRows("review") {
+		switch ev.Event {
+		case EvPrepared:
+			preps = append(preps, ev)
+		case EvCompleted:
+			comps = append(comps, ev)
+		}
+	}
+	if len(preps) != 1 || len(comps) != 1 {
+		t.Fatalf("rows %d/%d", len(preps), len(comps))
+	}
+	prep := preps[0]
+	legacy := digestJSON(mustJSON(map[string]any{
+		"prompt": rowStr(prep.Data, "prompt_digest"), "schema": rowStr(prep.Data, "schema_digest"),
+		"role": rowStr(prep.Data, "role"), "model": rowStr(prep.Data, "model"), "effort": rowStr(prep.Data, "effort"),
+		"node": rowStr(prep.Data, "node"), "step": rowStr(prep.Data, "step_decision"),
+		"head": rowStr(prep.Data, "head"), "cwd": rowStr(prep.Data, "cwd"),
+		"context": prep.Data["context"], "joins": "",
+	}))
+	if prep.Data["input_digest"] != legacy {
+		t.Fatalf("ordinary review digest changed: %v, want %s", prep.Data["input_digest"], legacy)
+	}
+	h.cfg.Resume = &ResumeOptions{}
+	if res = h.run(body); res.Status != RunCompleted {
+		t.Fatalf("resumed run: %+v", res)
+	}
+	if n := len(h.fake.Requests()); n != 2 {
+		t.Fatalf("resume made %d requests, want 2", n)
+	}
+	comps = comps[:0]
+	for _, ev := range h.callRows("review") {
+		if ev.Event == EvCompleted {
+			comps = append(comps, ev)
+		}
+	}
+	if len(comps) != 1 {
+		t.Fatalf("resume wrote %d completed rows, want the replayed one", len(comps))
+	}
+}
