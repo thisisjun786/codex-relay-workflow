@@ -51,7 +51,7 @@ func executorPremergeHeadRelation(ctx context.Context, checkout, base, evaluated
 		}
 		_, line, err := g.run(ctx, "rev-list", "--parents", "-n", "1", cur)
 		if err != nil {
-			return false, mismatch("git could not read parents of %s: %v", cur, err)
+			return false, mismatch("git could not read predecessor commits of %s: %v", cur, err)
 		}
 		fields := strings.Fields(line)
 		switch len(fields) - 1 {
@@ -71,7 +71,7 @@ func executorPremergeHeadRelation(ctx context.Context, checkout, base, evaluated
 			}
 			code, merged, err := g.runWith(ctx, []string{"GIT_ATTR_SOURCE=" + first}, "merge-tree", "--write-tree", first, second)
 			if err != nil || code != 0 || len(strings.Fields(merged)) == 0 || strings.Fields(merged)[0] != strings.TrimSpace(tree) {
-				return false, mismatch("merge %s is not the isolated automatic merge of its parents", cur)
+				return false, mismatch("merge %s is not the isolated automatic merge of its input commits", cur)
 			}
 			merges++
 			cur = first

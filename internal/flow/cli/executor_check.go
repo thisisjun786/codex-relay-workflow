@@ -65,7 +65,7 @@ func runExecutorResultCheck(ctx context.Context, args []string, out, errout io.W
 	fs.StringVar(&in.Actor, "actor", "", "current plan owner")
 	fs.StringVar(&in.Spool, "spool", "", "local received private spool (not a worker path)")
 	fs.StringVar(&in.ResultPath, "result", "result.json", "relative result file")
-	fs.StringVar(&in.CollectionRoot, "collection-root", "", "local parent for a new isolated checkout (default TMPDIR)")
+	fs.StringVar(&in.CollectionRoot, "collection-root", "", "local directory for a new isolated checkout (default TMPDIR)")
 	state := fs.String("state", "", "controller state")
 	socket := fs.String("socket", "", "controller socket identity")
 	epoch := fs.Int64("epoch", 0, "current coordinator epoch")
