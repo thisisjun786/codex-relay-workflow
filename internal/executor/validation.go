@@ -258,7 +258,7 @@ func validateTask(t Task) error {
 			return errInvalid(CodeTaskInvalid, f+".change", fmt.Sprintf("unknown change %q", r.Change))
 		}
 		switch r.Grade {
-		case "", "independent", "exclusive":
+		case "", "independent", "local", "exclusive":
 		case "mechanical":
 			if strings.TrimSpace(r.Rule) == "" {
 				return errInvalid(CodeTaskInvalid, f+".rule", "a mechanical region needs its rule")
