@@ -62,18 +62,23 @@ type headingBlockLine struct {
 	blank, setext, rule, quote bool
 }
 
-func readHeadingBlock(line string, inParagraph bool) headingBlockLine {
+func readHeadingBlock(line string, inParagraph bool, itemText int) headingBlockLine {
 	text := strings.TrimLeft(line, " \t")
 	b := headingBlockLine{
 		text: text, indent: indentOf(line[:len(line)-len(text)]),
 		atx: headingLine.FindStringSubmatch(line), blank: text == "",
 	}
-	t := strings.TrimLeft(line, " ")
-	switch {
-	case strings.HasPrefix(t, "```"):
-		b.fence = "```"
-	case strings.HasPrefix(t, "~~~"):
-		b.fence = "~~~"
+	fenceIndent := b.indent
+	if itemText > 0 && fenceIndent >= itemText {
+		fenceIndent -= itemText
+	}
+	if fenceIndent <= 3 {
+		switch {
+		case strings.HasPrefix(text, "```"):
+			b.fence = "```"
+		case strings.HasPrefix(text, "~~~"):
+			b.fence = "~~~"
+		}
 	}
 	if b.indent <= 3 {
 		b.html = headingHTMLStart(text, inParagraph)
@@ -92,7 +97,7 @@ func (b headingBlockLine) interruptsParagraph() bool {
 
 func headingReferenceBoundary(s string) bool {
 	line, _, _ := strings.Cut(s, "\n")
-	return readHeadingBlock(strings.TrimRight(line, "\r"), true).interruptsParagraph()
+	return readHeadingBlock(strings.TrimRight(line, "\r"), true, 0).interruptsParagraph()
 }
 
 // sections splits a body at its ATX or Setext headings, omitting an out-of-scope heading and
@@ -142,7 +147,7 @@ func sections(body string) []section {
 		var raw string
 		raw, remaining, _ = strings.Cut(remaining, "\n")
 		line := strings.TrimRight(raw, "\r")
-		block := readHeadingBlock(line, state.kind != noParagraph)
+		block := readHeadingBlock(line, state.kind != noParagraph, state.itemText)
 		rest, col := block.text, block.indent
 		inItem := state.itemText > 0 && col >= state.itemText
 		if state.html != 0 {
@@ -253,8 +258,13 @@ func sections(body string) []section {
 			}
 		case block.quote:
 			text, depth := headingQuoteText(line)
-			continued := state.kind == quoteParagraph && state.quoteDepth == depth &&
+			continued := state.kind == quoteParagraph && depth <= state.quoteDepth &&
 				(state.itemText == 0 || inItem)
+			if continued {
+				// A lazy line can omit quote markers without leaving the
+				// paragraph's original container.
+				depth = state.quoteDepth
+			}
 			flush()
 			if !inItem {
 				state.itemText = 0
