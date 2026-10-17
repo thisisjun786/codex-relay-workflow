@@ -179,16 +179,15 @@ func TestMilestoneRefusesWhatTheCompilerRefuses(t *testing.T) {
 	}
 }
 
-// TestMilestoneRefusesRequiredCommandsTheVerifierCannotRun (d2): the verifier of the shipped lane runs crw-dev ci local only, so a
-// milestone that requires another command is refused when the run reads it, before any node is released, and not held at its final
-// gate after its nodes landed; a lane given a verifier that runs commands reads it.
-func TestMilestoneRefusesRequiredCommandsTheVerifierCannotRun(t *testing.T) {
+// CRW-1363: unknown requirements remain readable; verification warns and records
+// which configured command actually ran.
+func TestMilestoneAcceptsUnknownRequiredCommands(t *testing.T) {
 	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
 	withCommand := func(cmds ...string) []byte {
 		return l.handoffBytes(func(in *compile.Input) { in.Projects[0].Milestones[0].RequiredCommands = cmds })
 	}
 	shipped := l.buildLane("run-verifier001", withCommand("make e2e"), LaneOptions{})
-	if _, err := shipped.Milestone(ctx, l.plan, "M1"); err == nil || !strings.Contains(err.Error(), "make e2e") {
+	if _, err := shipped.Milestone(ctx, l.plan, "M1"); err != nil {
 		t.Errorf("a command the shipped verifier cannot run: %v", err)
 	}
 	for name, cmds := range map[string][]string{"none": nil, "ci local": {ops.CILocalCommand}} {

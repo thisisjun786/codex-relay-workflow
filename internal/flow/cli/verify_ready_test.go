@@ -170,12 +170,9 @@ func fmtErr(err error) string {
 	return err.Error()
 }
 
-// TestHandoffWithAnUnrunnableRequiredCommandRefusedBeforeStart (CRW-1285 (3)): the shipped verifier runs crw-dev ci local only, so a
-// handoff whose milestone requires another command (make e2e) is refused by CheckHandoff, which `crw flow start --handoff` and the
-// start of a night batch apply (and `crw manage batch decide --handoff`, internal/manage): the run is not started and no process is
-// spawned, instead of the run process refusing it when it reads crw.milestone. It is the predicate SchedRelay.Milestone applies, an
-// input error, so the refusal is allowed; a milestone that requires nothing or crw-dev ci local starts.
-func TestHandoffWithAnUnrunnableRequiredCommandRefusedBeforeStart(t *testing.T) {
+// CRW-1363: nonempty requirements are accepted at start; the configured verifier
+// records unknown commands as warnings when it runs.
+func TestHandoffWithAnUnknownRequiredCommandStarts(t *testing.T) {
 	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
 	withCommands := func(cmds ...string) []byte {
 		return l.handoffBytes(func(in *compile.Input) { in.Projects[0].Milestones[0].RequiredCommands = cmds })
@@ -184,7 +181,7 @@ func TestHandoffWithAnUnrunnableRequiredCommandRefusedBeforeStart(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if why := CheckHandoff(unrunnable, l.plan, "M1"); !strings.Contains(why, "make e2e") || !strings.Contains(why, ops.CILocalCommand) {
+	if why := CheckHandoff(unrunnable, l.plan, "M1"); why != "" {
 		t.Errorf("CheckHandoff of a milestone that requires make e2e: %q", why)
 	}
 	for name, cmds := range map[string][]string{"none": nil, "ci local": {ops.CILocalCommand}} {
@@ -203,7 +200,7 @@ func TestHandoffWithAnUnrunnableRequiredCommandRefusedBeforeStart(t *testing.T) 
 	before := len(l.td.spawned)
 	code, out, errOut := l.td.do("start", "project-lane", "--args", `{"plan":"plan-1","milestone":"M1"}`, "--handoff", file, "--thread", labOwner, "--state", l.w.state,
 		"--socket", l.host.SocketPath, "--repo", l.repo)
-	if code == 0 || len(l.td.spawned) != before || !strings.Contains(errOut, "make e2e") {
+	if code != 0 || len(l.td.spawned) != before+1 {
 		t.Errorf("crw flow start --handoff with make e2e: exit %d, %d processes\n%s%s", code, len(l.td.spawned)-before, out, errOut)
 	}
 	spec := l.start("start", "project-lane", "--args", `{"plan":"plan-1","milestone":"M1"}`, "--handoff", l.file)

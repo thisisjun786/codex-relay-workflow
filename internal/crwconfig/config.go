@@ -140,6 +140,9 @@ func load(getenv func(string) string, flagPath string, strict bool) (*File, erro
 	}
 	file.roots = roots
 	file.paths = overrides
+	if _, err := file.RepositoryCommands(); err != nil {
+		return nil, err
+	}
 	// A malformed sandbox section is refused here, where the file is read, so crw config show names it
 	// instead of a sandbox start finding it later.
 	explicit, err := file.SandboxProjectRoots()

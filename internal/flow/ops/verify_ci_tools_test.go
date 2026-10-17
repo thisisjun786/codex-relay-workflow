@@ -17,6 +17,16 @@ import (
 
 const toolsPassRecord = `{"schema":"verification-record/1","result":"pass","digest":"sha256:ff","jobs":[]}`
 
+func TestRepositoryVerifierFallbackAndUnknownRequirementAreRecorded(t *testing.T) {
+	v := RepositoryVerifier{Fallback: CILocalVerifier{RecordDir: t.TempDir(), Run: func(_ context.Context, _ string, _ []string, _ string, args ...string) (int, []byte, error) {
+		return 0, nil, os.WriteFile(args[slices.Index(args, "--record")+1], []byte(toolsPassRecord), 0o600)
+	}}}
+	out, err := v.Verify(context.Background(), VerifyRequest{Head: strings.Repeat("a", 40), Worktree: toolsTree(t), Command: "make unfamiliar"})
+	if err != nil || !out.Pass || out.Command != CILocalCommand || !strings.Contains(out.Note, "not configured") || !strings.Contains(out.Note, "make unfamiliar") {
+		t.Fatalf("fallback: %+v %v", out, err)
+	}
+}
+
 // toolsTree is a worktree that carries its own cmd/crw-dev, as a CRW checkout does.
 func toolsTree(t *testing.T) string {
 	t.Helper()

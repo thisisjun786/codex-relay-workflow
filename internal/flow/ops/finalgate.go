@@ -186,7 +186,15 @@ func (o *finalGateOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpR
 	}
 	out.Decisions = gateDecisions(r, ms)
 	for _, cmd := range out.Commands {
-		ev := judgeTest(r, ms, cmd, id)
+		command := cmd
+		if resolver, ok := o.l.d.Verifier.(interface{ ResolveCommand(string) (string, string) }); ok {
+			var note string
+			command, note = resolver.ResolveCommand(cmd)
+			if note != "" {
+				out.Warnings = append(out.Warnings, note)
+			}
+		}
+		ev := judgeTest(r, ms, command, id)
 		out.Evidence = append(out.Evidence, ev)
 		if ev.State != EvidenceFresh {
 			out.NeedTests = append(out.NeedTests, cmd)
@@ -265,7 +273,9 @@ func judgeGate(g GateOutcome) (state, reason string) {
 	return GatePass, ""
 }
 
-// judgeTest judges the test evidence of one command: the newest verification of the milestone's head with the command that ran. A
+// judgeTest judges the test evidence of the resolved verifier command, keeping
+// the actual command on the evidence while NeedTests retains the plan requirement.
+// It reads the newest verification of the milestone's head with the command that ran. A
 // verification that stands on the head is fresh; one that stands on another head is stale; none is missing. An identity git cannot
 // resolve, on either side, proves nothing (the native gate's rule), so it is stale.
 func judgeTest(r rows, ms, command string, head source.Identity) Evidence {
