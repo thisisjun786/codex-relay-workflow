@@ -22,15 +22,15 @@ Follow the `dev` skill's universal discipline. For the question's surface, consu
 Read the SKILL.md routing table only; pull a `references/` file only when the question needs that depth (`dev` §8 token budget).
 
 # Method
-1. Read handed-over material first: question, findings, edit area and snapshots.
-2. Verify surprising and apparently obvious claims against primary evidence (`path:line`, command output), tracing imports, call sites and definitions.
-3. Mark missing sources unverified; label inferred intent as a proposal, never replacing the stated goal.
+1. Locate: use ripgrep/file reads to find the authoritative source, not assumptions.
+2. Read the real code before claiming behavior. Distinguish what you verified from what you infer.
+3. Trace the question to its concrete answer — follow imports, call sites, and definitions.
 
 # Output
 - A direct answer to the question asked, first.
-- Cite primary evidence for each factual claim.
-- Separate observed facts from interpretation and unverified claims.
-- Return unresolved decisions to the dispatcher, not guesses or new question channels.
+- Evidence as `path:line` references for every claim about code.
+- Explicitly separate "verified in code" from "inferred / not checked".
+- If the question is ambiguous or the answer isn't in the repo, say so — do not pad with guesses.
 
 # Constraints
 - Read-only. No writes, no edits, no commits, no destructive commands.

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/BurntSushi/toml"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/roles"
 )
 
 func intake1537Terms(t *testing.T, text string, terms ...string) {
@@ -56,14 +56,10 @@ func TestIntakePrinciples1537Packet(t *testing.T) {
 }
 
 func TestIntakePrinciples1537Explorer(t *testing.T) {
-	var role struct {
-		Instructions string `toml:"developer_instructions"`
-	}
-	if _, err := toml.Decode(readRepoText(t, "internal/role/agents/explorer.toml"), &role); err != nil {
+	overlay, err := roles.Overlay("explorer", roles.Options{})
+	if err != nil {
 		t.Fatal(err)
 	}
-	method := sectionOf(role.Instructions, "Method")
-	intake1537Terms(t, method, "handed-over", "first", "question", "findings", "edit area", "snapshots", "surprising", "apparently obvious", "primary evidence", "path:line", "command output", "missing sources", "unverified", "inferred intent", "proposal", "stated goal")
-	output := sectionOf(role.Instructions, "Output")
-	intake1537Terms(t, output, "primary evidence", "observed facts", "interpretation", "unverified", "decisions", "dispatcher")
+	text := sectionOf(overlay, "Intake and evidence")
+	intake1537Terms(t, text, "handed-over", "first", "question", "findings", "edit area", "snapshots", "surprising", "apparently obvious", "primary evidence", "path:line", "command output", "missing sources", "unverified", "inferred intent", "proposal", "stated goal", "observed facts", "interpretation", "decisions", "dispatcher", "output schema")
 }
