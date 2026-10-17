@@ -1,0 +1,335 @@
+//go:build linux
+
+package cli
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"slices"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/adapter"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/daemon"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/service"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/supervisor"
+)
+
+type probeHostState struct {
+	mu             sync.Mutex
+	host           *fakehost.Server
+	dir, scene     string
+	threads        map[string]*probeHostThread
+	worker         *fakehost.Conn
+	creates, wakes int
+}
+type probeHostThread struct {
+	id, status string
+	archived   bool
+	turns      []any
+}
+
+func newProbeHost(t *testing.T, dir, scene string) *probeHostState {
+	h := &probeHostState{host: fakehost.Start(t), dir: dir, scene: scene, threads: map[string]*probeHostThread{}}
+	h.host.HandleConn("probe/worker", func(conn *fakehost.Conn, _ json.RawMessage) fakehost.Reply {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		h.worker = conn
+		return fakehost.Reply{}
+	})
+	for _, method := range []string{"thread/start", "thread/read", "thread/resume", "thread/list", "thread/turns/list", "thread/items/list", "thread/goal/get", "thread/name/set", "thread/unsubscribe", "thread/archive", "thread/unarchive", "turn/start"} {
+		method := method
+		h.host.HandleConn(method, func(conn *fakehost.Conn, raw json.RawMessage) fakehost.Reply {
+			h.mu.Lock()
+			defer h.mu.Unlock()
+			var p map[string]any
+			if err := json.Unmarshal(raw, &p); err != nil {
+				t.Error(err)
+			}
+			id, _ := p["threadId"].(string)
+			fail := func(message string) fakehost.Reply {
+				return fakehost.Reply{Error: &fakehost.RPCError{Code: -32601, Message: message}}
+			}
+			object := func(th *probeHostThread) map[string]any {
+				return map[string]any{"id": th.id, "cwd": dir, "model": "model-a", "reasoningEffort": "high",
+					"approvalPolicy": "never", "sandbox": map[string]any{"type": "readOnly", "networkAccess": false},
+					"runtimeWorkspaceRoots": []any{dir}, "environments": []any{},
+					"status": map[string]any{"type": th.status}, "canAcceptDirectInput": true}
+			}
+			envelope := func(th *probeHostThread) fakehost.Reply {
+				return fakehost.Reply{Result: map[string]any{"thread": object(th), "model": "model-a", "reasoningEffort": "high",
+					"cwd": dir, "approvalPolicy": "never", "sandbox": map[string]any{"type": "readOnly", "networkAccess": false},
+					"runtimeWorkspaceRoots": []any{dir}, "environments": []any{}}}
+			}
+			switch method {
+			case "thread/start":
+				h.creates++
+				if scene == "create-unsupported" {
+					return fail("creation unsupported")
+				}
+				id = fmt.Sprintf("probe-%d", h.creates)
+				th := &probeHostThread{id: id, status: "idle"}
+				h.threads[id] = th
+				return envelope(th)
+			case "thread/list":
+				archived, _ := p["archived"].(bool)
+				rows := []any{}
+				for _, th := range h.threads {
+					if th.archived == archived {
+						rows = append(rows, object(th))
+					}
+				}
+				return fakehost.Reply{Result: map[string]any{"data": rows, "nextCursor": nil}}
+			case "thread/goal/get":
+				return fakehost.Reply{Result: map[string]any{"goal": nil}}
+			case "thread/name/set", "thread/unsubscribe":
+				return fakehost.Reply{}
+			}
+			if id == "owner" {
+				t.Errorf("probe touched the owner with %s", method)
+				return fail("owner must not be touched")
+			}
+			th := h.threads[id]
+			if th == nil {
+				return fail("unknown probe")
+			}
+			switch method {
+			case "thread/read":
+				return envelope(th)
+			case "thread/resume":
+				th.status = "idle"
+				return envelope(th)
+			case "thread/archive":
+				th.archived, th.status = true, "notLoaded"
+				return fakehost.Reply{}
+			case "thread/unarchive":
+				th.archived = false
+				if scene == "stays-loaded" {
+					th.status = "idle"
+				}
+				return envelope(th)
+			case "thread/turns/list":
+				rows := append([]any{}, th.turns...)
+				slices.Reverse(rows)
+				return fakehost.Reply{Result: map[string]any{"data": rows, "nextCursor": nil}}
+			case "thread/items/list":
+				return fakehost.Reply{Result: map[string]any{"data": []any{}, "nextCursor": nil}}
+			case "turn/start":
+				if len(th.turns) != 0 {
+					h.wakes++
+					if conn != h.worker {
+						t.Error("the CLI sent the wake instead of the observed worker")
+					}
+					if scene == "send-failed" {
+						return fail("wake refused")
+					}
+				}
+				turnID := fmt.Sprintf("%s-turn-%d", id, len(th.turns)+1)
+				turn := map[string]any{"id": turnID, "status": "completed", "startedAt": time.Now().Unix(), "items": []any{}, "itemsView": "full"}
+				th.turns = append(th.turns, turn)
+				th.status = "idle"
+				return fakehost.Reply{Result: map[string]any{"turn": turn}, Before: []fakehost.Notification{
+					{Method: "turn/started", Params: map[string]any{"threadId": id, "turn": map[string]any{"id": turnID, "status": "inProgress"}}},
+					{Method: "turn/completed", Params: map[string]any{"threadId": id, "turn": turn}},
+				}}
+			}
+			return fail("unscripted method")
+		})
+	}
+	return h
+}
+
+// configureProbeWorker is the existing TestStartReadsRealSupervisorWake service/worker
+// arrangement: claimed scope, published worker policy, and one real production adapter
+// goroutine as the only wake sender.
+func configureProbeWorker(t *testing.T, w *world, h *probeHostState) {
+	t.Helper()
+	policy := filepath.Join(t.TempDir(), "roles.json")
+	if err := os.WriteFile(policy, []byte(`{"roles":{"parent":{"model":"model-a","reasoningEffort":"high"},"supervisor":{"expectation":"record"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CODEX_THREAD_BRIDGE_EXECUTION_POLICY", policy)
+	t.Setenv(service.ScopeEnv, t.TempDir())
+	if err := os.Chmod(os.Getenv(service.ScopeEnv), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	registry.ResetRolePolicySnapshot()
+	t.Cleanup(registry.ResetRolePolicySnapshot)
+	settings, err := json.Marshal(map[string]any{"approvalPolicy": "never", "sandbox": map[string]any{"type": "readOnly", "networkAccess": false}, "cwd": h.dir, "runtimeWorkspaceRoots": []string{h.dir}, "model": "model-a", "reasoningEffort": "high", "environments": []any{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.st.DB.ExecContext(ctx, `INSERT INTO authorized_settings(task_id,settings,source,recorded_at) VALUES ('owner',?,'test','now')`, string(settings)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.st.DB.ExecContext(ctx, `INSERT INTO scope_bindings(binding_id,role,scope_kind,scope_key,task_id,host_id,status,revision,created_at,updated_at) VALUES ('owner-binding','parent','project','project-1','owner','host','active',1,'now','now')`); err != nil {
+		t.Fatal(err)
+	}
+	// Bind the store's socket the way a socket-bound daemon open does: while no
+	// writable store holds the gate, a socket-bound open stamps schema_meta and the
+	// mirror under write-gate EX and keeps SH. Reopen the world's store named for
+	// this socket so later writers only need that shared hold.
+	if err := w.st.Close(); err != nil {
+		t.Fatal(err)
+	}
+	bound, err := store.Open(ctx, w.db, h.host.SocketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.st = bound
+	selection, err := ResolveState(w.state, h.host.SocketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc, err := service.New(ctx, selection, h.host.SocketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lock, err := daemon.Acquire(w.state, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := svc.NewRecord(os.Getpid(), "wake-probe-test")
+	if err := svc.WriteRecord(record); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := svc.Scope.Claim(h.host.SocketPath, record)
+	if err != nil || claimed.Get("ok") != true {
+		t.Fatalf("scope: %v %v", claimed, err)
+	}
+	if err := svc.PublishWorkerPolicy(registry.EnvironmentRolePolicy().Summary()); err != nil {
+		t.Fatal(err)
+	}
+	worker, err := adapter.Open(h.host.SocketPath, w.state, adapter.Options{Store: w.st})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := worker.HostCall(ctx, "probe/worker", nil); err != nil {
+		t.Fatal(err)
+	}
+	workerCtx, cancel := context.WithCancel(ctx)
+	errs := make(chan error, 1)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(20 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-workerCtx.Done():
+				return
+			case <-ticker.C:
+				if _, err := (&supervisor.Channel{Store: w.st, Socket: h.host.SocketPath}).AutoSend(workerCtx, worker, float64(time.Now().UnixMicro())/1e6, 0, 1, "", "", ""); err != nil && workerCtx.Err() == nil {
+					select {
+					case errs <- err:
+					default:
+					}
+					return
+				}
+			}
+		}
+	}()
+	// Registered last so the worker stops before the policy env is restored and the store closes.
+	t.Cleanup(func() {
+		cancel()
+		<-done
+		select {
+		case err := <-errs:
+			t.Errorf("worker send: %v", err)
+		default:
+		}
+		if err := worker.Close(); err != nil {
+			t.Error(err)
+		}
+		if err := svc.Scope.Release(h.host.SocketPath); err != nil {
+			t.Error(err)
+		}
+		if err := lock.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+}
+
+func TestStartWakeProbeEmptyJournal(t *testing.T) {
+	for _, scene := range []string{"success", "create-unsupported", "stays-loaded", "send-failed"} {
+		t.Run(scene, func(t *testing.T) {
+			w := newWorld(t)
+			h := newProbeHost(t, t.TempDir(), scene)
+			// Use the existing currentWake fixture setup below verbatim.
+			configureProbeWorker(t, w, h)
+			td := w.deps()
+			td.Probe, td.Now = StoreProber{}, time.Now
+			args := []string{"start", "project-lane", "--preview", "--json", "--backend", "app-server", "--thread", "owner", "--state", w.state, "--socket", h.host.SocketPath, "--args", `{"plan":"plan-1","milestone":"M1"}`, "--handoff", defaultHandoff(t)}
+			code, out, errOut := td.doKeep(args...)
+			var answer StartAnswer
+			if code != 0 || json.Unmarshal([]byte(out), &answer) != nil {
+				t.Fatalf("start: %d %s %s", code, out, errOut)
+			}
+			var fact Fact
+			for _, f := range answer.Plan.Facts {
+				if f.Name == FactIdleWake {
+					fact = f
+				}
+			}
+			h.mu.Lock()
+			creates, wakes := h.creates, h.wakes
+			h.mu.Unlock()
+			if creates != 1 {
+				t.Fatalf("want one probe recipient, created=%d fact=%+v", creates, fact)
+			}
+			if scene == "success" {
+				if !fact.Pass || wakes != 1 {
+					t.Fatalf("one worker wake must prove fact5: wakes=%d fact=%+v", wakes, fact)
+				}
+				var proof, flowWake int
+				if err := w.st.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM journal WHERE kind=? AND json_extract(detail,'$.newTurn')=1`, delivery.WakeObserved).Scan(&proof); err != nil || proof != 1 {
+					t.Fatalf("proof=%d %v", proof, err)
+				}
+				if err := w.st.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM flow_events WHERE kind='message_delivery' AND json_extract(payload_json,'$.wake_id')='wake-probe' AND json_extract(payload_json,'$.result')='accepted'`).Scan(&flowWake); err != nil || flowWake != 1 {
+					t.Fatalf("run wake=%d %v", flowWake, err)
+				}
+				code, out, errOut = td.doKeep(args...)
+				if code != 0 || json.Unmarshal([]byte(out), &answer) != nil {
+					t.Fatalf("cached start: %d %s %s", code, out, errOut)
+				}
+				h.mu.Lock()
+				creates, wakes = h.creates, h.wakes
+				h.mu.Unlock()
+				if creates != 1 || wakes != 1 {
+					t.Fatalf("cached proof created another probe: creates=%d wakes=%d", creates, wakes)
+				}
+				for _, f := range answer.Plan.Facts {
+					if f.Name == FactIdleWake && !f.Pass {
+						t.Fatalf("cached proof failed: %+v", f)
+					}
+				}
+			} else {
+				if fact.Level != LevelWarn || fact.Reason == "" {
+					t.Fatalf("failed probe must warn: %+v", fact)
+				}
+				var failures int
+				if err := w.st.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM journal WHERE kind=? AND json_extract(detail,'$.probe')=1 AND length(json_extract(detail,'$.reason'))>0`, delivery.WakeObserved).Scan(&failures); err != nil || failures != 1 {
+					t.Fatalf("failure evidence=%d %v", failures, err)
+				}
+				if wakes > 1 {
+					t.Fatalf("probe retried the wake %d times", wakes)
+				}
+			}
+			var owner, activeProbes int
+			if err := w.st.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM scope_bindings WHERE task_id='owner' AND status='active'`).Scan(&owner); err != nil || owner != 1 {
+				t.Fatalf("owner binding changed: %d %v", owner, err)
+			}
+			if err := w.st.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM scope_bindings WHERE scope_key LIKE 'wake-probe:%' AND status='active'`).Scan(&activeProbes); err != nil || activeProbes != 0 {
+				t.Fatalf("live probe bindings=%d %v", activeProbes, err)
+			}
+		})
+	}
+}

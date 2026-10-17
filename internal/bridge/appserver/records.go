@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"sync"
 	"time"
 
@@ -181,6 +182,7 @@ type Client struct {
 	closeFrame    func(*websocket.Conn) error
 	mu            sync.Mutex
 	conn          *websocket.Conn
+	networkConn   net.Conn
 	connSeq       uint64
 	connID        uint64
 	counter       uint64
@@ -268,6 +270,18 @@ func (c *Client) ConnectionID() uint64 {
 		return 0
 	}
 	return c.connID
+}
+
+// ConnectionSnapshot borrows the actual transport of the current WebSocket.
+// Observers must not read, write or close it. The generation must still match
+// after an operation before its result can be attributed to this connection.
+func (c *Client) ConnectionSnapshot() (net.Conn, uint64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.conn == nil || c.networkConn == nil {
+		return nil, 0
+	}
+	return c.networkConn, c.connID
 }
 
 // SocketPath is the unix socket this client dials.

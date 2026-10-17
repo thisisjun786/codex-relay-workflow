@@ -63,6 +63,11 @@ type WakeAttempt struct {
 	RequiredSettings      json.RawMessage `json:"requiredSettings"`
 	Identity              WakeIdentity    `json:"identity"`
 	ObservedAt            string          `json:"observedAt"`
+
+	// Probe also permits a pre-send preparation failure before a recipient exists.
+	// Such a row is never proof of a turn.
+	Probe  bool   `json:"probe,omitempty"`
+	Reason string `json:"reason,omitempty"`
 }
 
 type wakeRecord struct {
@@ -77,7 +82,10 @@ type wakeRecord struct {
 // observations of one request are appended too; an earlier observation is never
 // replaced. Missing identity/settings are retained as unmeasured evidence.
 func RecordWakeAttempt(ctx context.Context, s *store.Store, attempt WakeAttempt) error {
-	if strings.TrimSpace(attempt.RequestID) == "" || strings.TrimSpace(attempt.RecipientTaskID) == "" {
+	missingRecipient := strings.TrimSpace(attempt.RecipientTaskID) == ""
+	preparationFailure := attempt.Probe && attempt.Reason != "" &&
+		attempt.SendAttempted == "no" && !attempt.NewTurn && attempt.TurnID == ""
+	if strings.TrimSpace(attempt.RequestID) == "" || (missingRecipient && !preparationFailure) {
 		return fmt.Errorf("wake evidence needs a request and recipient")
 	}
 	if _, err := time.Parse(time.RFC3339Nano, attempt.ObservedAt); err != nil {
