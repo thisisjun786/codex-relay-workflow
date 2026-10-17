@@ -300,7 +300,7 @@ func CommitVerificationKeys(ctx context.Context, checkout, commit string) (Verif
 	if err != nil {
 		return VerificationKeys{}, err
 	}
-	keys, err := QueueVerificationKeys(ctx, checkout, commit)
+	keys, err := commitVerificationKeys(ctx, checkout, commit, commands.VerifyCommand == "")
 	keys.RepositoryCommand = commands.VerifyCommand
 	return keys, err
 }
@@ -310,6 +310,10 @@ func CommitVerificationKeys(ctx context.Context, checkout, commit string) (Verif
 // from the commit digests to "". Queue local/GitHub evidence stays bound to these
 // keys even when the same repository has a flow command override.
 func QueueVerificationKeys(ctx context.Context, checkout, commit string) (VerificationKeys, error) {
+	return commitVerificationKeys(ctx, checkout, commit, true)
+}
+
+func commitVerificationKeys(ctx context.Context, checkout, commit string, withPins bool) (VerificationKeys, error) {
 	var keys VerificationKeys
 	tree, err := runGit(ctx, checkout, nil, "rev-parse", commit+"^{tree}")
 	if err != nil {
@@ -328,9 +332,12 @@ func QueueVerificationKeys(ctx context.Context, checkout, commit string) (Verifi
 		}
 		keys.Dependencies[file] = digest
 	}
-	keys.Pins, err = DeclaredToolPins(func(path string) ([]byte, bool, error) { return commitFileBody(ctx, checkout, commit, path) })
-	if err != nil {
-		return keys, err
+	keys.Pins = map[string]string{}
+	if withPins {
+		keys.Pins, err = DeclaredToolPins(func(path string) ([]byte, bool, error) { return commitFileBody(ctx, checkout, commit, path) })
+		if err != nil {
+			return keys, err
+		}
 	}
 	return keys, nil
 }

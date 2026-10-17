@@ -172,6 +172,11 @@ func TestTempRootLockCRW980ConcurrentInstallsShareAMissingRoot(t *testing.T) {
 // HTTP transports and file finalizers can close unrelated descriptors at any time.
 func openFDsUnder(t *testing.T, root string) map[string]string {
 	t.Helper()
+	// procfs reports physical paths even when TMPDIR names a symlink.
+	root, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
 	entries, err := os.ReadDir("/proc/self/fd")
 	if err != nil {
 		t.Skipf("no /proc/self/fd: %v", err)

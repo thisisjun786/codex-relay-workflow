@@ -38,6 +38,9 @@ func (c *callRun) inputDigest() (string, map[string]any) {
 	if p.qa {
 		in["qa"] = true
 	}
+	if c.executorAdmission != nil {
+		in["executor_task_digest"] = c.executorAdmission.TaskDigest
+	}
 	return digestJSON(mustJSON(in)), ctxb
 }
 

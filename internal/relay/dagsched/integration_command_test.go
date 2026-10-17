@@ -27,7 +27,7 @@ func TestIntegrationNoopCASAllowsCheckedOutBranchAndRejectsMovedTip(t *testing.T
 func TestRepositoryVerificationCanRetainTheSameRecordOnRetry(t *testing.T) {
 	k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a"}})
 	commandConfig(t, k.repo.path, "printf same-output", "")
-	w := integrationWorktree{s: k.sched, in: k.batchIn(), deps: IntegrationDeps(repositoryIntegrationVerifier("printf same-output")), dir: k.repo.path, tmp: t.TempDir(), baseTip: k.base, batch: "command-retry"}
+	w := integrationWorktree{s: k.sched, in: k.batchIn(), deps: IntegrationDeps(repositoryIntegrationVerifier(k.repo.path, "printf same-output")), dir: k.repo.path, tmp: t.TempDir(), baseTip: k.base, batch: "command-retry"}
 	for i := 0; i < 2; i++ {
 		if _, _, pass, err := w.verify(context.Background()); err != nil || !pass {
 			t.Fatalf("verification %d: pass %v, error %v", i, pass, err)
