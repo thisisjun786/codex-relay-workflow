@@ -38,6 +38,9 @@ type Helper struct {
 	code       string
 }
 
+// BundledSource is the executable text of a helper, for static source consumers.
+func (h Helper) BundledSource() string { return h.code }
+
 func sha(b []byte) string {
 	s := sha256.Sum256(b)
 	return hex.EncodeToString(s[:])

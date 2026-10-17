@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/compile"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/script"
 	"github.com/thisisjun786/codex-relay-workflow/internal/gitprobe"
 )
 
@@ -210,6 +211,18 @@ var laneCall = regexp.MustCompile(`\bcrw\.([A-Za-z]+)\s*\(`)
 // engineCrw are the functions the engine puts on the crw object itself (engine/scriptvm.go); they need no operation of the lane.
 var engineCrw = map[string]bool{"callFacts": true, "classify": true, "clock": true, "deferredAsks": true, "priorRelease": true, "recordedSignal": true, "tierStep": true}
 
+// workflowBody includes the project phases extracted from the entry script.
+// Other library helpers keep their existing preflight treatment.
+func workflowBody(p *script.Program) string {
+	body := p.Body
+	for _, helper := range p.Helpers {
+		if strings.HasPrefix(helper.Spec, "crw:lib/project-") {
+			body += "\n" + helper.BundledSource()
+		}
+	}
+	return body
+}
+
 // LaneOperations reads the `crw.*` operations a workflow calls, in the workflows it nests too: the names a build has to install
 // (OpsFor) for the workflow to run. The functions the engine itself provides (crw.clock, crw.classify, crw.tierStep and the reads of the signal
 // path crw.callFacts, crw.recordedSignal, crw.priorRelease, crw.deferredAsks) are not among them.
@@ -229,11 +242,11 @@ func LaneOperations(src Source) []string {
 		}
 		for _, m := range nestedCall.FindAllStringSubmatch(body, -1) {
 			if child, err := src.Workflows(m[1], ""); err == nil {
-				walk(child.Body, depth+1)
+				walk(workflowBody(child), depth+1)
 			}
 		}
 	}
-	walk(src.Program.Body, 0)
+	walk(workflowBody(src.Program), 0)
 	return out
 }
 
@@ -255,11 +268,11 @@ func Dispositions(src Source) []string {
 		}
 		for _, m := range nestedCall.FindAllStringSubmatch(body, -1) {
 			if child, err := src.Workflows(m[1], ""); err == nil {
-				walk(child.Body, depth+1)
+				walk(workflowBody(child), depth+1)
 			}
 		}
 	}
-	walk(src.Program.Body, 0)
+	walk(workflowBody(src.Program), 0)
 	return out
 }
 

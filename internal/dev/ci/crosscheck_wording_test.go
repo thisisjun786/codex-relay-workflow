@@ -111,7 +111,7 @@ func closeDocsProblems(d closeDocs, rule string) []string {
 
 func TestCloseDocsNameTheCrosscheck(t *testing.T) {
 	rule := crosscheckRuleOf(t)
-	docs := closeDocs{script: readRepoText(t, scriptDocPath), journal: readRepoText(t, journalDocPath), run: readRepoText(t, crwRunSkillPath)}
+	docs := closeDocs{script: readFlowReference(t, scriptDocPath), journal: readRepoText(t, journalDocPath), run: readRepoText(t, crwRunSkillPath)}
 	for _, p := range closeDocsProblems(docs, rule) {
 		t.Error(p)
 	}

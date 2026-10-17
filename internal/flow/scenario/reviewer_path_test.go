@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"slices"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/workflows"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/workflows/lib"
 )
 
 // ---- the old reviewer path (the journals of old runs) ----
@@ -38,18 +40,22 @@ func reviewerLane(t *testing.T, l *Lab) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	build, err := fs.ReadFile(lib.FS, "project-build.js")
+	if err != nil {
+		t.Fatal(err)
+	}
 	node, err := os.ReadFile("testdata/reviewer-node-lane.js")
 	if err != nil {
 		t.Fatal(err)
 	}
-	const schemas = "import { RECEIPT, "
-	start := bytes.Index(text, []byte("// The lane of one issue node."))
-	end := bytes.Index(text, []byte("\nphase('build')"))
-	if start < 0 || end < start || !bytes.HasPrefix(text, []byte(schemas)) {
-		t.Fatalf("the project lane has no node lane between its opening comment and phase('build') (%d, %d), or does not open with %q: reviewerLane needs a new marker", start, end, schemas)
+	const schemas = "import { RECEIPT }"
+	start := bytes.Index(build, []byte("// The lane of one issue node."))
+	if start < 0 || !bytes.HasPrefix(build, []byte(schemas)) {
+		t.Fatalf("lib/project-build.js has no node lane after its opening comment (%d), or does not open with %q: reviewerLane needs a new marker", start, schemas)
 	}
-	head := bytes.Replace(text[:start:start], []byte(schemas), []byte("import { VERDICT, RECEIPT, "), 1)
-	l.Source = slices.Concat(head, node, text[end:])
+	prefix := bytes.Replace(build[:start:start], []byte(schemas), []byte("import { VERDICT, RECEIPT }"), 1)
+	l.Source = text
+	l.Lib = libWith(t, "project-build.js", string(build), string(prefix)+string(node))
 	l.OldOps = map[string]engine.Op{"review": oldReviewOp{}}
 }
 
