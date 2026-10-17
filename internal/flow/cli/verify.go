@@ -31,12 +31,13 @@ func (c *command) verify(args []string) int {
 		return c.fail("%v", err)
 	}
 	if *checkout == "" {
-		dir, err := os.Getwd()
-		if err != nil {
-			return c.fail("the working directory: %v", err)
-		}
-		*checkout = dir
+		*checkout = "."
 	}
+	checkoutPath, err := filepath.Abs(*checkout)
+	if err != nil {
+		return c.fail("the checkout path: %v", err)
+	}
+	*checkout = checkoutPath
 	if *head == "" {
 		*head = c.getenv("CRW_VERIFY_HEAD")
 	}
@@ -52,6 +53,11 @@ func (c *command) verify(args []string) int {
 	if *record == "" {
 		return c.fail("a record path is required (--record or CRW_VERIFY_RECORD)")
 	}
+	recordPath, err := filepath.Abs(*record)
+	if err != nil {
+		return c.fail("the record path: %v", err)
+	}
+	*record = recordPath
 	tools, err := crwconfig.LoadVerifierTools(func(k string) string { return c.getenv(k) }, "")
 	if err != nil {
 		return c.fail("the verifier's configuration: %v", err)
