@@ -431,6 +431,10 @@ type heldProcess struct {
 // recorded its row.
 func (c *command) heldProcess(cm *common, state string, spec Spec, store *engine.Policy) heldProcess {
 	run := spec.RunID
+	// Read the owner's line before the journal: the process commits started and
+	// policy_repinned before binding. A line read after the journal could settle
+	// an older snapshot that contains started but not policy_repinned (CRW-1638).
+	last, present, lineErr := bound.OrchestratorLine(nil, spec.Thread)
 	events := c.runEvents(cm, run)
 	newest := -1
 	for i, ev := range events {
@@ -460,7 +464,7 @@ func (c *command) heldProcess(cm *common, state string, spec Spec, store *engine
 			}
 		}
 	}
-	settled, line := ownerLineOf(state, spec, out.table.Digest)
+	settled, line := ownerLineFrom(state, spec, out.table.Digest, last, present, lineErr)
 	// a process of this crw binds right after its started row: the line of a process that started within startingWait and is not
 	// settled yet is read again; an older process's line is what it bound, and is reported
 	out.binding, out.line = token != "" && !settled && processFresh(state, run, token), line
@@ -492,11 +496,16 @@ func (h heldProcess) warnings(run string, store *engine.Policy, resumed bool) []
 // process's (the run's open line under digest), when another live run holds the thread (one thread binds one live run, so the
 // process could not bind) or when no line can name the owner; line says what next found when it is not the process's line.
 func ownerLineOf(state string, spec Spec, digest string) (settled bool, line string) {
+	last, present, err := bound.OrchestratorLine(nil, spec.Thread)
+	return ownerLineFrom(state, spec, digest, last, present, err)
+}
+
+// ownerLineFrom judges the captured line against the process's pinned digest.
+func ownerLineFrom(state string, spec Spec, digest string, last bound.Line, present bool, err error) (settled bool, line string) {
 	run, thread := spec.RunID, spec.Thread
 	if !bound.ValidThreadID(thread) {
 		return true, fmt.Sprintf("the owner %q is not a thread id: no flow-bound line names it, and the spawn hook gives its spawns no role pair", thread)
 	}
-	last, present, err := bound.OrchestratorLine(nil, thread)
 	switch {
 	case err != nil:
 		return false, fmt.Sprintf("the orchestrator line of thread %s cannot be read (%v): the spawn hook decides the owner's spawns by it", thread, err)
