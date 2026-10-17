@@ -20,8 +20,8 @@ import (
 func TestModeTableDrivesUsageAndDispatch(t *testing.T) {
 	var out, errOut strings.Builder
 	if code := run(context.Background(), "crw", []string{"nope"}, &out, &errOut); code != parserExit ||
-		!strings.Contains(errOut.String(), "usage: crw [-h] [--version] {relay,bridge,hook,skill,doctor,install,review,manage,gui,config,publish,tools,recall,pabcd,role,provider,map,flow,help,version} ...") ||
-		!strings.Contains(errOut.String(), "(choose from 'relay', 'bridge', 'hook', 'skill', 'doctor', 'install', 'review', 'manage', 'gui', 'config', 'publish', 'tools', 'recall', 'pabcd', 'role', 'provider', 'map', 'flow', 'help', 'version')") {
+		!strings.Contains(errOut.String(), "usage: crw [-h] [--version] {relay,bridge,hook,skill,doctor,install,review,manage,gui,config,publish,tools,recall,work,role,provider,map,flow,help,version} ...") ||
+		!strings.Contains(errOut.String(), "(choose from 'relay', 'bridge', 'hook', 'skill', 'doctor', 'install', 'review', 'manage', 'gui', 'config', 'publish', 'tools', 'recall', 'work', 'role', 'provider', 'map', 'flow', 'help', 'version')") {
 		t.Fatalf("unknown mode: %d %q", code, errOut.String())
 	}
 	out.Reset()
@@ -36,12 +36,12 @@ func TestModeTableDrivesUsageAndDispatch(t *testing.T) {
 	}
 	out.Reset()
 	errOut.Reset()
-	if code := run(context.Background(), "crw", []string{"pabcd", "--help"}, &out, &errOut); code != 0 || !strings.HasPrefix(out.String(), "usage: crw pabcd") || errOut.Len() != 0 {
-		t.Errorf("crw pabcd --help: %d %q %q", code, out.String(), errOut.String())
+	if code := run(context.Background(), "crw", []string{"work", "--help"}, &out, &errOut); code != 0 || !strings.HasPrefix(out.String(), "usage: crw work") || errOut.Len() != 0 {
+		t.Errorf("crw work --help: %d %q %q", code, out.String(), errOut.String())
 	}
 	errOut.Reset()
-	if code := run(context.Background(), "crw", []string{"pabcd"}, &out, &errOut); code != parserExit || !strings.Contains(errOut.String(), "crw pabcd: error: the following arguments are required: verb") {
-		t.Errorf("crw pabcd: %d %q", code, errOut.String())
+	if code := run(context.Background(), "crw", []string{"work"}, &out, &errOut); code != parserExit || !strings.Contains(errOut.String(), "crw work: error: the following arguments are required: verb") {
+		t.Errorf("crw work: %d %q", code, errOut.String())
 	}
 }
 

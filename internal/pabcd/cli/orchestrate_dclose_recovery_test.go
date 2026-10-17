@@ -156,7 +156,7 @@ func TestOrchestrateDcloseRecoveryRefusesALegacyMarker(t *testing.T) {
 	if got.Code != 1 || !strings.Contains(got.Output, "predates the successor field") || !strings.Contains(got.Output, "The marker was kept") {
 		t.Fatalf("refusal: %+v", got)
 	}
-	if !strings.Contains(got.Output, "crw pabcd orchestrate reset --session "+id) {
+	if !strings.Contains(got.Output, "crw work state reset --session "+id) {
 		t.Fatalf("the refusal does not name the reset command: %q", got.Output)
 	}
 	orchestrateDcloseAssertUnchanged(t, before)
@@ -458,7 +458,7 @@ func TestOrchestrateDcloseRecoveryLostSuccessor(t *testing.T) {
 		if got.Code != 1 || !strings.Contains(got.Output, "names that same work-phase as its successor") {
 			t.Fatalf("refusal: %+v", got)
 		}
-		if !strings.Contains(got.Output, "crw pabcd orchestrate reset --session "+id) || strings.Contains(got.Output, "restore that work-phase") {
+		if !strings.Contains(got.Output, "crw work state reset --session "+id) || strings.Contains(got.Output, "restore that work-phase") {
 			t.Fatalf("the refusal does not point at reset: %q", got.Output)
 		}
 		orchestrateDcloseAssertUnchanged(t, before)
@@ -680,7 +680,7 @@ func TestOrchestrateDcloseRecoveryAbsentTarget(t *testing.T) {
 		if got.Code != 1 || !strings.Contains(got.Output, "the successor wp-2 it recorded is gone too") {
 			t.Fatalf("refusal: %+v", got)
 		}
-		if !strings.Contains(got.Output, "crw pabcd orchestrate reset --session "+id) {
+		if !strings.Contains(got.Output, "crw work state reset --session "+id) {
 			t.Fatalf("the refusal does not name reset: %q", got.Output)
 		}
 		orchestrateDcloseAssertUnchanged(t, before)

@@ -96,7 +96,7 @@ func TestLoopUnbindRecoversTheStrandedX2Session(t *testing.T) {
 	}
 	start := loopUnbindRead(t, cwd, slug)
 	refused := loopRun(t, cwd, "unbind", "--session", loopUnbindSession)
-	if refused.Code != 1 || !strings.Contains(refused.Output, "phase B") || !strings.Contains(refused.Output, "orchestrate reset --session "+loopUnbindSession) {
+	if refused.Code != 1 || !strings.Contains(refused.Output, "phase B") || !strings.Contains(refused.Output, "crw work state reset --session "+loopUnbindSession) {
 		t.Fatalf("in flight: %d %q", refused.Code, refused.Output)
 	}
 	if after := loopUnbindRead(t, cwd, slug); !equalFiles(after, start) {

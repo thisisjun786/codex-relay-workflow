@@ -21,9 +21,9 @@ type MemoryCliParse struct {
 
 // MemoryUsage is the oracle's usage text with the settled CRW verb and directory names.
 const MemoryUsage = `Usage:
-  crw pabcd memory allow-write --session <id>
-  crw pabcd memory allow-write --session=<id>
-  crw pabcd memory allow-write --help
+  crw work memory allow-write --session <id>
+  crw work memory allow-write --session=<id>
+  crw work memory allow-write --help
 
 Authorizes exactly ONE memory write (memories.add_ad_hoc_note, or an edit under
 ~/.codex/memories) for that session. The grant is consumed by the next write.

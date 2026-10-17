@@ -61,7 +61,7 @@ func loopUnbindLocked(ctx context.Context, cwd, sessionID string) (LoopCliResult
 	}
 	res := fsm.ApplyHumanTransition(cur, fsm.VerbUnbind, nil)
 	if !res.OK {
-		return LoopCliResult{Output: "loop " + res.Reason + "\nNothing was written.", Code: 1}, nil
+		return LoopCliResult{Output: "loop " + workDiagnostic(res.Reason) + "\nNothing was written.", Code: 1}, nil
 	}
 	if res.State == nil {
 		return loopUnbindNothing(sessionID), nil

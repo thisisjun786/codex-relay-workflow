@@ -169,7 +169,7 @@ func TestLoopSteerRefusals(t *testing.T) {
 		t.Fatalf("malformed JSON output = %q", out)
 	}
 	loopSession(t, cwd, "sess-2")
-	if out := loopMutRun(t, cwd, 1, "steer", "--session", "sess-2", "--batch-json", batch); out != "loop steer: session 'sess-2' has no bound goalplan — run `crw pabcd loop init --session sess-2` first" {
+	if out := loopMutRun(t, cwd, 1, "steer", "--session", "sess-2", "--batch-json", batch); out != "loop steer: session 'sess-2' has no bound goalplan — run `crw work continue init --session sess-2` first" {
 		t.Fatalf("unbound output = %q", out)
 	}
 	if out := loopMutRun(t, cwd, 1, "steer", "--session", loopMutSession, "--batch-json", `{"idempotencyKey":"k","rationale":"r","evidence":"e","ops":[]}`); !strings.Contains(out, "ops must be a non-empty array") {
@@ -307,7 +307,7 @@ func TestLoopAddVerbsRequireTheirArguments(t *testing.T) {
 		}
 	}
 	loopSession(t, cwd, "sess-2")
-	if out := loopMutRun(t, cwd, 1, "add-work-phase", "--session", "sess-2", "--id", "w", "--title", "t"); out != "loop add-work-phase: session 'sess-2' has no bound goalplan - run `crw pabcd loop init --session sess-2` first" {
+	if out := loopMutRun(t, cwd, 1, "add-work-phase", "--session", "sess-2", "--id", "w", "--title", "t"); out != "loop add-work-phase: session 'sess-2' has no bound goalplan - run `crw work continue init --session sess-2` first" {
 		t.Errorf("unbound output = %q", out)
 	}
 	before.assertUnchanged(t, cwd, slug)

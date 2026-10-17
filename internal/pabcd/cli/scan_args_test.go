@@ -67,7 +67,7 @@ func TestScanArgsNodeOracle(t *testing.T) {
 			}
 			if obj, ok := want.(map[string]any); ok {
 				if message, ok := obj["error"].(string); ok {
-					obj["error"] = strings.NewReplacer("cxc scan", "crw pabcd scan", "cxc orchestrate", "crw pabcd orchestrate").Replace(message)
+					obj["error"] = strings.NewReplacer("cxc scan", "crw work scan", "cxc orchestrate", "crw work state").Replace(message)
 				}
 			}
 			if !reflect.DeepEqual(got, want) {

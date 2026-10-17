@@ -253,3 +253,29 @@ func TestStatusReportsByLevel(t *testing.T) {
 		t.Errorf("%s keeps a status-only mode", runSkillFile)
 	}
 }
+
+func TestHandoffReportOrder(t *testing.T) {
+	for _, c := range []struct{ file, heading string }{
+		{statusSkillFile, "Write the report"}, {checkSkillFile, "Report the result"},
+	} {
+		t.Run(c.file, func(t *testing.T) {
+			section, ok := reportSectionOf(splitRead(t, c.file), c.heading)
+			if !ok {
+				t.Fatalf("missing section %q", c.heading)
+			}
+			last := -1
+			for _, label := range []string{"**Decisions needed.**", "**What changed.**", "**Next action.**"} {
+				pos := strings.Index(section, label)
+				if pos < 0 || pos <= last {
+					t.Errorf("%q missing or out of order in %s", label, c.heading)
+				}
+				last = pos
+			}
+			for _, contract := range []string{"owner", "evidence", "observable completion condition"} {
+				if !strings.Contains(section, contract) {
+					t.Errorf("handoff omits %q", contract)
+				}
+			}
+		})
+	}
+}

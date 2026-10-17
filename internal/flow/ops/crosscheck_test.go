@@ -631,6 +631,298 @@ func (w *ccWorld) receiptRow(node string, receipt map[string]any) {
 		Data: map[string]any{"role": "unit-check", "node": node, "state": "ok", "receipt": receipt}})
 }
 
+func (w *ccWorld) reuseRow(t *testing.T, d ReuseIntegratedResult) engine.Event {
+	t.Helper()
+	raw, err := json.Marshal(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var data map[string]any
+	if err := json.Unmarshal(raw, &data); err != nil {
+		t.Fatal(err)
+	}
+	data["result"] = string(raw)
+	w.calls++
+	return w.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: fmt.Sprintf("c_reuse%d", w.calls), Op: OpReuseIntegrated, Event: engine.EvCompleted, Data: data})
+}
+
+func srcRow(op, call string, data map[string]any) engine.Event {
+	return engine.Event{RunID: "source-run", Kind: engine.KindCall, CallID: call, Op: op, Event: engine.EvCompleted, Data: data}
+}
+
+func (w *ccWorld) sourceRuns(t *testing.T, sources []DesignRun) {
+	t.Helper()
+	w.lane.d.DesignHistory = func(_ context.Context, plan string) ([]DesignRun, error) {
+		if plan != "plan-1" {
+			t.Errorf("the run history was asked for plan %q", plan)
+		}
+		return sources, nil
+	}
+}
+
+func TestCrosscheckInheritsReusedReceipts(t *testing.T) {
+	w := newCCWorld(t, "n1", "n2", "n3")
+	src := engine.NewMemoryJournal()
+	oldCopy, oldSum := receiptCopy(t, "the older source receipt\n")
+	src.Append(srcRow(OpUnitCheck, "source-uc-older", map[string]any{"role": "unit-check", "node": "n1", "state": "ok", "commit": ccHead,
+		"receipt": map[string]any{"state": "accepted", "sha256": oldSum, "copy": oldCopy}}))
+	body := "red-first: TestChosen FAIL before the change\nmutation-red: TestChosen FAIL with the guard removed\n"
+	cp, sum := receiptCopy(t, body)
+	src.Append(srcRow(OpUnitCheck, "source-uc-latest", map[string]any{"role": "unit-check", "node": "n1", "state": "ok", "commit": ccHead,
+		"receipt": map[string]any{"state": "accepted", "sha256": sum, "copy": cp}}))
+	headCopy, headSum := receiptCopy(t, "a receipt of another head\n")
+	src.Append(srcRow(OpUnitCheck, "source-uc-head", map[string]any{"role": "unit-check", "node": "n1", "state": "ok", "commit": headTwo,
+		"receipt": map[string]any{"state": "accepted", "sha256": headSum, "copy": headCopy}}))
+	nodeCopy, nodeSum := receiptCopy(t, "a receipt of another node\n")
+	src.Append(srcRow(OpUnitCheck, "source-uc-node", map[string]any{"role": "unit-check", "node": "n2", "state": "ok", "commit": ccHead,
+		"receipt": map[string]any{"state": "accepted", "sha256": nodeSum, "copy": nodeCopy}}))
+	src.Append(srcRow(OpAccept, "source-accept", map[string]any{"plan": "plan-1", "node": "n1", "head": ccHead, "acceptance_id": "accept-1", "reviewer_call": "source-uc-latest"}))
+	w.sourceRuns(t, []DesignRun{{Run: "source-run", Events: src.Events()}})
+	w.reuseRow(t, ReuseIntegratedResult{Reused: true, Reason: ReuseIntegratedReused, Plan: "plan-1", Milestone: "M1", Node: "n1", Head: ccHead,
+		AcceptanceID: "accept-1", SourceRun: "source-run", SourceAcceptCall: "source-accept"})
+	n2Body := "red-first: TestN2 FAIL before\nmutation-red: TestN2 FAIL without the fix\n"
+	n2Copy, n2Sum := receiptCopy(t, n2Body)
+	w.receiptRow("n2", map[string]any{"state": "accepted", "sha256": n2Sum, "copy": n2Copy})
+	out, _ := w.crosscheck(ccHead, nil)
+	if out.State != CrosscheckStateVerdict || out.Verdict == nil {
+		t.Fatalf("outcome %+v", out)
+	}
+	v := out.Verdict
+	want := []CrosscheckReceipt{{Node: "n1", State: "accepted", SHA256: sum}, {Node: "n2", State: "accepted", SHA256: n2Sum}, {Node: "n3", State: ReceiptNoExecutor}}
+	if !slices.Equal(v.Receipts, want) {
+		t.Errorf("receipts %+v", v.Receipts)
+	}
+	got, err := os.ReadFile(v.ReceiptsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fileSum := sha256.Sum256(got)
+	if v.ReceiptsSHA256 != hex.EncodeToString(fileSum[:]) {
+		t.Errorf("receipts sha256 %q, the file hashes to %q", v.ReceiptsSHA256, hex.EncodeToString(fileSum[:]))
+	}
+	for _, s := range []string{body, n2Body, "Source run: source-run; unit-check call: source-uc-latest; acceptance call: source-accept"} {
+		if !strings.Contains(string(got), s) {
+			t.Errorf("the receipts file lacks %q:\n%s", s, got)
+		}
+	}
+	for _, s := range []string{"the older source receipt", "a receipt of another head", "a receipt of another node"} {
+		if strings.Contains(string(got), s) {
+			t.Errorf("the receipts file holds %q:\n%s", s, got)
+		}
+	}
+	calls := w.checker.requests()
+	if len(calls) != 2 {
+		t.Fatalf("%d checks", len(calls))
+	}
+	for _, c := range calls {
+		p := c.Request.Prompt
+		for _, s := range []string{"EXECUTOR RECEIPTS", v.ReceiptsFile, "node n1: accepted, sha256 " + sum} {
+			if !strings.Contains(p, s) {
+				t.Errorf("pass %s's prompt lacks %q:\n%s", c.Pass, s, p)
+			}
+		}
+		if strings.Contains(p, body) {
+			t.Errorf("pass %s's prompt carries the receipt bytes", c.Pass)
+		}
+	}
+	again, _ := w.crosscheck(ccHead, nil)
+	if again.Verdict == nil || again.Verdict.ReceiptsFile != v.ReceiptsFile || again.Verdict.ReceiptsSHA256 != v.ReceiptsSHA256 {
+		t.Errorf("the same round again: %+v", again.Verdict)
+	}
+}
+
+func TestCrosscheckHoldsWhenReusedReceiptCannotBeRead(t *testing.T) {
+	goodCopy, goodSum := receiptCopy(t, "the source receipt\n")
+	src := func(events ...engine.Event) []engine.Event {
+		j := engine.NewMemoryJournal()
+		for _, ev := range events {
+			j.Append(ev)
+		}
+		return j.Events()
+	}
+	check := func(call string, receipt map[string]any) engine.Event {
+		return srcRow(OpUnitCheck, call, map[string]any{"role": "unit-check", "node": "n1", "state": "ok", "commit": ccHead, "receipt": receipt})
+	}
+	accept := srcRow(OpAccept, "source-accept", map[string]any{"plan": "plan-1", "node": "n1", "head": ccHead, "acceptance_id": "accept-1", "reviewer_call": "source-uc"})
+	reused := func(t *testing.T, history func(ctx context.Context, plan string) ([]DesignRun, error)) *ccWorld {
+		w := newCCWorld(t, "n1")
+		w.reuseRow(t, ReuseIntegratedResult{Reused: true, Reason: ReuseIntegratedReused, Plan: "plan-1", Milestone: "M1", Node: "n1", Head: ccHead,
+			AcceptanceID: "accept-1", SourceRun: "source-run", SourceAcceptCall: "source-accept"})
+		w.lane.d.DesignHistory = history
+		return w
+	}
+	withSrc := func(t *testing.T, events []engine.Event) *ccWorld {
+		return reused(t, func(_ context.Context, plan string) ([]DesignRun, error) {
+			if plan != "plan-1" {
+				t.Errorf("the run history was asked for plan %q", plan)
+			}
+			return []DesignRun{{Run: "source-run", Events: events}}, nil
+		})
+	}
+	for _, c := range []struct {
+		name  string
+		hold  string
+		build func(t *testing.T) *ccWorld
+	}{
+		{"the accepted copy is gone", "crosscheck_receipt_missing", func(t *testing.T) *ccWorld {
+			return withSrc(t, src(check("source-uc", map[string]any{"state": "accepted", "sha256": goodSum, "copy": filepath.Join(t.TempDir(), "gone.md")}), accept))
+		}},
+		{"the accepted copy does not hash to its digest", "crosscheck_receipt_mismatch", func(t *testing.T) *ccWorld {
+			return withSrc(t, src(check("source-uc", map[string]any{"state": "accepted", "sha256": strings.Repeat("0", 64), "copy": goodCopy}), accept))
+		}},
+		{"the newest check accepted an unverified receipt", "crosscheck_receipt_unverified", func(t *testing.T) *ccWorld {
+			return withSrc(t, src(check("source-uc", map[string]any{"state": "unverified"}), accept))
+		}},
+		{"the accepted receipt was never copied", "crosscheck_receipt_not_copied", func(t *testing.T) *ccWorld {
+			return withSrc(t, src(check("source-uc", map[string]any{"state": "accepted", "sha256": goodSum, "path": goodCopy}), accept))
+		}},
+		{"the accepted receipt names no sha256", "crosscheck_receipt_unverified", func(t *testing.T) *ccWorld {
+			return withSrc(t, src(check("source-uc", map[string]any{"state": "accepted", "copy": goodCopy}), accept))
+		}},
+		{"the source run is not in the history", "crosscheck_receipt_missing", func(t *testing.T) *ccWorld {
+			return reused(t, func(context.Context, string) ([]DesignRun, error) {
+				return []DesignRun{{Run: "another-run", Events: src(check("source-uc", map[string]any{"state": "accepted", "sha256": goodSum, "copy": goodCopy}), accept)}}, nil
+			})
+		}},
+		{"no run history is wired", "crosscheck_receipt_missing", func(t *testing.T) *ccWorld {
+			return reused(t, nil)
+		}},
+		{"the history cannot be read", "crosscheck_receipt_missing", func(t *testing.T) *ccWorld {
+			return reused(t, func(context.Context, string) ([]DesignRun, error) {
+				return nil, fmt.Errorf("the journal store is gone")
+			})
+		}},
+		{"the source journal is unreadable", "crosscheck_receipt_missing", func(t *testing.T) *ccWorld {
+			return reused(t, func(context.Context, string) ([]DesignRun, error) {
+				return []DesignRun{{Run: "source-run", Reason: "source_unreadable", Detail: "the journal is gone"}}, nil
+			})
+		}},
+		{"the source has no matching unit check", "crosscheck_receipt_missing", func(t *testing.T) *ccWorld {
+			return withSrc(t, src(accept))
+		}},
+		{"the source acceptance is of another head", "crosscheck_receipt_missing", func(t *testing.T) *ccWorld {
+			return withSrc(t, src(check("source-uc", map[string]any{"state": "accepted", "sha256": goodSum, "copy": goodCopy}),
+				srcRow(OpAccept, "source-accept", map[string]any{"plan": "plan-1", "node": "n1", "head": headTwo, "acceptance_id": "accept-1", "reviewer_call": "source-uc"})))
+		}},
+		{"the newest matching check is bad and no older good one is used", "crosscheck_receipt_mismatch", func(t *testing.T) *ccWorld {
+			return withSrc(t, src(
+				check("source-uc-older", map[string]any{"state": "accepted", "sha256": goodSum, "copy": goodCopy}),
+				check("source-uc", map[string]any{"state": "accepted", "sha256": strings.Repeat("0", 64), "copy": goodCopy}),
+				accept))
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w := c.build(t)
+			out, row := w.crosscheck(ccHead, nil)
+			if out.State != CrosscheckStateHeld || out.Hold != c.hold || out.Verdict != nil || !strings.Contains(out.Detail, "n1") {
+				t.Errorf("outcome %+v", out)
+			}
+			if dataStr(row, "hold") != c.hold || dataStr(row, "node") != "n1" {
+				t.Errorf("row %+v", row.Data)
+			}
+			if n := len(w.checker.requests()); n != 0 || w.checkout.count() != 0 {
+				t.Errorf("%d checks and %d checkouts on a held receipt", n, w.checkout.count())
+			}
+		})
+	}
+}
+
+func TestCrosscheckInheritsAcceptedUncommittedReceipt(t *testing.T) {
+	w := newCCWorld(t, "n1")
+	src := engine.NewMemoryJournal()
+	body := "red-first: TestUncommitted FAIL before\nmutation-red: TestUncommitted FAIL without the fix\n"
+	cp, sum := receiptCopy(t, body)
+	src.Append(srcRow(OpUnitCheck, "source-uc-uncommitted", map[string]any{"role": "unit-check", "node": "n1", "state": "ok",
+		"receipt": map[string]any{"state": "accepted", "sha256": sum, "copy": cp}}))
+	otherCopy, otherSum := receiptCopy(t, "the receipt of a check the acceptance does not name\n")
+	src.Append(srcRow(OpUnitCheck, "source-uc-unnamed", map[string]any{"role": "unit-check", "node": "n1", "state": "ok",
+		"receipt": map[string]any{"state": "accepted", "sha256": otherSum, "copy": otherCopy}}))
+	src.Append(srcRow(OpAccept, "source-accept", map[string]any{"plan": "plan-1", "node": "n1", "head": ccHead, "acceptance_id": "accept-1", "reviewer_call": "source-uc-uncommitted"}))
+	w.sourceRuns(t, []DesignRun{{Run: "source-run", Events: src.Events()}})
+	w.reuseRow(t, ReuseIntegratedResult{Reused: true, Reason: ReuseIntegratedReused, Plan: "plan-1", Milestone: "M1", Node: "n1", Head: ccHead,
+		AcceptanceID: "accept-1", SourceRun: "source-run", SourceAcceptCall: "source-accept"})
+	out, _ := w.crosscheck(ccHead, nil)
+	if out.State != CrosscheckStateVerdict || out.Verdict == nil {
+		t.Fatalf("outcome %+v", out)
+	}
+	want := []CrosscheckReceipt{{Node: "n1", State: "accepted", SHA256: sum}}
+	if !slices.Equal(out.Verdict.Receipts, want) {
+		t.Errorf("receipts %+v", out.Verdict.Receipts)
+	}
+	got, err := os.ReadFile(out.Verdict.ReceiptsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), body) || !strings.Contains(string(got), "Source run: source-run; unit-check call: source-uc-uncommitted; acceptance call: source-accept") {
+		t.Errorf("the receipts file:\n%s", got)
+	}
+	if strings.Contains(string(got), "a check the acceptance does not name") {
+		t.Errorf("the receipts file holds the check the acceptance did not name:\n%s", got)
+	}
+}
+
+func TestCrosscheckIgnoresNonreusedReceiptHistory(t *testing.T) {
+	noHistory := func(t *testing.T) func(context.Context, string) ([]DesignRun, error) {
+		return func(context.Context, string) ([]DesignRun, error) {
+			t.Error("a node that is not reused asks for no run history")
+			return nil, nil
+		}
+	}
+	noExecutor := func(t *testing.T, w *ccWorld) {
+		t.Helper()
+		out, _ := w.crosscheck(ccHead, nil)
+		if out.State != CrosscheckStateVerdict || out.Verdict == nil {
+			t.Fatalf("outcome %+v", out)
+		}
+		if want := []CrosscheckReceipt{{Node: "n1", State: ReceiptNoExecutor}}; !slices.Equal(out.Verdict.Receipts, want) {
+			t.Errorf("receipts %+v", out.Verdict.Receipts)
+		}
+	}
+	t.Run("a node decided not reused", func(t *testing.T) {
+		w := newCCWorld(t, "n1")
+		w.reuseRow(t, ReuseIntegratedResult{Reused: false, Reason: ReuseIntegratedNot, Plan: "plan-1", Milestone: "M1", Node: "n1"})
+		w.lane.d.DesignHistory = noHistory(t)
+		noExecutor(t, w)
+	})
+	t.Run("a superseded reuse decision", func(t *testing.T) {
+		w := newCCWorld(t, "n1")
+		row := w.reuseRow(t, ReuseIntegratedResult{Reused: true, Reason: ReuseIntegratedReused, Plan: "plan-1", Milestone: "M1", Node: "n1", Head: ccHead,
+			AcceptanceID: "accept-1", SourceRun: "source-run", SourceAcceptCall: "source-accept"})
+		w.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: row.CallID, Op: OpReuseIntegrated, Event: engine.EvSuperseded})
+		w.lane.d.DesignHistory = noHistory(t)
+		noExecutor(t, w)
+	})
+	t.Run("the newest decision is not reused", func(t *testing.T) {
+		w := newCCWorld(t, "n1")
+		w.reuseRow(t, ReuseIntegratedResult{Reused: true, Reason: ReuseIntegratedReused, Plan: "plan-1", Milestone: "M1", Node: "n1", Head: ccHead,
+			AcceptanceID: "accept-1", SourceRun: "source-run", SourceAcceptCall: "source-accept"})
+		w.reuseRow(t, ReuseIntegratedResult{Reused: false, Reason: ReuseIntegratedNot, Plan: "plan-1", Milestone: "M1", Node: "n1"})
+		w.lane.d.DesignHistory = noHistory(t)
+		noExecutor(t, w)
+	})
+	t.Run("a superseded check of the source is ignored", func(t *testing.T) {
+		w := newCCWorld(t, "n1")
+		cp, sum := receiptCopy(t, "the source receipt\n")
+		src := engine.NewMemoryJournal()
+		src.Append(srcRow(OpUnitCheck, "source-uc", map[string]any{"role": "unit-check", "node": "n1", "state": "ok", "commit": ccHead,
+			"receipt": map[string]any{"state": "accepted", "sha256": sum, "copy": cp}}))
+		src.Append(srcRow(OpUnitCheck, "source-uc-bad", map[string]any{"role": "unit-check", "node": "n1", "state": "ok", "commit": ccHead,
+			"receipt": map[string]any{"state": "accepted", "sha256": strings.Repeat("0", 64), "copy": cp}}))
+		src.Append(engine.Event{RunID: "source-run", Kind: engine.KindCall, CallID: "source-uc-bad", Op: OpUnitCheck, Event: engine.EvSuperseded})
+		src.Append(srcRow(OpAccept, "source-accept", map[string]any{"plan": "plan-1", "node": "n1", "head": ccHead, "acceptance_id": "accept-1", "reviewer_call": "source-uc"}))
+		w.sourceRuns(t, []DesignRun{{Run: "source-run", Events: src.Events()}})
+		w.reuseRow(t, ReuseIntegratedResult{Reused: true, Reason: ReuseIntegratedReused, Plan: "plan-1", Milestone: "M1", Node: "n1", Head: ccHead,
+			AcceptanceID: "accept-1", SourceRun: "source-run", SourceAcceptCall: "source-accept"})
+		out, _ := w.crosscheck(ccHead, nil)
+		if out.State != CrosscheckStateVerdict || out.Verdict == nil {
+			t.Fatalf("outcome %+v", out)
+		}
+		if want := []CrosscheckReceipt{{Node: "n1", State: "accepted", SHA256: sum}}; !slices.Equal(out.Verdict.Receipts, want) {
+			t.Errorf("receipts %+v", out.Verdict.Receipts)
+		}
+	})
+}
+
 // TestCrosscheckCarriesTheReceiptsAndRedRecords (C12): the newest unit-check receipt of each node of the milestone goes to the receipts
 // file under LandRoot, V names the file, its digest and each node's receipt, and both passes are told to read it and check the red
 // records of each criterion against it.

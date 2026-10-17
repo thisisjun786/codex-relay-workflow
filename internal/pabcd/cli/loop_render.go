@@ -97,22 +97,22 @@ func RenderLoopPlanLines(plan *goalplan.Goalplan, lock *goalplan.GoalplanLockSta
 // replayer's own table produces the same bytes, which TestLoopHelpOracle checks.
 func RenderLoopHelp() string { return loopHelp }
 
-const loopHelp = `crw pabcd loop — durable goalplan for a multi-cycle PABCD loop
+const loopHelp = `crw work continue — durable goalplan for a multi-cycle task work
 
 Usage:
-  crw pabcd loop init --objective <text> [--session <id>] [--criterion <text>]... [--schema-version <n>] [--cwd <path>]
-  crw pabcd loop show (--slug <slug> | --objective <text> | --session <id>) [--cwd <path>]
-  crw pabcd loop validate (--slug <slug> | --objective <text> | --session <id>) [--cwd <path>]
-  crw pabcd loop steer --session <id> --batch-json <path-or-json> [--cwd <path>]
-  crw pabcd loop add-criterion --session <id> --criterion <text> [--surface logic|web|tui|desktop] [--presented native] [--cwd <path>]
-  crw pabcd loop add-work-phase --session <id> --id <id> --title <text> [--depends-on <id>]... [--cwd <path>]
-  crw pabcd loop ready (--slug <slug> | --objective <text> | --session <id>) [--json] [--cwd <path>]
-  crw pabcd loop add-task --session <id> --work-phase <id> --id <id> --title <text> [--depends-on <task-id>]... [--cwd <path>]
-  crw pabcd loop complete-task --session <id> --work-phase <id> --id <id> --outcome <text> [--cwd <path>]
-  crw pabcd loop meet-criterion --session <id> --id <id> --evidence <text> [--cwd <path>]
-  crw pabcd loop ask --session <id> --id <id> --question <text> [--recommendation <text>] [--option <text>]... [--work-phase <id>]... [--cwd <path>]
-  crw pabcd loop decide --session <id> --id <id> --answer <text> [--cwd <path>]
-  crw pabcd loop --help
+  crw work continue init --objective <text> [--session <id>] [--criterion <text>]... [--schema-version <n>] [--cwd <path>]
+  crw work continue show (--slug <slug> | --objective <text> | --session <id>) [--cwd <path>]
+  crw work continue validate (--slug <slug> | --objective <text> | --session <id>) [--cwd <path>]
+  crw work continue steer --session <id> --batch-json <path-or-json> [--cwd <path>]
+  crw work continue add-criterion --session <id> --criterion <text> [--surface logic|web|tui|desktop] [--presented native] [--cwd <path>]
+  crw work continue add-work-phase --session <id> --id <id> --title <text> [--depends-on <id>]... [--cwd <path>]
+  crw work continue ready (--slug <slug> | --objective <text> | --session <id>) [--json] [--cwd <path>]
+  crw work continue add-task --session <id> --work-phase <id> --id <id> --title <text> [--depends-on <task-id>]... [--cwd <path>]
+  crw work continue complete-task --session <id> --work-phase <id> --id <id> --outcome <text> [--cwd <path>]
+  crw work continue meet-criterion --session <id> --id <id> --evidence <text> [--cwd <path>]
+  crw work continue ask --session <id> --id <id> --question <text> [--recommendation <text>] [--option <text>]... [--work-phase <id>]... [--cwd <path>]
+  crw work continue decide --session <id> --id <id> --answer <text> [--cwd <path>]
+  crw work continue --help
 
 Notes:
   Mutating verbs require --session <id>; show, validate, and ready are read-only.

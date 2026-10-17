@@ -64,7 +64,7 @@ func ParseScanCliArgs(argv []string, cwd string) ScanCliParsed {
 		return ScanCliParsed{Args: a}
 	}
 	if a.Action != ScanActionRecord {
-		return ScanCliParsed{Error: fmt.Sprintf("unknown scan action '%s'; run crw pabcd scan --help", a.Action)}
+		return ScanCliParsed{Error: fmt.Sprintf("unknown scan action '%s'; run crw work scan --help", a.Action)}
 	}
 	for i := 1; i < len(argv); i++ {
 		flag := argv[i]
@@ -264,9 +264,9 @@ func scanNumber(raw string) float64 {
 
 const scanMaxLevelError = "scan record: --dim cannot set 'max'. To make a dimension count for I->P, ask a " +
 	"question, record the answer, and attribute it: " +
-	"`crw pabcd scan record --session <id> --derive --map <questionId>=<dimension>`. " +
+	"`crw work scan record --session <id> --derive --map <questionId>=<dimension>`. " +
 	"The gate re-reads the interview ledger, so a level with no answered question " +
 	"behind it does not open P. If the interview genuinely is NOT complete, bypass it " +
 	"deliberately: write {\"from\":\"I\",\"to\":\"P\",\"did\":\"<reason>\",\"override\":true} to a " +
-	"file and run `crw pabcd orchestrate P --session <id> --attest-file <path>` (the file flag " +
+	"file and run `crw work state P --session <id> --attest-file <path>` (the file flag " +
 	"is required on Windows) so the bypass is attested and recorded."

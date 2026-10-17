@@ -5,7 +5,7 @@
 close guarantees: the final gate, the crosscheck, then the close. The Go side is `internal/flow/ops/{finalgate,qa,crosscheck,lane_close,audit}.go`,
 `internal/flow/reviewadapter` and `internal/flow/audit`.
 
-A new `project-lane` run of the same plan can retry a failed milestone close without rebuilding integrated nodes. Before admitting its build lanes, `crw.reuseIntegrated(milestone, node)` checks the relay's current acceptance and integration observations, the unchanged node slice and approved design, and the earlier run's acceptance and integration records against the current target. A proven node is recorded as landed with its source run, acceptance and batch commit; a pending node still runs its ordinary lane. Missing proof for an integrated node refuses reuse. A reused landing also carries its source run's original review base: a source that re-planned after landing keeps the first base the milestone judged under, which the rerun's gate, crosscheck and close keep as their range base - separately from the latest design revision's own base tip - and the design decisions an issue references must be the same decisions, not only the same ids, or the reuse is refused. The new run makes its own final-gate and crosscheck evidence and audits the original acceptances; the earlier failed gate remains in its original journal. Repeating the close does not turn a failed check into a pass.
+A new `project-lane` run of the same plan can retry a failed milestone close without rebuilding integrated nodes. Before admitting its build lanes, `crw.reuseIntegrated(milestone, node)` checks the relay's current acceptance and integration observations, the unchanged node slice and approved design, and the earlier run's acceptance and integration records against the current target. A proven node is recorded as landed with its source run, acceptance and batch commit; a pending node still runs its ordinary lane. Missing proof for an integrated node refuses reuse. A reused landing also carries its source run's original review base: a source that re-planned after landing keeps the first base the milestone judged under, which the rerun's gate, crosscheck and close keep as their range base - separately from the latest design revision's own base tip - and the design decisions an issue references must be the same decisions, not only the same ids, or the reuse is refused. The new run makes its own final-gate and crosscheck evidence and audits the original acceptances; the earlier failed gate remains in its original journal. Its crosscheck inherits executor receipts from the source runs rather than treating the reused nodes as having no executor. Repeating the close does not turn a failed check into a pass.
 
 **The final gate.** `crw.finalGate(milestone)` pins the integrated head H (the tip of the integration target now) and judges the
 evidence that stands on it: the test evidence, a verification of H for each command of the plan's required set (`crw.verify` with no node;
@@ -58,12 +58,16 @@ criteria, the decisions, which live in the journal's ledger row and not in the c
 word), and the op runs both passes itself, in Go, through the review adapter (`reviewadapter.Adapter` over the engine's command line,
 answering `reviewadapter.AnswerSchema`): no agent call, no reviewer thread and no spawn decision.
 The op appends the EXECUTOR RECEIPTS section to each prompt: for every node of the milestone it reads the newest completed `crw.unitCheck`
-row of role `unit-check` in the run's journal and its executor receipt (an `accepted` copy is read and its sha256 checked; `not_assigned`,
-and `no_executor` for a node with no unit check in the run, are listed and block nothing), writes the receipt bytes to
-`<run dir>/crosscheck/<milestone>-r<round>-receipts.md`, outside both checkouts, and names that file, its sha256 and each node's state and
-digest, so the engine checks each criterion's red-first and mutation-red lines against the receipts. A receipt that cannot be handed over
-holds the round before any pass (`crosscheck_receipt_missing`, `crosscheck_receipt_unverified`, `crosscheck_receipt_not_copied`,
-`crosscheck_receipt_mismatch`, the row naming the node). The prompt carries refs, never diff bytes: one over `CrosscheckPromptLimit`
+row of role `unit-check` in the run's journal and its executor receipt; a node the run reused (`crw.reuseIntegrated`, which has no unit
+check of this run) reads instead the newest unit check of the journal the reuse record names (`source_run`) that matches the node and its
+accepted head (an `accepted` copy is read and its sha256 checked; `not_assigned`, and `no_executor` for a node not reused with no unit
+check in the run, are listed and block nothing), writes the receipt bytes to
+`<run dir>/crosscheck/<milestone>-r<round>-receipts.md`, outside both checkouts - a reused node's block naming its source run, unit-check
+call and acceptance call - and names that file, its sha256 and each node's state and digest, so the engine checks each criterion's
+red-first and mutation-red lines against the receipts. A receipt that cannot be handed over holds the round before any pass
+(`crosscheck_receipt_missing`, also when a reused node's source journal cannot be read or its unit check or accepted copy is missing;
+`crosscheck_receipt_unverified`; `crosscheck_receipt_not_copied`, also when a reused node's accepted receipt names no copy - the original
+path is never re-read; `crosscheck_receipt_mismatch`, the row naming the node). The prompt carries refs, never diff bytes: one over `CrosscheckPromptLimit`
 (120 KiB, since the engine takes it as one command-line word) is not sent (`crosscheck_prompt_too_large`). The op serves round 1 only: a
 prior verdict, or another round (an explicit 0 included; a round not given is 1), is refused `crosscheck_prior_invalid`.
 

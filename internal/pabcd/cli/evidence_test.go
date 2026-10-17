@@ -86,7 +86,7 @@ func TestCLIOracle(t *testing.T) {
 }
 
 func cliNames(s string) string {
-	return strings.ReplaceAll(strings.ReplaceAll(s, ".codexclaw", ".crw"), "cxc memory allow-write", "crw pabcd memory allow-write")
+	return strings.ReplaceAll(strings.ReplaceAll(s, ".codexclaw", ".crw"), "cxc memory allow-write", "crw work memory allow-write")
 }
 
 func runOracleCase(t *testing.T, cwd, id string) any {
