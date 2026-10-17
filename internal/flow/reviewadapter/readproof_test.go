@@ -195,7 +195,6 @@ func TestCommandReadsCheckout(t *testing.T) {
 		"a final && both ran":               "git status --short && sed -n 1,20p source.go",
 		"a final && of a neutral then read": "printf 'header\n' && cat README.md",
 		"git show a revision":               "git show HEAD",
-		"git show a patch of a path":        "git show HEAD -- source.go",
 		"git diff a path":                   "git diff -- source.go",
 		"git diff a range":                  "git diff HEAD~1",
 		"git diff the worktree":             "git diff",
@@ -206,6 +205,68 @@ func TestCommandReadsCheckout(t *testing.T) {
 			}
 		})
 	}
+	t.Run("git show pathspecs", func(t *testing.T) {
+		// Object type is evidence from a real repository. Keep the separate
+		// non-repository cases below on their original plain checkout.
+		repo := revisionRepo1618(t)
+		oid := func(object string) string {
+			t.Helper()
+			out, err := exec.Command("git", "-C", repo, "rev-parse", "--verify", object).Output()
+			if err != nil {
+				t.Fatal(err)
+			}
+			return strings.TrimSpace(string(out))
+		}
+		tree, blob, commit := oid("HEAD^{tree}"), oid("HEAD:source.go"), oid("HEAD")
+		for _, c := range []struct {
+			name, command string
+			read          bool
+		}{
+			{"reads: git show a patch of a path", "git show HEAD -- source.go", true},
+			{"reads: no explicit object", "git show -- source.go", true},
+			{"reads: a commit hash", "git show " + commit + " -- source.go", true},
+			{"reads: several commits", "git show HEAD HEAD~1 -- source.go", true},
+			{"reads: independent revision blob evidence", "git show HEAD:source.go " + tree + " -- README.md", true},
+			{"not a read: a tree expression with a pathspec", "git show 'HEAD^{tree}' -- README.md", false},
+			{"not a read: a tree hash with a pathspec", "git show " + tree + " -- README.md", false},
+			{"not a read: a directory with a pathspec", "git show HEAD:sub -- README.md", false},
+			{"not a read: another file's blob hash with a pathspec", "git show " + blob + " -- README.md", false},
+			{"not a read: a commit followed by a tree", "git show HEAD " + tree + " -- README.md", false},
+			{"not a read: a tree followed by a commit", "git show " + tree + " HEAD -- README.md", false},
+			{"not a read: a directory followed by a commit", "git show HEAD:sub HEAD -- README.md", false},
+			{"not a read: an unknown object", "git show no-such-ref-1633 -- README.md", false},
+			{"not a read: a commit and an unknown object", "git show HEAD no-such-ref-1633 -- README.md", false},
+		} {
+			t.Run(c.name, func(t *testing.T) {
+				if got := commandReadsCheckout(t.Context(), c.command, repo); got != c.read {
+					t.Fatalf("%q reads the checkout: %v, want %v", c.command, got, c.read)
+				}
+			})
+		}
+		t.Run("noncommit pathspecs do not satisfy the read floor", func(t *testing.T) {
+			var events []string
+			for i, object := range []string{"HEAD^{tree}", tree, blob} {
+				out, err := exec.Command("git", "-C", repo, "show", object, "--", "README.md").Output()
+				if err != nil {
+					t.Fatalf("git show %s: %v", object, err)
+				}
+				if i < 2 && !strings.HasPrefix(string(out), "tree "+object+"\n") {
+					t.Fatalf("expected a tree listing, got %q", out)
+				}
+				if i == 2 && string(out) != "package x\n" {
+					t.Fatalf("expected source.go's blob, got %q", out)
+				}
+				events = append(events, astraCommandLine(t, fmt.Sprintf("object_%d", i),
+					"git show "+q(object)+" -- README.md"))
+			}
+			stdout := strings.Join(events, "\n") + "\n" + astraStream(`{"verdict":"verified","findings":[]}`)
+			res := checkForWorktree(t, AstraProfile("/run/answer.strict.json"), repo, fakeRun{stdout: stdout}, 50*time.Second)
+			wantState(t, res, StateNotRead)
+			if res.Commands != 0 || res.Verdict != "" || len(res.Findings) != 0 {
+				t.Fatalf("noncommit pathspecs counted as read evidence: %+v", res)
+			}
+		})
+	})
 	for name, command := range map[string]string{
 		"pwd":                                     "pwd",
 		"date":                                    "date",
