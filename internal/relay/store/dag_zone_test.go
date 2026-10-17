@@ -24,6 +24,14 @@ import (
 // zoneInventory is the expected column list of every zone table, written from the contract
 // (4.5, 4.3, 2.2, 2.3, 6.2, 2.4) and not read back from the DDL under test.
 var zoneInventory = map[string][]string{
+	// CRW-1339: additive host registry, immutable assignments and independent heavy permits.
+	"executor_hosts":             {"host_id", "config_json", "enabled", "session_limit", "test_slots", "test_cpu_budget", "observation_json", "received_at", "checked"},
+	"executor_host_events":       {"seq", "host_id", "kind", "detail_json", "recorded_at"},
+	"executor_host_incarnations": {"host_id", "incarnation", "boot_id"},
+	"executor_assignments":       {"execution_id", "plan_id", "node_id", "host_id", "incarnation", "task_digest", "admission_json", "grant_json", "slot_id", "state", "proof", "placement_json", "recorded_at"},
+	"executor_heavy_permits":     {"permit_id", "execution_id", "command_id", "cpu", "state", "proof"},
+	"executor_toolchain_plans":   {"plan_id", "host_id", "manifest_json", "profile_digest", "state", "readback_json", "recorded_at"},
+
 	"dag_plans":                    {"plan_id", "project_key", "created_by_task_id", "created_at"},
 	"dag_plan_revisions":           {"plan_id", "revision_no", "parent_revision_no", "request_id", "request_digest", "change_json", "state_digest", "coordinator_epoch", "author_task_id", "recorded_at"},
 	"dag_nodes":                    {"plan_id", "node_id", "introduced_rev", "retired_rev", "slice_digest", "issue_key", "node_kind", "title", "criteria_set_digest", "supersedes_node_id"},

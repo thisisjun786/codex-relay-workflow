@@ -174,6 +174,9 @@ func modes() []mode {
 	help := func(c invocation) int { usage(c.stdout); return 0 }
 	showVersion := func(c invocation) int { fmt.Fprintln(c.stdout, version); return 0 }
 	return []mode{
+		{"host", true, func(c invocation) int { return flowcli.HostRun(c.ctx, c.args, c.stdout, c.stderr) }},
+		{"executor", true, func(c invocation) int { return flowcli.ExecutorRun(c.ctx, c.args, c.stdout, c.stderr) }},
+		{"worker", true, func(c invocation) int { return flowcli.WorkerRun(c.ctx, c.args, os.Stdin, c.stdout, c.stderr) }},
 		{"relay", true, func(c invocation) int { return relay(c.ctx, "crw relay", c.args, c.stdout, c.stderr) }},
 		{"bridge", true, func(c invocation) int { return bridge(c.ctx, c.program, c.args) }},
 		{"hook", true, func(c invocation) int {

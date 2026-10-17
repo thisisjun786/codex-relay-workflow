@@ -529,6 +529,9 @@ func (c *Capacity) Release(ctx context.Context, in Release) (contract.OrderedObj
 			already = row
 			return nil
 		}
+		if err := c.hostSlotReturnable(ctx, row.SlotID); err != nil {
+			return err
+		}
 		if _, err := c.Store.ReleaseExecutionSlot(ctx, row.SlotID, released, now, in.ReleasedBy, in.Reason, held); err != nil {
 			return err
 		}
