@@ -676,3 +676,302 @@ func TestExecutorAdmissionFailurePreservesRecoveryHold(t *testing.T) {
 		t.Errorf("the original recovery hold was not preserved: %v", ids)
 	}
 }
+
+func TestExecutorNativeUnboundCreationEvidence1651(t *testing.T) {
+	admission, err := executor.Freeze(enTask("n1", "build it", Pair{Model: "requested", Effort: "high"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, tc := range map[string]struct {
+		preparedThread string
+		request        string
+	}{
+		"fork on a known source":    {preparedThread: "source-session", request: EvForkRequested},
+		"thread on a known source":  {preparedThread: "source-session", request: EvThreadRequested},
+		"thread without any source": {preparedThread: "", request: EvThreadRequested},
+		"fork without any source":   {preparedThread: "", request: EvForkRequested},
+	} {
+		t.Run(name, func(t *testing.T) {
+			prepared := Event{Seq: 1, RunID: "run", CallID: "call", Kind: KindCall, Op: "agent", Event: EvPrepared,
+				Data: map[string]any{"executor_admission": admission, "thread_id": tc.preparedThread,
+					"configured_model": "source-model", "configured_effort": "low"}}
+			request := Event{Seq: 2, RunID: "run", CallID: "call", Kind: KindCall, Op: "agent", Event: tc.request,
+				Data: map[string]any{"thread_id": tc.preparedThread}}
+			terminal := Event{Seq: 3, RunID: "run", CallID: "call", Kind: KindCall, Op: "agent", Event: EvOutcomeUnknown}
+			admission, attempts, err := executorNativeEvidence([]Event{prepared, request, terminal}, terminal)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(attempts) != 1 {
+				t.Fatalf("got %d attempts, want one", len(attempts))
+			}
+			attempt := attempts[0]
+			p := attempt.provenance
+			if attempt.key != (executorNativeKey{}) {
+				t.Fatalf("unknown evidence invented a native key: %+v", attempt.key)
+			}
+			if p.Provider != executor.Codex || p.NativeSession.Value != "" || p.NativeSession.UnknownReason == "" {
+				t.Fatalf("the lost creation did not record an unknown session: %+v", p)
+			}
+			if p.NativeTurns == nil || len(p.NativeTurns) != 0 {
+				t.Fatalf("the lost creation recorded turns: %+v", p.NativeTurns)
+			}
+			if p.Model.Value != "" || p.Model.UnknownReason == "" || p.Effort.Value != "" || p.Effort.UnknownReason == "" {
+				t.Fatalf("the lost creation kept the source pair: %+v", p)
+			}
+			raw, err := json.Marshal(p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var m map[string]any
+			if err := json.Unmarshal(raw, &m); err != nil {
+				t.Fatal(err)
+			}
+			session, ok := m["native_session"].(map[string]any)
+			if !ok {
+				t.Fatalf("native_session = %v", m["native_session"])
+			}
+			if _, present := session["value"]; present {
+				t.Fatalf("the unknown session serializes a value: %s", raw)
+			}
+			if _, err := executor.NewResult(admission, "incomplete", executor.Payload{}, p); err != nil {
+				t.Fatalf("the unknown evidence is not a valid executor result: %v", err)
+			}
+		})
+	}
+}
+
+func TestExecutorNativeCreationBinding1651(t *testing.T) {
+	admission, err := executor.Freeze(enTask("n1", "build it", Pair{Model: "requested", Effort: "high"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, started := range map[string]string{"thread": EvThreadStarted, "fork": EvForkStarted} {
+		t.Run(name, func(t *testing.T) {
+			prepared := Event{Seq: 1, RunID: "run", CallID: "call", Kind: KindCall, Op: "agent", Event: EvPrepared,
+				Data: map[string]any{"executor_admission": admission, "thread_id": "source-session",
+					"configured_model": "source-model", "configured_effort": "low"}}
+			events := []Event{prepared,
+				{Seq: 2, RunID: "run", CallID: "call", Kind: KindCall, Op: "agent", Event: map[string]string{EvThreadStarted: EvThreadRequested, EvForkStarted: EvForkRequested}[started],
+					Data: map[string]any{"thread_id": "source-session"}},
+				{Seq: 3, RunID: "run", CallID: "call", Kind: KindCall, Op: "agent", Event: started,
+					Data: map[string]any{"thread_id": "created-session", "model": "created-model", "effort": "high"}},
+				{Seq: 4, RunID: "run", CallID: "call", Kind: KindCall, Op: "agent", Event: EvOutcomeUnknown},
+			}
+			_, attempts, err := executorNativeEvidence(events, events[len(events)-1])
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(attempts) != 1 {
+				t.Fatalf("got %d attempts, want one", len(attempts))
+			}
+			p := attempts[0].provenance
+			if p.NativeSession.Value != "created-session" || p.NativeSession.UnknownReason != "" ||
+				len(p.NativeTurns) != 0 || p.Model.Value != "created-model" || p.Effort.Value != "high" {
+				t.Fatalf("the created session did not win: %+v", p)
+			}
+		})
+		t.Run(name+" with a turn", func(t *testing.T) {
+			prepared := Event{Seq: 1, RunID: "run", CallID: "call", Kind: KindCall, Op: "agent", Event: EvPrepared,
+				Data: map[string]any{"executor_admission": admission, "thread_id": "source-session",
+					"configured_model": "source-model", "configured_effort": "low"}}
+			events := []Event{prepared,
+				{Seq: 2, RunID: "run", CallID: "call", Kind: KindCall, Op: "agent", Event: map[string]string{EvThreadStarted: EvThreadRequested, EvForkStarted: EvForkRequested}[started],
+					Data: map[string]any{"thread_id": "source-session"}},
+				{Seq: 3, RunID: "run", CallID: "call", Kind: KindCall, Op: "agent", Event: started,
+					Data: map[string]any{"thread_id": "created-session", "model": "created-model", "effort": "high"}},
+				{Seq: 4, RunID: "run", CallID: "call", Kind: KindCall, Op: "agent", Event: EvTurnStarted,
+					Data: map[string]any{"turn_id": "created-turn"}},
+				{Seq: 5, RunID: "run", CallID: "call", Kind: KindCall, Op: "agent", Event: EvOutcomeUnknown},
+			}
+			_, attempts, err := executorNativeEvidence(events, events[len(events)-1])
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(attempts) != 1 || attempts[0].provenance.NativeSession.Value != "created-session" ||
+				len(attempts[0].provenance.NativeTurns) != 1 || attempts[0].provenance.NativeTurns[0] != "created-turn" {
+				t.Fatalf("the turn did not attach to the created session: %+v", attempts)
+			}
+		})
+	}
+	t.Run("a turn without a started session is an error", func(t *testing.T) {
+		prepared := Event{Seq: 1, RunID: "run", CallID: "call", Kind: KindCall, Op: "agent", Event: EvPrepared,
+			Data: map[string]any{"executor_admission": admission, "thread_id": "source-session",
+				"configured_model": "source-model", "configured_effort": "low"}}
+		events := []Event{prepared,
+			{Seq: 2, RunID: "run", CallID: "call", Kind: KindCall, Op: "agent", Event: EvForkRequested,
+				Data: map[string]any{"thread_id": "source-session"}},
+			{Seq: 3, RunID: "run", CallID: "call", Kind: KindCall, Op: "agent", Event: EvTurnStarted,
+				Data: map[string]any{"turn_id": "stray-turn"}},
+			{Seq: 4, RunID: "run", CallID: "call", Kind: KindCall, Op: "agent", Event: EvOutcomeUnknown},
+		}
+		if _, _, err := executorNativeEvidence(events, events[len(events)-1]); err == nil {
+			t.Fatal("a turn after a creation request bound the prepared source")
+		}
+	})
+}
+
+func TestExecutorNativeGenerationBoundary1651(t *testing.T) {
+	admission, err := executor.Freeze(enTask("n1", "build it", Pair{Model: "requested", Effort: "high"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared := func(seq int) Event {
+		return Event{Seq: seq, RunID: "run", CallID: "call", Kind: KindCall, Op: "agent", Event: EvPrepared,
+			Data: map[string]any{"executor_admission": admission, "thread_id": "source-session",
+				"configured_model": "configured", "configured_effort": "low"}}
+	}
+	fork := func(seq int, run, call string) Event {
+		return Event{Seq: seq, RunID: run, CallID: call, Kind: KindCall, Op: "agent", Event: EvForkRequested,
+			Data: map[string]any{"thread_id": "source-session"}}
+	}
+	terminal := func(seq int) Event {
+		return Event{Seq: seq, RunID: "run", CallID: "call", Kind: KindCall, Op: "agent", Event: EvOutcomeUnknown}
+	}
+	for name, events := range map[string][]Event{
+		"an old generation's request":  {prepared(1), fork(2, "run", "call"), prepared(3), terminal(4)},
+		"another call's request":       {prepared(1), fork(2, "run", "other"), terminal(3)},
+		"another run's request":        {prepared(1), fork(2, "other", "call"), terminal(3)},
+		"a request after the terminal": {prepared(1), terminal(2), fork(3, "run", "call")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			term := events[len(events)-1]
+			if term.Event != EvOutcomeUnknown {
+				term = terminal(2)
+			}
+			_, attempts, err := executorNativeEvidence(events, term)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(attempts) != 1 {
+				t.Fatalf("got %d attempts, want the one known session", len(attempts))
+			}
+			p := attempts[0].provenance
+			if p.NativeSession.Value != "source-session" || p.Model.Value != "configured" || p.Effort.Value != "low" {
+				t.Fatalf("the prepared fallback did not apply: %+v", p)
+			}
+		})
+	}
+}
+
+type unboundExecutorFork1651 struct {
+	*treeFake
+	forks int
+}
+
+func (*unboundExecutorFork1651) ExecutorKind() executor.Kind { return executor.Codex }
+
+func (b *unboundExecutorFork1651) Place(req PlaceRequest) (Placement, error) {
+	if req.Continues != nil {
+		return Placement{Kind: PlaceRestore, Path: "/w/restored", Fork: true}, nil
+	}
+	return b.treeFake.Place(req)
+}
+
+func (b *unboundExecutorFork1651) ForkThread(context.Context, ForkSpec) (ThreadInfo, error) {
+	b.forks++
+	return ThreadInfo{}, &TransportError{Err: errors.New("fork response lost")}
+}
+
+func TestExecutorNativeUnboundFork1651(t *testing.T) {
+	const body = `const b = await agent.call('build it', { agentType: 'executor', node: 'n1', label: 'build' })
+return await agent.call('build it', { resume: b, label: 'continue' })`
+	for _, dj := range deathJournals(t) {
+		t.Run(dj.name, func(t *testing.T) {
+			first, reopen := dj.open(t)
+			h := newHarness(t)
+			b := &unboundExecutorFork1651{treeFake: newTreeFake()}
+			h.fake = b.Fake
+			h.cfg.Backend = b
+			h.cfg.Journal = first
+			h.cfg.ExecutorAdmission = enResolver(enTask("n1", "build it", Pair{Model: "claude-fake-haiku", Effort: "xhigh"}), nil)
+			res := h.run(body)
+			if got := value[map[string]any](t, res); got["status"] != StatusUnknown {
+				t.Fatalf("the lost fork did not end unknown: %v", got)
+			}
+			if b.forks != 1 {
+				t.Fatalf("forks = %d", b.forks)
+			}
+			var continueID string
+			for _, c := range res.Calls {
+				if c.Label == "continue" {
+					continueID = c.CallID
+				}
+			}
+			if continueID == "" {
+				t.Fatal("the continuation call was not recorded")
+			}
+			rows := CallEvents(first, continueID)
+			if got := eventsOf(rows); got != "prepared,fork_requested,outcome_unknown" {
+				t.Fatalf("continuation events: %s", got)
+			}
+			source := rowStr(rows[0].Data, "thread_id")
+			if source == "" || rowStr(rows[1].Data, "thread_id") != source {
+				t.Fatalf("prepared %v and request %v name different sessions", rows[0].Data, rows[1].Data)
+			}
+			terminal := rows[len(rows)-1]
+			before, err := json.Marshal(rows)
+			if err != nil {
+				t.Fatal(err)
+			}
+			j := reopen()
+			h.cfg.Journal = j
+			requests := len(b.Requests())
+			check := func(pass int) {
+				t.Helper()
+				var natives []Event
+				for _, ev := range flowRows(j, "executor_native") {
+					if ev.CallID == continueID {
+						natives = append(natives, ev)
+					}
+				}
+				if len(natives) != 1 {
+					t.Fatalf("pass %d: %d continuation provenance rows, want one", pass, len(natives))
+				}
+				native := natives[0]
+				if rowInt(native.Data, "native_call_seq") != terminal.Seq || rowStr(native.Data, "terminal_event") != EvOutcomeUnknown {
+					t.Fatalf("pass %d: provenance does not name the original terminal: %+v", pass, native)
+				}
+				var p executor.Provenance
+				enDecode1639(t, native.Data["provenance"], &p)
+				if p.NativeSession.Value != "" || p.NativeSession.UnknownReason == "" {
+					t.Fatalf("pass %d: the lost fork recorded a session: %+v", pass, p)
+				}
+				if p.NativeTurns == nil || len(p.NativeTurns) != 0 {
+					t.Fatalf("pass %d: the lost fork recorded turns: %+v", pass, p.NativeTurns)
+				}
+				var a executor.Admission
+				enDecode1639(t, native.Data["admission"], &a)
+				if _, err := executor.NewResult(a, "incomplete", executor.Payload{}, p); err != nil {
+					t.Fatalf("pass %d: the unknown evidence is not valid: %v", pass, err)
+				}
+				var original executor.Admission
+				enDecode1639(t, rows[0].Data["executor_admission"], &original)
+				if a.TaskDigest != original.TaskDigest {
+					t.Fatalf("pass %d: the admission digest changed", pass)
+				}
+				after, err := json.Marshal(CallEvents(j, continueID))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if string(before) != string(after) {
+					t.Fatalf("pass %d: replay rewrote the journal evidence", pass)
+				}
+			}
+			check(0)
+			for pass := 1; pass <= 2; pass++ {
+				h.cfg.Resume = &ResumeOptions{}
+				if got := value[map[string]any](t, h.run(body)); got["status"] != StatusUnknown {
+					t.Fatalf("replay %d changed the outcome: %v", pass, got)
+				}
+				if b.forks != 1 {
+					t.Fatalf("replay %d forked again: %d", pass, b.forks)
+				}
+				if got := len(b.Requests()); got != requests {
+					t.Fatalf("replay %d sent requests: %d -> %d", pass, requests, got)
+				}
+				check(pass)
+			}
+		})
+	}
+}
