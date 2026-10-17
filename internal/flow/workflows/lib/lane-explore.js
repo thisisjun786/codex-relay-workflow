@@ -31,6 +31,10 @@ function chunks(list, n) {
 // neither is opts.head: the head the explorer calls are placed at when the context names none.
 export async function explore(kind, questions, ctx, opts) {
   const plan = await crw.exploreRoute(kind, ctx, questions)
+  if (kind === 'research' && ctx.source_call && (!plan.source || !plan.source.head)) {
+    throw new Error('research_source_unavailable: no snapshot for the asking executor')
+  }
+  const packetCtx = kind === 'research' ? { ...ctx, source: plan.source } : ctx
   const spawn = plan.routes.filter((r) => r.route === 'spawn')
   const ends = (opts && opts.endConditions) || []
   const endsFor = spawn.length && ends.length ? spawn[0].digest : null
@@ -49,18 +53,18 @@ export async function explore(kind, questions, ctx, opts) {
   // a background explorer (CRW-1466) is labelled explore-bg:<milestone>:<digest12>, so a reader of the explore: labels (an open
   // question's, a research or evidence question's) never takes one for its own; every other kind keeps its label
   const prefix = kind === 'background' ? 'explore-bg:' : 'explore:'
-  // the head the explorers read: the context's (it is part of the route, and of the reuse key of a re-plan's or an evidence question),
-  // else opts.head, a head the calls are placed at that the route does not key on (the first DESIGN's design head)
-  const callHead = ctx.head || (opts && opts.head) || undefined
+  // Research reads the asking executor's retained pending tree, including close fixes over ctx.head.
+  // Other questions read the context's head, else opts.head (the first DESIGN's design head).
+  const callHead = (kind === 'research' && plan.source && plan.source.head) || ctx.head || (opts && opts.head) || undefined
   // the questions whose explorer was null_model twice (CRW-1571), by digest, and the last retry that was
   const missing = {}
   let lastMissing = null
   const label = (r) => prefix + (ctx.node || ctx.milestone) + ':' + r.digest.slice(0, 12)
   const ask = (r, suffix) => r.digest === endsFor
-    ? agent.call(explorerPacket(kind, r, ctx, ends), {
+    ? agent.call(explorerPacket(kind, r, packetCtx, ends), {
       agentType: 'explorer', node: ctx.node || undefined, head: callHead, schema: FINDINGS_END, label: label(r) + suffix,
     })
-    : agent.call(explorerPacket(kind, r, ctx), {
+    : agent.call(explorerPacket(kind, r, packetCtx), {
       agentType: 'explorer', node: ctx.node || undefined, head: callHead, schema: FINDINGS, label: label(r) + suffix,
     })
   const settle = (r, call) => {

@@ -151,7 +151,7 @@ async function nodeLane(n, rel, sig) {
       // SP-EXPL-2: the question is answered and the SAME executor thread goes on; a research request is never a tier step. The
       // research continuations of the tier are counted by crw.exploreRoute alone (spawned and reused alike, CRW-1470): past them
       // the route is escalate, and its reason (research_cap) is the detail
-      const asked = await crw.explore('research', [{ id: ex.callId, question: ex.output.research_question, scope: '', files_needed: null }], { node, tier, regions: plan.regions })
+      const asked = await crw.explore('research', [{ id: ex.callId, question: ex.output.research_question, scope: '', files_needed: null }], { node, tier, regions: plan.regions, source_call: ex.callId, findings: last.findings })
       if (asked.failed) {
         await crw.hold(node, { reason: asked.failed.reason || asked.failed.status, call: asked.failed.callId, source: 'explorer' })
         return { node, state: 'held', reason: asked.failed.reason, call: asked.failed.callId }
