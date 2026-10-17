@@ -237,3 +237,57 @@ func TestScriptPageKeepsTheAppServerBackendForTests(t *testing.T) {
 		t.Errorf("the App Server backend section does not say it is the backend of tests and shadow runs:\n%.400s", section)
 	}
 }
+
+// CRW-1614: these checks hold the documented wait protocol, not host timing.
+// The actual exec/session/cell behavior is measured separately in isolated Codex sessions.
+func childWaitInstructionProblems(section string) []string {
+	flat := normalized(section)
+	var problems []string
+	for _, rule := range []struct{ name, pattern string }{
+		{"explicit dispatch wait", "`crw flow dispatched [^`]*--wait 120`"},
+		{"handoff language", `(?i)progress messages[^.]*handoff's ` + "`Language:`" + ` line`},
+		{"process continuation", `(?i)continue that same process with ` + "`write_stdin\\(session_id=.*?chars=\"\", yield_time_ms=300000\\)`"},
+		{"cell continuation", `(?i)cell ID, use its ` + "`wait`" + ` continuation for that same cell`},
+		{"no short polling driver", `(?i)never replace it with a shell or JavaScript loop of short ` + "`flow next`" + ` calls`},
+		{"long agent wait", "`wait_agent`" + `[^.]*timeout_ms=600000[^.]*` + "`crw flow next RUN --wait 600 --json`"},
+		{"exec yield window", "`exec_command`" + `[^.]*` + "`yield_time_ms=30000`"},
+		{"retry semantics", `(?i)does not retry a ` + "`retry`" + ` reply`},
+		{"running empty output", `(?i)empty output with a live ` + "`session_id`" + ` as a command that is still running`},
+		{"one pending command", `(?i)at most one ` + "`next`" + ` command in flight`},
+	} {
+		if !regexp.MustCompile(rule.pattern).MatchString(flat) {
+			problems = append(problems, rule.name)
+		}
+	}
+	return problems
+}
+
+func TestChildSkillWaitsForTheSameHostCommand(t *testing.T) {
+	section := sectionOf(readRepoText(t, runSkillFile), "Run a milestone with a flow run")
+	if problems := childWaitInstructionProblems(section); len(problems) > 0 {
+		t.Fatalf("%s lacks wait instructions: %s", runSkillFile, strings.Join(problems, ", "))
+	}
+	for _, tc := range []struct{ name, remove, want string }{
+		{"dispatch wait", "--wait 120", "explicit dispatch wait"},
+		{"handoff language", "`Language:`", "handoff language"},
+		{"process continuation", "write_stdin(", "process continuation"},
+		{"cell continuation", "its `wait` continuation", "cell continuation"},
+		{"short polling driver", "never replace it with a shell or JavaScript loop", "no short polling driver"},
+		{"long agent wait", "timeout_ms=600000", "long agent wait"},
+		{"retry semantics", "does not retry a `retry` reply", "retry semantics"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if !strings.Contains(section, tc.remove) {
+				t.Fatalf("fixture no longer contains %q", tc.remove)
+			}
+			broken := strings.ReplaceAll(section, tc.remove, "")
+			found := false
+			for _, problem := range childWaitInstructionProblems(broken) {
+				found = found || problem == tc.want
+			}
+			if !found {
+				t.Errorf("removing %q did not report %q", tc.remove, tc.want)
+			}
+		})
+	}
+}
