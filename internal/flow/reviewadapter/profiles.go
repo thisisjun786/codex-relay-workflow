@@ -2,6 +2,7 @@ package reviewadapter
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -36,9 +37,9 @@ type Profile struct {
 	Args func(req Request) ([]string, error)
 	// Ranged is set for a profile that judges a committed range: Check refuses a request that names no range (Base and Head).
 	Ranged bool
-	// Usage reads what the call read from the tool's stdout (Usage); ok is false when the output reports no usage. Nil: the tool
-	// reports none, and the record's usage is zero.
-	Usage func(stdout []byte, req Request) (u Usage, ok bool)
+	// Usage reads what the call read from the tool's stdout (Usage); ok is false when the output reports no usage. ctx is the
+	// caller's: a reader that runs commands stops when it ends. Nil: the tool reports none, and the record's usage is zero.
+	Usage func(ctx context.Context, stdout []byte, req Request) (u Usage, ok bool)
 	// MinCacheRead, MinCommands and MinElapsed are the floors of a pass that read the repository: an answer that would be ok is
 	// not_read when any floor is set and the call ran shorter than MinElapsed, its output reports no usage, or it read fewer cached
 	// tokens than MinCacheRead or ran fewer commands than MinCommands. A zero floor is no check, and a profile with none is never
