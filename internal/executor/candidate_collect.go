@@ -77,6 +77,14 @@ func CollectCandidate(ctx context.Context, a Admission, want Candidate, repo Reg
 	if _, err = git("init", "--template=", "."); err != nil {
 		return nil, err
 	}
+	// Select repository policy and hosted verification using controller enrollment,
+	// never a worker URL. Fetch can still use a controller-owned local mirror.
+	if repo.Forge != "github" {
+		return nil, collectionError("repository_mismatch", false, "unsupported registered forge")
+	}
+	if _, err = git("remote", "add", "origin", "https://github.com/"+repo.ID+".git"); err != nil {
+		return nil, err
+	}
 	if _, err = git("fetch", "--no-tags", "--no-recurse-submodules", "--", repo.Source, want.Branch+":refs/remotes/assigned/candidate"); err != nil {
 		return nil, collectionError("fetch_failed", true, "%v", err)
 	}
