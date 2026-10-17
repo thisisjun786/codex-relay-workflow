@@ -9,11 +9,15 @@
 //
 // The issue body is read for the fields of an issue line from a small fixed set of headings (see body.go):
 //
-//	criteria  a bullet list under 끝 조건, Done when, Acceptance or Acceptance criteria (a bullet indented under another is part of that
-//	          criterion); with none the issue title is the one criterion
-//	regions   a bullet list under 수정 범위, Edit regions or Regions (a path in backticks, or the first word; a trailing slash is a tree);
-//	          with none the issue has no region and the compile default applies
+//	criteria  bullet lists under 기준 (Acceptance criteria, Criteria), 정한 답 (Decided answer), 먼저 실패하게 쓸 시험 (Red tests),
+//	          then 끝 조건 (Done condition, Done when), using issue-ready's aliases in that kind order; Acceptance is also a done
+//	          condition. A bullet indented under another belongs to that criterion; with none the title is the one criterion.
+//	          Bodies using only legacy headings retain their previous order.
+//	regions   a bullet list under 편집 영역 (Edit regions), using issue-ready's aliases, or the legacy 수정 범위 and Regions
+//	          (a path in backticks, or the first word; a trailing slash is a tree); with none compile's default applies
 //	size      "size_fit: V", "size_reason: V" and "issue_size: V" lines under 크기, Size or Size fit; with none compile's defaults apply
+//
+// An out-of-scope heading and all its descendants are omitted until the next heading at the same or a shallower level.
 //
 // What cannot be mapped is a warning, never a refusal: a missing criteria section, a region compile would refuse, a size value outside
 // its closed set, a blocker that is closed, outside the milestone or the issue itself, a milestone that is closed or has no open issue,
@@ -190,7 +194,7 @@ func issueLine(is tracking.Issue, byRef map[string]tracking.Issue, project strin
 	line.Criteria = criteria(secs)
 	if len(line.Criteria) == 0 {
 		line.Criteria = []string{is.Title}
-		warn("criteria_missing", "the body has no bullet list under 끝 조건, Done when, Acceptance or Acceptance criteria: the title is the one criterion")
+		warn("criteria_missing", "the body has no bullet list under 기준, Acceptance criteria, Criteria, 정한 답, Decided answer, 먼저 실패하게 쓸 시험, Red tests, 끝 조건, Done condition, Done when or Acceptance: the title is the one criterion")
 	}
 	if items, _ := linesOf(secs, regionHeadings); len(items) > 0 {
 		seen := map[string]bool{}
