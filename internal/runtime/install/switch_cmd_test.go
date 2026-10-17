@@ -243,7 +243,7 @@ func TestInstallSwitchStatusSummarisesHookTrust(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write(".codex-plugin/plugin.json", `{"name":"crw","hooks":["./wiring/hooks/a.json"]}`)
+	write(".codex-plugin/plugin.json", `{"name":"crw","version":"0.4.0+aaaaaaaaaaaa","hooks":["./wiring/hooks/a.json"]}`)
 	write("wiring/hooks/a.json", `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"crw hook --plugin-launch; exit 0","timeout":10}]}]}}`)
 	entries, err := doctor.ListHookTrustEntries(root, "crw@crw")
 	if err != nil || len(entries) != 1 {
@@ -272,6 +272,13 @@ func TestInstallSwitchStatusSummarisesHookTrust(t *testing.T) {
 	if s := trust(); s.HookTrust.Trusted != 1 || s.HookTrust.Drifted != 0 || s.HookTrust.Untrusted != 0 {
 		t.Fatalf("trusted: %+v", s.HookTrust)
 	}
+	// A different payload's stamped version does not choose the switch's identity: the trust
+	// is the hook's hash, so a new derived suffix leaves it trusted (CRW-1582).
+	write(".codex-plugin/plugin.json", `{"name":"crw","version":"0.4.0+bbbbbbbbbbbb","hooks":["./wiring/hooks/a.json"]}`)
+	if s := trust(); s.HookTrust.Trusted != 1 || s.HookTrust.Drifted != 0 || s.HookTrust.Key != "crw@crw" {
+		t.Fatalf("restamped payload lost the hook's trust: %+v", s.HookTrust)
+	}
+	write(".codex-plugin/plugin.json", `{"name":"crw","version":"0.4.0+aaaaaaaaaaaa","hooks":["./wiring/hooks/a.json"]}`)
 	if err := os.WriteFile(filepath.Join(h.home, "config.toml"), []byte(switchConfig+section("sha256:other")), 0o600); err != nil {
 		t.Fatal(err)
 	}

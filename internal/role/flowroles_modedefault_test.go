@@ -6,7 +6,8 @@ import (
 )
 
 // CRW-1330 (evaluation 5a1a64c2 d2, criterion c1): a flow-only key the store holds in mode default is undecided, like a helper
-// role in mode default; only a key the store does not hold (or cannot use) takes the compiled default.
+// role in mode default; only a key the store does not hold (or cannot use) takes the compiled default. The exception is
+// unit-check (CRW-1589): a tool never inherits a session's pair, so its mode default entry takes the tool default.
 func TestCRW1330_FlowOnlyKeyInModeDefaultIsUndecided(t *testing.T) {
 	env, dir := home(t)
 	writeStore(t, dir, `{"roles": {"executor-t1": {"mode": "default"}, "critic": {"mode": "default", "effort": "high"}}}`)
@@ -23,8 +24,11 @@ func TestCRW1330_FlowOnlyKeyInModeDefaultIsUndecided(t *testing.T) {
 			t.Errorf("warnings lack %q:\n%s", want, joined)
 		}
 	}
-	if strings.Contains(joined, "the flow uses the compiled default") {
-		t.Errorf("a key in mode default is not at its compiled default:\n%s", joined)
+	// the unit check's mode default is the exception (CRW-1589): a tool never inherits a session's pair
+	for _, w := range snap.Warnings {
+		if strings.Contains(w, "the flow uses the compiled default") && !strings.Contains(w, "unit-check") {
+			t.Errorf("a key in mode default is not at its compiled default:\n%s", w)
+		}
 	}
 	// get answers the role as the flow reads it
 	view := helperCLIDecode[map[string]any](t, RunHelper(ParseHelperArgs([]string{"get", "executor-t1"}), env))

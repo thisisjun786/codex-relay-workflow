@@ -19,13 +19,9 @@ const (
 	AgentReviewerFinal = "reviewer-final"
 	AgentExplorer      = "explorer"
 	// AgentCritic is the design audit's role (CRW-1434): it audits the architect's design. It came after the other six, so a
-	// policy file may leave it out (see DefaultCriticPair).
+	// policy file may leave it out; the critic then inherits the reviewer's pair (CRW-1589).
 	AgentCritic = "critic"
 )
-
-// DefaultCriticPair is the critic's compiled default pair, the one a policy file's agent-roles section that declares no critic
-// gives it (every file written before the critic existed). It matches the role store's compiled default of the critic key.
-var DefaultCriticPair = RolePair{Model: "gpt-6.1-sol", Effort: "xhigh"}
 
 // AgentUnitCheck is the role the row of a unit check (the op crw.unitCheck) names in the flow journal. It is a name
 // only: a unit check is a tool run, not an agent call, so it is not one of AgentRoleNames and the policy file
@@ -86,7 +82,7 @@ func (r AliasRow) within(o AliasRow) bool {
 
 // AgentRoles is the agent-roles and agent-aliases sections of a policy file.
 type AgentRoles struct {
-	// Roles holds the six roles in AgentRoleNames order (a file without a critic has the filled one, DefaultCriticPair).
+	// Roles holds the six roles in AgentRoleNames order (a file without a critic has the filled one, the reviewer's pair).
 	Roles []AgentRole
 	// Aliases are the rows of the alias table, in the order the file states them; no two overlap unless one is
 	// strictly more specific, so a call matches the most specific row and the order decides nothing.
@@ -175,7 +171,7 @@ func CanonicalFamily(family string) (string, bool) {
 }
 
 // parseAgentSections reads agent-roles and agent-aliases from the policy document; nil when the file declares neither.
-// filled reports that agent-roles declares no critic, so the critic has its compiled default pair (DefaultCriticPair). retired names
+// filled reports that agent-roles declares no critic, so the critic inherits the reviewer's pair. retired names
 // the sections that hold the retired role key (an agent-roles entry, an agent-aliases row naming it), which were skipped.
 func parseAgentSections(data object) (declared *AgentRoles, filled bool, retired []string, err error) {
 	if !has(data, "agent-roles") {
@@ -192,7 +188,7 @@ func parseAgentSections(data object) (declared *AgentRoles, filled bool, retired
 		retired = append(retired, "agent-roles")
 	}
 	if _, ok := byName[AgentCritic]; !ok {
-		byName[AgentCritic] = AgentRole{Name: AgentCritic, Pair: RolePair{Model: DefaultCriticPair.Model, Effort: DefaultCriticPair.Effort}, Aliases: DefaultModelAliases(AgentCritic)}
+		byName[AgentCritic] = AgentRole{Name: AgentCritic, Pair: byName[AgentReviewer].Pair, Aliases: DefaultModelAliases(AgentCritic)}
 		filled = true
 	}
 	declared = &AgentRoles{}
@@ -221,9 +217,10 @@ func retiredKeyWarning(sections []string) string {
 	return fmt.Sprintf("the execution policy's %s %s %s: %s", strings.Join(sections, " and "), verb, AgentReviewerFinal, RetiredRoleKeyNotice)
 }
 
-// criticFilledWarning is the warning of an agent-roles section that declares no critic: the compiled default applies to it.
+// criticFilledWarning is the warning of an agent-roles section that declares no critic: the critic inherits the
+// reviewer's pair (CRW-1589).
 func criticFilledWarning() string {
-	return fmt.Sprintf("agent-roles declares no critic; the compiled default %s/%s applies", DefaultCriticPair.Model, DefaultCriticPair.Effort)
+	return "agent-roles declares no critic; the critic inherits the reviewer pair"
 }
 
 func (a *AgentRoles) byName() map[string]AgentRole {
@@ -436,7 +433,7 @@ func ignoredAgentSections(err error) string {
 }
 
 // checkAgentRoles checks whether the declared role pairs are approved by the allowed list
-// (of the roles the file declares; a filled critic, criticFilled, is the code's pair, not the file's). A flow run no longer reads agent-roles (CRW-1330: its pairs come
+// (of the roles the file declares; a filled critic, criticFilled, is the reviewer's pair, not one the file declared). A flow run no longer reads agent-roles (CRW-1330: its pairs come
 // from the helper role store), so a disagreement in a section nothing runs on is reported, never a refusal of the policy
 // the relay and the bridge run on.
 func checkAgentRoles(roles map[string]AgentRole, allowed map[string][]string, criticFilled bool) []string {

@@ -665,11 +665,11 @@ func TestKoreanLevelWordsOnlyInHierarchyTable(t *testing.T) {
 	}
 }
 
-// The two kinds of key in execution-roles.md are held by two different implementations: the host's
+// The three kinds of key in execution-roles.md are held by two different implementations: the host's
 // execution policy (internal/bridge/execution) accepts the relay roles and refuses any other key, and
-// the helper role store (internal/role) holds the agent roles, the four helper roles and the two
-// flow-only keys (CRW-1330). The document's Kind column and its get_capabilities rule have to follow
-// that split, not a table of nine keys.
+// the helper role store (internal/role) holds the agent roles, the four helper roles and the three
+// flow-only keys (CRW-1330, and the unit check's tool key CRW-1589 — a tool run, never an agent). The
+// document's Kind column and its get_capabilities rule have to follow that split, not a table of ten keys.
 func TestExecutionRolesKindsMatchTheirPolicies(t *testing.T) {
 	text := readRepoText(t, canonRefDir+"execution-roles.md")
 	kinds := map[string]string{}
@@ -682,6 +682,12 @@ func TestExecutionRolesKindsMatchTheirPolicies(t *testing.T) {
 	var helperKeys []string
 	for _, r := range append(role.Roles(), role.FlowOnlyRoles()...) {
 		helperKeys = append(helperKeys, string(r))
+	}
+	kindOfHelper := func(key string) string {
+		if key == string(role.UnitCheck) {
+			return "tool key"
+		}
+		return "agent role"
 	}
 	relayKeys := []string{execution.Supervisor, execution.Parent, execution.Child}
 	if len(kinds) != len(relayKeys)+len(helperKeys) {
@@ -707,8 +713,8 @@ func TestExecutionRolesKindsMatchTheirPolicies(t *testing.T) {
 		if err := acceptsKey(key); err == nil {
 			t.Errorf("the host execution policy accepts %q, which the table lists as a helper role", key)
 		}
-		if kinds[key] != "agent role" {
-			t.Errorf("%q is a role of the helper store; its Kind is %q, want \"agent role\"", key, kinds[key])
+		if want := kindOfHelper(key); kinds[key] != want {
+			t.Errorf("%q is a key of the helper store; its Kind is %q, want %q", key, kinds[key], want)
 		}
 	}
 	t.Run("the get_capabilities rule is about relay roles only", func(t *testing.T) {
@@ -759,7 +765,7 @@ func TestExecutionRolesKindsMatchTheirPolicies(t *testing.T) {
 		}
 		for _, row := range tableRows(reverted, "Policy key") {
 			for _, key := range helperKeys {
-				if strings.Trim(row[0], "`") == key && row[1] != "agent role" {
+				if strings.Trim(row[0], "`") == key && row[1] != kindOfHelper(key) {
 					t.Fatalf("the fixture changed the Kind of %q", key)
 				}
 			}

@@ -100,6 +100,31 @@ func TestNextBindsThePairsTheLiveRunPinned(t *testing.T) {
 	}
 }
 
+// TestCRW1589_PinnedPairsKeepUnitCheckOutOfTheAgentRoles (CRW-1589): a started row's role_pairs may name unit-check,
+// the pair the row pins for the unit check tool; withPinnedPairs moves it to the table's tool pair and never makes it a
+// spawnable role, and a row of a crw before it (no unit-check) keeps the table's own.
+func TestCRW1589_PinnedPairsKeepUnitCheckOutOfTheAgentRoles(t *testing.T) {
+	pinned := map[string]engine.Pair{
+		"reviewer":   {Model: "pinned-reviewer", Effort: "high"},
+		"unit-check": {Model: "pinned-check", Effort: "low"},
+	}
+	out := withPinnedPairs(engine.FakePolicy(), pinned, "sha256:pinned")
+	if _, ok := out.Roles["unit-check"]; ok {
+		t.Fatalf("unit-check became a table role: %v", out.Roles)
+	}
+	if out.UnitCheck != (engine.Pair{Model: "pinned-check", Effort: "low"}) {
+		t.Fatalf("the pinned unit-check pair %+v", out.UnitCheck)
+	}
+	if out.Digest != "sha256:pinned" || out.Roles["reviewer"].Pair != (engine.Pair{Model: "pinned-reviewer", Effort: "high"}) {
+		t.Fatalf("the pinned table %+v %s", out.Roles["reviewer"], out.Digest)
+	}
+	// A row written before unit-check was pinned keeps the table's own pair.
+	old := withPinnedPairs(engine.FakePolicy(), map[string]engine.Pair{"reviewer": {Model: "pinned-reviewer", Effort: "high"}}, "sha256:old")
+	if _, ok := old.Roles["unit-check"]; ok || old.UnitCheck != engine.FakePolicy().UnitCheck {
+		t.Fatalf("an old row's table %+v %v", old.Roles, old.UnitCheck)
+	}
+}
+
 func TestNextHintNamesTheOpenSubagents(t *testing.T) {
 	w := newWorld(t)
 	td := w.deps()

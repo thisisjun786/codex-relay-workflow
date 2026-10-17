@@ -91,8 +91,8 @@ func assertRetiredNamedOnce(t *testing.T, report PolicyReport, text, source, wan
 			t.Errorf("crw flow roles lists reviewer-final: %+v", r)
 		}
 	}
-	if len(report.Roles) != len(execution.AgentRoleNames) {
-		t.Errorf("roles %d, the flow has %d", len(report.Roles), len(execution.AgentRoleNames))
+	if len(report.Roles) != len(execution.AgentRoleNames)+1 {
+		t.Errorf("roles %d, the flow has %d agent roles and the unit check's tool row", len(report.Roles), len(execution.AgentRoleNames))
 	}
 	if report.Digest == nil || *report.Digest != want {
 		t.Errorf("digest %v, want %s (the same store without the retired entry)", report.Digest, want)

@@ -35,6 +35,36 @@
             },
             "policy_digest": "",
             "policy_source": "",
+            "role_pairs": {
+              "architect": {
+                "effort": "high",
+                "model": "claude-fake-opus"
+              },
+              "critic": {
+                "effort": "high",
+                "model": "gpt-fake-sol"
+              },
+              "executor": {
+                "effort": "xhigh",
+                "model": "claude-fake-haiku"
+              },
+              "executor-t1": {
+                "effort": "xhigh",
+                "model": "claude-fake-sonnet"
+              },
+              "explorer": {
+                "effort": "high",
+                "model": "claude-fake-haiku"
+              },
+              "reviewer": {
+                "effort": "high",
+                "model": "gpt-fake-sol"
+              },
+              "unit-check": {
+                "effort": "high",
+                "model": "gpt-6-astra"
+              }
+            },
             "script_digest": "21652355111e8807939c9edac09d43631bc41aa7e410defdedd214879dd082af",
             "workflow": "scenario"
           }

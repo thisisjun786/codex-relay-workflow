@@ -454,8 +454,11 @@ with the relay's reason, and the release goes on as for an undeclared node.
 review tool itself, in Go through the review adapter, over the uncommitted changes the executor call `call` left in the node's
 worktree, so no reviewer agent is called and no reviewer thread is made for a node (row `crw.unitCheck`,
 [journal.md](journal.md#the-proofs)). The tool is a Codex review by default (`codex review --uncommitted`, CRW-1517; its model and
-effort are the lane's settings `CRW_UNIT_CHECK_MODEL` and `CRW_UNIT_CHECK_EFFORT`, blank or unset for the defaults, and a setting the
-lane refuses stops the run when the lane is built), and Bugbot on a Codex quota: a check whose Codex call ends `quota` is asked once
+effort are the `unit-check` key of the helper role store — `crw role helper set unit-check --mode model --model <model>
+--effort <effort>` (CRW-1589; with no entry, or one in mode default, the tool default `gpt-6-astra` at `high`, and a stored
+model with no effort takes `high`) — which a non-blank `CRW_UNIT_CHECK_MODEL` or `CRW_UNIT_CHECK_EFFORT` overrides per field
+in the run's role snapshot, each applied override named in a warning and recorded in the started row's `unit_check_overrides`,
+and a setting codex cannot be given stops the run when the lane is built, naming the field or the environment variable that supplied it), and Bugbot on a Codex quota: a check whose Codex call ends `quota` is asked once
 more, with the same request, of Bugbot, the row's `result` is Bugbot's and the row keeps the Codex call (`fallback`, `fallback_from`,
 `fallback_state`, `fallback_model`); a Bugbot call that ends `quota` too holds the node as below. Codex prints no mark of a finished
 review, so a Codex answer with no findings list is clean when its summary is neither Codex's own text for a review that gave no answer
@@ -751,6 +754,8 @@ naming it;
 close guarantees: the final gate, the crosscheck, then the close. The Go side is `internal/flow/ops/{finalgate,qa,crosscheck,lane_close,audit}.go`,
 `internal/flow/reviewadapter` and `internal/flow/audit`.
 
+A new `project-lane` run of the same plan can retry a failed milestone close without rebuilding integrated nodes. Before admitting its build lanes, `crw.reuseIntegrated(milestone, node)` checks the relay's current acceptance and integration observations, the unchanged node slice and approved design, and the earlier run's acceptance and integration records against the current target. A proven node is recorded as landed with its source run, acceptance and batch commit; a pending node still runs its ordinary lane. Missing proof for an integrated node refuses reuse. A reused landing also carries its source run's original review base: a source that re-planned after landing keeps the first base the milestone judged under, which the rerun's gate, crosscheck and close keep as their range base - separately from the latest design revision's own base tip - and the design decisions an issue references must be the same decisions, not only the same ids, or the reuse is refused. The new run makes its own final-gate and crosscheck evidence and audits the original acceptances; the earlier failed gate remains in its original journal. Repeating the close does not turn a failed check into a pass.
+
 **The final gate.** `crw.finalGate(milestone)` pins the integrated head H (the tip of the integration target now) and judges the
 evidence that stands on it: the test evidence, a verification of H for each command of the plan's required set (`crw.verify` with no node;
 a plan that names none requires `crw-dev ci local`), and, when a criterion of the milestone has the surface `web`, `tui` or `desktop`,
@@ -983,7 +988,7 @@ A held row records whether the
 call's packet reached the host (`input_state`: `delivered` or `not_delivered`) and the `codexErrorInfo` verbatim; on a backend
 that places calls an executor's held row also carries `p_held`, the working snapshot of its worktree when the failure was
 classified, and its completed row `pending_tree`, the working snapshot when the turn ended. The run record holds the workflow name, the script digest, the helper digests, the digest of `args`, the meta, and
-the path of the helper role store with the canonical digest of the six role pairs (`policy_source`, `policy_digest`),
+the path of the helper role store with the canonical digest of the seven configured pairs (the six agent roles and unit-check) (`policy_source`, `policy_digest`),
 the role table's warnings (`policy_warnings`) when it has any, and the `backend` the run's calls run on (`session` or
 `app-server`).
 

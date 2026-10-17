@@ -22,7 +22,7 @@ import (
 // sessionCall is what one session call keeps between its steps.
 type sessionCall struct {
 	// attempt is the ordinal of the call's current subagent (1 for the first); agent, turn and boundK are the subagent bound to
-	// it, the turn bound last and its k.
+	// it, the turn bound last and its k. Attempts also increase across re-prepared generations of the same call.
 	attempt int
 	agent   string
 	turn    string
@@ -321,12 +321,12 @@ func (c *callRun) sessionEstablish(ctx context.Context) (CallResult, bool) {
 
 // sessionStageOf reads where a session call's rows of its newest attempt say it stopped.
 func sessionStageOf(rows []Event) *sessionStage {
-	st := &sessionStage{kind: stagePrepared}
+	st := &sessionStage{kind: stagePrepared, attempt: 1}
 	for _, ev := range rows {
 		d := ev.Data
 		switch ev.Event {
 		case EvPrepared:
-			st = &sessionStage{kind: stagePrepared}
+			st = &sessionStage{kind: stagePrepared, attempt: max(1, rowInt(d, "attempt"))}
 		case EvStepPublished:
 			st = &sessionStage{kind: stagePublished, k: rowInt(d, "k"), attempt: rowInt(d, "attempt"), op: rowStr(d, "op"), input: rowStr(d, "input"),
 				repair: d["repair"] == true, action: rowStr(d, "action"), agent: rowStr(d, "agent_id"), note: rowStr(d, "note"), prev: rowStr(d, "previous_answer"),
@@ -413,6 +413,7 @@ func (c *callRun) sessionRecover(ctx context.Context) (res CallResult, stop bool
 	bus := c.e.cfg.Session.Bus
 	switch st.kind {
 	case stagePrepared:
+		s.attempt = st.attempt
 		s.resume = nil
 		c.firstK = 1
 		return CallResult{}, false, 1, c.checkpointPreface() + p.prompt
@@ -536,11 +537,11 @@ func (c *callRun) sessionResumeHeld(ctx context.Context) (res CallResult, stop b
 		return res, true, 0, "", nil
 	}
 	st := sessionStageOf(rows)
-	lastK, maxAttempt := 0, 0
+	lastK, maxAttempt := 0, max(1, st.attempt)
 	var repairStep *Event
 	for i, ev := range rows {
 		if ev.Event == EvPrepared {
-			lastK, maxAttempt, repairStep = 0, 0, nil
+			lastK, maxAttempt, repairStep = 0, max(1, rowInt(ev.Data, "attempt")), nil
 		}
 		if ev.Event == EvStepPublished {
 			lastK, maxAttempt = max(lastK, rowInt(ev.Data, "k")), max(maxAttempt, rowInt(ev.Data, "attempt"))
