@@ -139,7 +139,7 @@ func TestCRW1607LabelCatalog(t *testing.T) {
 		t.Fatal("labels.json names no area labels")
 	}
 	dirs := map[string]string{"dev-ci": "internal/dev/ci", "install": "internal/runtime/install",
-		"skills": "plugins/crw/skills"}
+		"skills": "plugins/crw/skills", "work": "internal/pabcd"}
 	for _, suffix := range areas {
 		dir := dirs[suffix]
 		if dir == "" {
