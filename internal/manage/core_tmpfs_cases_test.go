@@ -55,9 +55,15 @@ func TestTmpfsRootIsChosenAtTheFloorAndIsTheCallersToRemove(t *testing.T) {
 	if want := filepath.Join(base, "crw-m-"+strconv.Itoa(os.Getpid())+"-effffffc"); root != want {
 		t.Errorf("root %q, want %q", root, want)
 	}
-	// Control-socket symlinks below test homes still depend on the temporary root's length.
 	if fi, err := os.Stat(root); err != nil || !fi.IsDir() {
 		t.Errorf("root %q: %v", root, err)
+	}
+}
+
+// Helpers can still inherit legacy roots, whose original path-length bound must hold too.
+func TestTmpfsLegacyRootKeepsControlSocketPathsShort(t *testing.T) {
+	if n := len("/dev/shm/") + len(tmpfsRootPrefix) + len(strconv.Itoa(1<<22)); n > 31 {
+		t.Errorf("a legacy root is %d bytes, over its original 31-byte bound", n)
 	}
 }
 

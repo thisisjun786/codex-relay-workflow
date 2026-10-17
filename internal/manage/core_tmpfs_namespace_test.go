@@ -7,10 +7,12 @@ import (
 	"strconv"
 	"syscall"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc/tmploctest"
 )
 
 func TestTmpfsRootKeepsControlSocketPathsShort(t *testing.T) {
-	root := filepath.Join("/dev/shm", tmpfsRootName(1<<22, "ffffffffffffffff"))
+	root := filepath.Join(tmploctest.MemoryBase(""), tmpfsRootName(1<<22, "ffffffffffffffff"))
 	if size := len(root) + 67; size > 107 {
 		t.Fatalf("control socket path needs %d bytes, over the Linux limit of 107", size)
 	}
