@@ -4,6 +4,7 @@ import (
 	"path"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/compile"
 	"github.com/thisisjun786/codex-relay-workflow/internal/skill"
@@ -32,15 +33,16 @@ var sizeFields = map[string][]string{
 }
 
 var (
-	headingLine     = regexp.MustCompile(`^ {0,3}(#{1,6})\s+(.*?)\s*#*\s*$`)
-	setextLine      = regexp.MustCompile(`^ {0,3}(=+|-+)[ \t]*$`)
-	setextListLine  = regexp.MustCompile(`^(\d{1,9}[.)]|[-*+])(?:([ \t]+)(.*))?$`)
-	setextBreakLine = regexp.MustCompile(`^ {0,3}(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})$`)
-	bulletLine      = regexp.MustCompile(`^(\s*)(?:[-*+]|\d+[.)])(?:\s+(.*))?$`)
-	checkbox        = regexp.MustCompile(`^\[[ xX]\]\s*`)
-	blockedLine     = regexp.MustCompile(`(?i)^(?:\*\*)?blocked by:`)
-	sizeFieldRe     = regexp.MustCompile("^(size_fit|size_reason|issue_size)\\s*:\\s*`?([A-Za-z0-9_]+)`?\\s*$")
-	backtickSpan    = regexp.MustCompile("`([^`]+)`")
+	headingLine      = regexp.MustCompile(`^ {0,3}(#{1,6})\s+(.*?)\s*#*\s*$`)
+	setextLine       = regexp.MustCompile(`^ {0,3}(=+|-+)[ \t]*$`)
+	setextListLine   = regexp.MustCompile(`^(\d{1,9}[.)]|[-*+])(?:([ \t]+)(.*))?$`)
+	setextBreakLine  = regexp.MustCompile(`^ {0,3}(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})$`)
+	headingBlankLine = regexp.MustCompile(`\n[ \t]*\n`)
+	bulletLine       = regexp.MustCompile(`^(\s*)(?:[-*+]|\d+[.)])(?:\s+(.*))?$`)
+	checkbox         = regexp.MustCompile(`^\[[ xX]\]\s*`)
+	blockedLine      = regexp.MustCompile(`(?i)^(?:\*\*)?blocked by:`)
+	sizeFieldRe      = regexp.MustCompile("^(size_fit|size_reason|issue_size)\\s*:\\s*`?([A-Za-z0-9_]+)`?\\s*$")
+	backtickSpan     = regexp.MustCompile("`([^`]+)`")
 )
 
 // section is the non-fence lines under one heading.
@@ -63,11 +65,11 @@ func sections(body string) []section {
 	var out []section
 	excludedDepth := 0
 	state := struct {
-		paragraph   []string
-		kind        int
-		itemText    int
-		fence       string
-		htmlComment bool
+		paragraph []string
+		kind      int
+		itemText  int
+		fence     string
+		html      int // zero: none; otherwise index + 1 in headingHTMLBlocks
 	}{}
 	emit := func(lines ...string) {
 		if excludedDepth == 0 && len(out) > 0 {
@@ -90,14 +92,18 @@ func sections(body string) []section {
 		}
 		out = append(out, section{heading: normalizeHeading(title), depth: depth})
 	}
-	for _, raw := range strings.Split(body, "\n") {
+	for remaining := strings.ReplaceAll(body, "\r\n", "\n"); remaining != ""; {
+		source := remaining
+		var raw string
+		raw, remaining, _ = strings.Cut(remaining, "\n")
 		line := strings.TrimRight(raw, "\r")
 		rest := strings.TrimLeft(line, " \t")
 		col := indentOf(line[:len(line)-len(rest)])
 		inItem := state.itemText > 0 && col >= state.itemText
-		if state.htmlComment {
-			state.htmlComment = headingCommentOpen(line, true)
-			emit(line)
+		if state.html != 0 {
+			if headingHTMLEnd(state.html, line, true) {
+				state.html = 0
+			}
 			continue
 		}
 		t := strings.TrimLeft(line, " ")
@@ -124,14 +130,25 @@ func sections(body string) []section {
 		if state.fence != "" {
 			continue
 		}
-		if col <= 3 && strings.HasPrefix(rest, "<!--") {
+		if html := headingHTMLStart(rest, state.kind != noParagraph); col <= 3 && html != 0 {
 			flush()
 			if !inItem {
 				state.itemText = 0
 			}
-			state.htmlComment = headingCommentOpen(rest, false)
-			emit(line)
+			if !headingHTMLEnd(html, rest, false) {
+				state.html = html
+			}
+			// An omitted block must also end bullet continuation in the section.
+			emit("")
 			continue
+		}
+		if col <= 3 && state.kind == noParagraph && !inItem && strings.HasPrefix(rest, "[") {
+			if n := headingReference(strings.TrimLeft(source, " \t")); n > 0 {
+				remaining = strings.TrimLeft(source, " \t")[n:]
+				state.itemText = 0
+				emit("")
+				continue
+			}
 		}
 		if m := headingLine.FindStringSubmatch(line); m != nil {
 			flush()
@@ -186,16 +203,16 @@ func sections(body string) []section {
 				state.paragraph = append(state.paragraph, line)
 			}
 		case col <= 3 && strings.HasPrefix(rest, ">"):
+			continued := state.kind == quoteParagraph
 			flush()
 			if !inItem {
 				state.itemText = 0
 			}
-			text := strings.TrimSpace(rest)
-			for strings.HasPrefix(text, ">") {
-				text = strings.TrimSpace(strings.TrimPrefix(text, ">"))
-			}
-			if setextParagraph(text) && !strings.HasPrefix(text, "```") &&
-				!strings.HasPrefix(text, "~~~") && !strings.HasPrefix(text, "<!--") {
+			text := headingQuoteText(line)
+			content := strings.TrimLeft(text, " ")
+			if (len(text)-len(content) < 4 || continued) && setextParagraph(content) &&
+				!strings.HasPrefix(content, "```") && !strings.HasPrefix(content, "~~~") &&
+				headingHTMLStart(content, continued) == 0 {
 				state.kind = quoteParagraph
 				state.paragraph = append(state.paragraph, line)
 			} else {
@@ -227,6 +244,208 @@ func sections(body string) []section {
 	}
 	flush()
 	return out
+}
+
+// Block starts and reference syntax follow the document checker's rules in
+// internal/dev/ci/anchors.go. That dev-only package is not a runtime dependency.
+var headingHTMLBlocks = []struct {
+	start, end *regexp.Regexp // nil end: a blank line terminates the block
+	interrupts bool
+}{
+	{regexp.MustCompile(`^<!--`), nil, true}, // headingCommentOpen also handles reopening
+	{regexp.MustCompile(`(?i)^<(?:pre|script|style|textarea)(?:[ \t>]|$)`), regexp.MustCompile(`(?i)</(?:pre|script|style|textarea)>`), true},
+	{regexp.MustCompile(`^<\?`), regexp.MustCompile(`\?>`), true},
+	{regexp.MustCompile(`^<![A-Za-z]`), regexp.MustCompile(`>`), true},
+	{regexp.MustCompile(`^<!\[CDATA\[`), regexp.MustCompile(`\]\]>`), true},
+	{regexp.MustCompile(`(?i)^</?(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)(?:[ \t]|/?>|$)`), nil, true},
+	{regexp.MustCompile("^(?:<[A-Za-z][A-Za-z0-9-]*(?:[ \\t]+[^\\s\"'<>/=`]+(?:[ \\t]*=[ \\t]*(?:\"[^\"]*\"|'[^']*'|[^\\s\"'=<>`]+))?)*[ \\t]*/?>|</[A-Za-z][A-Za-z0-9-]*[ \\t]*>)[ \\t]*$"), nil, false},
+}
+
+func headingHTMLStart(line string, inParagraph bool) int {
+	for i, block := range headingHTMLBlocks {
+		if (block.interrupts || !inParagraph) && block.start.MatchString(line) {
+			return i + 1
+		}
+	}
+	return 0
+}
+
+func headingHTMLEnd(kind int, line string, open bool) bool {
+	if kind == 1 {
+		return !headingCommentOpen(line, open)
+	}
+	end := headingHTMLBlocks[kind-1].end
+	if end == nil {
+		return strings.TrimSpace(line) == ""
+	}
+	return end.MatchString(line)
+}
+
+// headingQuoteText removes quote markers and their one optional space, keeping
+// code indentation. Expand tabs at their original columns before stripping.
+func headingQuoteText(line string) string {
+	var expanded strings.Builder
+	col := 0
+	for _, r := range line {
+		if r == '\t' {
+			n := 4 - col%4
+			expanded.WriteString(strings.Repeat(" ", n))
+			col += n
+		} else {
+			expanded.WriteRune(r)
+			col++
+		}
+	}
+	text := expanded.String()
+	for {
+		rest := strings.TrimLeft(text, " ")
+		if len(text)-len(rest) > 3 || !strings.HasPrefix(rest, ">") {
+			return text
+		}
+		text = strings.TrimPrefix(rest[1:], " ")
+	}
+}
+
+// headingReference reads the link reference definition s starts with, as CommonMark reads one: a
+// label in brackets (some non-space text of at most 999 characters, no unescaped bracket), ':', white space holding at most one
+// line end, a destination (in <> without a line end or an unescaped <, or plain text without spaces
+// or control characters whose parentheses balance), and, after white space, an optional title in
+// double quotes, single quotes or parentheses; nothing but spaces may follow on the line. When the
+// title is not well formed or text follows it, the definition ends with its destination if nothing
+// follows that on its line. It
+// returns the length of s the definition takes, up to its line end, or zero.
+func headingReference(s string) int {
+	if !strings.HasPrefix(s, "[") {
+		return 0
+	}
+	// Unlike the document checker, this caller supplies the unconsumed body.
+	// A definition's label and title cannot cross a blank paragraph boundary.
+	if blank := headingBlankLine.FindStringIndex(s); blank != nil {
+		s = s[:blank[0]]
+	}
+	i, characters := 1, 0 // the label holds at most 999 characters (not UTF-8 bytes)
+	for ; ; i++ {
+		if i >= len(s) || s[i] == '[' || characters > 999 {
+			return 0
+		}
+		if s[i] == '\\' && i+1 < len(s) && headingPunctuation(rune(s[i+1])) {
+			i++
+			characters += 2
+			continue
+		}
+		if s[i] == ']' {
+			break
+		}
+		if utf8.RuneStart(s[i]) {
+			characters++
+		}
+	}
+	label := strings.TrimSpace(s[1:i])
+	if label == "" || i+1 >= len(s) || s[i+1] != ':' {
+		return 0
+	}
+	i = headingDefinitionSpace(s, i+2)
+	destination := i
+	if i < len(s) && s[i] == '<' {
+		for i++; ; i++ {
+			if i >= len(s) || s[i] == '\n' || s[i] == '<' {
+				return 0
+			}
+			if s[i] == '\\' && i+1 < len(s) && headingPunctuation(rune(s[i+1])) {
+				i++
+				continue
+			}
+			if s[i] == '>' {
+				i++
+				break
+			}
+		}
+	} else {
+		depth := 0
+	raw:
+		for ; i < len(s) && s[i] > ' ' && s[i] != 0x7f; i++ {
+			switch {
+			case s[i] == '\\' && i+1 < len(s) && headingPunctuation(rune(s[i+1])):
+				i++
+			case s[i] == '(':
+				depth++
+			case s[i] == ')':
+				if depth == 0 {
+					break raw
+				}
+				depth--
+			}
+		}
+		if i == destination || depth != 0 {
+			return 0
+		}
+	}
+	if title := headingDefinitionSpace(s, i); title > i && title < len(s) && strings.ContainsRune("\"'(", rune(s[title])) {
+		if end, ok := headingTitleEnd(s, title); ok {
+			if line, ok := headingLineEnd(s, end); ok {
+				return line
+			}
+		}
+	}
+	if line, ok := headingLineEnd(s, i); ok {
+		return line
+	}
+	return 0
+}
+
+// headingDefinitionSpace is the index after the spaces and tabs at s[i:], with at most one line end.
+func headingDefinitionSpace(s string, i int) int {
+	lineEnd := false
+	for ; i < len(s); i++ {
+		if s[i] == '\n' {
+			if lineEnd {
+				break
+			}
+			lineEnd = true
+		} else if s[i] != ' ' && s[i] != '\t' {
+			break
+		}
+	}
+	return i
+}
+
+// headingTitleEnd is the index after the title that opens at s[open] (in double quotes, single
+// quotes or parentheses), and whether it is closed; in a () title an unescaped '(' is not allowed.
+func headingTitleEnd(s string, open int) (int, bool) {
+	closing := s[open]
+	if closing == '(' {
+		closing = ')'
+	}
+	for i := open + 1; i < len(s); i++ {
+		switch {
+		case s[i] == '\\' && i+1 < len(s) && headingPunctuation(rune(s[i+1])):
+			i++
+		case s[i] == closing:
+			return i + 1, true
+		case s[open] == '(' && s[i] == '(':
+			return 0, false
+		}
+	}
+	return 0, false
+}
+
+// headingLineEnd is the index after the line end that ends s[i:] (or len(s)), and whether only
+// spaces and tabs come before it.
+func headingLineEnd(s string, i int) (int, bool) {
+	for ; i < len(s); i++ {
+		switch s[i] {
+		case '\n':
+			return i + 1, true
+		case ' ', '\t':
+		default:
+			return 0, false
+		}
+	}
+	return i, true
+}
+
+func headingPunctuation(r rune) bool {
+	return strings.ContainsRune("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~", r)
 }
 
 // headingCommentOpen carries an HTML comment block across lines. A comment may
