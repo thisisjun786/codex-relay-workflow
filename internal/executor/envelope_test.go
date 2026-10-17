@@ -35,6 +35,22 @@ func mustFreeze(t *testing.T, task Task) Admission {
 	return a
 }
 
+// GradeLocal is part of the region contract (relay/dagsched/grades.go).
+func TestFreezeAcceptsLocalRegionGrade1639(t *testing.T) {
+	task := testTask(Codex)
+	task.Regions[0].Grade = "local"
+	a, err := Freeze(task)
+	if err != nil {
+		t.Fatalf("local region rejected: %v", err)
+	}
+	if a.Task.Regions[0].Grade != "local" {
+		t.Fatalf("local grade changed to %q", a.Task.Regions[0].Grade)
+	}
+	if err := ValidateAdmission(a); err != nil {
+		t.Fatalf("frozen local admission rejected: %v", err)
+	}
+}
+
 func TestFreezeDigestStableAcrossReorderings(t *testing.T) {
 	for _, kind := range []Kind{Codex, Devin, ClaudeCode} {
 		t.Run(string(kind), func(t *testing.T) {
