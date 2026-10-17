@@ -348,7 +348,7 @@ func loopInitBoundGate(cwd, sessionID string) (LoopCliResult, bool) {
 		return LoopCliResult{Output: "loop init: " + crwdir.DirName + " is a symbolic link; refusing to create the session lock through it.\nNothing was written.", Code: 1}, false
 	}
 	if verdict := session.CheckBound(cwd, sessionID); !verdict.OK {
-		return LoopCliResult{Output: "loop init: " + workDiagnostic(verdict.Reason) + "\nNothing was written.", Code: 1}, false
+		return LoopCliResult{Output: "loop init: " + workSourceDiagnostic(verdict.Reason) + "\nNothing was written.", Code: 1}, false
 	}
 	return LoopCliResult{}, true
 }
