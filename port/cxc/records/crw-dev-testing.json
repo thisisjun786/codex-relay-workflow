@@ -254,9 +254,9 @@
     },
     {
       "file": "references/reference-result-evaluation.md",
-      "reason": "CRW-1220: the description is scoped to automated test strategy; the test auditor gates move to crw-dev-code-reviewer behind one link; the limited-oracle reference becomes reference-result-evaluation",
+      "reason": "CRW-1526: rename task work skills and references; preserve source provenance and stored hook/state contracts",
       "add": true,
-      "sha256": "c27814aa51fa6b5c147f1357b8d43173e5745fcc10f73e6da960713028fe9703"
+      "sha256": "e335d3bcd5b779938a080169b7d2c3db7e0afb997089c8bd50c74edbfeba5bd2"
     }
   ]
 }

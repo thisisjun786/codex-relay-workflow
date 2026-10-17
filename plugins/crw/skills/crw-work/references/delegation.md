@@ -7,12 +7,12 @@ session's native working directory rather than a copy of it. A bounded worker
 can operate in a separately created managed worktree only when its packet
 supplies that absolute path and it uses it as every shell command's workdir.
 
-The main session owns the plan, host goal, and every PABCD transition.
+The main session owns the plan, host goal, and every task work transition.
 At P, consult a read-only architect; at A, dispatch an independent reviewer.
 Use a supported read-only transport for both and a supported write role for bounded
 implementation (DISPATCH-AGENT-TYPE-01 and the live schema below).
 The executor role resolves to its registered native `executor` type once `crw role helper register executor` has run; unregistered installs keep the built-in `worker`.
-When PABCD policy is enabled, the registered executor is evidence-gated on every SubagentStop; the built-in worker fallback is evidence-gated only while the parent has an active PABCD B/C cycle. When PABCD policy is disabled, both gates are silent. Outside that cycle the worker releases without a receipt.
+When task work policy is enabled, the registered executor is evidence-gated on every SubagentStop; the built-in worker fallback is evidence-gated only while the parent has an active task work B/C cycle. When task work policy is disabled, both gates are silent. Outside that cycle the worker releases without a receipt.
 Subagents are leaves (LEAF-TOPOLOGY-01) unless recursion is explicitly granted.
 Every dispatch carries a structured TASK packet (DISPATCH-TASK-01):
 `TASK`, `SCOPE`, `MUST DO`, `MUST NOT`, `PROOF`, `RETURN FORMAT`, and decision boundary.
@@ -128,7 +128,7 @@ follow-up/wait/retirement schema, never a display label or guessed ID. Apply onl
 supported fork/model/effort/tier fields and honor explicit user constraints;
 documented inheritance still needs observed settings when exact identity matters.
 Do not mutate shared or persistent role configuration without authorization.
-Reading this transport owner does not turn a non-audit task into a PABCD A gate.
+Reading this transport owner does not turn a non-audit task into a task work A gate.
 
 **Lifecycle contract.** Discover the actual spawn capability through the host's
 catalog/search when available, then use its live schema as described above.
@@ -136,7 +136,7 @@ If no discovery/spawn capability exists, report the gap. Fan out independent lan
 reuse the same reviewer throughout the A loop.
 
 Before waiting on dispatched work, read the mode-neutral
-[Waiting on work](../../crw-loop/references/waiting.md) rules in either HITL or HOTL.
+[Waiting on work](../../crw-continue/references/waiting.md) rules in either HITL or HOTL.
 This route does not authorize an otherwise forbidden dispatch, wait, or mode transition.
 A wait timeout is an observation outcome, not a verdict: classify progress,
 suspected stagnation, confirmed failure and unavailable observation per that
@@ -259,7 +259,7 @@ the coordinator is full-access; this also occurs for projectless targets. Check
 the child's actual permission mode before assigning unattended writes. A
 bounded checkout worker can instead use `create_worktree` plus a subagent with
 the returned absolute path as every shell workdir. This does not give the
-subagent its own task, goal or PABCD state.
+subagent its own task, goal or task work state.
 
 **Delegation safeguards:**
 
@@ -270,7 +270,7 @@ subagent its own task, goal or PABCD state.
   file paths for edits. Different workers get different worktrees. Never run
   concurrent branch-level operations (`checkout`, `switch`, `branch`, `stash`,
   `reset`, `rebase`, `merge`, `pull`) in one checkout; a file scope cannot
-  separate one HEAD. Work that needs its own goal or PABCD cycle stays a
+  separate one HEAD. Work that needs its own goal or task work cycle stays a
   separate thread task.
 - **REVIEW-DECORRELATE-01:** prefer a separate review execution context when available; model family is provenance, not a review constraint. If the host actually reports that an agent review reused the author's thread, record a warning and continue. Tool reviews run as separate invocations and have no agent thread id; never invent one.
 - **SPECIALIST-CRUX-01:** when a narrow crux lies outside the builder's domain,

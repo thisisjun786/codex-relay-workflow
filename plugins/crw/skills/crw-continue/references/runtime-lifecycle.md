@@ -1,13 +1,20 @@
 # Loop runtime lifecycle
 
+This reference describes existing standalone task-goal/state contracts.
+The current development flow is defined by [Task work](../../crw-work/SKILL.md#work-through-the-current-flow).
+I/P/A/B/C/D below are compatibility record values, not current flow stages.
+Use only the operations authorized for the selected task and installed runtime;
+do not start another state machine inside a flow-managed node. A renamed skill
+does not migrate hooks, state files, attestations or goalplan schemas.
+
 Read only for authorized HOTL entry/resume or continuation/completion diagnosis.
 Mode selection belongs to ../SKILL.md; phase control belongs to
-../../pabcd/references/phase-control.md. Follow the live host tool contract.
+../../crw-work/references/phase-control.md. Follow the live host tool contract.
 
 ## Orchestrate mandate (ORCH-MANDATE-01, STRICT)
 
 A loop claim without persisted FSM evidence is INVALID. Narrating phases ("now I'm in
-B", "audit passed") without their `crw pabcd orchestrate` transitions is the exact
+B", "audit passed") without their `crw work state` transitions is the exact
 failure mode this rule exists to stop: the Stop hook never arms, the ledger stays
 empty, and the "loop" is one ordinary turn wearing a loop costume. Mandatory sequence
 for EVERY loop entry or re-entry:
@@ -19,33 +26,33 @@ for EVERY loop entry or re-entry:
    environment ID yourself, choose latest state or replay a synthetic hook event.
    If validation fails, report it and continue independently authorized work.
    Binding creates missing FSM state only; it does not verify hooks or arm Stop.
-2. `crw pabcd orchestrate status --session <id>` — read the real phase before claiming any.
-3. For a new authorized HOTL goal: create_goal, crw pabcd loop init, register the plan,
+2. `crw work state status --session <id>` — read the real phase before claiming any.
+3. For a new authorized HOTL goal: create_goal, crw work continue init, register the plan,
    then enter P. On resume, inspect and reuse the matching active goal and bound
    plan; do not recreate or overwrite them. Resolve a mismatched goal/scope first.
    HITL enters I or P only within the requested scope and without a host goal.
 4. Advance the four gated work edges (P>A, A>B, B>C, C>D) with
-   `crw pabcd orchestrate <phase> --attest <json>` — or `--attest-file <path>`, which is
+   `crw work state <phase> --attest <json>` — or `--attest-file <path>`, which is
    REQUIRED on Windows because PowerShell cannot pass inline JSON as one argument —
    carrying the phase's real artifact
    (ORCH-ARTIFACT-01). Every attest names the edge it advances with `from`/`to`,
    plus that edge's own keys (`planUnit` on P>A, `workPhaseId` on every gated edge
    under a bound goalplan, `testReceiptPath` on C>D) — canonical table and
-   copy-paste objects: [Phase control](../../crw-pabcd/references/phase-control.md) (ATTEST-SHAPE-01).
+   copy-paste objects: [Phase control](../../crw-work/references/phase-control.md) (ATTEST-SHAPE-01).
    Entry edges (IDLE→P, I→P) are explicit commands without an
    attest JSON — the shipped gate (`dist/attest.js` GATED_TRANSITIONS) gates exactly
    those four. A phase without its persisted transition did not happen — the
    footer/ledger is the only proof of phase.
 5. After D closes to IDLE, read durable state (goalplan + ledger) to confirm remaining
    work, then re-enter P for the next work-phase with
-   `crw pabcd orchestrate P --session <id>`.
+   `crw work state P --session <id>`.
 
 Work performed outside the FSM does not count as loop progress: re-enter and attest
 it before building on it. Runtime companions (shipped): a loop/goalplan/
 continue-until-done request hitting an UN-ARMED FSM gets the arming mandate injected
 at prompt time (`LOOP_ARM_DIRECTIVE`, hook `UserPromptSubmit`), except that a request naming a
 project or a coordination gets a short scope pointer instead (crw-run for the project parent,
-crw-loop only for an explicit implementation of a task in this session; the pointer arms
+crw-continue only for an explicit implementation of a task in this session; the pointer arms
 nothing), and an active goal
 with no in-flight cycle gets the Stop-time block naming the arming command
 (GOAL-IDLE-CONTINUE-01) — but neither companion moves a phase for you; the commands
@@ -56,9 +63,9 @@ remain yours to run.
 `update_goal {status:"complete"}` is gated by a deterministic PreToolUse hook,
 not just discipline text. The hook DENIES the call when:
 
-- a PABCD cycle is in flight (`orchestrationActive`, phase not IDLE/I) — close
-  the cycle through D (or `crw pabcd orchestrate reset`) first; or
-- the session-bound goalplan fails the E8 gate (`crw pabcd loop validate`): undone
+- a task work cycle is in flight (`orchestrationActive`, phase not IDLE/I) — close
+  the cycle through D (or `crw work state reset`) first; or
+- the session-bound goalplan fails the E8 gate (`crw work continue validate`): undone
   work phases, unmet criteria, `met` marks without `capturedEvidence`, or an
   empty unregistered plan.
 

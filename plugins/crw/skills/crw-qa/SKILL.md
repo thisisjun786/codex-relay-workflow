@@ -31,7 +31,7 @@ Aside, agbrowse and native browser capabilities may drive built UI; none is requ
 - `crw-qa` (this skill) owns the manual QA PROCEDURE: scenario matrix,
   faithful channels, evidence contract, adversarial classes, reviewer passes,
   teardown receipts.
-- Both feed PABCD C. Neither replaces the other: a green suite without a
+- Both feed task validation. Neither replaces the other: a green suite without a
   driven surface can still ship a broken border or a dead route; a driven
   surface without a suite has no regression guard. Promote a QA flow to a
   deterministic test (dev-testing §4.1) when it must stay guarded.
@@ -181,7 +181,7 @@ browser tabs, containers, temp dirs — gets its own teardown line WITH proof:
 A stateless pass records an explicit "no resources spawned" line with what was
 checked. No QA asset is left running after the verdict.
 
-## 7. Binding to PABCD C
+## 7. Binding to task validation
 
 A user-facing surface change closes C with BOTH: the automated gate
 (dev-testing) AND this skill's QA matrix — any FAIL verdict blocks the C>D

@@ -27,14 +27,14 @@ external processes inside a loop:
   what is being waited on and the elapsed time. Keep the two cadences separate:
   how often you tell the user something is not how often you may ask an external
   API. When lanes and the observer share one quota, the polling budget belongs to
-  the coordinator — see `crw-pabcd` `references/dispatch-surfaces.md`
+  the coordinator — see `crw-work` `references/dispatch-surfaces.md`
   (DISPATCH-POLL-BUDGET-01).
 - Know which wait you are calling. V1's `wait_agent` may carry the child's final
   message in its result; V2's is a no-content mailbox and the answer arrives
   separately. Reading the answer out of the wait result works on V1 and silently
   returns nothing on V2, which looks like a stalled agent rather than a schema
   mismatch. Threads are different again: `wait_threads` takes per-target cursors.
-  See `crw-pabcd` `references/delegation.md`.
+  See `crw-work` `references/delegation.md`.
 - On V1 the same completed report can reach you through the notification, the wait
   result and the close result. Consume it once per child task per turn and do not
   issue an extra wait to re-fetch something you already have
@@ -105,7 +105,7 @@ never as a provider failure.
 For managed stagnation or unusable final output, report `outcome:task_failed`
 with the matching `taskFailure.kind`, concrete `taskFailure.evidence`, the
 recorded child ID, `executionState:stopped` and termination/partial-work
-`reconciliation`. Follow the [report contract](../../crw-pabcd/references/delegation.md#configured-first-fallback).
+`reconciliation`. Follow the [report contract](../../crw-work/references/delegation.md#configured-first-fallback).
 Provider errors use `outcome:failed`; do not invent a provider code for a task
 failure or label cancellation or exhausted bounds as stagnation. Validate the
 final work before reporting `outcome:complete`, which closes the dispatch.

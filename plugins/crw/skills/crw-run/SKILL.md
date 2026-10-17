@@ -35,12 +35,12 @@ default the child holds no goal: it ends its turn when only waiting remains, and
 event or a step of its run brings it back. [Goal mode](references/goal-mode.md) holds the lifecycle of
 the child's goal where the user explicitly asked for one; it does not enlarge Run's project scope.
 Load `crw:crw-dev` and relevant surface skills for development
-and review work. A `child` session whose effective workflow is `crw-loop` loads
-`crw:crw-loop` and `crw:crw-pabcd` and owns its goal, goalplan and phases.
+and review work. A `child` session whose effective workflow is `crw-continue` loads
+`crw:crw-continue` and `crw:crw-work` and owns its goal, goalplan and phases.
 Resolve current installed paths; never copy plugin versions from old records.
-`crw-loop` and `crw-pabcd` own those phases and the helper role policy (`crw role helper`)
+`crw-continue` and `crw-work` own those phases and the helper role policy (`crw role helper`)
 owns helper routing; the child does not adopt a `child` session's FSM. How a `child` session consumes its
-packet and when a task loops are [crw-loop's lane dispatch](../crw-loop/references/lane-dispatch.md); this
+packet and when a task loops are [crw-continue's lane dispatch](../crw-continue/references/lane-dispatch.md); this
 skill writes the packet and does not restate the `child` session's rules.
 
 Read the shared [tracking model](../crw-canon/references/tracking-model.md) for tracking document
@@ -115,10 +115,10 @@ title, and sidebar pin, then continue the authorized execution here.
 Goal mode is Run's one optional mode: the child holds a native host goal, and the host's
 automatic continuation carries the run across turns. It is entered only by an explicit request for a
 child goal on the project, such as a goal for the run, keeping or restoring a goal the child already
-holds, or `$crw-loop` given a milestone and coordination intent. In the last case no loop starts:
-say so, and continue here in goal mode. A *loop* is the PABCD completion loop of one task, owned by
-`crw-loop`; goal mode is this mode, and the two are different procedures. The child follows
-[Goal mode](references/goal-mode.md) and never the `crw-loop` or `crw-pabcd` procedure, with or without
+holds, or `$crw-continue` given a milestone and coordination intent. In the last case no loop starts:
+say so, and continue here in goal mode. A *loop* is the task work completion loop of one task, owned by
+`crw-continue`; goal mode is this mode, and the two are different procedures. The child follows
+[Goal mode](references/goal-mode.md) and never the `crw-continue` or `crw-work` procedure, with or without
 a goal, for as long as it acts as child; the one way a session leaves that role is the
 explicit current-task implementation request under task creation below. Nothing else enters it: an ordinary project execution request, a status or explanation request,
 a quoted example, automatic skill discovery or an unsubmitted UI prompt opens no goal.
@@ -166,7 +166,7 @@ the user explicitly asked for one; by default there is none and the delivery pat
 the child. Returning from Run hands control back to that mode where goal mode is running.
 Explicit pause/no-goal limits still win, and existing
 child `.crw/` state must be reconciled through its supported lifecycle, never reset to
-avoid a guard. A child holding its own goal does not alter the `child` session `crw-loop` defaults.
+avoid a guard. A child holding its own goal does not alter the `child` session `crw-continue` defaults.
 
 ## Run a milestone with a flow run
 
@@ -193,7 +193,7 @@ The child carries a project one milestone at a time, and starts one run of the b
 
 A node the architect sized `split` with sub-tasks (CRW-1459) is released to one executor, as any executor node is. Its sub-tasks run in their order on the node's one executor thread: the build does the first, and each next one is a `subtask:<node>:<tier>:s<k>` turn of the same thread. A sub-task before the last is committed as a checkpoint against its own edit regions, with no unit check, no verification and no land; the receipt of the last sub-task, and every fix after it, goes through the node's commit and verification, then the one check of the node's whole change (the committed range from the node's base to its head, against every criterion of the node), on which the node's acceptance rests, and the land, so the node is judged once, as a whole. A sub-task that reported failed is named in the next packet with its summary and gap and judged with the node; it is no tier evidence. A fresh thread (a rebuild, the `executor-t1` build after a tier step) starts at the node's last commit, which holds the sub-tasks done, and its packet at the first sub-task not done. The run makes each of these calls itself: this thread takes their steps like those of any node and sends no task packet for a sub-task. A split with no sub-tasks, from a DESIGN recorded before sub-tasks existed (CRW-1435), still goes up as `size_split` and is released to no executor.
 
-A node the architect sized `bundle_split`, an issue that even sub-tasks do not make one node's work, starts no executor: the project lane escalates it as `size_split` with ask `bundle_split_request` (the detail and the evidence carry the plan's `size_reason`), the escalation closes the node, and the run waits for no answer to it and goes on with the other nodes of the milestone. The escalation notice names the request: the parent (repository session) makes the bundle split of the node's issue, and this thread asks it for that split. It writes an evidence file that names the issue, the node, the plan's `size_reason` and the escalation, and runs `crw flow report-up --kind project_decision_request --run RUN --evidence FILE`. A node of an oversized issue that an older DESIGN sized for a `child` session starts no `child` session either: the project lane escalates it as `size_split` with detail `child_retired` (the evidence carries the plan's `size_reason`), releases the node to no executor, and goes on with the other nodes of the milestone. That escalation goes up to the parent (repository session), which asks for a bundle split of that issue. No executor and no `child` session is started for either node, so this thread sends no task packet for it and arms no `crw-pabcd` for it ([who owns control](../crw-canon/references/flow/control.md#who-owns-control-in-a-flow-managed-run)). The `child`-session rules from [Independent implementation tasks](#independent-implementation-tasks) on, the dispatch of a `child` session and its observation, verification and correction, are the exception path of a plan with no run.
+A node the architect sized `bundle_split`, an issue that even sub-tasks do not make one node's work, starts no executor: the project lane escalates it as `size_split` with ask `bundle_split_request` (the detail and the evidence carry the plan's `size_reason`), the escalation closes the node, and the run waits for no answer to it and goes on with the other nodes of the milestone. The escalation notice names the request: the parent (repository session) makes the bundle split of the node's issue, and this thread asks it for that split. It writes an evidence file that names the issue, the node, the plan's `size_reason` and the escalation, and runs `crw flow report-up --kind project_decision_request --run RUN --evidence FILE`. A node of an oversized issue that an older DESIGN sized for a `child` session starts no `child` session either: the project lane escalates it as `size_split` with detail `child_retired` (the evidence carries the plan's `size_reason`), releases the node to no executor, and goes on with the other nodes of the milestone. That escalation goes up to the parent (repository session), which asks for a bundle split of that issue. No executor and no `child` session is started for either node, so this thread sends no task packet for it and arms no `crw-work` for it ([who owns control](../crw-canon/references/flow/control.md#who-owns-control-in-a-flow-managed-run)). The `child`-session rules from [Independent implementation tasks](#independent-implementation-tasks) on, the dispatch of a `child` session and its observation, verification and correction, are the exception path of a plan with no run.
 
 ### How the child works
 
@@ -292,7 +292,7 @@ preparation, report the specific missing permission or tool, and request only
 the unresolved decision. Do not silently switch execution mode or widen permissions.
 
 An explicit request to implement within the current task overrides this workflow's
-default separation: honor it with `crw-loop` and label the actual mode accurately. For that
+default separation: honor it with `crw-continue` and label the actual mode accurately. For that
 task the session is its implementer and not acting as child, which is the supported
 role change that lets it follow the loop procedure: it creates no `child` session and dispatches nothing,
 and it starts no goal mode. A session bound to the project that holds no child goal does this
@@ -304,7 +304,7 @@ issues resumes when the loop ends or the user returns the session to the child r
 Status-only, report-only, read-only, and no-create limits also win. Ordinary
 coordinator review, verification, CI inspection, and authorized integration
 remain here. Assignment is not loop evidence: creating or assigning a `child` session task
-does not by itself create a goal or prove that a `crw-loop` started.
+does not by itself create a goal or prove that a `crw-continue` started.
 
 ## Establish the project baseline
 
@@ -514,8 +514,8 @@ launched; on this path the child's own or an internal subagent's implementation 
 
 Apply the effective settings through the creation tool's real arguments, and send
 the bounded issue packet in the initial work prompt so the `child` session can start the
-assigned work. When `crw-loop` is the effective workflow, that prompt invokes the
-`crw-loop` skill; an explicit non-Loop or no-goal alternative omits that
+assigned work. When `crw-continue` is the effective workflow, that prompt invokes the
+`crw-continue` skill; an explicit non-Loop or no-goal alternative omits that
 invocation and names the agreed workflow instead. Verify the returned task ID,
 cwd/workspace roots, model, effort, and full permission profile from the creation
 receipt, and reconcile a mismatch on that same task. A prompt saying “use this
@@ -587,8 +587,8 @@ nested in the response, is in
 [codex-session-relay](references/relay.md). Without a relay this paragraph does not
 apply and the dispatch above stands as written.
 
-When `crw-loop` is the effective workflow, the `child` session owns its goal, goalplan, and
-phases through its own `crw-loop` and `crw-pabcd`; the coordinator checks the
+When `crw-continue` is the effective workflow, the `child` session owns its goal, goalplan, and
+phases through its own `crw-continue` and `crw-work`; the coordinator checks the
 resulting evidence, not the `child` session's internals. Creating a task does not create a
 goal; an active turn does not prove the loop is armed. Missing loop prerequisites
 are reported explicitly, with no silent substitution of a different workflow.
@@ -739,7 +739,7 @@ by; the standing cap and its precedence are in
 The first thing settled is the role, because it decides what this task opens: an initiative
 management task runs without a native goal or an automatic loop, a child opens no goal
 either and is resumed by the delivery path, and a `child` session creates or reuses its own goal and
-keeps its `crw-loop`. Record the role beside the recorded mode and observation path, the approved
+keeps its `crw-continue`. Record the role beside the recorded mode and observation path, the approved
 scope, the hook compatibility, and whether the approval policy in force can carry the callback this
 run depends on. Where a child does hold a goal because one was requested, record its objective and
 state beside those.
@@ -888,7 +888,7 @@ Describe evidence separately:
 | Peer acted on an instruction | The changed work, revision or reply; neither acceptance nor a read establishes it |
 | Goal paused | The goal read back as paused; it does not establish that a running turn stopped |
 | Requested settings applied | Actual returned settings, not prompt text |
-| `crw-loop` active | `child` session's active goal and current goalplan/FSM evidence |
+| `crw-continue` active | `child` session's active goal and current goalplan/FSM evidence |
 | Agreed workflow actually followed | That task's own recorded phases, plan and evidence for this assignment. A skill-loading line, an acceptance receipt, or the instruction quoted back is an indication of receipt, not of compliance |
 | `child` session reused its own existing goal | That task's current goal and goalplan read back under its own identity. A second goal opened for the same assignment is a duplicate, not a resume |
 | Work delivered | Completed turn plus actual commit/diff and checks for code; verified result with both input baseline and delivered output revision/digest for non-PR work |
@@ -1212,8 +1212,8 @@ Observation spends a shared resource as well. Parallel `child` sessions and the 
 typically use the same credentials and the same external API allowance, so polling competes with
 the work being polled. This task, as the child (project session), owns that aggregate for its
 project: before sustained observation it reads the actual budget and reserves headroom for the
-`child` sessions ([the observer shares the lanes' quota](../crw-pabcd/references/dispatch-surfaces.md#the-observer-shares-the-lanes-quota-dispatch-poll-budget-01-default),
-[waiting on work](../crw-loop/references/waiting.md)).
+`child` sessions ([the observer shares the lanes' quota](../crw-work/references/dispatch-surfaces.md#the-observer-shares-the-lanes-quota-dispatch-poll-budget-01-default),
+[waiting on work](../crw-continue/references/waiting.md)).
 Proposing is the default, and anything beyond this run's authorized resources is a
 request rather than an action.
 

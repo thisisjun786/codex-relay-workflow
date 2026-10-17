@@ -26,7 +26,7 @@ concurrency limits are V1 `agents.max_threads` (default 6) and V2 `max_concurren
 These lanes are subagents, not separate Codex tasks: every one runs in this session's working directory on
 this branch. Luna lanes are safe to fan out because discovery writes nothing, which is why this shape does not
 transfer to parallel write work. Branch or worktree lanes need one task each; see
-[Dispatch surfaces](../../crw-pabcd/references/dispatch-surfaces.md).
+[Dispatch surfaces](../../crw-work/references/dispatch-surfaces.md).
 
 If the spawn is refused with `unusable helper role settings`, the role store cannot be read for the explorer
 role, and the same spawn is refused again against the same store: do not re-issue it and do not probe the

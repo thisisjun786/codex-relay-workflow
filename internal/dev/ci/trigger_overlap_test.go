@@ -96,10 +96,10 @@ func TestTriggerOverlapTable(t *testing.T) {
 		}
 	})
 	root := skillsFixture(t, map[string]string{
-		"crw-plan":  "Decompose a goal into tracking issues. Use for a roadmap or 기획.",
-		"crw-pabcd": "Run the PABCD loop on one task.",
-		"crw-ask":   "Ask clarifying questions. Use for 요구사항 정리.",
-		"crw-qa":    "Manual QA of a surface; also mentions the Roadmap by mistake.",
+		"crw-plan": "Decompose a goal into tracking issues. Use for a roadmap or 기획.",
+		"crw-work": "Run the task work loop on one task.",
+		"crw-ask":  "Ask clarifying questions. Use for 요구사항 정리.",
+		"crw-qa":   "Manual QA of a surface; also mentions the Roadmap by mistake.",
 	})
 	done := func(check string, triggers map[string]string) inventoryRow {
 		return inventoryRow{Disposition: "fix", Owner: "S04", Check: []string{check}, Status: "done", Triggers: triggers}

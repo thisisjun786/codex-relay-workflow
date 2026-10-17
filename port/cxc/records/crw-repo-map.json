@@ -199,7 +199,7 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "CRW-1162: the venv is ready only with its completion marker; the Dependencies section says what a run without the marker does",
+      "reason": "CRW-1526: rename task work skills and references; preserve source provenance and stored hook/state contracts",
       "hunks": [
         {
           "line": 4,
@@ -243,6 +243,15 @@
           ],
           "new": [
             "python3 -m pip install -r \"<crw-repo-map skill directory>/scripts/requirements.txt\"\n"
+          ]
+        },
+        {
+          "line": 106,
+          "old": [
+            "derived data. It is wiped only by `crw pabcd reset --all`.\n"
+          ],
+          "new": [
+            "derived data. It is wiped only by `crw work reset --all`.\n"
           ]
         },
         {

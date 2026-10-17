@@ -1,0 +1,6 @@
+interface:
+  display_name: "crw-work"
+  short_description: "Scoped task work, verification, and completion evidence."
+  default_prompt: "Use $crw-work to take this task through the authorized development flow and record its completion evidence."
+policy:
+  allow_implicit_invocation: true

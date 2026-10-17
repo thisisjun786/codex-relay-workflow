@@ -1,5 +1,13 @@
 # Plan output contract
 
+The current development flow is defined by [Task work](../SKILL.md#work-through-the-current-flow).
+The letters I/P/A/B/C/D below name existing standalone task-state records and
+their compatibility operations, not current flow stages. Reuse the applicable
+planning, review and evidence guidance within the requested scope; do not start
+this state machine for a flow-managed node. CLI examples use the public
+`crw work` namespace and require its supporting runtime. Hook registrations,
+stored enum values and existing evidence formats are unchanged here.
+
 Read for C2+ P-phase plans, including plan-only requests. Begin the plan with a
 compact loop-spec header making all nine concepts below explicit. A short sentence
 may cover several fields; no verbose fixed format is required, but brevity must
@@ -17,7 +25,7 @@ not silently remove a field.
 | Expected terminal outcomes | What success, unresolved requirements or blocked execution would mean for this scope. Report outcomes are not new FSM phases or host goal statuses. |
 | Escalation condition | What requires main/user direction. Delegation plans follow DISPATCH-RETIRE-01: without managed dispatch, main reclaims after two distinct agents fail the same packet, once prior work is stopped. With [configured first fallback](delegation.md#configured-first-fallback), the returned action governs recovery: only `main-direct` permits reclaim; `reconcile`/`stop` permit neither reclaim nor replacement. Pushing a slice to a worker requires a P-phase amendment, never a mid-B improvisation. |
 
-HOTL goal plans also state the crw-loop resource bounds. Follow the live host
+HOTL goal plans also state the crw-continue resource bounds. Follow the live host
 goal-tool contract; do not invent a token or time budget that the user did not set.
 
 Scope restrictions remain authoritative. If a plan-only/no-tests request forbids

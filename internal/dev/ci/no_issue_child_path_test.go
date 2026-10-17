@@ -138,14 +138,14 @@ func TestSkillsHaveNoIssueChildPath(t *testing.T) {
 	})
 }
 
-// CRW-1418 (PR #889 round 2): the `child` session is dispatched only for a plan with no flow run. The places of crw-run and crw-pabcd that
+// CRW-1418 (PR #889 round 2): the `child` session is dispatched only for a plan with no flow run. The places of crw-run and crw-work that
 // tell the child to dispatch, reuse, observe or correct a `child` session say so in the same sentence: crw-run's execution request and its
-// project-run loop, and the managed lanes of crw-pabcd's dispatch surfaces. A sentence that says no `child` session is started or that one
+// project-run loop, and the managed lanes of crw-work's dispatch surfaces. A sentence that says no `child` session is started or that one
 // never does something needs no condition.
 var issueChildDispatchPlaces = []struct{ file, heading string }{
 	{runSkillFile, "Determine the requested operation"},
 	{runSkillFile, "Keep a project run moving"},
-	{"plugins/crw/skills/crw-pabcd/references/dispatch-surfaces.md", "DISPATCH-MANAGED-01 (STRICT) — start from the binding, not from the mechanism"},
+	{"plugins/crw/skills/crw-work/references/dispatch-surfaces.md", "DISPATCH-MANAGED-01 (STRICT) — start from the binding, not from the mechanism"},
 }
 
 var (

@@ -33,7 +33,7 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "CRW-1344: Linear wording became tracking wording (a tracking issue, the tracking repository, a milestone), and the skill catalog no longer lists a Linear skill",
+      "reason": "CRW-1526: rename task work skills and references; preserve source provenance and stored hook/state contracts",
       "hunks": [
         {
           "line": 3,
@@ -81,6 +81,15 @@
           ]
         },
         {
+          "line": 65,
+          "old": [
+            "  the docs-only first work-phase (LOOP-DOCS-FIRST-01, `crw-loop`), not scaffolded\n"
+          ],
+          "new": [
+            "  the docs-only first work-phase (LOOP-DOCS-FIRST-01, `crw-continue`), not scaffolded\n"
+          ]
+        },
+        {
           "line": 70,
           "old": [
             "## 2.1 Lightweight Source of Truth (implementation-unit devlog)\n"
@@ -99,7 +108,7 @@
           ],
           "new": [
             "The numbered plan documents of a C2+ unit are workspace-local execution evidence owned by\n",
-            "[Implementation units](../crw-pabcd/references/implementation-units.md); scaffolding does not\n",
+            "[Implementation units](../crw-work/references/implementation-units.md); scaffolding does not\n",
             "create or number them. C0/C1 record exemptions are owned by crw-dev §0.1. Propose the\n",
             "`docs/`/`plans/` architecture docs when:\n"
           ]
@@ -121,6 +130,15 @@
           ]
         },
         {
+          "line": 104,
+          "old": [
+            "the SoT doc in the SAME unit (C gate, `pabcd` C phase). If the repo has no SoT doc,\n"
+          ],
+          "new": [
+            "the SoT doc in the SAME unit (task validation, `crw-work` references/phase-check.md). If the repo has no SoT doc,\n"
+          ]
+        },
+        {
           "line": 108,
           "old": [
             "Implementation-unit devlog method:\n",
@@ -134,7 +152,7 @@
           "new": [
             "Keep diff-level plans in files, not chat; keep chat summaries short: explain the phase,\n",
             "show a compact tree/change map, then link the plan file. Phase naming is owned by\n",
-            "[Implementation units](../crw-pabcd/references/implementation-units.md) (LEXICO-SPLIT-01).\n"
+            "[Implementation units](../crw-work/references/implementation-units.md) (LEXICO-SPLIT-01).\n"
           ]
         },
         {
@@ -158,13 +176,22 @@
           ]
         },
         {
+          "line": 165,
+          "old": [
+            "If the task is ambiguous or cross-cutting, route through the `pabcd` skill flow before scaffolding.\n"
+          ],
+          "new": [
+            "If the task is ambiguous or cross-cutting, route through the `crw-work` skill flow before scaffolding.\n"
+          ]
+        },
+        {
           "line": 207,
           "old": [
             "| Plan folders        | `YYMMDD_slug/`        | `260510_feature_bootstrap/`  |\n",
             "| Phase docs          | decade-prefixed `NNN_slug.md`, `000_*` is the index (LEXICO-SPLIT-01) | `000_plan.md`, `010_phase1_build.md` |\n"
           ],
           "new": [
-            "| Plan documents      | owned by [Implementation units](../crw-pabcd/references/implementation-units.md) | |\n"
+            "| Plan documents      | owned by [Implementation units](../crw-work/references/implementation-units.md) | |\n"
           ]
         },
         {
@@ -173,7 +200,7 @@
             "1. Follow decade numbering (../pabcd/references/implementation-units.md, LEXICO-SPLIT-01): 000-009 research, 010-019 phase 1, etc.\n"
           ],
           "new": [
-            "1. Follow decade numbering ([Implementation units](../crw-pabcd/references/implementation-units.md), LEXICO-SPLIT-01): 000-009 research, 010-019 phase 1, etc.\n"
+            "1. Follow decade numbering ([Implementation units](../crw-work/references/implementation-units.md), LEXICO-SPLIT-01): 000-009 research, 010-019 phase 1, etc.\n"
           ]
         }
       ]

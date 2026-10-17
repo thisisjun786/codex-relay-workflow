@@ -1,4 +1,12 @@
-# Loop-Engineering Alignment — Full Rules (dev-pabcd §11)
+# Loop-Engineering Alignment — Full Rules (crw-work)
+
+The current development flow is defined by [Task work](../SKILL.md#work-through-the-current-flow).
+The letters I/P/A/B/C/D below name existing standalone task-state records and
+their compatibility operations, not current flow stages. Reuse the applicable
+planning, review and evidence guidance within the requested scope; do not start
+this state machine for a flow-managed node. CLI examples use the public
+`crw work` namespace and require its supporting runtime. Hook registrations,
+stored enum values and existing evidence formats are unchanged here.
 
 Canonical full text for the §11 stub in `../SKILL.md`. Rule IDs and section numbers
 are stable; the router keeps a one-line summary per rule and this file holds the
@@ -7,7 +15,7 @@ in the initiative repo.
 
 ## Context
 
-PABCD is the macro loop: phase-level control with gates. Loop engineering supplies the
+task work is the macro loop: phase-level control with gates. Loop engineering supplies the
 micro-loop rules inside each phase. This file holds the adopted subset in full.
 
 ### §11.1 Loop values (DEFAULT)
@@ -46,7 +54,7 @@ the failing delta → re-verify.
 - **DEFAULT (LOOP-REPAIR-01):** 2 consecutive failed repairs of the same failure → stop
   patching, enter root-cause mode (`dev-debugging`). 3 → escalate: replan (return to P)
   or Interview return in HITL. "One more attempt" past these thresholds is the doom loop.
-- **LOOP-DOOM-01 (HEURISTIC):** 3 attestation failures in the same PABCD-phase within
+- **LOOP-DOOM-01 (HEURISTIC):** 3 attestation failures in the same legacy work step within
   one work-phase means no-progress. In HITL, return to Interview. In HOTL, do not
   fake Interview while a goal is active; either replan at P from the evidence already
   available, or close the work-phase as `NEEDS_HUMAN`, `BLOCKED`, or `UNSAFE`.
@@ -79,7 +87,7 @@ A repair loop applied to an optimization problem is a category error; the fix is
 shape, not more cycles. A full paper-grounded explore-and-select workflow proposal
 (LOOP-EXPLORE-SELECT-01: StrategyCard candidates, descriptor archive, opponent
 portfolio, evaluation cascade, restart ladder) is recorded in
-`backlog/260702_explore_select_research.md` — pending adoption via a normal PABCD pass.
+`backlog/260702_explore_select_research.md` — pending adoption via a normal task work pass.
 
 ### §11.4a Analysis-before-regeneration (DEFAULT, LOOP-REANALYZE-01)
 
@@ -139,7 +147,7 @@ Goal-mode (unattended) loop-specs must state: tool/credential scope (what the lo
 touch), token/cost budget, and a wall-clock bound. For C4 surfaces, an unattended loop
 with unstated scope is an ESCALATE-class omission — stop and ask before running it.
 
-Continuation belongs to [crw-loop](../../crw-loop/SKILL.md);
-divergence operation belongs to [Divergence tiers](../../crw-loop/references/divergence-tiers.md).
+Continuation belongs to [crw-continue](../../crw-continue/SKILL.md);
+divergence operation belongs to [Divergence tiers](../../crw-continue/references/divergence-tiers.md).
 Optimization meta-rules are in [Optimization rules](optimization.md).
 Read only the owner needed by the current action.

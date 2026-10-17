@@ -1,0 +1,1511 @@
+{
+  "origin": {
+    "tag": "v0.2.40",
+    "commit": "3c1459acadeb1906d97c00a598e1457327ae372d",
+    "skills_listing_sha256": "79d9580f39ca27221cb9c24337080e3fe4a1e71f76338c7329fca63f76a32e89"
+  },
+  "table_sha256": "fd84a8db22c3838ba6bb2ae0804ca58f9e81dbbd121b18e62da4b27d4eb70769",
+  "from": "pabcd",
+  "as": "work",
+  "files": {
+    "SKILL.md": {
+      "original": "d080fce03cae65b0bc5e081f409f02be98d771e44bdd4e44d0bb1657427dc640"
+    },
+    "agents/openai.yaml": {
+      "original": "234470af1ede36e42afab4899cfdaa3c837501ac64467211bc777b348382ce73"
+    },
+    "references/catalog-discovery.yaml": {
+      "original": "906dd52c37774888fcffb4bbba4cee31d1e055a471e46f315727530ebe0e2820"
+    },
+    "references/delegation.md": {
+      "original": "65ebbb511384c2f332658638b67a37af5c6a1e2a46b5213c7caf54bbaa8b6da9"
+    },
+    "references/dispatch-surfaces.md": {
+      "original": "0ee25f178da61abca9b56de80b2f1890e55479a44088509c7490cf9345785a3d"
+    },
+    "references/implementation-units.md": {
+      "original": "3b3ccc9a1f1264ca603a37082a7a70bbc1577924c76d132a4c49c139d7660f32"
+    },
+    "references/loop-engineering.md": {
+      "original": "841cab83d5142da14689d7a04eb84b35d62e31d40e4e8afa39e28c432df3ba43"
+    },
+    "references/optimization.md": {
+      "original": "23aab46ec630e2365f2c6eccd3aa673876e971298d95e0386269fc5257d6b024"
+    },
+    "references/phase-audit.md": {
+      "original": "df4289299cfc9f14cb83b0885aca734581941991b2f46a54ee7162897a325175"
+    },
+    "references/phase-check.md": {
+      "original": "926a105cdd159c5525089e25d0eaf29ee5337f4efde2aee5415266a34aa03ad1"
+    },
+    "references/phase-control.md": {
+      "original": "a40317ac1b149c79260e4947cec67c8e910a8e73585f24c538625374ac49074b"
+    },
+    "references/phase-plan.md": {
+      "original": "84ba35c87e3fc8aa892d212d58a1918a01cc48077047a5cdfb0a5ae9e9d719c8"
+    },
+    "references/plan-output.md": {
+      "original": "008afe31f5c350909f207d3e99a276adae4bda78fe42b28ae9020d2e13dd6795"
+    }
+  },
+  "edits": [
+    {
+      "file": "SKILL.md",
+      "reason": "CRW-1526: rename task work skills and references; preserve source provenance and stored hook/state contracts",
+      "hunks": [
+        {
+          "line": 2,
+          "old": [
+            "name: crw-pabcd\n",
+            "description: \"Use for class-scaled Plan-Audit-Build-Check-Done work. Explicit explanation, interview, plan-only, and read-only limits win; loading the skill does not activate a loop. Triggers: PABCD, plan this, 기획, 단계별로, 요구사항 정리.\"\n",
+            "metadata:\n",
+            "  last-verified: \"2026-07-02\"\n",
+            "  short-description: \"Codex-native PABCD loop (Interview/Plan/Audit/Build/Check/Done) with class-scaled depth.\"\n"
+          ],
+          "new": [
+            "name: crw-work\n",
+            "description: \"Use for class-scaled work and completion evidence on one task. Explicit explanation, interview-only, plan-only, and read-only limits win; loading the skill does not activate execution or continuation. Triggers: task work, 단계별로.\"\n"
+          ]
+        },
+        {
+          "line": 9,
+          "old": [
+            "# PABCD Workflow\n"
+          ],
+          "new": [
+            "# Task work (formerly PABCD)\n"
+          ]
+        },
+        {
+          "line": 11,
+          "old": [
+            "A Codex-native reimplementation of the IPABCD development loop (Interview + Plan / Audit / Build / Check / Done). There is no external orchestrator server. State lives in `.crw/sessions/<sessionId>.json` plus `.crw/ledger.jsonl`; transitions are driven by the `pabcd-state` hook component, the chat-side `crw-orchestrate` surface (human free-pass), and the live `crw pabcd orchestrate` terminal CLI (agent-gated).\n"
+          ],
+          "new": [
+            "Carry one authorized task through the current development flow: **수령 → 탐색 →\n",
+            "설계 → 비평 → 구현 → 단위 점검 → 크로스체크 → PR → 머지** (intake, explore,\n",
+            "design, critic, implement, unit check, crosscheck, PR, merge). Work class and the\n",
+            "requested scope determine which work is needed. The stored task-state letters\n",
+            "are compatibility values, not names for these flow stages.\n"
+          ]
+        },
+        {
+          "line": 13,
+          "old": [
+            "> **C0/C1 work (small in-place patches):** See `dev` §0.0 Work Classifier and §0.1 Patch Fast-Path first — full PABCD is mandatory for C4 and conditional for C3, never the baseline for every task.\n"
+          ],
+          "new": [
+            "`crw-dev` owns work class, the C0/C1 fast path, fresh proof and safety. A small\n",
+            "in-place repair does not acquire a full project workflow merely by loading this\n",
+            "skill. `crw-plan` decomposes agreed goals into milestones and issues; `crw-check`\n",
+            "audits delivered work against its canonical intent. Scoped persistence belongs to\n",
+            "[crw-continue](../crw-continue/SKILL.md).\n"
+          ]
+        },
+        {
+          "line": 15,
+          "old": [
+            "## Intent boundary\n"
+          ],
+          "new": [
+            "Which level does the work and owns its goal is defined by [hierarchy](../crw-canon/references/hierarchy.md#scope-of-each-level), whose [level table](../crw-canon/references/hierarchy.md#the-levels) names the layers.\n"
+          ]
+        },
+        {
+          "line": 17,
+          "old": [
+            "Loading this skill is not authority to execute phases. Explanation, review,\n",
+            "interview-only, plan-only, read-only, no-goal, no-FSM, and no-delegation limits win.\n",
+            "Use the requested method only within that scope. An operative bare crw-loop\n",
+            "request selects scoped HOTL through crw-loop; ordinary PABCD use does not.\n",
+            "crw-dev is canonical for work class, C0/C1 fast-path, proof, and safety.\n"
+          ],
+          "new": [
+            "## Intent and ownership\n"
+          ]
+        },
+        {
+          "line": 23,
+          "old": [
+            "## Interview Trigger\n"
+          ],
+          "new": [
+            "Explanation, review, interview-only, plan-only, read-only, no-goal, no-FSM and\n",
+            "no-delegation limits remain in force. Loading a skill or approving an outline\n",
+            "does not authorize implementation, publication or a host goal. A bare execution\n",
+            "request for `crw-continue` selects scoped HOTL; ordinary task work does not.\n"
+          ]
+        },
+        {
+          "line": 25,
+          "old": [
+            "Two distinct things, do not conflate them:\n"
+          ],
+          "new": [
+            "Determine the actual repository root before planning. Resolve source and test\n",
+            "paths against it. Do not invent a tracking issue for standalone work with no\n",
+            "tracking issue or CRW execution binding; the user's request and repository\n",
+            "decisions remain its scope.\n"
+          ]
+        },
+        {
+          "line": 27,
+          "old": [
+            "- **Hook hint (narrow):** `UserPromptSubmit` detects `interview` / `인터뷰`\n",
+            "  and other existing lexical phase hints and injects scoped advice only. Natural\n",
+            "  hints never enter or advance a phase. A line-anchored `orchestrate i` command\n",
+            "  instead takes the existing explicit-command parser path.\n",
+            "- **Agent judgment (broad):** for unclear requirements phrased otherwise, select\n",
+            "  `crw-interview` and its applicable references. Loading a skill is not a state\n",
+            "  transition. When phase entry is authorized, use `crw pabcd orchestrate I --session <id>`\n",
+            "  with the current SessionStart binding; explicit user commands are also supported.\n"
+          ],
+          "new": [
+            "A flow-managed node follows the run's packet and\n",
+            "[control ownership](../crw-canon/references/flow/control.md#who-owns-control-in-a-flow-managed-run).\n",
+            "The run owns its design, critic, executor calls, unit checks, crosscheck and\n",
+            "evidence. An executor or oversized child starts no second task-state machine,\n",
+            "goal or continuation loop. [spawn policy](../crw-canon/references/spawn-policy.md)\n",
+            "owns the run's calls; this skill does not add another coordinator.\n"
+          ]
+        },
+        {
+          "line": 36,
+          "old": [
+            "**I — Interview**: HITL-only requirements discovery. Canonical rules (four dimensions, contradiction scanning, readiness gating, Q/A capture) live in `crw-interview`; PABCD owns the phase edge I->P and the return-to-Interview affordance from any phase.\n"
+          ],
+          "new": [
+            "Unclear registration goes back to `crw-define`. Ambiguity during a run becomes a\n",
+            "decision request to the session above the project session, lifted with\n",
+            "`crw flow report-up` and the evidence file. Continue unblocked work on recorded\n",
+            "assumptions. The default flow starts no synchronous interview; explicit\n",
+            "clarification remains subject to the current request and host capabilities.\n"
+          ]
+        },
+        {
+          "line": 38,
+          "old": [
+            "## How It Works\n"
+          ],
+          "new": [
+            "## Work through the current flow\n"
+          ]
+        },
+        {
+          "line": 40,
+          "old": [
+            "PABCD is a forward progression with Interview return.\n"
+          ],
+          "new": [
+            "| Stage | Work and completion evidence |\n",
+            "| --- | --- |\n",
+            "| 수령 / intake | Read the request, binding, criteria, owner, work class, edit scope and delivery grant. Resolve contradictory authority before dependent work. |\n",
+            "| 탐색 / explore | Inspect the relevant code, tests and prior evidence. Separate observation, hypothesis and confirmed cause. Record the affected surfaces and unanswered questions. |\n",
+            "| 설계 / design | Produce a scoped executable design from that evidence. For a managed run, follow its architect call and approved DESIGN. Planning alone changes no implementation. |\n",
+            "| 비평 / critic | Obtain the required design review before implementation. Resolve or rebut findings with evidence; the later crosscheck does not replace this review. |\n",
+            "| 구현 / implement | Implement the agreed design in bounded changes. Keep scope and ownership intact and surface deviations. |\n",
+            "| 단위 점검 / unit check | Run the relevant tests and the separately invoked review required by the run/repository before its commit. Fix required findings and bind the resulting proof to the actual candidate. |\n",
+            "| 크로스체크 / crosscheck | Check the integrated range and acceptance coverage with the required independent evidence. The run owns its final gate; an executor's assertion is not its receipt. |\n",
+            "| PR | Follow the repository's configured delivery path. A PR-unit project opens its milestone PR; direct landing opens none. A task does not acquire publication permission from this stage name. |\n",
+            "| 머지 / merge | The authorized integration owner verifies and lands the candidate under repository policy. Report the actual landed revision or the pending/blocked outcome, with evidence. |\n"
+          ]
+        },
+        {
+          "line": 42,
+          "old": [
+            "```\n",
+            "IDLE ──→ P ──→ A ──→ B ──→ C ──→ D ──→ IDLE\n",
+            "         │      │      │\n",
+            "        gate   gate   gate\n",
+            "         └──────┴──────┴────→ I (Interview, context preserved)\n",
+            "```\n"
+          ],
+          "new": [
+            "**Implementation and delivery authority:** Push only as `crw-dev` DEV-GIT-PUSH-01 defines. Local checkpoints follow DEV-GIT-COMMIT-01; if the selected delivery path and design declare a PR stack, use DEV-STACK-02 in `crw-dev` references/stacked-prs.md.\n"
+          ]
+        },
+        {
+          "line": 49,
+          "old": [
+            "You can return to Interview (I) from any phase to clarify requirements; the plan and audit context are preserved. Phases P, A, B pause for confirmation in interactive use; C and D proceed once their work is genuinely done. In goal mode the agent must explicitly run `crw pabcd orchestrate P --session <id>` to start each PABCD cycle; nothing self-advances into P automatically, but the P->D sequence is never skipped. Goal mode is PABCD-only: while a goal is active the Interview NEVER fires — entry is suppressed and `request_user_input` is hard-denied, so the Interview is HITL-only and runs only with no active goal.\n"
+          ],
+          "new": [
+            "Scale detail and review to the `crw-dev` classifier. C0/C1 keeps its fast path;\n",
+            "C2 needs a compact plan and targeted proof; C3 follows its persistence and\n",
+            "cross-domain risks; C4 keeps independent review, full relevant gates and a durable risk/evidence\n",
+            "record. The flow's high-risk lane supplies those gates when it owns execution.\n",
+            "An evidence-free state transition cannot substitute for the work.\n"
+          ]
+        },
+        {
+          "line": 51,
+          "old": [
+            "## Phase Control / Orchestrate\n"
+          ],
+          "new": [
+            "For C2+ unit records or a multi-part roadmap, read\n",
+            "[Implementation units](references/implementation-units.md). These records are\n",
+            "workspace-local execution evidence that quotes the tracking canon when there is\n",
+            "one, or the request/repository source for standalone work. They are not a second\n",
+            "product source of truth. `crw-dev` owns the C0/C1 record exemptions.\n"
+          ]
+        },
+        {
+          "line": 53,
+          "old": [
+            "Before an authorized state-control action read\n",
+            "[Phase control](references/phase-control.md). It owns the chat/CLI distinction,\n",
+            "SESSION-IDENTITY-01, ORCH-ARTIFACT-01, ATTEST-SHAPE-01, Windows attest-file usage,\n",
+            "and every edge's required keys. Entry edges are not the four gated work edges.\n",
+            "Do not claim a phase from narration; do its work and record the real transition.\n",
+            "Goal activation and scoped continuation are owned by [crw-loop](../loop/SKILL.md).\n"
+          ],
+          "new": [
+            "## Select supporting guidance\n"
+          ]
+        },
+        {
+          "line": 60,
+          "old": [
+            "## Phases\n"
+          ],
+          "new": [
+            "Read the owner needed for the current action, not the whole reference graph.\n",
+            "For tool composition or response projection use\n",
+            "[native execution](../crw-dev/references/native-execution.md), respecting the\n",
+            "available host tools and their output limits.\n"
+          ]
+        },
+        {
+          "line": 62,
+          "old": [
+            "For tool composition, response projection, or in-context JS computation during\n",
+            "phase work, use [native execution](../dev/references/native-execution.md).\n",
+            "This selects an available execution path, never a phase or new authority.\n"
+          ],
+          "new": [
+            "- Planning detail and scoped outline assessment:\n",
+            "  [Plan guidance](references/phase-plan.md),\n",
+            "  [Plan output](references/plan-output.md), and\n",
+            "  [Assessment guidance](references/phase-audit.md). Their stored state codes\n",
+            "  describe compatibility records; they do not rename the current flow stages.\n",
+            "- Reachable verification, render evidence and conditional paths:\n",
+            "  [Validation guidance](references/phase-check.md). Passing an unrelated check\n",
+            "  does not establish the requested result.\n",
+            "- Repeated failures and optimization:\n",
+            "  [Loop engineering](references/loop-engineering.md) and, only for optimization\n",
+            "  or mechanism comparison, [Optimization rules](references/optimization.md).\n",
+            "  Preserve the existing repair/replan boundaries and accept/rebut synthesis;\n",
+            "  do not turn a rejected result into success or weaken its criteria.\n"
+          ]
+        },
+        {
+          "line": 66,
+          "old": [
+            "Read only the current phase's detailed owner before doing its work. A reference\n",
+            "link is a conditional routing edge, not a command to preload the entire graph.\n"
+          ],
+          "new": [
+            "## Delegation\n"
+          ]
+        },
+        {
+          "line": 69,
+          "old": [
+            "| Phase / trigger | Mandatory owner before work |\n",
+            "|---|---|\n",
+            "| I | crw-interview; no active host goal |\n",
+            "| P, including plan-only | [Plan phase](references/phase-plan.md): architect proposal → main executable plan → same-architect reflection; C2+ plans also read [Plan output](references/plan-output.md) for consultation evidence |\n",
+            "| A, if authorized | [Audit phase](references/phase-audit.md) |\n",
+            "| C | [Check phase](references/phase-check.md) |\n",
+            "| P/A specifying render or conditional-path verification | [Check phase](references/phase-check.md), to define reachable activation and observable evidence |\n"
+          ],
+          "new": [
+            "Start from the binding under\n",
+            "[DISPATCH-MANAGED-01](references/dispatch-surfaces.md#dispatch-managed-01-strict--start-from-the-binding-not-from-the-mechanism).\n",
+            "A managed issue/node stays with its owning flow or supported `crw-run` path.\n",
+            "Duplicate-assignment or capacity refusal is not permission to create a thread\n",
+            "by hand. An unresolved binding does not establish unmanaged scope.\n"
+          ]
+        },
+        {
+          "line": 77,
+          "old": [
+            "P explores and plans without implementing; PHASE-SPLIT-01 and the diff-level\n",
+            "contract apply. A actually audits, folds/rebuts blockers, and re-audits; only pass\n",
+            "or justified near-pass exits. C requires fresh relevant proof and SoT sync;\n",
+            "passing unrelated checks is not evidence. Explicit execution restrictions are not\n",
+            "overridden by a reference asking to run a verifier or dispatch a reviewer.\n"
+          ],
+          "new": [
+            "For standalone work with no tracking issue and no CRW execution binding, and for\n",
+            "bounded helper work, choose the actual surface before dispatch. A subagent is a\n",
+            "leaf in the current checkout: no host goal, task-state machine or further spawning\n",
+            "by default. A separate task needing its own branch/worktree or merge/CI lane uses\n",
+            "the supported task/thread surface with its own scope. Concurrent writers need\n",
+            "disjoint edit scopes and never perform branch-level Git operations concurrently.\n"
+          ]
+        },
+        {
+          "line": 83,
+          "old": [
+            "3. **B — Build**: Implement the audited plan in small atomic commits (DEV-GIT-COMMIT-01). Verify as you go. Stay inside the plan's scope boundary; surface deviations instead of silently expanding scope. Never push to a remote without explicit user approval (DEV-GIT-PUSH-01, ESCALATE). When P declared a stack, follow `DEV-STACK-02` in `crw-dev` `references/stacked-prs.md`.\n",
+            "5. **D — Done**: Summarize what was checked with evidence, update STATUS/devlog, commit (local only — pushing remains gated by DEV-GIT-PUSH-01), and confirm no pending work remains for this work-phase before returning to idle. The D summary is written for a reader who was not in the loop — conclusion, what changed, evidence pointers — per [Reader documents](../dev/references/reader-documents.md) READER-DOC-02/04. For loop/multi-pass work, **LOOP-PESSIMIST-01 (DEFAULT)** also records what did not improve, which hypothesis died, and what evidence would show the current direction is wrong; D -> IDLE -> P is a context/bias-flush boundary, so the next cycle resumes from disk artifacts rather than transcript momentum.\n"
+          ],
+          "new": [
+            "Read [Dispatch surfaces](references/dispatch-surfaces.md) and\n",
+            "[Delegation](references/delegation.md) before an authorized dispatch. The main\n",
+            "session keeps its own plan and transitions. Explicit no-delegation and scoped\n",
+            "read/write restrictions win. For independently user-owned peers use\n",
+            "[peer collaboration](../crw-dev/references/peer-collaboration.md); contact neither\n",
+            "transfers authority nor reactivates another task's goal.\n"
+          ]
+        },
+        {
+          "line": 86,
+          "old": [
+            "## Work-Phase Loop (multi-pass tasks)\n"
+          ],
+          "new": [
+            "## Existing task-state records\n"
+          ]
+        },
+        {
+          "line": 88,
+          "old": [
+            "**Terminology**: a *work-phase* is one outcome slice of the goal (e.g. \"Phase 3: Management API\"); a *PABCD-phase* is one letter P/A/B/C/D of a single cycle. They are not the same. Work-phases need not be slices of one feature: successive cycles in the SAME session may target completely different features or plans under the same goal (LOOP-UNIT-CHAIN-01, `crw-loop`).\n"
+          ],
+          "new": [
+            "The public command namespace is `crw work`: `state` inspects or controls task\n",
+            "state, `outline` handles task plans, `assessment` handles assessment-round\n",
+            "records, and `continue` handles authorized continuation. Other verb names stay\n",
+            "as listed in the canonical command map. These command spellings require the\n",
+            "corresponding runtime; changing this skill does not install or activate it.\n"
+          ]
+        },
+        {
+          "line": 90,
+          "old": [
+            "**Invariant — one work-phase = one full PABCD cycle.** Run P→A→B→C→D for a work-phase, close D (state → IDLE), then start the next work-phase at P. Do NOT run B for several work-phases back-to-back, and do NOT commit a work-phase straight out of B without passing C and D.\n"
+          ],
+          "new": [
+            "For an authorized existing-state operation read\n",
+            "[State control](references/phase-control.md), which owns session identity,\n",
+            "chat/CLI differences, attestations and edge-specific artifacts. SESSION-IDENTITY-01\n",
+            "requires the current native binding, not a copied parent or historical id.\n",
+            "Preserve native-cwd and foreign-session refusals. Hooks may guard an operation;\n",
+            "they do not perform the work or advance a state on the agent's behalf.\n"
+          ]
+        },
+        {
+          "line": 92,
+          "old": [
+            "Faithful execution: perform each phase's actual work; the state transition is not\n",
+            "its artifact. C0/C1 keeps crw-dev's fast-path; a real loop still cannot skip phases.\n",
+            "LOOP-CONTINUITY-01: P quotes the previous D conclusion/direction, with a reason\n",
+            "for changing it. PLAN-TRACK-01: when available, the native update_plan surface\n",
+            "mirrors progress; the durable plan remains the source of truth.\n"
+          ],
+          "new": [
+            "Legacy values `IDLE`, `I`, `P`, `A`, `B`, `C`, `D` remain stored values until the\n",
+            "explicit migration. Their human record labels are inactive, clarify, outline, assess,\n",
+            "change, validate and finish. Never reinterpret them as flow journal stages,\n",
+            "rewrite old receipts, or claim that a source rename migrated live state.\n"
+          ]
+        },
+        {
+          "line": 98,
+          "old": [
+            "### Implementation-Unit Documents\n"
+          ],
+          "new": [
+            "The storage sentences below remain unchanged pending the state migration:\n"
+          ]
+        },
+        {
+          "line": 100,
+          "old": [
+            "Before C2+ unit planning or any multi-phase roadmap, read\n",
+            "[Implementation units](references/implementation-units.md).\n",
+            "It owns DIFFLEVEL-ROADMAP-01, PHASE-SPLIT-01 linkage, LEXICO-SPLIT-01,\n",
+            "UNIT-RESIDENCE-01, numbering, and docs-first document contents.\n",
+            "crw-dev §0.1 owns C0/C1 record exemptions. crw-loop owns when docs-first begins.\n"
+          ],
+          "new": [
+            "The following historical hook/storage description retains its original command\n",
+            "spelling for that migration; new command examples use the namespace above.\n"
+          ]
+        },
+        {
+          "line": 106,
+          "old": [
+            "### Optimization-Loop Meta-Rules (plateau discipline)\n"
+          ],
+          "new": [
+            "> State lives in `.crw/sessions/<sessionId>.json` plus `.crw/ledger.jsonl`; transitions are driven by the `pabcd-state` hook component, the chat-side `orchestrate` command (human free-pass), and the live `crw pabcd orchestrate` terminal CLI (agent-gated).\n"
+          ]
+        },
+        {
+          "line": 108,
+          "old": [
+            "For optimization, mechanism comparison, or plateau analysis, read\n",
+            "[Optimization rules](references/optimization.md) and\n",
+            "[Loop engineering](references/loop-engineering.md). Ordinary repair does not\n",
+            "preload optimization material.\n",
+            "\n",
+            "## PABCD Depth by Work Class\n",
+            "\n",
+            "| Class | Plan (P) | Audit (A) | Build (B) | Check (C) | Record (D) |\n",
+            "|-------|----------|-----------|-----------|-----------|------------|\n",
+            "| C0-C1 | None/inline | Optional | Direct fix | Smallest proof | crw-dev §0.1: C0 exempt; C1 records only in an existing owning unit |\n",
+            "| C2 | Compact plan | Micro-audit | Implement + focused tests | Targeted gate | Summary |\n",
+            "| C3 | Compact or full plan depending on persistence/risk | Required when public contract, architecture, persistence, or cross-session risk exists; otherwise focused audit | Implement; use a reviewer subagent when useful | Affected suite + docs consistency when contracts changed | Summary + evidence; durable record only when state must persist |\n",
+            "| C4 | Full PABCD plan (mandatory) | Required, independent reviewer | Implement; independent verification | Full relevant gates | Durable risk/approval/evidence record |\n",
+            "| C5 | Interview/research first | — | — | — | Reclassify, then follow the new class |\n",
+            "\n",
+            "See `dev` §0.0 for the full class definitions and tie-break rules.\n",
+            "\n",
+            "## Delegation model — choosing a surface\n",
+            "\n",
+            "Choose the surface before dispatching. A **subagent** (`spawn_agent`) is a leaf\n",
+            "running in **this session's own working directory**, with no session state, no\n",
+            "goal and no FSM; its writes are your uncommitted changes. A **thread**\n",
+            "(`create_thread`) is a separate Codex task with its own goal and PABCD state, and\n",
+            "with `environment: worktree` its own checkout — `local` shares the project\n",
+            "checkout. Work needing its own branch, checkout or merge/CI lane is thread work,\n",
+            "one worktree thread per lane; a bounded slice of the tree you are already editing\n",
+            "is subagent work. Asking for parallel lane work is asking for those threads — the lanes are\n",
+            "the mechanism, not an extra deliverable — so do not fall back to subagents on the\n",
+            "shared tree to avoid creating tasks. Concurrent subagents need non-overlapping\n",
+            "write scopes and must never run branch-level git operations at the same time.\n",
+            "Before an authorized dispatch that is not obviously one or the other, read\n",
+            "[Dispatch surfaces](references/dispatch-surfaces.md).\n",
+            "\n",
+            "This section governs dispatched children, not independently user-owned peer tasks.\n",
+            "For necessary read-only context, follow\n",
+            "[peer collaboration](../dev/references/peer-collaboration.md). Outbound contact\n",
+            "requires an explicit user request or necessary coordination of a confirmed\n",
+            "blocking CI/merge collision, plus host permission and wake checks. Each peer retains\n",
+            "its own goal, plan and phase authority; a peer message never advances either FSM.\n",
+            "\n",
+            "The main session owns the plan, host goal, and transitions. Before authorized\n",
+            "dispatch read [Delegation](references/delegation.md). Leaves do not spawn by\n",
+            "default; attachments name the needed owner skills explicitly.\n",
+            "No-delegation and scoped read/write restrictions take precedence.\n",
+            "\n",
+            "## Loop Engineering (§11)\n",
+            "\n",
+            "For repeated failure, reviewer FAIL, or loop-archetype selection, read\n",
+            "[Loop engineering](references/loop-engineering.md). LOOP-REPAIR-01: two repeated\n",
+            "failed repairs require root-cause work, three require replan. LOOP-DOOM-01:\n",
+            "three failed attestations are no-progress, never success. REVIEW-SYNTHESIS-01\n",
+            "requires accept/rebut synthesis before re-dispatch. HOTL never returns to I\n",
+            "while its goal is active.\n",
+            "\n",
+            "## Catalog Discovery routing\n",
+            "\n",
+            "Interview sub-modes and Catalog Discovery rules live in `$crw-interview`\n",
+            "(INTERVIEW-CATALOG-01, CATALOG-DESIGN-FIRST-01). The option ontology YAML lives at\n",
+            "`references/catalog-discovery.yaml` in this skill directory.\n",
+            "\n",
+            "## State\n",
+            "\n"
+          ]
+        },
+        {
+          "line": 174,
+          "old": [
+            "## Repository Root\n"
+          ],
+          "new": [
+            "## Finish or hand back\n"
+          ]
+        },
+        {
+          "line": 176,
+          "old": [
+            "Determine the actual working repository root before planning (resolve via `pwd -P` from the target repo, or the project root the harness injects). Resolve all relative paths (`src/...`, `tests/...`) against it. If the root is ambiguous, ask before proceeding.\n"
+          ],
+          "new": [
+            "Use fresh, relevant proof for the actual scope; report failed, missing and\n",
+            "unobserved evidence separately. Record the outcome for a reader who was not in\n",
+            "the task, following [Reader documents](../crw-dev/references/reader-documents.md).\n",
+            "Say what changed, what was verified, what remains and which action is next.\n",
+            "Completion, publication, integration and live activation remain distinct facts.\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "agents/openai.yaml",
+      "reason": "CRW-1526: rename task work skills and references; preserve source provenance and stored hook/state contracts",
+      "hunks": [
+        {
+          "line": 2,
+          "old": [
+            "  display_name: \"crw-pabcd\"\n",
+            "  short_description: \"PABCD phases, evidence, and explicit scope boundaries.\"\n"
+          ],
+          "new": [
+            "  display_name: \"crw-work\"\n",
+            "  short_description: \"Scoped task work, verification, and completion evidence.\"\n",
+            "  default_prompt: \"Use $crw-work to take this task through the authorized development flow and record its completion evidence.\"\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/catalog-discovery.yaml",
+      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed CRW-1340: the synchronous Interview is retired with crw-interview; an unclear milestone or issue goes back to its registration (crw-define) and ambiguity during a run goes up as a decision request, so the routes to the Interview are dropped.",
+      "remove": true
+    },
+    {
+      "file": "references/delegation.md",
+      "reason": "CRW-1526: rename task work skills and references; preserve source provenance and stored hook/state contracts",
+      "hunks": [
+        {
+          "line": 10,
+          "old": [
+            "The main session owns the plan, host goal, and every PABCD transition.\n"
+          ],
+          "new": [
+            "The main session owns the plan, host goal, and every task work transition.\n"
+          ]
+        },
+        {
+          "line": 15,
+          "old": [
+            "When PABCD policy is enabled, the registered executor is evidence-gated on every SubagentStop; the built-in worker fallback is evidence-gated only while the parent has an active PABCD B/C cycle. When PABCD policy is disabled, both gates are silent. Outside that cycle the worker releases without a receipt.\n"
+          ],
+          "new": [
+            "When task work policy is enabled, the registered executor is evidence-gated on every SubagentStop; the built-in worker fallback is evidence-gated only while the parent has an active task work B/C cycle. When task work policy is disabled, both gates are silent. Outside that cycle the worker releases without a receipt.\n"
+          ]
+        },
+        {
+          "line": 64,
+          "old": [
+            "Repository-only provenance for lifecycle, economy, isolation, skill transport and\n",
+            "topology: `structure/20_pabcd_dispatch_doctrine.md` §3. This is not an installed\n",
+            "prerequisite; do not assume the path exists inside the plugin payload. An explicitly\n",
+            "required task source still must be loaded or reported missing before its governed action.\n"
+          ],
+          "new": [
+            "An explicitly required task source still must be loaded or reported missing before its\n",
+            "governed action.\n"
+          ]
+        },
+        {
+          "line": 133,
+          "old": [
+            "Reading this transport owner does not turn a non-audit task into a PABCD A gate.\n"
+          ],
+          "new": [
+            "Reading this transport owner does not turn a non-audit task into a task work A gate.\n"
+          ]
+        },
+        {
+          "line": 141,
+          "old": [
+            "[Waiting on work](../../loop/references/waiting.md) rules in either HITL or HOTL.\n"
+          ],
+          "new": [
+            "[Waiting on work](../../crw-continue/references/waiting.md) rules in either HITL or HOTL.\n"
+          ]
+        },
+        {
+          "line": 264,
+          "old": [
+            "subagent its own task, goal or PABCD state.\n"
+          ],
+          "new": [
+            "subagent its own task, goal or task work state.\n"
+          ]
+        },
+        {
+          "line": 275,
+          "old": [
+            "  separate one HEAD. Work that needs its own goal or PABCD cycle stays a\n"
+          ],
+          "new": [
+            "  separate one HEAD. Work that needs its own goal or task work cycle stays a\n"
+          ]
+        },
+        {
+          "line": 277,
+          "old": [
+            "- **REVIEW-DECORRELATE-01:** prefer an independent context; use a different model family\n",
+            "  only when host policy and user authorization permit the override. Otherwise inherit\n",
+            "  and record that family-level independence was not established.\n"
+          ],
+          "new": [
+            "- **REVIEW-DECORRELATE-01:** prefer a separate review execution context when available; model family is provenance, not a review constraint. If the host actually reports that an agent review reused the author's thread, record a warning and continue. Tool reviews run as separate invocations and have no agent thread id; never invent one.\n"
+          ]
+        },
+        {
+          "line": 362,
+          "old": [
+            "at the next P; discard them when the phase map changes. See DISPATCH-ECONOMY-01 in\n",
+            "`structure/20_pabcd_dispatch_doctrine.md` §3 (repository-only provenance, not an installed prerequisite).\n"
+          ],
+          "new": [
+            "at the next P; discard them when the phase map changes. See DISPATCH-ECONOMY-01.\n"
+          ]
+        },
+        {
+          "line": 368,
+          "old": [
+            "with JSON on stdin before its first native call. The command selects and records\n"
+          ],
+          "new": [
+            "with JSON on stdin before a native spawn of that role. The command selects and records\n"
+          ]
+        },
+        {
+          "line": 372,
+          "new": [
+            "Dispatch is the default procedure, not a prohibition. When the user's current request\n",
+            "explicitly asks for a direct native spawn (for example \"native, without dispatch\"), spawn\n",
+            "it as asked, for any role (explorer, executor, reviewer or architect): the spawn hook\n",
+            "allows it and marks it unmanaged (its notice reads \"This direct spawn is not managed by\n",
+            "first-fallback tracking\"), and an unmanaged spawn creates no managed receipt. Do not\n",
+            "refuse such a request because of this section; it removes no capability and changes\n",
+            "neither the managed spawn's receipt and marker rules nor the hook's decision.\n",
+            "\n"
+          ]
+        },
+        {
+          "line": 377,
+          "new": [
+            "   Under multi-agent V2 (`spawn_agent` takes `task_name`), add `\"v2TaskName\":true` to\n",
+            "   the claim and give the native call the returned `taskName`, the `dispatchId`, as its\n",
+            "   `task_name`.\n"
+          ]
+        },
+        {
+          "line": 378,
+          "old": [
+            "   Report `outcome:created` and the actual `agentId`, then use native wait. Report\n"
+          ],
+          "new": [
+            "   Report `outcome:created` and the actual `agentId` (under multi-agent V2, where\n",
+            "   `spawn_agent` returns the agent path `root/<task>`, written with a leading slash, and no thread id, that path is the\n",
+            "   `agentId`; the command resolves it to the child's thread id in the native database\n",
+            "   and records the thread id), then use native wait. Created\n",
+            "   requires the spawn hook's issuance of the attempt (a V2 task is host ciphertext whose\n",
+            "   marker the hook cannot read, so the hook issues the attempt of a claim made with\n",
+            "   `v2TaskName:true` to the V2 call whose `task_name` is its `dispatchId`, and none to any\n",
+            "   other call: a direct call whose name only equals a dispatch id stays unmanaged; an\n",
+            "   explorer-typed call may carry a reviewer or architect dispatch), and the child's first message\n",
+            "   must carry this attempt's marker (a child forked from this session starts with the\n",
+            "   parent's history, so it is tied by the call's result alone). The marker does not tie the child to the call:\n",
+            "   only the host's own result of the issued spawn call naming this `agentId` does, and\n",
+            "   a child the host cannot yet tie that way is recorded unverified and cannot complete\n",
+            "   an independent review until created is reported again. A child spawned while the hook was off is recorded only with\n",
+            "   `reconciliation` evidence, never deleted or respawned, and cannot satisfy\n",
+            "   independent review. Report\n"
+          ]
+        },
+        {
+          "line": 394,
+          "new": [
+            "   Before a `failed` or `task_failed` handoff of a recorded child, the command reads\n",
+            "   that child: an active child or a turn in progress refuses, and an end it cannot\n",
+            "   see returns `reconcile` with the child kept; stop the child, then report again.\n"
+          ]
+        },
+        {
+          "line": 402,
+          "new": [
+            "   A policy `stop` that leaves a recorded child marks its cleanup pending; once the\n",
+            "   child has ended, report `outcome:stopped` with its `agentId`,\n",
+            "   `executionState:stopped` and `reconciliation`. That only records the cleanup:\n",
+            "   the dispatch stays stopped and nothing is reopened or switched.\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/dispatch-surfaces.md",
+      "reason": "CRW-1526: rename task work skills and references; preserve source provenance and stored hook/state contracts",
+      "hunks": [
+        {
+          "line": 3,
+          "new": [
+            "The sessions in this document are named by [the level table](../../crw-canon/references/hierarchy.md#the-levels): the child is the project session, and a `child` session (a code id, not a layer) is no layer.\n",
+            "\n"
+          ]
+        },
+        {
+          "line": 4,
+          "old": [
+            "surfaces. [Delegation](delegation.md) owns what a subagent packet contains once\n"
+          ],
+          "new": [
+            "surfaces for unmanaged work; a CRW-managed lane is chosen first by\n",
+            "[DISPATCH-MANAGED-01](#dispatch-managed-01-strict--start-from-the-binding-not-from-the-mechanism).\n",
+            "[Delegation](delegation.md) owns what a subagent packet contains once\n"
+          ]
+        },
+        {
+          "line": 7,
+          "new": [
+            "## DISPATCH-MANAGED-01 (STRICT) — start from the binding, not from the mechanism\n",
+            "\n",
+            "Before choosing a surface, find out what owns the work. Read the binding the task carries:\n",
+            "the task packet, the assignment record the relay holds for it, or the DAG node\n",
+            "([OPS-7.1](../../crw-run/references/operations.md#ops-71-what-an-assignment-binds) says what an assignment binds).\n",
+            "\n",
+            "- **Managed** — a tracking issue or a DAG node, whether the relay already holds an assignment for it\n",
+            "  or not. An issue with no assignment yet is not unmanaged: its first lane is a managed one. A\n",
+            "  managed issue or node is one of two things, and the choice is the plan of [the child](../../crw-canon/references/hierarchy.md#the-levels) (project session), not this file's:\n",
+            "  - a flow executor call of the child's run, the default path: the run releases the node to the\n",
+            "    relay's DAG scheduler and publishes the executor's step, the child spawns that step's role\n",
+            "    subagent (a leaf) as `crw flow next` names it and reports it with `crw flow dispatched`, and the\n",
+            "    call, its commits, its review and its acceptance are rows of the run's journal and the DAG records\n",
+            "    ([the flow commands](../../crw-canon/references/flow.md), [the spawn policy](../../crw-canon/references/spawn-policy.md)).\n",
+            "  - a `child` session, only for a plan with no flow run: started and resumed\n",
+            "    through `crw-run` on the exception path of one oversized issue, with the managed\n",
+            "    start, the DAG release and their bridge recovery, pair/profile, capacity and receipt rules. A\n",
+            "    node a flow run's architect sizes for a child starts no `child` session: the project lane escalates\n",
+            "    it as `size_split` with detail `child_retired`. It is never a desktop `create_thread` lane.\n",
+            "\n",
+            "  Either way the relay refuses a second active or paused assignment of the same issue and a release\n",
+            "  past capacity; those answers are followed, not routed around by creating a thread by hand. The\n",
+            "  child's own thread spawns the run's role subagents for the steps `crw flow next` hands it, and helpers\n",
+            "  of its own for its judgment (recorded, SP-NAT-1); it edits no node's directory. The implementation of\n",
+            "  an issue is its run's executor call or its `child` session's, and a step's subagent is a leaf that spawns\n",
+            "  nothing. The manifest of\n",
+            "  managed lanes is a read-only projection of the relay assignments and DAG records (and, for a run,\n",
+            "  its journal), not a second file to keep. A goal-free parent is resumed by relay delivery\n",
+            "  ([OPS-8.1](../../crw-run/references/operations.md#ops-81-parent-continuation-and-waiting)): it\n",
+            "  checks the existing wake readiness ([OPS-8.5](../../crw-run/references/operations.md#ops-85-the-goal-free-parents-wake-path))\n",
+            "  and yields only after that readiness is established, never by arming a wake of its own.\n",
+            "- **Unmanaged** — standalone task work with no tracking issue and no CRW execution binding, and bounded\n",
+            "  helper delegation inside any task. A tracking issue with no assignment yet is not this case. The\n",
+            "  rest of this file applies as written.\n",
+            "- **Unknown** — the lookup failed, the relay is unavailable, or the identity is ambiguous. That is\n",
+            "  not permission to take the unmanaged route for an independent lane: resolve the binding, or\n",
+            "  report that it is unresolved and keep to bounded helpers meanwhile. Nothing is forced the other\n",
+            "  way either: a bounded helper or worktree worker needs no relay binding, and none is invented for it.\n",
+            "\n",
+            "A native helper's dispatch record is a local helper record. It is never an independent child's\n",
+            "assignment, a DAG acceptance or a relay receipt, and it is not a flow executor call, which exists\n",
+            "only as a call the run records.\n",
+            "\n"
+          ]
+        },
+        {
+          "line": 13,
+          "old": [
+            "  `multi_agent_v1` or `collaboration` namespace). Its native cwd inherits the\n",
+            "  parent's working directory. It has no session state, no host goal and no PABCD FSM.\n"
+          ],
+          "new": [
+            "  `multi_agent_v1` or `collaboration` namespace). Its native cwd inherits the spawning session's working directory. It has no session state, no host goal and no task work FSM.\n"
+          ]
+        },
+        {
+          "line": 19,
+          "old": [
+            "  its own goal and PABCD state, because crw keys those to the task.\n"
+          ],
+          "new": [
+            "  its own goal and task work state, because crw keys those to the task.\n"
+          ]
+        },
+        {
+          "line": 25,
+          "old": [
+            "An **independent task lane** owns a goal, PABCD cycle or long-running branch/CI\n"
+          ],
+          "new": [
+            "An **independent task lane** owns a goal, task work cycle or long-running branch/CI\n"
+          ]
+        },
+        {
+          "line": 31,
+          "old": [
+            "own goal or PABCD state. Different workers must use different worktrees.\n"
+          ],
+          "new": [
+            "own goal or task work state. Different workers must use different worktrees. When the\n",
+            "dispatch assigns a tree, the SubagentStop gate reads the receipt under that tree: the\n",
+            "packet carries the line `CRW-WORKTREE: <path>`, the spawn hook records it as an evidence\n",
+            "assignment (CRW-1115), and the worker writes its receipt under `<that tree>/.crw/evidence/`\n",
+            "and reports the absolute path. A dispatch with no assignment still writes its receipt under\n",
+            "the native cwd's `.crw/evidence`. For a flow executor the engine makes the assignment and\n",
+            "the parent does nothing: the spawn message, the packet and the block reason name the one\n",
+            "file `<P>/.crw/evidence/<id>.md` in the call worktree P (CRW-1482).\n"
+          ]
+        },
+        {
+          "line": 39,
+          "old": [
+            "| Working directory | native cwd inherits the parent's; a bounded worker must pass its assigned managed-worktree path as the shell workdir on every command | its own, with `environment: worktree`; the shared project checkout with `local` |\n",
+            "| Git branch and HEAD | native cwd points at the parent's; commands run in an assigned managed worktree see that worktree's branch and HEAD | its own under `worktree`; shared under `local` |\n"
+          ],
+          "new": [
+            "| Working directory | native cwd inherits the spawning session's; a bounded worker must pass its assigned managed-worktree path as the shell workdir on every command | its own, with `environment: worktree`; the shared project checkout with `local` |\n",
+            "| Git branch and HEAD | native cwd points at the spawning session's; commands run in an assigned managed worktree see that worktree's branch and HEAD | its own under `worktree`; shared under `local` |\n"
+          ]
+        },
+        {
+          "line": 45,
+          "old": [
+            "| PABCD FSM | none; it must not run `crw pabcd orchestrate` | its own, keyed to the task |\n"
+          ],
+          "new": [
+            "| task work FSM | none; it must not run `crw work state` | its own, keyed to the task |\n"
+          ]
+        },
+        {
+          "line": 57,
+          "old": [
+            "A spawned child inherits the parent's cwd. Measured on 2026-09-13: a probe\n",
+            "subagent reported the parent's `pwd`, the parent's `git rev-parse --show-toplevel`,\n",
+            "the parent's branch and HEAD, and a file it created appeared as an untracked entry\n",
+            "in the parent's `git status`. In `codex-rs`, `apply_spawn_agent_runtime_overrides`\n"
+          ],
+          "new": [
+            "A spawned subagent inherits the spawning session's cwd. Measured on 2026-09-13: a probe\n",
+            "subagent reported the spawning session's `pwd`, the spawning session's `git rev-parse --show-toplevel`,\n",
+            "the spawning session's branch and HEAD, and a file it created appeared as an untracked entry\n",
+            "in the spawning session's `git status`. In `codex-rs`, `apply_spawn_agent_runtime_overrides`\n"
+          ]
+        },
+        {
+          "line": 86,
+          "old": [
+            "Route by what the work needs to own, not by how parallel it is:\n"
+          ],
+          "new": [
+            "Route by what the work needs to own, not by how parallel it is. A CRW-bound issue or DAG\n",
+            "node is routed by [DISPATCH-MANAGED-01](#dispatch-managed-01-strict--start-from-the-binding-not-from-the-mechanism)\n",
+            "first; this list is for the rest:\n"
+          ]
+        },
+        {
+          "line": 88,
+          "old": [
+            "- Needs its own goal, PABCD cycle, user-visible task, or long-running\n"
+          ],
+          "new": [
+            "- Needs its own goal, task work cycle, user-visible task, or long-running\n"
+          ]
+        },
+        {
+          "line": 97,
+          "old": [
+            "  operations in one checkout. The coordinator owns goal/PABCD and integration.\n"
+          ],
+          "new": [
+            "  operations in one checkout. The coordinator owns goal/task work and integration.\n"
+          ]
+        },
+        {
+          "line": 109,
+          "old": [
+            "explicit checkout path. When a lane needs independent goal/PABCD ownership,\n"
+          ],
+          "new": [
+            "explicit checkout path. When a lane needs independent goal/task work ownership,\n"
+          ]
+        },
+        {
+          "line": 114,
+          "old": [
+            "Creating a thread is user-visible, so it needs a user request. A request for\n"
+          ],
+          "new": [
+            "Creating a thread is user-visible, so it needs a user request (a managed lane is started\n",
+            "by the relay, not created as a thread by hand). A request for\n"
+          ]
+        },
+        {
+          "line": 128,
+          "old": [
+            "N independent task lanes mean N `worktree` threads, N checkouts and N FSMs.\n"
+          ],
+          "new": [
+            "For unmanaged work, N independent task lanes mean N `worktree` threads, N checkouts and N FSMs.\n"
+          ]
+        },
+        {
+          "line": 150,
+          "old": [
+            "[Lane dispatch](../../loop/references/lane-dispatch.md) carries the packet contract and\n"
+          ],
+          "new": [
+            "[Lane dispatch](../../crw-continue/references/lane-dispatch.md) carries the packet contract and\n"
+          ]
+        },
+        {
+          "line": 180,
+          "old": [
+            "Lane work outlives a turn, and nothing resumes a parent automatically. Stop-continuation\n",
+            "is bounded on purpose: it releases under context pressure and at the stagnation cap. A\n",
+            "parent that dispatches lanes, yields, and expects to wake up later has arranged nothing,\n",
+            "and every lane then sits finished and unmerged.\n"
+          ],
+          "new": [
+            "Lane work outlives a turn, and for unmanaged lanes nothing resumes a parent automatically.\n",
+            "Stop-continuation is bounded on purpose: it releases under context pressure and at the\n",
+            "stagnation cap. A parent that dispatches lanes, yields, and expects to wake up later has\n",
+            "arranged nothing, and every lane then sits finished and unmerged. In a managed run a\n",
+            "goal-free parent is resumed by relay delivery instead (DISPATCH-MANAGED-01): it verifies that\n",
+            "wake readiness and arranges no second wake or manifest.\n"
+          ]
+        },
+        {
+          "line": 230,
+          "old": [
+            "Independent task lanes are separate tasks, so nothing in the system knows two were handed the\n",
+            "same issue until their pull requests collide. One shared record makes that visible before\n",
+            "the branches diverge. Per lane: repository, lane id, task and host id, worktree, branch,\n"
+          ],
+          "new": [
+            "For unmanaged work, independent task lanes are separate tasks, so nothing in the system knows\n",
+            "two were handed the same issue until their pull requests collide. One shared record makes that\n",
+            "visible before the branches diverge. Managed lanes keep no such file: the relay refuses a\n",
+            "second active assignment of an issue, and their identity, checkout and status are read from\n",
+            "its assignment and DAG records. Per lane: repository, lane id, task and host id, worktree, branch,\n"
+          ]
+        },
+        {
+          "line": 253,
+          "old": [
+            "Validate it with `node plugins/crw/scripts/check-lane-manifest.mjs <manifest.json>`.\n"
+          ],
+          "new": [
+            "Resolve `<crw-continue skill directory>` from the loaded loop skill path, then validate\n",
+            "it with `node \"<crw-continue skill directory>/scripts/check-lane-manifest.mjs\" <manifest.json>`.\n"
+          ]
+        },
+        {
+          "line": 289,
+          "old": [
+            "A subagent may not create a goal, run `crw pabcd orchestrate`, or bind a session; the\n"
+          ],
+          "new": [
+            "A subagent may not create a goal, run `crw work state`, or bind a session; the\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/implementation-units.md",
+      "reason": "CRW-1526: rename task work skills and references; preserve source provenance and stored hook/state contracts",
+      "hunks": [
+        {
+          "line": 3,
+          "old": [
+            "Full documentation routine (P concretizes the docs, A audits them as a hard gate, D\n",
+            "archives to `_fin/`, plus the mainstream design-doc/RFC translation table):\n",
+            "[Implementation log](../../dev-scaffolding/references/implementation-log.md).\n"
+          ],
+          "new": [
+            "The current development flow is defined by [Task work](../SKILL.md#work-through-the-current-flow).\n",
+            "The letters I/P/A/B/C/D below name existing standalone task-state records and\n",
+            "their compatibility operations, not current flow stages. Reuse the applicable\n",
+            "planning, review and evidence guidance within the requested scope; do not start\n",
+            "this state machine for a flow-managed node. CLI examples use the public\n",
+            "`crw work` namespace and require its supporting runtime. Hook registrations,\n",
+            "stored enum values and existing evidence formats are unchanged here.\n",
+            "\n",
+            "The numbered plan documents of a unit are workspace-local execution evidence: the plan as it\n",
+            "is carried out in this checkout. Where the work has a tracking issue, each one quotes the tracking issue and documents it implements\n",
+            "(the ref and the revision read), which stay canonical under\n",
+            "[Tracking holds canonical documents](../../crw-canon/references/tracking-model.md#tracking-holds-canonical-documents),\n",
+            "and never replaces them. Standalone work with no tracking issue quotes the original request and the repository's own contract documents instead, and creates no issue to have something to cite. A product decision is made and recorded in the tracking repository; a plan document\n",
+            "points to it, and where the two disagree the tracking record wins and the plan document is\n",
+            "amended at the next P. This file owns the format of the numbered documents.\n"
+          ]
+        },
+        {
+          "line": 28,
+          "old": [
+            "C0/C1 record behavior is canonically defined by [crw-dev §0.1](../../dev/SKILL.md):\n"
+          ],
+          "new": [
+            "C0/C1 record behavior is canonically defined by [crw-dev §0.1](../../crw-dev/SKILL.md):\n"
+          ]
+        },
+        {
+          "line": 55,
+          "old": [
+            "as MULTIPLE PABCD passes — one per work-phase. Pre-plan the full slice map and WRITE\n"
+          ],
+          "new": [
+            "as MULTIPLE task work passes — one per work-phase. Pre-plan the full slice map and WRITE\n"
+          ]
+        },
+        {
+          "line": 59,
+          "old": [
+            "amends it before building. The first pass MAY be a design-only PABCD pass (Phase 0):\n"
+          ],
+          "new": [
+            "amends it before building. The first pass MAY be a design-only task work pass (Phase 0):\n"
+          ]
+        },
+        {
+          "line": 61,
+          "old": [
+            "difflevel roadmap before the first implementation work-phase. Under a `crw-loop`\n"
+          ],
+          "new": [
+            "difflevel roadmap before the first implementation work-phase. Under a `crw-continue`\n"
+          ]
+        },
+        {
+          "line": 63,
+          "old": [
+            "STRICT for HOTL goal loops (LOOP-DOCS-FIRST-01, `crw-loop`) — there the roadmap\n"
+          ],
+          "new": [
+            "STRICT for HOTL goal loops (LOOP-DOCS-FIRST-01, `crw-continue`) — there the roadmap\n"
+          ]
+        },
+        {
+          "line": 68,
+          "old": [
+            "cycle in the same session. \"This needs its own PABCD\" is a plan statement, never a\n"
+          ],
+          "new": [
+            "cycle in the same session. \"This needs its own task work\" is a plan statement, never a\n"
+          ]
+        },
+        {
+          "line": 71,
+          "old": [
+            "HITL and goal PABCD may both use `crw-loop` divergence/collapse. In HITL, the agent\n"
+          ],
+          "new": [
+            "HITL and goal task work may both use `crw-continue` divergence/collapse. In HITL, the agent\n"
+          ]
+        },
+        {
+          "line": 81,
+          "old": [
+            "Faithful execution and PLAN-TRACK-01 remain in [Work-phase loop](../SKILL.md#work-phase-loop-multi-pass-tasks).\n"
+          ],
+          "new": [
+            "Perform the actual work and record its evidence under [Task work](../SKILL.md#work-through-the-current-flow). PLAN-TRACK-01: when available, the native update_plan surface mirrors progress; the durable plan remains the source of truth.\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/loop-engineering.md",
+      "reason": "CRW-1526: rename task work skills and references; preserve source provenance and stored hook/state contracts",
+      "hunks": [
+        {
+          "line": 1,
+          "old": [
+            "# Loop-Engineering Alignment — Full Rules (dev-pabcd §11)\n"
+          ],
+          "new": [
+            "# Loop-Engineering Alignment — Full Rules (crw-work)\n",
+            "\n",
+            "The current development flow is defined by [Task work](../SKILL.md#work-through-the-current-flow).\n",
+            "The letters I/P/A/B/C/D below name existing standalone task-state records and\n",
+            "their compatibility operations, not current flow stages. Reuse the applicable\n",
+            "planning, review and evidence guidance within the requested scope; do not start\n",
+            "this state machine for a flow-managed node. CLI examples use the public\n",
+            "`crw work` namespace and require its supporting runtime. Hook registrations,\n",
+            "stored enum values and existing evidence formats are unchanged here.\n"
+          ]
+        },
+        {
+          "line": 10,
+          "old": [
+            "PABCD is the macro loop: phase-level control with gates. Loop engineering supplies the\n"
+          ],
+          "new": [
+            "task work is the macro loop: phase-level control with gates. Loop engineering supplies the\n"
+          ]
+        },
+        {
+          "line": 49,
+          "old": [
+            "- **LOOP-DOOM-01 (HEURISTIC):** 3 attestation failures in the same PABCD-phase within\n"
+          ],
+          "new": [
+            "- **LOOP-DOOM-01 (HEURISTIC):** 3 attestation failures in the same legacy work step within\n"
+          ]
+        },
+        {
+          "line": 60,
+          "old": [
+            "  (design-note lineage, not production-validated). Reviewer lifecycle across rounds is\n",
+            "  owned by `structure/20_pabcd_dispatch_doctrine.md` §3 (DISPATCH-ACTOR-01 /\n",
+            "  DISPATCH-RETIRE-01; repository-only provenance, not an installed prerequisite).\n"
+          ],
+          "new": [
+            "  (design-note lineage, not production-validated). Reviewer lifecycle across rounds follows\n",
+            "  DISPATCH-ACTOR-01 / DISPATCH-RETIRE-01.\n"
+          ]
+        },
+        {
+          "line": 83,
+          "old": [
+            "`backlog/260702_explore_select_research.md` — pending adoption via a normal PABCD pass.\n"
+          ],
+          "new": [
+            "`backlog/260702_explore_select_research.md` — pending adoption via a normal task work pass.\n"
+          ]
+        },
+        {
+          "line": 143,
+          "old": [
+            "Continuation belongs to [crw-loop](../../loop/SKILL.md);\n",
+            "divergence operation belongs to [Divergence tiers](../../loop/references/divergence-tiers.md).\n"
+          ],
+          "new": [
+            "Continuation belongs to [crw-continue](../../crw-continue/SKILL.md);\n",
+            "divergence operation belongs to [Divergence tiers](../../crw-continue/references/divergence-tiers.md).\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/optimization.md",
+      "reason": "CRW-1526: rename task work skills and references; preserve source provenance and stored hook/state contracts",
+      "hunks": [
+        {
+          "line": 3,
+          "new": [
+            "The current development flow is defined by [Task work](../SKILL.md#work-through-the-current-flow).\n",
+            "The letters I/P/A/B/C/D below name existing standalone task-state records and\n",
+            "their compatibility operations, not current flow stages. Reuse the applicable\n",
+            "planning, review and evidence guidance within the requested scope; do not start\n",
+            "this state machine for a flow-managed node. CLI examples use the public\n",
+            "`crw work` namespace and require its supporting runtime. Hook registrations,\n",
+            "stored enum values and existing evidence formats are unchanged here.\n",
+            "\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/phase-audit.md",
+      "reason": "CRW-1526: rename task work skills and references; preserve source provenance and stored hook/state contracts",
+      "hunks": [
+        {
+          "line": 3,
+          "old": [
+            "2. **A — Audit**: Adversarial, read-only review of the plan against the real codebase. Dispatch an independent read-only reviewer using the exposed spawn schema (`agent_type:\"reviewer\"` when available; otherwise supported `agent_type:\"explorer\"` with `CRW-ROLE: reviewer` before `TASK:`; when the schema has no `agent_type`, use the same header and explicit read-only scope in supported `message` or text-`items`, per the [live-schema transport owner](delegation.md#live-tool-schema-and-role-transport)). Logical scope does not claim a native sandbox. Dispatch this reviewer — even a small/mini-model one — to challenge assumptions, find blockers (rollback gaps, missing callers, phantom constants), and verify references. For each conditional path the plan adds, the reviewer also asks: is the trigger reachable at all from states the system actually visits (callers exist, preconditions can co-occur, upstream code does not consume the trigger first), and does the plan name its activation scenario (C-ACTIVATION-GROUNDING-01)? An unreachable-by-construction branch is a plan blocker, not a C-phase discovery. The reviewer also checks: new devlog phase documents use the numbered lexicographic filename convention; bare-named or research/implementation-mixed docs are a FAIL (LEXICO-SPLIT-01). Multi-phase units satisfy DIFFLEVEL-ROADMAP-01: every roadmap phase has a diff-level decade doc (no outline-only or missing phases), and the phase map is dependency-ordered, not effort-bucketed (PHASE-SPLIT-01). **Audit loop (STRICT, AUDIT-LOOP-01):** A is a loop — audit -> synthesize -> amend plan -> re-audit — not a single round. Exit A>B only when the MAIN agent judges the round **pass** (reviewer approved) or **near-pass**: every High/Critical blocker was folded into the plan as a concrete amendment or explicitly rebutted with recorded rationale, and only non-blocking residuals remain (`GO-WITH-FIXES; 2 blockers folded back` qualifies — the main agent is the judge, not a string parser). A FAIL round never exits: apply REVIEW-SYNTHESIS-01 (loop-engineering.md §11.3), amend the plan, and re-audit with the SAME reviewer (V2 `followup_task` to its task_name or V1 `send_input` to its agent_id; DISPATCH-ACTOR-01); LOOP-REPAIR-01 bounds the loop — after 3 failed rounds return to P with a changed plan (HITL may return to Interview). The dispatch packet explicitly names `$crw:crw-dev-code-reviewer` AND `$crw:crw-search` (reference/version/external-claim verification rides the search ladder) and instructs the reviewer to end with a normalized final line `VERDICT: PASS | GO-WITH-FIXES (blockers=N) | FAIL` plus numbered blockers. No code changes. The `A>B` attest structurally requires `auditOutput` (the pasted tail of the reviewer's verdict) plus `auditVerdict` (`pass|near-pass|fail` — the MAIN agent's own judgment of the round); `near-pass` additionally requires `auditResidual` naming each residual blocker and its disposition (folded/rebutted). A declared `fail` never advances, and a pasted tail whose final verdict line says FAIL is rejected regardless of the claimed judgment. Still a form-only bar: the gate cannot verify the paste's provenance, so faithful execution (really dispatching the reviewer, really looping) remains the agent's obligation.\n"
+          ],
+          "new": [
+            "The current development flow is defined by [Task work](../SKILL.md#work-through-the-current-flow).\n",
+            "The letters I/P/A/B/C/D below name existing standalone task-state records and\n",
+            "their compatibility operations, not current flow stages. Reuse the applicable\n",
+            "planning, review and evidence guidance within the requested scope; do not start\n",
+            "this state machine for a flow-managed node. CLI examples use the public\n",
+            "`crw work` namespace and require its supporting runtime. Hook registrations,\n",
+            "stored enum values and existing evidence formats are unchanged here.\n",
+            "\n",
+            "2. **A — Audit**: Adversarial, read-only review of the plan against the real codebase. Dispatch an independent read-only reviewer using the exposed spawn schema (`agent_type:\"reviewer\"` when available; otherwise supported `agent_type:\"explorer\"` with `CRW-ROLE: reviewer` before `TASK:`; when the schema has no `agent_type`, use the same header and explicit read-only scope in supported `message` or text-`items`, per the [live-schema transport owner](delegation.md#live-tool-schema-and-role-transport)). Logical scope does not claim a native sandbox. Dispatch this reviewer — even a small/mini-model one — to challenge assumptions, find blockers (rollback gaps, missing callers, phantom constants), and verify references. For each conditional path the plan adds, the reviewer also asks: is the trigger reachable at all from states the system actually visits (callers exist, preconditions can co-occur, upstream code does not consume the trigger first), and does the plan name its activation scenario (C-ACTIVATION-GROUNDING-01)? An unreachable-by-construction branch is a plan blocker, not a C-phase discovery. The reviewer also checks: new devlog phase documents use the numbered lexicographic filename convention; bare-named or research/implementation-mixed docs are a FAIL (LEXICO-SPLIT-01). Multi-phase units satisfy DIFFLEVEL-ROADMAP-01: every roadmap phase has a diff-level decade doc (no outline-only or missing phases), and the phase map is dependency-ordered, not effort-bucketed (PHASE-SPLIT-01). **Audit loop (STRICT, AUDIT-LOOP-01):** A is a loop — audit -> synthesize -> amend plan -> re-audit — not a single round. Exit A>B only when the MAIN agent judges the round **pass** (reviewer approved) or **near-pass**: every High/Critical blocker was folded into the plan as a concrete amendment or explicitly rebutted with recorded rationale, and only non-blocking residuals remain (`GO-WITH-FIXES; 2 blockers folded back` qualifies — the main agent is the judge, not a string parser; the reviewer's own closing line is `VERDICT: GO-WITH-FIXES (blockers=N)`, which the observer records as a near-pass with its count, and the attest's `auditBlockers` then gives each blocker its disposition, folded or rebutted, with the reason). A FAIL round never exits: apply REVIEW-SYNTHESIS-01 (loop-engineering.md §11.3), amend the plan, and re-audit with the SAME reviewer (V2 `followup_task` to its task_name or V1 `send_input` to its agent_id; DISPATCH-ACTOR-01); LOOP-REPAIR-01 bounds the loop — after 3 failed rounds return to P with a changed plan (HITL may return to Interview). The dispatch packet explicitly names `$crw:crw-dev-code-reviewer` AND `$crw:crw-search` (reference/version/external-claim verification rides the search ladder) and instructs the reviewer to end with a normalized final line `VERDICT: PASS | GO-WITH-FIXES (blockers=N) | FAIL` plus numbered blockers. No code changes. The `A>B` attest structurally requires `auditOutput` (the pasted tail of the reviewer's verdict) plus `auditVerdict` (`pass|near-pass|fail` — the MAIN agent's own judgment of the round); `near-pass` additionally requires `auditResidual` naming each residual blocker and its disposition (folded/rebutted); when the recorded reviewer verdict is `GO-WITH-FIXES (blockers=N)` it also requires `auditBlockers`, one `{\"blocker\":<n>,\"disposition\":\"folded\"|\"rebutted\",\"reason\":\"...\"}` for each blocker 1..N (the gate checks that form, in any language, never the prose of `auditResidual`). A declared `fail` never advances, and a pasted tail whose final verdict line says FAIL is rejected regardless of the claimed judgment. Still a form-only bar: the gate cannot verify the paste's provenance, so faithful execution (really dispatching the reviewer, really looping) remains the agent's obligation.\n"
+          ]
+        },
+        {
+          "line": 7,
+          "old": [
+            "   **Verification is not pinned to A (LEAN-REVIEW-01, 260818).** `crw pabcd review-round open` still exists, and a verdict a reviewer's exit records is still honoured: it cannot be contradicted by your attest, spent after a re-plan, or spent on a plan that changed since. What changed is that an open round no longer BLOCKS `A>B`. It used to, and that produced a deadlock — every reason the SubagentStop observer did not fire (a matcher that missed the runtime's role vocabulary, a reviewer whose closing lines did not parse, a reinstall that moved `PLUGIN_ROOT` out from under a live session) became a cycle that could never leave A, whose only escape was hand-feeding the hook its own payload. A gate whose normal recovery is forging its own input is not a gate.\n"
+          ],
+          "new": [
+            "   **Verification is not pinned to A (LEAN-REVIEW-01, 260818).** `crw work assessment open` still exists, and a verdict a reviewer's exit records is still honoured: it cannot be contradicted by your attest, spent after a re-plan, or spent on a plan that changed since. What changed is that an open round no longer BLOCKS `A>B`. It used to, and that produced a deadlock — every reason the SubagentStop observer did not fire (a matcher that missed the runtime's role vocabulary, a reviewer whose closing lines did not parse, a reinstall that moved `PLUGIN_ROOT` out from under a live session) became a cycle that could never leave A, whose only escape was hand-feeding the hook its own payload. A gate whose normal recovery is forging its own input is not a gate.\n"
+          ]
+        },
+        {
+          "line": 17,
+          "old": [
+            "  a direct independent audit instead. Normative lifecycle rules: DISPATCH-ACTOR-01 /\n",
+            "  DISPATCH-RETIRE-01 in `structure/20_pabcd_dispatch_doctrine.md` §3\n",
+            "  (repository-only provenance, not an installed prerequisite).\n"
+          ],
+          "new": [
+            "  a direct independent audit instead. Lifecycle rules: DISPATCH-ACTOR-01 /\n",
+            "  DISPATCH-RETIRE-01.\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/phase-check.md",
+      "reason": "CRW-1526: rename task work skills and references; preserve source provenance and stored hook/state contracts",
+      "hunks": [
+        {
+          "line": 3,
+          "new": [
+            "The current development flow is defined by [Task work](../SKILL.md#work-through-the-current-flow).\n",
+            "The letters I/P/A/B/C/D below name existing standalone task-state records and\n",
+            "their compatibility operations, not current flow stages. Reuse the applicable\n",
+            "planning, review and evidence guidance within the requested scope; do not start\n",
+            "this state machine for a flow-managed node. CLI examples use the public\n",
+            "`crw work` namespace and require its supporting runtime. Hook registrations,\n",
+            "stored enum values and existing evidence formats are unchanged here.\n",
+            "\n"
+          ]
+        },
+        {
+          "line": 12,
+          "old": [
+            "   [Reader documents](../../dev/references/reader-documents.md) READER-DOC-05 and records\n"
+          ],
+          "new": [
+            "   [Reader documents](../../crw-dev/references/reader-documents.md) READER-DOC-05 and records\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/phase-control.md",
+      "reason": "CRW-1526: rename task work skill and distinguish terminal namespace from preserved chat grammar",
+      "hunks": [
+        {
+          "line": 3,
+          "new": [
+            "The current development flow is defined by [Task work](../SKILL.md#work-through-the-current-flow).\n",
+            "The letters I/P/A/B/C/D below name existing standalone task-state records and\n",
+            "their compatibility operations, not current flow stages. Reuse the applicable\n",
+            "planning, review and evidence guidance within the requested scope; do not start\n",
+            "this state machine for a flow-managed node. CLI examples use the public\n",
+            "`crw work` namespace and require its supporting runtime. Hook registrations,\n",
+            "stored enum values and existing evidence formats are unchanged here.\n",
+            "\n"
+          ]
+        },
+        {
+          "line": 8,
+          "old": [
+            "orchestrate <I|P|A|B|C|D|status|reset> [--attest <json> | --attest-file <path>]\n"
+          ],
+          "new": [
+            "orchestrate <I|P|A|B|C|D|status|reset> [--attest <json>]\n"
+          ]
+        },
+        {
+          "line": 11,
+          "old": [
+            "**On Windows use `--attest-file`.** PowerShell strips the quotes from inline JSON\n"
+          ],
+          "new": [
+            "**For the terminal CLI on Windows use `--attest-file`.** PowerShell strips the quotes from inline JSON\n"
+          ]
+        },
+        {
+          "line": 17,
+          "old": [
+            "crw pabcd orchestrate A --session <id> --attest-file .crw/attest.json\n"
+          ],
+          "new": [
+            "crw work state A --session <id> --attest-file .crw/attest.json\n"
+          ]
+        },
+        {
+          "line": 20,
+          "old": [
+            "Accepted prefixes include `$crw:crw-orchestrate`, `$crw-pabcd`,\n",
+            "`crw pabcd orchestrate`, `/orchestrate`, and bare `orchestrate`.\n"
+          ],
+          "new": [
+            "Chat accepts line-anchored `orchestrate <verb>` and `/orchestrate <verb>`.\n",
+            "`crw work state` is the terminal CLI; loading `crw-work` does not change the\n",
+            "chat parser or migrate its existing prefixes.\n"
+          ]
+        },
+        {
+          "line": 27,
+          "old": [
+            "- Agent/terminal path is the live `crw pabcd orchestrate` CLI and is attest-gated:\n"
+          ],
+          "new": [
+            "- Agent/terminal path is the live `crw work state` CLI and is attest-gated:\n"
+          ]
+        },
+        {
+          "line": 35,
+          "old": [
+            "Advancing a phase is not the same as doing it (see [Faithful execution](../SKILL.md#work-phase-loop-multi-pass-tasks)). Each forward\n"
+          ],
+          "new": [
+            "Advancing a phase is not the same as doing it (see [Task work](../SKILL.md#work-through-the-current-flow)). Each forward\n"
+          ]
+        },
+        {
+          "line": 50,
+          "new": [
+            "The numbered documents `planUnit` names are workspace-local execution evidence: where the work has a tracking issue, each quotes the\n",
+            "tracking issue and documents it implements, which stay canonical under\n",
+            "[Tracking holds canonical documents](../../crw-canon/references/tracking-model.md#tracking-holds-canonical-documents);\n",
+            "standalone work with no tracking issue quotes the original request and the repository's own contract documents and creates no issue for it.\n",
+            "The gate checks that the unit exists and holds numbered documents, not what they decide; their\n",
+            "format is [Implementation units](implementation-units.md).\n",
+            "\n"
+          ]
+        },
+        {
+          "line": 61,
+          "old": [
+            "| A->B | `from`, `to`, `did`, `auditOutput`, `auditVerdict` (`pass`/`near-pass`/`fail`); near-pass adds `auditResidual` | FAIL never advances |\n"
+          ],
+          "new": [
+            "| A->B | `from`, `to`, `did`, `auditOutput`, `auditVerdict` (`pass`/`near-pass`/`fail`); near-pass adds `auditResidual`; a recorded `GO-WITH-FIXES (blockers=N)` adds `auditBlockers` | FAIL never advances |\n"
+          ]
+        },
+        {
+          "line": 63,
+          "old": [
+            "| C->D | `from`, `to`, `did`, `checkOutput`, `exitCode` (required, must be 0) | a goalplan-bound session also needs `testReceiptPath` from `crw pabcd receipt test` |\n"
+          ],
+          "new": [
+            "| C->D | `from`, `to`, `did`, `checkOutput`, `exitCode` (required, must be 0) | a goalplan-bound session also needs `testReceiptPath` from `crw work receipt test` |\n"
+          ]
+        },
+        {
+          "line": 72,
+          "old": [
+            "{\"from\":\"A\",\"to\":\"B\",\"did\":\"folded 2 blockers, rebutted 1\",\"auditOutput\":\"<pasted reviewer verdict tail>\",\"auditVerdict\":\"near-pass\",\"auditResidual\":\"GO-WITH-FIXES; blocker 1 folded, blocker 2 rebutted because ...\",\"workPhaseId\":\"wp1\"}\n"
+          ],
+          "new": [
+            "{\"from\":\"A\",\"to\":\"B\",\"did\":\"folded 1 blocker, rebutted 1\",\"auditOutput\":\"<pasted reviewer verdict tail>\",\"auditVerdict\":\"near-pass\",\"auditResidual\":\"GO-WITH-FIXES (blockers=2); blocker 1 folded, blocker 2 rebutted because ...\",\"auditBlockers\":[{\"blocker\":1,\"disposition\":\"folded\",\"reason\":\"<how the plan changed>\"},{\"blocker\":2,\"disposition\":\"rebutted\",\"reason\":\"<why it does not hold>\"}],\"workPhaseId\":\"wp1\"}\n"
+          ]
+        },
+        {
+          "line": 77,
+          "old": [
+            "Omit `workPhaseId` when no goalplan is bound, and `testReceiptPath` when the\n",
+            "session is unbound. Everything else is mandatory on that edge.\n"
+          ],
+          "new": [
+            "Omit `workPhaseId` when no goalplan is bound, `testReceiptPath` when the\n",
+            "session is unbound, and `auditBlockers` when the recorded reviewer verdict has no `blockers=N`. Everything else is mandatory on that edge.\n"
+          ]
+        },
+        {
+          "line": 88,
+          "old": [
+            "`crw pabcd orchestrate <verb> --session <id> --attest <json>` (or `--attest-file <path>`,\n"
+          ],
+          "new": [
+            "`crw work state <verb> --session <id> --attest <json>` (or `--attest-file <path>`,\n"
+          ]
+        },
+        {
+          "line": 91,
+          "old": [
+            "`auditResidual`.\n"
+          ],
+          "new": [
+            "`auditResidual`, and a round whose recorded reviewer verdict is `GO-WITH-FIXES (blockers=N)` also requires\n",
+            "`auditBlockers`: one `{\"blocker\":<n>,\"disposition\":\"folded\"|\"rebutted\",\"reason\":\"...\"}` for each blocker 1..N.\n"
+          ]
+        },
+        {
+          "line": 95,
+          "old": [
+            "parent or transcript-history id; this also governs `crw pabcd loop init` and `crw goalplan`.\n"
+          ],
+          "new": [
+            "parent or transcript-history id; this also governs `crw work continue init` and `crw goalplan`.\n"
+          ]
+        },
+        {
+          "line": 106,
+          "old": [
+            "`IPABCD: <phase> (<LABEL>)`. Injected footer values are prompt-time snapshots.\n"
+          ],
+          "new": [
+            "`PABCD: <phase> (<LABEL>)`. Injected footer values are prompt-time snapshots.\n"
+          ]
+        },
+        {
+          "line": 115,
+          "old": [
+            "Execution intent and HOTL activation belong to [crw-loop](../../loop/SKILL.md).\n"
+          ],
+          "new": [
+            "Execution intent and HOTL activation belong to [crw-continue](../../crw-continue/SKILL.md).\n"
+          ]
+        },
+        {
+          "line": 140,
+          "old": [
+            "`crw pabcd loop validate --session <id> --slug <slug>` so validation uses the same binding.\n"
+          ],
+          "new": [
+            "`crw work continue validate --session <id> --slug <slug>` so validation uses the same binding.\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/phase-plan.md",
+      "reason": "CRW-1526: rename task work skills and references; preserve source provenance and stored hook/state contracts",
+      "hunks": [
+        {
+          "line": 3,
+          "new": [
+            "The current development flow is defined by [Task work](../SKILL.md#work-through-the-current-flow).\n",
+            "The letters I/P/A/B/C/D below name existing standalone task-state records and\n",
+            "their compatibility operations, not current flow stages. Reuse the applicable\n",
+            "planning, review and evidence guidance within the requested scope; do not start\n",
+            "this state machine for a flow-managed node. CLI examples use the public\n",
+            "`crw work` namespace and require its supporting runtime. Hook registrations,\n",
+            "stored enum values and existing evidence formats are unchanged here.\n",
+            "\n"
+          ]
+        },
+        {
+          "line": 34,
+          "old": [
+            "0. **I — Interview**: HITL-only requirements discovery; canonical rules live in `crw-interview`. PABCD owns I->P and return-to-Interview phase edges.\n",
+            "1. **P — Plan**: Explore first (read real code, configs, docs). **Slice and order phases by dependency/architecture structure (STRICT, PHASE-SPLIT-01)** — the orthodox unlimited-time build order: foundations (schema, contracts, core data flow) → core capabilities → integration → hardening/polish — so each phase consumes the verified output of the previous one. Effort-based bucketing is FORBIDDEN: never split or order phases by estimated effort or payoff speed — no \"quick win vs heavy\" buckets, no impact/effort matrices, no time-boxed slices. Phase boundaries encode the system's build order, not the schedule. DB/API/UI/test work inside a phase are subtasks, not top-level phases by default, and every phase must still close with something independently verifiable (build, tests, or a demonstrable surface). Write a diff-level plan: file change map, scope boundary (IN/OUT), and testable accept criteria. For every planned conditional path (error handler, fallback, guard, gated branch, threshold behavior), the accept criteria name its **activation scenario** — how C will trigger it and what observable effect proves it ran (C-ACTIVATION-GROUNDING-01). For C2+ plans, including plan-only requests, begin with the loop-spec header required by [Plan output](plan-output.md). For open-ended optimization, include the divergence plan, deterministic selection rule, and telemetry schema; if the verifier only reports scalar outcome, instrumentation is B's first work item before candidates. Ground every decision in code you have read. No implementation yet. For broad or unfamiliar repos, include a compact tree, detected conventions, which existing logs/docs you will reuse, and the SoT sync target (SOT-SYNC-01): which general source-of-truth doc (architecture/INDEX docs, or equivalent) this unit will patch in C — or, if the repo has none, the plan recommends creating one (dev-scaffolding §2.1). **A dependency-ordered phase map may be publishable as a PR stack (`DEV-STACK-01`).** When the unit will produce dependent branches too large to review as one diff, P decides whether to stack and records it. Rules: `crw-dev` `../../dev/references/stacked-prs.md`.\n"
+          ],
+          "new": [
+            "0. **I — Interview**: kept only for an explicit command; CRW holds no synchronous interview, and an open question goes up as a decision request ([SKILL.md](../SKILL.md#intent-and-ownership)). task work owns the I->P edge.\n",
+            "1. **P — Plan**: Explore first (read real code, configs, docs). **Slice and order phases by dependency/architecture structure (STRICT, PHASE-SPLIT-01)** — the orthodox unlimited-time build order: foundations (schema, contracts, core data flow) → core capabilities → integration → hardening/polish — so each phase consumes the verified output of the previous one. Effort-based bucketing is FORBIDDEN: never split or order phases by estimated effort or payoff speed — no \"quick win vs heavy\" buckets, no impact/effort matrices, no time-boxed slices. Phase boundaries encode the system's build order, not the schedule. DB/API/UI/test work inside a phase are subtasks, not top-level phases by default, and every phase must still close with something independently verifiable (build, tests, or a demonstrable surface). Write a diff-level plan: file change map, scope boundary (IN/OUT), and testable accept criteria. For every planned conditional path (error handler, fallback, guard, gated branch, threshold behavior), the accept criteria name its **activation scenario** — how C will trigger it and what observable effect proves it ran (C-ACTIVATION-GROUNDING-01). For C2+ plans, including plan-only requests, begin with the loop-spec header required by [Plan output](plan-output.md). For open-ended optimization, include the divergence plan, deterministic selection rule, and telemetry schema; if the verifier only reports scalar outcome, instrumentation is B's first work item before candidates. Ground every decision in code you have read. No implementation yet. For broad or unfamiliar repos, include a compact tree, detected conventions, which existing logs/docs you will reuse, and the SoT sync target (SOT-SYNC-01): which general source-of-truth doc (architecture/INDEX docs, or equivalent) this unit will patch in C — or, if the repo has none, the plan recommends creating one (dev-scaffolding §2.1). **A dependency-ordered phase map may be publishable as a PR stack where the repository's delivery path uses pull requests (`DEV-STACK-01`).** When the unit will produce dependent branches too large to review as one diff, P decides whether to stack and records it; CRW internal work is delivered as a task branch to the integrator and is not stacked. Rules: `crw-dev` `../../dev/references/stacked-prs.md`.\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/plan-output.md",
+      "reason": "CRW-1526: rename task work skills and references; preserve source provenance and stored hook/state contracts",
+      "hunks": [
+        {
+          "line": 3,
+          "new": [
+            "The current development flow is defined by [Task work](../SKILL.md#work-through-the-current-flow).\n",
+            "The letters I/P/A/B/C/D below name existing standalone task-state records and\n",
+            "their compatibility operations, not current flow stages. Reuse the applicable\n",
+            "planning, review and evidence guidance within the requested scope; do not start\n",
+            "this state machine for a flow-managed node. CLI examples use the public\n",
+            "`crw work` namespace and require its supporting runtime. Hook registrations,\n",
+            "stored enum values and existing evidence formats are unchanged here.\n",
+            "\n"
+          ]
+        },
+        {
+          "line": 20,
+          "old": [
+            "HOTL goal plans also state the crw-loop resource bounds. Follow the live host\n"
+          ],
+          "new": [
+            "HOTL goal plans also state the crw-continue resource bounds. Follow the live host\n"
+          ]
+        },
+        {
+          "line": 53,
+          "old": [
+            "[Reader documents](../../dev/references/reader-documents.md) READER-DOC-02: the\n"
+          ],
+          "new": [
+            "[Reader documents](../../crw-dev/references/reader-documents.md) READER-DOC-02: the\n"
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -29,7 +29,7 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "CRW-1553: the relay role `child` is named by its id (\"a `child` session\"), not as an issue child",
+      "reason": "CRW-1526: rename task work skills and references; preserve source provenance and stored hook/state contracts",
       "hunks": [
         {
           "line": 3,
@@ -68,12 +68,39 @@
           ]
         },
         {
+          "line": 35,
+          "old": [
+            "When any PABCD workflow enters divergence mode (HITL manual entry or goal-mode\n"
+          ],
+          "new": [
+            "When any task work workflow enters divergence mode (HITL manual entry or goal-mode\n"
+          ]
+        },
+        {
+          "line": 43,
+          "old": [
+            "- Record provenance URLs with `crw pabcd divergence candidate add ... --source <url>`.\n"
+          ],
+          "new": [
+            "- Record provenance URLs with `crw work divergence candidate add ... --source <url>`.\n"
+          ]
+        },
+        {
           "line": 76,
           "old": [
             "Use the shared [portable browser routing](../dev/references/browser-routing.md).\n"
           ],
           "new": [
             "Use the shared [portable browser routing](../crw-dev/references/browser-routing.md).\n"
+          ]
+        },
+        {
+          "line": 115,
+          "old": [
+            "owned by `pabcd/references/delegation.md`. For signed-in,\n"
+          ],
+          "new": [
+            "owned by `crw-work/references/delegation.md`. For signed-in,\n"
           ]
         },
         {
@@ -98,6 +125,15 @@
           ],
           "new": [
             "Any search subagent — Tier 3 deep-research explorers, Luna lanes ([Luna lane](references/lunasearch.md)),\n"
+          ]
+        },
+        {
+          "line": 138,
+          "old": [
+            "PABCD A-gate audit/reviewer dispatches are in scope too: a plan auditor must\n"
+          ],
+          "new": [
+            "Outline-assessment (legacy state A) reviewer dispatches are in scope too: a plan auditor must\n"
           ]
         },
         {
@@ -194,7 +230,7 @@
     },
     {
       "file": "references/deep-research.md",
-      "reason": "Resolve the cross-skill Markdown reference through the renamed CRW dev folder; retain the policy text.",
+      "reason": "CRW-1526: rename task work skills and references; preserve source provenance and stored hook/state contracts",
       "hunks": [
         {
           "line": 21,
@@ -203,6 +239,15 @@
           ],
           "new": [
             "[Reader documents](../../crw-dev/references/reader-documents.md). If the scope, purpose\n"
+          ]
+        },
+        {
+          "line": 73,
+          "old": [
+            "task_name/followup_task) are owned by `pabcd/references/delegation.md`. Collect results opportunistically; keep working while\n"
+          ],
+          "new": [
+            "task_name/followup_task) are owned by `crw-work/references/delegation.md`. Collect results opportunistically; keep working while\n"
           ]
         },
         {
@@ -215,9 +260,9 @@
     },
     {
       "file": "references/lunasearch.md",
-      "reason": "CRW-1553: the relay role `child` is named by its id (\"a `child` session\"), not as an issue child",
+      "reason": "CRW-1526: rename task work skills and references; preserve source provenance and stored hook/state contracts",
       "add": true,
-      "sha256": "0fae86d0217b6eaa765732502f7eae855d9aa57a987911f320a74f5970ee115d"
+      "sha256": "8ef43491ef08d9f5005eb308a9a5b7eacb119786c3ee7cd5c9d2b8cdc10dfd1f"
     },
     {
       "file": "references/query-rewrite.md",

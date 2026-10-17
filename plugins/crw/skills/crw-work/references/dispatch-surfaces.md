@@ -39,7 +39,7 @@ the task packet, the assignment record the relay holds for it, or the DAG node
   ([OPS-8.1](../../crw-run/references/operations.md#ops-81-parent-continuation-and-waiting)): it
   checks the existing wake readiness ([OPS-8.5](../../crw-run/references/operations.md#ops-85-the-goal-free-parents-wake-path))
   and yields only after that readiness is established, never by arming a wake of its own.
-- **Unmanaged** — standalone PABCD with no tracking issue and no CRW execution binding, and bounded
+- **Unmanaged** — standalone task work with no tracking issue and no CRW execution binding, and bounded
   helper delegation inside any task. A tracking issue with no assignment yet is not this case. The
   rest of this file applies as written.
 - **Unknown** — the lookup failed, the relay is unavailable, or the identity is ambiguous. That is
@@ -57,24 +57,24 @@ only as a call the run records.
 different mechanisms answer to those words and they are not substitutes:
 
 - A **subagent** is a leaf spawned with the collab tools (`spawn_agent` in the
-  `multi_agent_v1` or `collaboration` namespace). Its native cwd inherits the spawning session's working directory. It has no session state, no host goal and no PABCD FSM.
+  `multi_agent_v1` or `collaboration` namespace). Its native cwd inherits the spawning session's working directory. It has no session state, no host goal and no task work FSM.
 - A **thread** is a separate Codex task created with the desktop task tools
   (`create_thread` and its family). With `environment: worktree` it gets its own
   checkout; with `environment: local` it shares the project checkout. Either way
   it is an independent task with its own conversation, its own session binding and
-  its own goal and PABCD state, because crw keys those to the task.
+  its own goal and task work state, because crw keys those to the task.
 
 Isolation comes from the environment, not from being a task. A `local` thread is
 an independent owner sharing one checkout; a `worktree` thread is an independent
 owner with its own. An independent task lane needs the second.
 
-An **independent task lane** owns a goal, PABCD cycle or long-running branch/CI
+An **independent task lane** owns a goal, task work cycle or long-running branch/CI
 lifecycle: use one worktree thread per lane. A **bounded checkout worker** needs
 only a disjoint checkout and returns a patch or evidence to the coordinator:
 create a managed worktree, then give its absolute path to a subagent. The
 subagent's native cwd still inherits the coordinator's; the packet must require
 that path as the shell workdir on every command. Workers do not acquire their
-own goal or PABCD state. Different workers must use different worktrees. When the
+own goal or task work state. Different workers must use different worktrees. When the
 dispatch assigns a tree, the SubagentStop gate reads the receipt under that tree: the
 packet carries the line `CRW-WORKTREE: <path>`, the spawn hook records it as an evidence
 assignment (CRW-1115), and the worker writes its receipt under `<that tree>/.crw/evidence/`
@@ -95,7 +95,7 @@ Say which one you are creating, in those words, before you create it.
 | Thread id | yes, its own | yes, its own |
 | `.crw` session state | none | its own |
 | Host goal | none; it must not call `create_goal` | its own, keyed to the task |
-| PABCD FSM | none; it must not run `crw pabcd orchestrate` | its own, keyed to the task |
+| task work FSM | none; it must not run `crw work state` | its own, keyed to the task |
 | Who owns the result | the parent integrates it | the task owns it, and the user owns the task |
 | Visible in the app sidebar | no | yes |
 | Creation authority | delegation authority | an explicit or clearly implied user request |
@@ -140,7 +140,7 @@ Route by what the work needs to own, not by how parallel it is. A CRW-bound issu
 node is routed by [DISPATCH-MANAGED-01](#dispatch-managed-01-strict--start-from-the-binding-not-from-the-mechanism)
 first; this list is for the rest:
 
-- Needs its own goal, PABCD cycle, user-visible task, or long-running
+- Needs its own goal, task work cycle, user-visible task, or long-running
   merge/CI lifecycle -> **thread**, one per independent task lane, with
   `environment: worktree` for an isolated checkout. A `local` thread shares
   the checkout.
@@ -149,7 +149,7 @@ first; this list is for the rest:
   completed absolute workspace path, then spawn a **subagent** with that path
   and an instruction to pass it as the shell workdir on every command. Give
   concurrent workers disjoint worktrees and prohibit concurrent branch
-  operations in one checkout. The coordinator owns goal/PABCD and integration.
+  operations in one checkout. The coordinator owns goal/task work and integration.
 - Is a bounded slice inside a thread lane that already owns its checkout ->
   **subagent** of that thread.
 - Is a bounded slice of the checkout you are already editing, returning
@@ -161,7 +161,7 @@ first; this list is for the rest:
 projectless targets. Confirm their actual permission state before planning an
 unattended write lane. The bounded worktree/subagent route does not grant new
 permissions; it uses the coordinator's inherited subagent permission and an
-explicit checkout path. When a lane needs independent goal/PABCD ownership,
+explicit checkout path. When a lane needs independent goal/task work ownership,
 keep the thread route and handle its actual permission state.
 
 ## DISPATCH-AUTHORITY-01 — asking for lane work is asking for the lanes
@@ -203,7 +203,7 @@ Addressing has one canonical form: `threadId` plus `hostId`. The user-facing men
 app builds is `[@Title](thread://<threadId>?hostId=<encoded hostId>)`, and several lanes
 can be referenced in one turn. A queued worktree instead returns a provisional
 `clientThreadId` that no tool accepts; keep it in its own field.
-[Lane dispatch](../../crw-loop/references/lane-dispatch.md) carries the packet contract and
+[Lane dispatch](../../crw-continue/references/lane-dispatch.md) carries the packet contract and
 the measured bounds.
 
 Use the packet's three states to preserve this distinction: `dispatch` before requesting
@@ -310,8 +310,8 @@ coordinator's packet or progress record instead.
 }
 ```
 
-Resolve `<crw-loop skill directory>` from the loaded loop skill path, then validate
-it with `node "<crw-loop skill directory>/scripts/check-lane-manifest.mjs" <manifest.json>`.
+Resolve `<crw-continue skill directory>` from the loaded loop skill path, then validate
+it with `node "<crw-continue skill directory>/scripts/check-lane-manifest.mjs" <manifest.json>`.
 
 Two rules the validator enforces because they are the ones people get wrong. An issue
 reference must name its repository — a bare number is ambiguous the moment lanes span
@@ -347,7 +347,7 @@ authorizes replacing a lane and never proves one finished.
 
 ## What neither surface grants
 
-A subagent may not create a goal, run `crw pabcd orchestrate`, or bind a session; the
+A subagent may not create a goal, run `crw work state`, or bind a session; the
 parent owns all of it. A thread owns its own goal and FSM, and the parent may not
 advance them — messaging a task is not commanding it. Neither surface inherits
 permission the parent does not have.

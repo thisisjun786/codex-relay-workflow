@@ -17,7 +17,7 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "CRW-1553: the relay role `child` is named by its id (\"a `child` session\"), not as an issue child",
+      "reason": "CRW-1526: rename task work skills and references; preserve source provenance and stored hook/state contracts",
       "hunks": [
         {
           "line": 3,
@@ -51,7 +51,7 @@
             "its own worktree. See [Dispatch surfaces](../pabcd/references/dispatch-surfaces.md).\n"
           ],
           "new": [
-            "its own worktree. See [Dispatch surfaces](../crw-pabcd/references/dispatch-surfaces.md).\n"
+            "its own worktree. See [Dispatch surfaces](../crw-work/references/dispatch-surfaces.md).\n"
           ]
         },
         {

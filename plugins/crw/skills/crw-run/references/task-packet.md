@@ -7,7 +7,7 @@ remove inapplicable items instead of sending placeholders. Embed the acceptance
 criteria unless the worker's access to the linked issue has been established;
 another task may not have the same connectors.
 
-The packets below are for a `child` session of a plan with no run. A flow run starts no `child` session: a node sized for one goes up as a `size_split` escalation with detail `child_retired`, and the repository session asks for a bundle split. A node a run releases is built by the run's own calls: the thread sends it no packet, and it starts no PABCD state machine ([who owns control](../../crw-canon/references/flow/control.md#who-owns-control-in-a-flow-managed-run)). A node sized `split` with sub-tasks is one such node: the run builds its sub-tasks in order on the node's one executor thread, each next one a turn the run sends (`subtask:<node>:<tier>:s<k>`), and the thread sends no packet for any of them.
+The packets below are for a `child` session of a plan with no run. A flow run starts no `child` session: a node sized for one goes up as a `size_split` escalation with detail `child_retired`, and the repository session asks for a bundle split. A node a run releases is built by the run's own calls: the thread sends it no packet, and it starts no task work state machine ([who owns control](../../crw-canon/references/flow/control.md#who-owns-control-in-a-flow-managed-run)). A node sized `split` with sub-tasks is one such node: the run builds its sub-tasks in order on the node's one executor thread, each next one a turn the run sends (`subtask:<node>:<tier>:s<k>`), and the thread sends no packet for any of them.
 
 ## Child task titles
 
@@ -21,7 +21,7 @@ assigned result clear. The title after ` · ` may be a natural sentence or phras
 of up to 20 characters, including spaces and punctuation; the issue code and
 separator do not count. Do not abbreviate away the task's meaning just to make
 it shorter, or pad a clear title to reach 20 characters.
-Do not append workflow labels (including `crw-loop`), repository,
+Do not append workflow labels (including `crw-continue`), repository,
 PR number, model, CI status, or merge status. Keep the execution mode in the
 packet's `Workflow` field and verify runtime behavior separately. A title or a
 chat link does not establish the task's native PR association; keep PR linkage
@@ -99,7 +99,7 @@ Context:
 - Prerequisites: [verified contract/commits and how included]
 - Effective model/effort: [values from the request or Default independent execution;
   actual configuration is supplied by creation]
-- Coordinator: [task ID; context only, never a PABCD session binding]
+- Coordinator: [task ID; context only, never a task work session binding]
 - Responsible `child` session: [existing independent task/host ID, or newly created task from the launch receipt]
 - Assignment route: [reuse / create; current writer state and authorization source]
 - Management marker: [the stable creation request id this launch was issued under, per
@@ -383,7 +383,7 @@ Execution:
   The relay accepts a receipt from the generation's anchor turn (the dispatch turn it
   bound for that generation) and from a turn already admitted against that anchor, which in
   the first generation of a managed start includes the business turn that delivered this
-  assignment once managed-start has confirmed it. Under `crw-loop` the work usually ends in a
+  assignment once managed-start has confirmed it. Under `crw-continue` the work usually ends in a
   different turn: a goal-continuation turn, or one a restarted App Server opened. An emit from
   such a turn is refused `unassigned_turn` unless it carries a continuation claim, so attach
   the claim to that first emit instead of learning it from the refusal:
@@ -419,19 +419,19 @@ Execution:
   you. Report it naming the owner the lookup returned, preserve your artifact, and write
   nothing into that relationship; the coordinator reconciles your work with that owner.
 - If you need something only a person can give, such as a decision, a credential or an
-  approval this packet does not carry, do not ask with `request_user_input`: while your goal is active the PABCD
+  approval this packet does not carry, do not ask with `request_user_input`: while your goal is active the task work
   hook only warns about it and records it, and the call waits for a person who is not there. Write the question out in a blocked file, record `blocked_needs_input` on your
   turn and, where a relay holds the assignment, emit that outcome without `--artifact` (it
   carries no file) and put the question and the blocked file's path in your final message;
   where none does, return the status the case takes (BLOCKED, UNSAFE or NEEDS_HUMAN)
   with the question. Then end the turn. Your coordinator takes the question to Jun. See
   [Default dev integration](../../crw-canon/references/delivery.md#default-dev-integration).
-- [When `crw-loop` is the effective workflow:]
-  `$crw:crw-loop` — invoke the skill, or attach it through the
+- [When `crw-continue` is the effective workflow:]
+  `$crw:crw-continue` — invoke the skill, or attach it through the
   creation tool's supported skill field, and run this bounded objective under it and
-  `crw-pabcd` using your own session binding, host goal, and goalplan.
+  `crw-work` using your own session binding, host goal, and goalplan.
   If a required loop capability is absent, report the exact gap before starting.
-  `LOOP-DOCS-FIRST-01` applies to your own issue as `crw-loop` states it: a single-cycle issue
+  `LOOP-DOCS-FIRST-01` applies to your own issue as `crw-continue` states it: a single-cycle issue
   skips the docs-only first cycle, and a `child` session that plans two or more work-phases opens with
   one, with the roadmap debt for scope found later.
   A correction generation, a base-refresh generation and a separated publication step are not
@@ -489,7 +489,7 @@ Return:
   pair was declared on this host or the check went unmade; disclose whether served-model proof
   exists. A report that says verified when nothing was compared is the failure this line exists
   to prevent.
-- For `crw-loop`: goal/goalplan identifiers, final FSM state, and completion evidence.
+- For `crw-continue`: goal/goalplan identifiers, final FSM state, and completion evidence.
 - Delivery artifact: [the pushed head SHA and the local verification record, including how each
   finding was resolved; for an in-flight pull request, its URL and the state of its checks and
   reviews; or the frozen diff bundle for a restricted or narrowed delivery].
@@ -540,7 +540,7 @@ is already specified rather than restating it, giving the [Non-PR packet](#non-p
 field in brackets where that reduced shape names it differently.
 
 - Effective workflow and the skills to apply — the Loop and non-Loop branches under
-  `Execution:`, plus `Workflow:` [`Workflow/settings:`]. Where `crw-loop` is effective the
+  `Execution:`, plus `Workflow:` [`Workflow/settings:`]. Where `crw-continue` is effective the
   packet carries the literal installed-skill invocation and names the applicable surface
   skills; naming the skills descriptively is not the invocation. Where an explicit
   non-Loop or no-goal alternative is effective, that workflow is named in its place.
@@ -755,7 +755,7 @@ TASK
 Context: <project and coordinator task; the execution mode: relay-managed with its state directory and exact issue identity, or
   explicitly direct with the reason>.
 Codex task title (not the pull request's title): <ISSUE-ID · short Korean title>
-Workflow: <the effective workflow, restated; for `crw-loop` the literal $crw:crw-loop with $crw:crw-pabcd and
+Workflow: <the effective workflow, restated; for `crw-continue` the literal $crw:crw-continue with $crw:crw-work and
   $crw:crw-dev, how LOOP-DOCS-FIRST-01 applies to this issue, and that the first turn writes the activation evidence>
 Model/effort: <the pair requested through the creation call; the coordinator reads the receipt back>
 Language: English for everything you write (messages, commits, pull request title, body and replies, handoff and receipt text).
@@ -894,7 +894,7 @@ STOP WHEN carries five principles in place of the Launch packet's longer rules a
 
 - Do not stop to ask for permission for what the packet already grants. A decision, a credential or an approval it does not carry
   is the one route for a question: write the question out, emit `blocked_needs_input` (where no relay holds the assignment, return the
-  status the case takes, BLOCKED, UNSAFE or NEEDS_HUMAN, with the question) and end the turn. Never call `request_user_input`: while a goal is active the PABCD
+  status the case takes, BLOCKED, UNSAFE or NEEDS_HUMAN, with the question) and end the turn. Never call `request_user_input`: while a goal is active the task work
   hook only warns about it and records it, and the call waits for a person who is not there.
 - Do not stop at a partial fix or a proof of concept: deliver the whole DELIVERABLE, or report blocked.
 - Make no refactor and add no feature the TASK did not ask for. An edit outside SCOPE is a defect even when it improves something.
@@ -936,7 +936,7 @@ coordinator to merge.
 Context: the project that tracks the deferred test and documentation defects of the Go port; coordinator task <task id>; relay-managed,
 state <state directory>, issue identity CRW-243.
 Codex task title (not the pull request's title): CRW-243 · 시드의 결속 세대 거부 복원
-Workflow: $crw:crw-loop with $crw:crw-pabcd and $crw:crw-dev, your own session binding, goal and goalplan. This is a
+Workflow: $crw:crw-continue with $crw:crw-work and $crw:crw-dev, your own session binding, goal and goalplan. This is a
 single-cycle issue, so it skips the docs-only first cycle. Your first turn writes the activation evidence.
 Model/effort: <the pair requested through the creation call>.
 Language: English for everything you write.
@@ -987,7 +987,7 @@ Supervisor: none.
 Issue/PR mapping: CRW-243; thisisjun786/codex-relay-workflow; one pull request into dev from codex/crw-243-storeseed-dispatch-turn.
 Title: CRW-243 · 시드의 결속 세대 거부 복원
   This names the Codex task only. Your pull request's title is yours, in English: "CRW-243: <short English summary>".
-Workflow: crw-loop, [the Loop branch of the template]
+Workflow: crw-continue, [the Loop branch of the template]
 Language: [the template's text]
 
 Context:
@@ -1484,9 +1484,9 @@ says, so read the level first and the fields second:
   reload every skill it once had, and an unrelated reference is not part of recovery.
 - The effective workflow, restated. A transport carries model and effort as settings
   and has no field for the workflow, so a send that omits it has silently dropped it. Where that
-  workflow is `crw-loop`, the restatement carries the rule that a correction generation, a
+  workflow is `crw-continue`, the restatement carries the rule that a correction generation, a
   base-refresh generation and a separated publication step are not the first work-phase of new
-  work, so they do not open `LOOP-DOCS-FIRST-01`'s docs-only cycle; `crw-loop`'s own rule, which a task
+  work, so they do not open `LOOP-DOCS-FIRST-01`'s docs-only cycle; `crw-continue`'s own rule, which a task
   that lost its first assignment is left with, counts work-phases and not what a phase does.
 - The language the task writes in, restated: English for a `child` session under
   [Default independent execution](../../crw-canon/references/delivery.md#default-independent-execution),

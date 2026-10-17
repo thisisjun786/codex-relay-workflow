@@ -667,14 +667,14 @@ func Test47_PLG_18_JSONReport(t *testing.T) {
 	}
 	// The plugin ships the skills the repository holds: its own nine (crw-canon, the reference-only
 	// library, among them) and, since the activation move (CRW-392), the 22 ported from CXC that remain
-	// (CRW-1340 removed crw-interview, CRW-1352 crw-run-initiative), crw-loop (the PABCD loop) among them; the parent-goal procedure
-	// crw-loop once carried is crw-run's goal mode.
-	names := []any{"crw-add-issue", "crw-ast-grep", "crw-canon", "crw-check", "crw-define", "crw-dev", "crw-dev-architecture",
+	// (CRW-1340 removed crw-interview, CRW-1352 crw-run-initiative), crw-continue (the task work loop) among them; the parent-goal procedure
+	// crw-continue once carried is crw-run's goal mode.
+	names := []any{"crw-add-issue", "crw-ast-grep", "crw-canon", "crw-check", "crw-continue", "crw-define", "crw-dev", "crw-dev-architecture",
 		"crw-dev-backend", "crw-dev-code-reviewer", "crw-dev-data", "crw-dev-debugging", "crw-dev-devops",
 		"crw-dev-frontend", "crw-dev-scaffolding", "crw-dev-security", "crw-dev-testing", "crw-dev-uiux-design",
-		"crw-dev-visualizer", "crw-kwrite", "crw-loop",
-		"crw-pabcd", "crw-plan", "crw-qa", "crw-recall", "crw-refactor", "crw-repo-map", "crw-run", "crw-search",
-		"crw-status", "crw-tidy", "crw-worktree-guardian"}
+		"crw-dev-visualizer", "crw-kwrite",
+		"crw-plan", "crw-qa", "crw-recall", "crw-refactor", "crw-repo-map", "crw-run", "crw-search",
+		"crw-status", "crw-tidy", "crw-work", "crw-worktree-guardian"}
 	var expected []any
 	for _, n := range names {
 		expected = append(expected, "crw:"+n.(string))

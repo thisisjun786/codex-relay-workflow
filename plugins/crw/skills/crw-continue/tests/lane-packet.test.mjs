@@ -15,7 +15,7 @@ const pluginRoot = resolve(here, "..");
 const base = () => ({
   lane: "lane-1",
   address: { threadId: "01a0b875-9bb1", hostId: "local" },
-  work: { writeScope: ["plugins/crw/skills/loop"], base: "dev", branch: "codex/lane-1" },
+  work: { writeScope: ["plugins/crw/skills/crw-continue"], base: "dev", branch: "codex/lane-1" },
   reporting: { evidence: ["branch head sha", "CI run id"], onBlocked: "report and stop" },
 });
 const creation = () => ({ provisionalId: "pending-xyz", hostId: "local", requestedAt: "2026-09-22T12:00:00Z" });
@@ -112,7 +112,7 @@ test("mixed packet sets retain their response shape and collision checks", () =>
   c.lane = "lane-3"; c.work.branch = "codex/lane-3"; c.work.writeScope = ["src"];
   delete c.address;
   assert.deepEqual(validateLanePacketSet({ lanes: [a, b, c] }), { ok: true, errors: [], lanes: 3 });
-  b.work.writeScope = ["plugins/crw/skills/pabcd/../loop/references"];
+  b.work.writeScope = ["plugins/crw/skills/crw-work/../crw-continue/references"];
   assert.match(validateLanePacketSet({ lanes: [a, b] }).errors.join(" "), /write scopes overlap/);
   b.work.writeScope = ["docs"]; b.work.branch = a.work.branch;
   assert.match(validateLanePacketSet({ lanes: [a, b] }).errors.join(" "), /same branch/);
@@ -283,7 +283,7 @@ test("overlapping write scopes across two lanes are caught before dispatch", () 
   const a = base(), b = base();
   b.lane = "lane-2";
   b.work.branch = "codex/lane-2";
-  b.work.writeScope = ["plugins/crw/skills/loop/references"];
+  b.work.writeScope = ["plugins/crw/skills/crw-continue/references"];
   const r = validateLanePacketSet({ lanes: [a, b] });
   assert.equal(r.ok, false);
   assert.match(r.errors.join(" "), /write scopes overlap/);
@@ -293,7 +293,7 @@ test("an aliased path cannot hide an overlap", () => {
   const a = base(), b = base();
   b.lane = "lane-2";
   b.work.branch = "codex/lane-2";
-  b.work.writeScope = ["plugins/crw/skills/pabcd/../loop/references"];
+  b.work.writeScope = ["plugins/crw/skills/crw-work/../crw-continue/references"];
   const r = validateLanePacketSet({ lanes: [a, b] });
   assert.equal(r.ok, false);
   assert.match(r.errors.join(" "), /write scopes overlap/);
@@ -375,24 +375,24 @@ const lineWith = (file, needle) =>
 const boundValue = (id) => String(fixture.bounds.find((b) => b.id === id).value);
 
 test("waiting.md states the wait bounds on the line that describes wait_threads", () => {
-  const lines = lineWith(join(skills, "crw-loop", "references", "waiting.md"), "wait_threads");
+  const lines = lineWith(join(skills, "crw-continue", "references", "waiting.md"), "wait_threads");
   const stated = lines.filter((l) => l.includes(boundValue("wait_threads.targets.max")));
   assert.ok(stated.length > 0, "waiting.md does not state the target bound where it describes the wait");
-  const doc = readFileSync(join(skills, "crw-loop", "references", "waiting.md"), "utf8");
+  const doc = readFileSync(join(skills, "crw-continue", "references", "waiting.md"), "utf8");
   assert.ok(doc.includes(boundValue("wait_threads.timeoutMs.max")), "the timeout bound drifted out of waiting.md");
 });
 
 test("the delegation thread-surface table carries the measured bounds", () => {
-  const table = readFileSync(join(skills, "crw-pabcd", "references", "delegation.md"), "utf8");
+  const table = readFileSync(join(skills, "crw-work", "references", "delegation.md"), "utf8");
   for (const id of ["wait_threads.targets.max", "wait_threads.timeoutMs.max", "read_thread.turnLimit.max", "read_thread.maxOutputCharsPerItem.max", "list_threads.limit.max", "get_handoff_status.waitMs.max"])
     assert.ok(table.includes(boundValue(id)), id + " is missing from the delegation table");
 });
 
 test("dispatch-surfaces states the subagent cap and routes to the lane contract", () => {
-  const doc = readFileSync(join(skills, "crw-pabcd", "references", "dispatch-surfaces.md"), "utf8");
+  const doc = readFileSync(join(skills, "crw-work", "references", "dispatch-surfaces.md"), "utf8");
   assert.ok(doc.includes("DISPATCH-FANOUT-CAP-01"), "the fan-out rule is missing");
   assert.ok(doc.includes(boundValue("subagents.maxThreads.defaultV1")), "the subagent cap drifted");
-  assert.ok(doc.includes("](../../crw-loop/references/lane-dispatch.md)"), "dispatch-surfaces does not route to the lane contract");
+  assert.ok(doc.includes("](../../crw-continue/references/lane-dispatch.md)"), "dispatch-surfaces does not route to the lane contract");
 });
 
 test("a missing artifact is NOT RUN, never a pass", () => {

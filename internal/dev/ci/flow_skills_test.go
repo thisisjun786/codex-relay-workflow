@@ -59,8 +59,8 @@ func flowOwnershipProblems(section string) []string {
 		}
 	}
 	for _, p := range wordingMissing(flat, []string{
-		`(?i)the executor and an oversized (issue )?child start no PABCD state machine`,
-		`(?i)the standalone PABCD rules are unchanged`,
+		`(?i)the executor and an oversized (issue )?child start no task work state machine`,
+		`(?i)the standalone task work rules are unchanged`,
 		`(?i)the crosscheck does not replace the critic's design check`,
 		`(?i)crosscheck[^.]*separate (tool )?invocation`,
 		`(?i)same.thread[^.]*warning[^.]*record[^.]*continue`,
@@ -124,7 +124,7 @@ func TestFlowControlOwnershipTableWording(t *testing.T) {
 
 	t.Run("fixture: each missing sentence is reported", func(t *testing.T) {
 		good := "## Who owns control in a flow-managed run\n\n| Control | Owner |\n|---|---|\n| Phases | the run |\n| Audit | the run |\n| Evidence | the run |\n\n" +
-			"The executor and an oversized child start no PABCD state machine. The standalone PABCD rules are unchanged.\n\n" +
+			"The executor and an oversized child start no task work state machine. The standalone task work rules are unchanged.\n\n" +
 			"1. The architect DESIGN.\n2. The critic's design check, pre-build, by the critic in a separate review execution, before any executor starts; needs_changes returns to the architect and a replan is audited again.\n" +
 			"3. The unit check of each node before the run commits it.\n4. After integration the final gate, then the crosscheck over the integrated range in a separate tool invocation.\n" +
 			"A same-thread review, if observed, is warning-only and recorded; the run continues. Tool reviews have no agent thread id.\n5. The acceptance audit.\n6. The report.\n\nThe crosscheck does not replace the critic's design check.\n"
@@ -137,7 +137,7 @@ func TestFlowControlOwnershipTableWording(t *testing.T) {
 			},
 			"audit unowned": func(s string) string { return strings.Replace(s, "| Audit | the run |", "| Audit | the executor |", 1) },
 			"fsm allowed": func(s string) string {
-				return strings.Replace(s, "start no PABCD state machine", "start the PABCD state machine", 1)
+				return strings.Replace(s, "start no task work state machine", "start the task work state machine", 1)
 			},
 			"final replaces": func(s string) string {
 				return strings.Replace(s, "The crosscheck does not replace", "The crosscheck replaces", 1)
@@ -909,7 +909,7 @@ func TestPlanKeyDocsNameTheMilestoneKey(t *testing.T) {
 
 // A task packet belongs to a `child` session of a plan with no run. A flow run starts no `child` session (CRW-1415): a node sized for one goes up
 // as a `size_split` escalation with detail `child_retired` and the repository session asks for a bundle split; the nodes a run releases get no packet from
-// the thread and start no PABCD state machine.
+// the thread and start no task work state machine.
 func taskPacketScopeProblems(intro string) []string {
 	flat := normalized(intro)
 	var problems []string
@@ -920,7 +920,7 @@ func taskPacketScopeProblems(intro string) []string {
 		"`child_retired`",
 		`(?i)bundle split`,
 		`(?i)(sends|gets)( it)? no (task )?packet`,
-		`(?i)no PABCD state machine`,
+		`(?i)no task work state machine`,
 		`flow/control\.md#who-owns-control-in-a-flow-managed-run`,
 	}) {
 		problems = append(problems, "the introduction lacks "+p)
@@ -940,7 +940,7 @@ func TestTaskPacketIsForAPlanWithNoRun(t *testing.T) {
 	if problems := taskPacketScopeProblems(intro); len(problems) > 0 {
 		t.Errorf("task-packet.md introduction:\n  %s\n%s", strings.Join(problems, "\n  "), normalized(intro))
 	}
-	good := "The packets are for a `child` session of a plan with no run. A flow run starts no `child` session: a node sized for one goes up as a `size_split` escalation with detail `child_retired` and the repository session asks for a bundle split. A node a run releases gets no packet from the thread and starts no PABCD state machine ([control](../../crw-canon/references/flow/control.md#who-owns-control-in-a-flow-managed-run))."
+	good := "The packets are for a `child` session of a plan with no run. A flow run starts no `child` session: a node sized for one goes up as a `size_split` escalation with detail `child_retired` and the repository session asks for a bundle split. A node a run releases gets no packet from the thread and starts no task work state machine ([control](../../crw-canon/references/flow/control.md#who-owns-control-in-a-flow-managed-run))."
 	if p := taskPacketScopeProblems(good); len(p) > 0 {
 		t.Fatalf("the good text is reported: %v", p)
 	}

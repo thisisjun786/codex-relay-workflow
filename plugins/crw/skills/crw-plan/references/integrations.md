@@ -176,7 +176,7 @@ Load the existing owner for the requested operation:
 | Turn one short request into one ready issue (a lighter path than a plan) | [crw-add-issue](../../crw-add-issue/SKILL.md) |
 | Execute the project, coordinate progress, or follow up on delivery | [crw-run](../../crw-run/SKILL.md) |
 | Create/restore a child's native goal, which exists only where the user explicitly asked for one | [crw-run goal mode](../../crw-run/references/goal-mode.md) |
-| Carry one task's authorized objective through a scoped PABCD completion loop | `crw-loop`, with `crw-pabcd` for the phases |
+| Carry one task's authorized objective through a scoped task work completion loop | `crw-continue`, with `crw-work` for the phases |
 | Execute an initiative's approved projects through their existing children, or run its midpoint check | [the section of crw-run for the parent (repository session)](../../crw-run/SKILL.md#the-parent-the-repository-session), which reads [Initiative supervision](../../crw-run/references/initiative-supervision.md) rather than the project binding above |
 | Compare delivery with accepted requirements | [crw-check](../../crw-check/SKILL.md) |
 | Investigate contradictions or broken invariants | [crw-check](../../crw-check/SKILL.md#find-contradictions) |
@@ -185,7 +185,7 @@ Load the existing owner for the requested operation:
 
 Keep one operation owner and load only the helpers it needs. Jun need not name
 the skills. Binding alone does not launch the backlog, create workers or goals,
-activate `crw-loop` or goal mode, change model settings, or install an automation. When the
+activate `crw-continue` or goal mode, change model settings, or install an automation. When the
 same request also authorizes execution, finish the link and continue through
 the requesting Run owner in that scope. Preserve an existing authorized run and its routine
 follow-up; a status question does not pause it. When another operation owner

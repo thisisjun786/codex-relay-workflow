@@ -232,8 +232,17 @@
     },
     {
       "file": "references/native-desktop-acceptance.md",
-      "reason": "Resolve the QA and DevOps helper paths from their loaded skill directories so the unchanged examples work in staging and in the final plugin layout.",
+      "reason": "CRW-1526: rename task work skills and references; preserve source provenance and stored hook/state contracts",
       "hunks": [
+        {
+          "line": 26,
+          "old": [
+            "plan with `crw pabcd loop add-criterion --session <id> --criterion <text> --surface\n"
+          ],
+          "new": [
+            "plan with `crw work continue add-criterion --session <id> --criterion <text> --surface\n"
+          ]
+        },
         {
           "line": 120,
           "new": [

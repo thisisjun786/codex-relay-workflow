@@ -3,6 +3,7 @@
 package skillport
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -150,6 +151,55 @@ func TestStageCleanSkill(t *testing.T) {
 	}
 	f.expectClean(t, "offline", nil)
 	f.expectClean(t, "with the source", &f.src)
+}
+
+func TestInstalledNameKeepsSourceProvenance1526(t *testing.T) {
+	for _, row := range []struct {
+		name, as string
+		wantOK   bool
+	}{
+		{"explicit installed name", "work", true},
+		{"missing installed name", "", false},
+		{"different installed name", "continue", false},
+		{"unsafe installed name", "../work", false},
+	} {
+		t.Run(row.name, func(t *testing.T) {
+			f := newFixture(t)
+			f.stage(t)
+			oldRecord := recordPath(f.root, "crw-kwrite")
+			var record map[string]any
+			must(t, json.Unmarshal([]byte(slurp(t, oldRecord)), &record))
+			if row.as != "" {
+				record["as"] = row.as
+			}
+			data, err := json.Marshal(record)
+			must(t, err)
+			put(t, oldRecord, string(data), 0o644)
+			must(t, os.Rename(oldRecord, recordPath(f.root, "crw-work")))
+			must(t, os.Rename(filepath.Join(f.root, SkillsRoot, "crw-kwrite"), filepath.Join(f.root, SkillsRoot, "crw-work")))
+			for _, src := range []*Source{nil, &f.src} {
+				if row.wantOK {
+					f.expectClean(t, row.name, src)
+				} else if got := f.problems(src); got == "" {
+					t.Error("a renamed record without a matching installed name was accepted")
+				}
+			}
+			if !row.wantOK {
+				return
+			}
+			// Recording later edits must still render the original kwrite folder.
+			p := filepath.Join(f.root, SkillsRoot, "crw-work", "SKILL.md")
+			put(t, p, strings.ReplaceAll(slurp(t, p), "crw-kwrite", "crw-work"), 0o644)
+			_, err = RecordEdits(f.root, f.src, "crw-work", "rename installed skill")
+			must(t, err)
+			f.expectClean(t, "edited installed skill with original source", &f.src)
+			s, err := load(f.root, "crw-work")
+			must(t, err)
+			if s.From != "kwrite" || s.Origin != f.src.Origin {
+				t.Fatal("installed rename changed source provenance")
+			}
+		})
+	}
 }
 
 func TestCheckNamesUnrecordedDifferences(t *testing.T) {

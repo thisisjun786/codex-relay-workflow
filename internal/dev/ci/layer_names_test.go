@@ -276,8 +276,8 @@ var nonSessionFiles = map[string]string{
 	"docs/flow/journal.md":                                  "a git parent commit and the parent path of a nested call",
 	"docs/relay/dag-plans.md":                               "the parent revision of a plan and the Linear parent of an issue",
 	"plugins/crw/skills/crw-dev/references/stacked-prs.md":  "the parent and child branches of a stacked pull request, and the session a native subagent runs in",
-	"plugins/crw/skills/crw-pabcd/references/delegation.md": "the session that delegates to a native subagent and that subagent",
-	"plugins/crw/skills/crw-loop/references/waiting.md":     "a native subagent and the session that waits on it",
+	"plugins/crw/skills/crw-work/references/delegation.md":  "the session that delegates to a native subagent and that subagent",
+	"plugins/crw/skills/crw-continue/references/waiting.md": "a native subagent and the session that waits on it",
 }
 
 // layerWordSenses are the openings a first use's parenthetical may take, per word, when it gives a relay role id.

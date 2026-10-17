@@ -11,8 +11,8 @@ host the cutover has not moved still runs the Python fence release's console scr
 repository in todo 44; move it through the cutover before relying on this page.) It
 records one issue's assignment durably: the relationship, its execution generations, each delivery attempt, the
 child's acknowledgement and verdict, and the coordination summary owed to the coordination issue. It owns none of that
-workflow's authority. It does not read or write any task's `.crw/` PABCD state, and `crw-loop` startup and phase
-procedure stay with the `crw-loop` and `crw-pabcd` skills; this reference never restates
+workflow's authority. It does not read or write any task's `.crw/` task work state, and `crw-continue` startup and phase
+procedure stay with the `crw-continue` and `crw-work` skills; this reference never restates
 them.
 
 Verified against `crw` built from `423c2584` on 2026-09-29: every command and flag this page
@@ -1053,7 +1053,7 @@ relay accepts a receipt from three kinds of turn only: the generation's anchor (
 it bound for that generation), a turn already admitted against that anchor (managed-start admits
 the business turn it delivered once it has confirmed the dispatch), and a turn the receipt itself
 admits by carrying a continuation claim. Any other turn is refused `unassigned_turn`. A `child` session
-under `crw-loop` usually ends in the third kind: while its goal is outstanding Codex opens
+under `crw-continue` usually ends in the third kind: while its goal is outstanding Codex opens
 goal-continuation turns, and an App Server restart cuts the business turn, so the completion comes
 from a turn nobody admitted. A `child` session outside a loop that finishes after a restart is in the same
 position.

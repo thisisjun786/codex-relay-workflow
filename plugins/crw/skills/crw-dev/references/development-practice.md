@@ -4,7 +4,7 @@
 
 Before broad changes, inspect source layout, source-of-truth docs, agent instructions,
 toolchain config, and sibling naming/test/module patterns. Devlogs use decade-range
-numbering, never bare `PLAN.md`/`PHASES.md`/`RCA.md` (LEXICO-SPLIT-01; see `pabcd`).
+numbering, never bare `PLAN.md`/`PHASES.md`/`RCA.md` (LEXICO-SPLIT-01; see `crw-work`).
 
 Discover conventions in order: repo instructions/SoT docs → toolchain/config → owning
 module → direct callers → 2-3 sibling examples.
@@ -54,7 +54,7 @@ Each PR/changeset MUST be scoped to one logical change. Opportunistic rewrites, 
 - One default export per file when the file has a primary purpose (JS/TS convention; other languages follow their idioms).
 - Follow existing naming conventions in the project. Check sibling files before creating new ones.
 - New files must match the directory structure and naming patterns already in use.
-- Devlog phase documents use decade-range numbering (LEXICO-SPLIT-01, `pabcd` Implementation-Unit Documents). Never use bare filenames like `PLAN.md`, `PHASES.md`, or `RCA.md`.
+- Devlog phase documents use decade-range numbering (LEXICO-SPLIT-01, `crw-work` Implementation-Unit Documents). Never use bare filenames like `PLAN.md`, `PHASES.md`, or `RCA.md`.
 
 ---
 
