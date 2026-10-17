@@ -1601,6 +1601,9 @@ func (s *Scheduler) integrateWithCommand(ctx context.Context, in IntegrationBatc
 		}
 		out.merged = append(out.merged, integrationMerge{Candidate: c, MergeCommit: tip})
 		out.head, out.record, out.digest = tip, record, digest
+		if err := s.recordVerifiedHead(ctx, in, batch, tip, digest, record, mergedCandidates(out.merged)); err != nil {
+			return out, err
+		}
 		previous = tip
 	}
 	return out, nil
@@ -1700,27 +1703,32 @@ func (s *Scheduler) reconcilePlannedMoves(ctx context.Context, in IntegrationBat
 			moved[r.BatchID] = true
 		}
 	}
-	seen := map[string]bool{}
+	var batches []string
+	matches := map[string]bool{}
 	for _, r := range rows {
-		if r.Stage != "intent" || r.NodeID != "" || moved[r.BatchID] || seen[r.BatchID] {
+		if r.Stage != "intent" || r.NodeID != "" || moved[r.BatchID] {
 			continue
 		}
 		var d map[string]string
 		if json.Unmarshal([]byte(r.Detail), &d) != nil || d["verified_head"] == "" || d["integration_ref"] != in.IntegrationRef {
 			continue
 		}
-		seen[r.BatchID] = true
-		if d["verified_head"] != tip {
-			out.Abandoned = append(out.Abandoned, r.BatchID)
+		if _, seen := matches[r.BatchID]; !seen {
+			batches = append(batches, r.BatchID)
+		}
+		matches[r.BatchID] = matches[r.BatchID] || d["verified_head"] == tip
+	}
+	for _, batch := range batches {
+		if !matches[batch] {
+			out.Abandoned = append(out.Abandoned, batch)
 			continue
 		}
-		batch, head := r.BatchID, tip
 		if err := s.IntegrationWrite(ctx, in.Plan, in.Actor, func(txCtx context.Context) error {
-			return s.stageRow(txCtx, in, batch, "ref_moved", Candidate{}, head)
+			return s.stageRow(txCtx, in, batch, "ref_moved", Candidate{}, tip)
 		}); err != nil {
 			return err
 		}
-		out.Reconciled = append(out.Reconciled, r.BatchID)
+		out.Reconciled = append(out.Reconciled, batch)
 	}
 	return nil
 }
