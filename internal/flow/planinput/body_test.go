@@ -350,3 +350,53 @@ func TestSetextContextReadsWholeTitleAndFlushesBody(t *testing.T) {
 		t.Errorf("non-heading body changed: %q", is.Criteria)
 	}
 }
+
+func TestHeadingBlockTransitions(t *testing.T) {
+	const kept = "### Criteria\n- keep\n### Edit regions\n- `keep.go`\n"
+	const hidden = "### Criteria\n- hidden\n### Edit regions\n- `hidden.go`\n"
+	for _, tc := range []struct{ name, body string }{
+		{"comment data", "## Criteria\n- keep\n<!--\n## Notes\n- hidden\n-->\n" +
+			"## Edit regions\n- `keep.go`\n<!--\n## Notes\n- `hidden.go`\n-->\n"},
+		{"comment without headings", kept + "<!--\n- `hidden.go`\n-->\n"},
+		{"unclosed comment", kept + "<!--\n" + hidden},
+		{"comment closes and reopens", kept + "<!-- first --> <!-- second\n" + hidden + "-->\n"},
+		{"reference definitions", "[spec]: https://example.test/spec\nCriteria\n---\n- keep\n\n" +
+			"[edit]: /edit\nEdit regions\n---\n- `keep.go`\n"},
+		{"reference destination and title lines", "[spec]:\n  <https://example.test/spec>\n  \"a title\"\nCriteria\n---\n- keep\n\n" +
+			"[edit]: /edit(a) 'edit title'\nEdit regions\n---\n- `keep.go`\n"},
+		{"reference multiline title", "[spec]: /spec \"a title\ncontinued\"\nCriteria\n---\n- keep\n\n" +
+			"## Edit regions\n- `keep.go`\n"},
+		{"reference title stops at blank", "## Out of scope\n[spec]: /spec \"unfinished\n\nIn scope\n---\n" + kept + "\nend\"\n"},
+		{"reference does not interrupt paragraph", kept + "## Out of scope\nOut of scope\n[spec]: /spec\n(research)\n---\n" + hidden},
+		{"invalid reference remains title text", kept + "## Out of scope\n[Out of scope]: /unbalanced(\n(research)\n---\n" + hidden},
+		{"quoted code", "## Out of scope\n>     example\nIn scope\n---\n" + kept},
+		{"quoted code with tabs", "## Out of scope\n>\t  example\nIn scope\n---\n" + kept},
+		{"nested quoted code", "## Out of scope\n> >     example\nIn scope\n---\n" + kept},
+		{"indented quote continuation", kept + "## Out of scope\n> paragraph\n>     continuation\nIn scope\n---\n" + hidden},
+		{"raw HTML ends quote", "## Out of scope\n> quote\n<script></script>\nIn scope\n---\n" + kept},
+		{"raw HTML hides data and fences", "<SCRIPT>\n```\n" + hidden + "</SCRIPT>\n" + kept},
+		{"HTML block ends at blank", "## Out of scope\n> quote\n<div>\n" + hidden + "</div>\n\nIn scope\n---\n" + kept},
+		{"HTML block stays open until blank", kept + "<div>\n" + hidden + "</div>\n" + hidden + "\n"},
+		{"processing instruction", "<?instruction\n" + hidden + "?>\n" + kept},
+		{"declaration", "<!DOCTYPE\n" + hidden + ">\n" + kept},
+		{"CDATA", "<![CDATA[\n" + hidden + "]]>\n" + kept},
+		{"complete custom tag", "<custom attr=\"value\">\n" + hidden + "\n" + kept},
+		{"inline tag does not interrupt quote", kept + "## Out of scope\n> quote\n<span>\nIn scope\n---\n" + hidden},
+		{"quoted HTML is not a paragraph", "## Out of scope\n> <script></script>\nIn scope\n---\n" + kept},
+	} {
+		for _, ending := range []struct{ name, value string }{{"LF", "\n"}, {"CRLF", "\r\n"}} {
+			t.Run(tc.name+"/"+ending.name, func(t *testing.T) {
+				body := strings.ReplaceAll(tc.body, "\n", ending.value)
+				res := build(t, milestone(open(1, body)), Options{})
+				is := only(t, res)
+				if !reflect.DeepEqual(is.Criteria, []string{"keep"}) ||
+					!reflect.DeepEqual(is.Regions, []compile.Region{{Path: "keep.go", Kind: "file"}}) {
+					t.Errorf("block transition: criteria=%q regions=%+v; want keep and keep.go", is.Criteria, is.Regions)
+				}
+				if len(res.Warnings) != 0 {
+					t.Errorf("warnings = %+v; want none", res.Warnings)
+				}
+			})
+		}
+	}
+}
