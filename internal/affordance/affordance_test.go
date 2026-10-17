@@ -795,3 +795,35 @@ func TestSessionStartCompactWithoutTranscriptEvidenceSaysTheList(t *testing.T) {
 		t.Errorf("compact without a transcript was silenced because the prompt hook ran: %q", got)
 	}
 }
+
+func TestTaskWorkAffordanceNames(t *testing.T) {
+	binding := RenderSessionBinding("work-session", testEnv)
+	for _, want := range []string{"`crw work state`", "--session work-session", "never a parent/history id"} {
+		if !strings.Contains(binding, want) {
+			t.Errorf("binding lacks %q: %s", want, binding)
+		}
+	}
+	if oldWorkName.MatchString(binding) {
+		t.Errorf("binding still recommends an old name: %s", binding)
+	}
+	ws := t.TempDir()
+	start := contextOf(t, RunMapAffordanceSessionStart(payload(ws, "SessionStart", "work-session", nil), ws, testEnv), "SessionStart")
+	RunPostCompactAffordance(payload(ws, "PostCompact", "work-session", nil))
+	restored := contextOf(t, RunUserPromptAffordance(payload(ws, "UserPromptSubmit", "work-session", nil), testEnv), "UserPromptSubmit")
+	for name, text := range map[string]string{"loop": RenderLoopAffordance(testEnv), "session start": start, "compact restore": restored} {
+		t.Run(name, func(t *testing.T) {
+			for _, want := range []string{"for actual task continuation load $crw:crw-continue + $crw:crw-work", "for actual task continuation inspect", "crw work state status --session <your id>", "a mention alone grants no authority", "No-delegation means no dispatch", "do not bypass guards"} {
+				if !strings.Contains(text, want) {
+					t.Errorf("missing %q: %s", want, text)
+				}
+			}
+			if oldWorkName.MatchString(strings.Replace(text, "task work (formerly PABCD)", "task work", 1)) {
+				t.Errorf("old public name outside its first explanation: %s", text)
+			}
+		})
+	}
+	env := func(key string) (string, bool) { return "chosen-crw", key == "CRW_BIN" }
+	if got := ResolveCRWCommands("`crw work state status --session S`", env); got != "`chosen-crw work state status --session S`" {
+		t.Errorf("new command lost the invocation prefix: %s", got)
+	}
+}
