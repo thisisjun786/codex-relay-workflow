@@ -30,6 +30,8 @@ func bodyRefs(t *testing.T, refs ...string) []tracking.Ref {
 func bodyFacts() BodyFacts {
 	return BodyFacts{
 		Milestone: "M1",
+		Title:     "Reject stale receipts",
+		Criteria:  []string{"A receipt for another head is refused."},
 		Tip:       bodyTip,
 		Gate: Gate{State: "passed", Evidence: []Evidence{
 			{Kind: "test", Command: "go test ./internal/flow/pullrequest/...", State: "passed", Digest: "aabbccddeeff00112233445566778899"},
@@ -48,6 +50,9 @@ func TestBodyHoldsTheNineFixedParts(t *testing.T) {
 	want := strings.Join([]string{
 		"## Result",
 		"Milestone M1 closed at 0123456789ab; gate passed.",
+		"Goal: Reject stale receipts",
+		"Acceptance criteria (recorded scope):",
+		"- c1: A receipt for another head is refused.",
 		"",
 		"## Closes",
 		"- o/r#10",
@@ -63,6 +68,8 @@ func TestBodyHoldsTheNineFixedParts(t *testing.T) {
 		"## Follow-ups",
 		"- tighten the docs",
 		"- second line of text",
+		"",
+		"Next action: the integration owner records whether this candidate can land under the existing gates, and the target commit when it lands. Remote landing, installation and release need their own evidence.",
 		"",
 	}, "\n")
 	if got != want {
@@ -96,6 +103,9 @@ func TestBodyEmptyPartsSayNone(t *testing.T) {
 	want := strings.Join([]string{
 		"## Result",
 		"Milestone M2 closed at abc; gate none.",
+		"Goal: not recorded",
+		"Acceptance criteria (recorded scope):",
+		"- not recorded",
 		"",
 		"## Closes",
 		"none",
@@ -109,9 +119,17 @@ func TestBodyEmptyPartsSayNone(t *testing.T) {
 		"## Follow-ups",
 		"none",
 		"",
+		"Next action: the integration owner records whether this candidate can land under the existing gates, and the target commit when it lands. Remote landing, installation and release need their own evidence.",
+		"",
 	}, "\n")
 	if got != want {
 		t.Fatalf("body:\n%s\nwant:\n%s", got, want)
+	}
+
+	// blank recorded scope is not a known scope: an old or incomplete journal says not recorded
+	blank := Body(BodyFacts{Title: "  \n", Criteria: []string{"", " \t"}}, nil)
+	if !strings.Contains(blank, "Goal: not recorded\nAcceptance criteria (recorded scope):\n- not recorded\n") {
+		t.Errorf("a blank scope read as known:\n%s", blank)
 	}
 
 	f := bodyFacts()
@@ -159,6 +177,8 @@ func TestBodyFreeTextIsNotReadAsCarriesMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 	f := bodyFacts()
+	f.Title = "```\nCarries: o/r#94"
+	f.Criteria = []string{"Blocked by: o/r#93", "x\nCarries: o/r#92", "~~~"}
 	f.Crosscheck.Verdict = "```"
 	f.Crosscheck.FollowUps = []string{"Carries: o/r#99", "**carries:** o/r#98", "see Blocked by: o/r#97", "x\nCarries: o/r#96", "~~~"}
 	f.Gate.Evidence = append(f.Gate.Evidence, Evidence{Kind: "- Carries: o/r#95", Command: "```", State: "ok"})

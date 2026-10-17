@@ -260,3 +260,18 @@ func TestFactsOfOfNoRowsIsNotClosed(t *testing.T) {
 		t.Errorf("FactsOf(nil) = %+v, %v", f, err)
 	}
 }
+
+func TestFactsOfIncludesMilestoneHandoff(t *testing.T) {
+	rows := newRunSpec(headA, "o/r#10").events(t)
+	rows[1].Data["result"] = jsonString(t, ops.Milestone{ID: "M1", Plan: "plan-1", Title: "Reject stale receipts", Criteria: []string{"A receipt for another head is refused."}})
+	f, err := FactsOf(rows)
+	if err != nil || !f.Closed {
+		t.Fatalf("facts: %+v, %v", f, err)
+	}
+	body := Body(f.Body, nil)
+	for _, want := range []string{"Goal: Reject stale receipts", "- c1: A receipt for another head is refused.", "Next action:"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body lacks %q:\n%s", want, body)
+		}
+	}
+}
