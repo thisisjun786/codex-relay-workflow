@@ -31,7 +31,7 @@ func localCacheDirectory(opts localOptions, current verificationRecord) (string,
 	key := verificationRecord{Schema: recordSchema, Repository: current.Repository, TreeHash: current.TreeHash,
 		CiDigest: current.CiDigest, Tools: current.Tools, GoFlags: current.GoFlags, GoEnv: current.GoEnv,
 		HeavyGate: current.HeavyGate, Dependencies: current.Dependencies, OS: current.OS, Arch: current.Arch,
-		PlanDigest: current.PlanDigest}
+		PlanDigest: current.PlanDigest, CPU: current.CPU}
 	key.VerifierKind, key.VerifierRules = localVerifierIdentity(current)
 	digest, err := recordDigest(key)
 	if err != nil {
