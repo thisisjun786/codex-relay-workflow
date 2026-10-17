@@ -74,9 +74,9 @@ func (o *acceptOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResu
 	// commit row of the head, else the land release of the head, else git in the node's worktree. With none of them the tree is
 	// unknown and such a check is on no head; it is resolved once, and only for such a check.
 	tree, treeRead := "", false
-	headTree := func() (string, error) {
+	headTree := func() string {
 		if treeRead {
-			return tree, nil
+			return tree
 		}
 		treeRead = true
 		if c, ok := r.opRows(OpCommit).last(func(ev engine.Event) bool {
@@ -86,13 +86,13 @@ func (o *acceptOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResu
 		} else if dataStr(rel, "kind") == "land" && dataStr(rel, "head") == head.Commit && dataStr(rel, "tree") != "" {
 			tree = dataStr(rel, "tree")
 		} else if wt := r.worktreeOf(node); wt != "" {
-			t, err := TreeOf(ctx, o.l.d.Git, wt, head.Commit)
-			if err != nil {
-				return "", err
+			// A failed lookup leaves the tree unknown; it cannot bind a tree-only
+			// check to this head or invalidate a review that already names the head.
+			if t, err := TreeOf(ctx, o.l.d.Git, wt, head.Commit); err == nil {
+				tree = t
 			}
-			tree = t
 		}
-		return tree, nil
+		return tree
 	}
 	// The basis of the premerge record is the newest judgment of the head in journal order (CRW-1456, CRW-1480): a review of the head
 	// with a verdict of either value, or a unit check on the head that gave a judgment. A check that gave none (no answer, quota, a
@@ -125,10 +125,7 @@ func (o *acceptOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResu
 			}
 			onHead := strings.EqualFold(commit, head.Commit)
 			if commit == "" && head.Commit != "" {
-				t, err := headTree()
-				if err != nil {
-					return engine.OpResult{}, err
-				}
+				t := headTree()
 				onHead = t != "" && strings.EqualFold(dataStr(ev, "tree"), t)
 			}
 			if onHead {
