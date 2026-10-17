@@ -33,7 +33,11 @@ func (c *command) verify(args []string) int {
 	if *checkout == "" {
 		*checkout = "."
 	}
-	checkoutPath, err := filepath.Abs(*checkout)
+	checkoutPath, err := verifyAbsolutePath(*checkout)
+	if err != nil {
+		return c.fail("the checkout path: %v", err)
+	}
+	checkoutPath, err = filepath.EvalSymlinks(checkoutPath)
 	if err != nil {
 		return c.fail("the checkout path: %v", err)
 	}
@@ -53,7 +57,7 @@ func (c *command) verify(args []string) int {
 	if *record == "" {
 		return c.fail("a record path is required (--record or CRW_VERIFY_RECORD)")
 	}
-	recordPath, err := filepath.Abs(*record)
+	recordPath, err := verifyAbsolutePath(*record)
 	if err != nil {
 		return c.fail("the record path: %v", err)
 	}
@@ -81,12 +85,32 @@ func (c *command) verify(args []string) int {
 	return 0
 }
 
+func verifyAbsolutePath(path string) (string, error) {
+	if filepath.IsAbs(path) {
+		return path, nil
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	return cwd + string(os.PathSeparator) + path, nil
+}
+
 // verifyRecordWrite writes raw to path through a temporary file of its directory, renamed over it.
 func verifyRecordWrite(path string, raw []byte) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	dir, name := filepath.Split(path)
+	if dir == "" {
+		dir = "."
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".verify-*.json")
+	dir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return err
+	}
+	target := filepath.Join(dir, name)
+	tmp, err := os.CreateTemp(filepath.Dir(target), ".verify-*.json")
 	if err != nil {
 		return err
 	}
@@ -99,5 +123,5 @@ func verifyRecordWrite(path string, raw []byte) error {
 		os.Remove(tmp.Name())
 		return err
 	}
-	return os.Rename(tmp.Name(), path)
+	return os.Rename(tmp.Name(), target)
 }

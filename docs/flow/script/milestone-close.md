@@ -5,6 +5,42 @@
 close guarantees: the final gate, the crosscheck, then the close. The Go side is `internal/flow/ops/{finalgate,qa,crosscheck,lane_close,audit}.go`,
 `internal/flow/reviewadapter` and `internal/flow/audit`.
 
+**Build criteria and delivery criteria.** The crosscheck judges the integrated code before publication. A condition about an origin
+push or a tracking record being closed belongs to the later delivery check. The handoff's milestone entry marks these conditions by
+their original criterion ids:
+
+```json
+{
+  "criteria": [
+    "The origin integration branch contains the work and its issues and milestone are closed",
+    "The implemented behavior passes its regression tests"
+  ],
+  "delivery_criteria": [
+    {
+      "id": "c1",
+      "checks": [
+        {"kind": "remote_push"},
+        {"kind": "issues_closed"},
+        {"kind": "milestone_closed", "ref": "acme/app#6"}
+      ]
+    }
+  ]
+}
+```
+
+`delivery_criteria` is optional. Each entry assigns the whole criterion to delivery; split a criterion that combines functional
+behavior with publication into separate criteria first. The crosscheck omits valid delivery entries and keeps the original ids of
+the rest (`c2` above stays `c2`). Both passes still review the integrated range when all criteria are delivery criteria.
+Compile and start warn and record the deferred ids. A likely delivery phrase without an annotation produces an advisory warning;
+word matching never removes a requirement from the crosscheck. An annotation with an unknown id or check, an invalid reference,
+duplicate id or check, or no checks also warns and leaves that criterion in the build crosscheck. The handoff is not refused for
+these warnings.
+
+The close and project result carry `delivery: {state: "pending", head, criteria}` when delivery criteria exist. The run's `closed`
+state records the successful code close and permits the existing publication procedure; fulfillment of the deferred criteria needs
+the post-publication readback below. Adding or changing annotations changes the milestone input, so keep existing runs' pinned
+handoffs and proofs intact and compile the intended input for a new run.
+
 A new `project-lane` run of the same plan can retry a failed milestone close without rebuilding integrated nodes. Before admitting its build lanes, `crw.reuseIntegrated(milestone, node)` checks the relay's current acceptance and integration observations, the unchanged node slice and approved design, and the earlier run's acceptance and integration records against the current target. A proven node is recorded as landed with its source run, acceptance and batch commit; a pending node still runs its ordinary lane. Missing proof for an integrated node refuses reuse. A reused landing also carries its source run's original review base: a source that re-planned after landing keeps the first base the milestone judged under, which the rerun's gate, crosscheck and close keep as their range base - separately from the latest design revision's own base tip - and the design decisions an issue references must be the same decisions, not only the same ids, or the reuse is refused. The new run makes its own final-gate and crosscheck evidence and audits the original acceptances; the earlier failed gate remains in its original journal. Its crosscheck inherits executor receipts from the source runs rather than treating the reused nodes as having no executor. Repeating the close does not turn a failed check into a pass.
 
 **The final gate.** `crw.finalGate(milestone)` pins the integrated head H (the tip of the integration target now) and judges the
@@ -52,7 +88,7 @@ packets of the passes and of the self-review name that path. The QA mark is part
 mark is another call on a resume.
 
 **The crosscheck.** After a passed gate, `crw.crosscheck(milestone, gate, opts)` (CRW-1473) reviews the integrated range of the gate
-(`base..head`) in one round of two passes: pass A judges coverage (every criterion of the milestone and every decision of the approved
+(`base..head`) in one round of two passes: pass A judges coverage (every build criterion of the milestone and every decision of the approved
 DESIGN, met or not, with its evidence), pass B hunts bugs. The script builds the text of each pass (`crosscheckPacket`: the range, the
 criteria, the decisions, which live in the journal's ledger row and not in the checkout, the lens of the pass and the close rule word for
 word), and the op runs both passes itself, in Go, through the review adapter (`reviewadapter.Adapter` over the engine's command line,
@@ -68,8 +104,9 @@ red-first and mutation-red lines against the receipts. A receipt that cannot be 
 (`crosscheck_receipt_missing`, also when a reused node's source journal cannot be read or its unit check or accepted copy is missing;
 `crosscheck_receipt_unverified`; `crosscheck_receipt_not_copied`, also when a reused node's accepted receipt names no copy - the original
 path is never re-read; `crosscheck_receipt_mismatch`, the row naming the node). The prompt carries refs, never diff bytes: one over `CrosscheckPromptLimit`
-(120 KiB, since the engine takes it as one command-line word) is not sent (`crosscheck_prompt_too_large`). The op serves round 1 only: a
-prior verdict, or another round (an explicit 0 included; a round not given is 1), is refused `crosscheck_prior_invalid`.
+(120 KiB, since the engine takes it as one command-line word) is not sent (`crosscheck_prompt_too_large`). The first round is round 1;
+the close's correction is followed by round 2 with the prior verdict. A prior verdict or round that does not describe that continuation
+is refused `crosscheck_prior_invalid`.
 
 **The run directory and the checkouts.** Every file the crosscheck writes lies under the run's directory (`Deps.LandRoot`,
 `<state>/flow/<run>` in the run process), which must be an absolute path: an empty or relative one fails the round before anything is
@@ -119,7 +156,17 @@ judged, and refuses, recording no close, evidence whose crosscheck is not a veri
 of a close made before the crosscheck, evidence with no crosscheck whose `final` member, the old close's `crw.reviewerFinal` review,
 is not verified, or evidence with neither):
 `close_unverified`. When the target is no longer the head the gate judged, the close is judged again from the new head, at most three
-times. A crosscheck that does not verify the range keeps the milestone open, and the close stops:
+times.
+
+**The close's correction.** A first `needs_changes` verdict gets one correction before the close stops. When every finding is
+`evidence_missing`, the run asks the explorer and rechecks the same head with its answers. A mixed set, including a `test_gap` and
+`evidence_missing`, goes to one close-fix executor. If that executor returns `needs_research`, the run uses the existing research route:
+the explorer answers the question and `answerPacket` resumes the same executor handle, retaining its worktree edits. The existing
+research limit still applies; an unavailable explorer holds the close, and an exhausted research limit escalates `blocked_scope`.
+Once the executor is ready, the run commits the correction, repeats the final gate and crosscheck at the repaired head, and publishes
+the local repair only when both pass. A research request alone never discards the correction or becomes `close_fix_research`.
+
+A crosscheck that still does not verify the range keeps the milestone open, and the close stops:
 
 - `needs_changes`: the run ends escalated `crosscheck_pending`, ask `crosscheck_pending`, with V in the escalation's evidence and in the
   run's value (`crosscheck`, V as the op recorded it) and the fix packet (`fix`, `crosscheckFixPacket`: the blocking findings by id, the
@@ -127,7 +174,7 @@ times. A crosscheck that does not verify the range keeps the milestone open, and
   landed, so the route is a correction node of a new plan revision: a correction issue of the milestone naming the finding ids
   (`crw-add-issue`, a plan revision), fixed by a new executor subagent on a branch from the integration tip, landed with
   `crw flow start land-head`, and the verdict and the landed head reported up. The child hands V and the fix packet up to the parent
-  (repository session) with `crw flow report-up`; the run makes no executor call for it. The escalation's id is of the run, the call and
+  (repository session) with `crw flow report-up`; the run makes no further close-fix executor call for it. The escalation's id is of the run, the call and
   V's canonical digest: a resume that judges the range again (the target moved, or a proof error ran the gate again at the same head)
   and gives another V is a new escalation with the new V, the current question of the milestone, told again, while the earlier
   escalation keeps its V; the same V again is the same escalation.
@@ -169,6 +216,26 @@ call id of its own (`audit_...`), unless `--no-record` is given or the run has n
 after its last `started` row (a run that is still writing owns its journal, and so does a resumed process after an earlier process's end).
 The row is appended under the run lock, taken without waiting after the host reads, on the journal opened again under it, where the
 end is read again: while a process holds the run (one that wrote its end row and still reconciles what goes up) nothing is recorded.
+
+**Delivery readback after publication.** After the owner performs the authorized publication and tracking updates, run
+`crw flow audit --run RUN --delivery --json` (with `--state` and `--socket` when needed). This mode reads the last closed milestone of
+that run; it takes neither `--acceptance` nor a `--milestone` subset. It requires the run's completed close, a passing final gate and
+a verified crosscheck at the same head before observing any delivery target.
+
+- `remote_push` reads origin's exact branch named by the pinned handoff target. The remote tip must equal the closed head or be proven
+  to contain it. If origin advanced to a commit the checkout cannot read, containment is `unobserved`; fetch the intended remote
+  history before checking again.
+- `issues_closed` reads every issue named by the closed milestone's nodes and requires `closed` with reason `completed`.
+  `not_planned` does not fulfill it; an unavailable completion reason is `unobserved`.
+- `milestone_closed` reads the explicit `OWNER/NAME#N` tracking milestone and requires it to be closed. A flow milestone key does
+  not supply a tracking reference.
+
+Every declared check must pass. Open or incomplete delivery is `pending`; unreadable evidence is `unobserved`, and neither is a pass.
+The command exits 0 for `passed`, 1 for pending or unobserved checks, and 2 for a run or invocation it cannot use. It records the head,
+criteria, individual observations and time in a `delivery_checked` run event; `--no-record` prints the same observation without appending
+it. The command takes the existing run lock before reading the current close and keeps it through readback and recording. It observes
+origin and tracking state without publishing or closing records itself. This event is the delivery evidence; the earlier close's
+pending value remains a record of what was known before publication.
 
 **The scenario harness** (`internal/flow/scenario`) runs this script on the engine over the fake App Server host, a temporary relay
 store (the journal and the decision rows), a temporary git repository with an integration branch, a scripted model, a fake relay and

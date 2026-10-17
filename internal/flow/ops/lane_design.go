@@ -9,6 +9,7 @@ import (
 	"path"
 	"strings"
 
+	flowdelivery "github.com/thisisjun786/codex-relay-workflow/internal/flow/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 )
 
@@ -51,6 +52,8 @@ func normalizeMilestone(ms *Milestone) {
 	if ms.Nodes == nil {
 		ms.Nodes = []PlanNode{}
 	}
+	// Only complete, unambiguous delivery annotations reach the lane; an invalid one stays in the build crosscheck (CRW-1609).
+	ms.DeliveryCriteria, _ = flowdelivery.Valid(ms.Criteria, ms.DeliveryCriteria)
 }
 
 func (o *milestoneOp) Proven(ctx context.Context, ev []engine.Event, row engine.Event) (bool, string, error) {

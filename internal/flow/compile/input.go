@@ -29,6 +29,8 @@ import (
 	"io"
 	"path"
 	"strings"
+
+	flowdelivery "github.com/thisisjun786/codex-relay-workflow/internal/flow/delivery"
 )
 
 // The schemas of the handoff and of the result.
@@ -82,14 +84,15 @@ type InputWarning struct {
 // Milestone is a milestone of a project as the run reads it: its title, its criteria (at least one), the surfaces of its criteria (a
 // non-empty subset of logic, web, tui and desktop: web, tui or desktop makes a QA receipt part of the final gate), its work grade
 // (C1..C5: from C3 the QA evidence is judged by the two oracle passes) and the required verification commands of its final gate
-// (empty: the repository's CI, crw-dev ci local).
+// (empty: the repository's CI, crw-dev ci local). DeliveryCriteria marks whole criteria for post-publication readback (CRW-1609).
 type Milestone struct {
-	Key              string   `json:"key"`
-	Title            string   `json:"title"`
-	Criteria         []string `json:"criteria"`
-	Surfaces         []string `json:"surfaces"`
-	Grade            string   `json:"grade"`
-	RequiredCommands []string `json:"required_commands"`
+	Key              string                   `json:"key"`
+	Title            string                   `json:"title"`
+	Criteria         []string                 `json:"criteria"`
+	DeliveryCriteria []flowdelivery.Criterion `json:"delivery_criteria,omitempty"`
+	Surfaces         []string                 `json:"surfaces"`
+	Grade            string                   `json:"grade"`
+	RequiredCommands []string                 `json:"required_commands"`
 }
 
 // Surfaces are the surfaces a milestone's criteria may name.

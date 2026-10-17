@@ -285,7 +285,7 @@ execution, create a worker, or repeat a notification beyond the one delivery the
 record already makes; retrying a failed write is that same delivery, not a repeat.
 Return needed schedule changes to [crw-plan](../../crw-plan/SKILL.md) and already
 accepted corrections to the existing owner by the path this skill already defines,
-and put a needed user decision in the report's last block. A passed or approaching
+and put a needed user decision in the report's first block. A passed or approaching
 deadline changes no criterion, no review requirement, and no delivery level.
 
 Refusing to own execution is not the same as narrowing the work around it. Inside an
@@ -313,16 +313,27 @@ lookup scope.
 
 ## Order the report
 
-A progress or interim report leads with the schedule: the overall verdict with the
-query and judgment times, then the notable lead and delay per result with its
-baseline date, current date, achievement or last known evidence, and difference,
-then the affected next steps, then internal coordination waits and user decisions.
+Use the same order for progress, interim and completion reports as
+[Report the result](../SKILL.md#report-the-result):
+
+1. **Decisions needed.** Put the unresolved choice first, with its owner and the
+   evidence that makes it necessary, or say none. Separate internal coordination
+   waits from decisions only Jun can make.
+2. **What changed.** Give the verification result at the reviewed revision and the
+   action actually taken with its evidence, then the schedule: the overall verdict
+   with the query and judgment times, and the notable lead and delay per result with
+   its baseline date, current date, achievement or last known evidence, and difference.
+   Compare with an established baseline; without one, state the current result.
+   Keep unchecked scope and unverified delivery explicit.
+3. **Next action.** Name one affected next step, correction or missing observation,
+   with its owner, reason and observable completion condition. When all obligations
+   are met, say complete rather than inventing work. Reporting the step adds no
+   execution authority.
+
 Keep it short. Where a mismatch was routed, keep three facts apart that collapse
 easily into one: that a correction request was sent, that the owning parent actually
 resumed, and that a result was verified. Only the third is delivery, and the first
-never implies the second. A completion check keeps this skill's existing lead, the verification
-result and the action actually taken, and places the schedule block immediately
-after it.
+never implies the second.
 
 ## Judgment cases
 

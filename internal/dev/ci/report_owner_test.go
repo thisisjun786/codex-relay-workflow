@@ -257,6 +257,7 @@ func TestStatusReportsByLevel(t *testing.T) {
 func TestHandoffReportOrder(t *testing.T) {
 	for _, c := range []struct{ file, heading string }{
 		{statusSkillFile, "Write the report"}, {checkSkillFile, "Report the result"},
+		{scheduleJudgeMD, "Order the report"},
 	} {
 		t.Run(c.file, func(t *testing.T) {
 			section, ok := reportSectionOf(splitRead(t, c.file), c.heading)
@@ -277,5 +278,9 @@ func TestHandoffReportOrder(t *testing.T) {
 				}
 			}
 		})
+	}
+	refusal, ok := reportSectionOf(splitRead(t, scheduleJudgeMD), "What the check refuses")
+	if !ok || !strings.Contains(refusal, "put a needed user decision in the report's first block") {
+		t.Error("the schedule reference must put a needed user decision in the report's first block")
 	}
 }

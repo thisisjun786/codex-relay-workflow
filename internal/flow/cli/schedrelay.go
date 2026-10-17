@@ -234,7 +234,7 @@ func (r *SchedRelay) Milestone(ctx context.Context, plan, milestone string) (ops
 	for _, n := range snap.Nodes {
 		nodes[n.NodeID] = n
 	}
-	out := ops.Milestone{ID: milestone, Plan: plan, Title: entry.Title, Criteria: slices.Clone(entry.Criteria), CriteriaDigest: compile.CriteriaDigest(entry.Criteria),
+	out := ops.Milestone{ID: milestone, Plan: plan, Title: entry.Title, Criteria: slices.Clone(entry.Criteria), DeliveryCriteria: entry.DeliveryCriteria, CriteriaDigest: compile.CriteriaDigest(entry.Criteria),
 		Surfaces: slices.Clone(entry.Surfaces), Grade: entry.Grade, RequiredCommands: append([]string{}, entry.RequiredCommands...), Nodes: []ops.PlanNode{}}
 	for _, id := range dagsched.OfferingOrder(snap) {
 		if !members[id] {

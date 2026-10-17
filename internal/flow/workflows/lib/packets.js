@@ -39,8 +39,9 @@ function list(items, empty) {
 }
 
 // criteriaList labels the criteria of a plan c1, c2, ...: the ids a verdict answers by, one entry for each (ops.CriterionIDs).
-function criteriaList(criteria) {
-  return list((criteria || []).map((c, i) => 'c' + (i + 1) + ': ' + c))
+function criteriaList(criteria, excluded) {
+  return list((criteria || []).map((text, i) => ({ id: 'c' + (i + 1), text }))
+    .filter((c) => !(excluded || []).includes(c.id)).map((c) => c.id + ': ' + c.text))
 }
 
 function section(title, lines) {
@@ -632,7 +633,8 @@ export function crosscheckPacket(ms, g, pass, opts) {
   return [
     'CROSSCHECK pass ' + pass + ' of milestone ' + ms.id + ' (' + ms.title + '), after its final gate passed. Review the changes between ' + g.base + ' and ' + g.head + ': the integrated range, not the issues one by one. Your directory is a checkout of the head; read it and change no file.',
     'HEAD: ' + g.head + '\nBASE: ' + g.base + '\nRANGE: ' + g.range,
-    section('CRITERIA OF THE MILESTONE', criteriaList(ms.criteria)),
+    ...((ms.delivery_criteria || []).length ? ['DELIVERY BOUNDARY: criteria ' + ms.delivery_criteria.map((c) => c.id).join(', ') + ' are explicitly assigned to post-publication readback and omitted from the criteria below. Judge the code and its evidence at HEAD, including defects in the integrated range. Do not judge those deferred criteria or report evidence_missing for their remote push or tracking closure. This verdict does not verify delivery; after publication the owner must run crw flow audit --run RUN --delivery.'] : []),
+    section('CRITERIA OF THE MILESTONE', criteriaList(ms.criteria, (ms.delivery_criteria || []).map((c) => c.id))),
     section('DESIGN DECISIONS (the approved DESIGN of this milestone)', decisionLines(g.decisions)),
     CROSSCHECK_LENS[pass] || CROSSCHECK_LENS.B,
     CROSSCHECK_RULE,
@@ -652,7 +654,8 @@ export function closeFixPacket(ms, g, v) {
     fixPacket('milestone:' + ms.id, v, null, null, null),
     'RANGE: git diff ' + g.base + '..' + g.head,
     section('EDIT REGIONS', list(regions, 'undeclared')),
-    section('CRITERIA OF THE MILESTONE', criteriaList(ms.criteria)),
+    ...((ms.delivery_criteria || []).length ? ['Delivery criteria ' + ms.delivery_criteria.map((c) => c.id).join(', ') + ' belong to post-publication readback. They are not repair findings and are omitted from the criteria above. Fix the carried code findings; delivery remains pending for crw flow audit --run RUN --delivery after publication.'] : []),
+    section('CRITERIA OF THE MILESTONE', criteriaList(ms.criteria, (ms.delivery_criteria || []).map((c) => c.id))),
     'Fix the carried findings in this worktree and preserve the integrated work. Do not commit, integrate, or start another run. This run commits the correction, applies the existing final gate and crosscheck once more, and publishes the candidate only when both pass.',
   ].join('\n\n')
 }

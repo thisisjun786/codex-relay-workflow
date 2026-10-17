@@ -32,10 +32,10 @@ export function milestonePhase(ms, lanes, replan) {
       // the correction issues are the orchestrator's: crw-add-issue and a plan revision, planned in the revision the architect just made
       const esc = await crw.escalate(null, { reason: 'replan_correction', detail: 'revision ' + out.revision + ' of milestone ' + ms.id + ' after ' + due.reasons.join(', '), ask: 'correction_issues' })
       return { state: 'replanned', milestone: ms.id, lanes, tip: closed.tip, revision: out.revision, reasons: due.reasons, escalation: esc.id, report: reported.report.report_id,
-        crosscheck: closed.crosscheck.verdict, reflection: reflection.alignment }
+        crosscheck: closed.crosscheck.verdict, reflection: reflection.alignment, delivery: closed.delivery }
     }
     await crw.spawnDecision('ARCH_2', 'skip', { reason: 'no_replan_signal', inputs: { milestone: ms.id, revision: due.revision, plan_mismatch: due.plan_mismatch, slice_change: due.slice_change.changed, reflection: reflection.alignment } })
-    return { state: 'closed', milestone: ms.id, lanes, tip: closed.tip, report: reported.report.report_id, gate: closed.gate.state, crosscheck: closed.crosscheck.verdict, reflection: reflection.alignment,
+    return { state: 'closed', milestone: ms.id, lanes, tip: closed.tip, report: reported.report.report_id, gate: closed.gate.state, crosscheck: closed.crosscheck.verdict, reflection: reflection.alignment, delivery: closed.delivery,
       audit: { ok: reported.audit.ok, mismatch: reported.audit.mismatch, unobserved: reported.audit.unobserved } }
   }
   return closeAndReport

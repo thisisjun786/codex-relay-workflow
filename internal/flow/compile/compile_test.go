@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	flowdelivery "github.com/thisisjun786/codex-relay-workflow/internal/flow/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 )
@@ -1109,6 +1110,40 @@ func TestBundleTargetEqualToThePRBaseIsRefused(t *testing.T) {
 	for k, e := range ea {
 		if !reflect.DeepEqual(eb[k], e) || e.TargetBaseRef != "bundle/m1" {
 			t.Errorf("edge %v: %+v != %+v", k, e, eb[k])
+		}
+	}
+}
+
+func TestCRW1609DeliveryWarnings(t *testing.T) {
+	// A valid annotation, an unmarked delivery-looking criterion and a malformed
+	// annotation each warn; none refuses the handoff or changes the revision.
+	in := Input{Schema: InputSchema, Projects: []Project{{Key: "PX", PlanID: "plan-px",
+		Target: &Target{Repository: "/srv/acme/shop", BaseRef: "dev"},
+		Issues: []Issue{iss("A", inMilestone("M1"))},
+		Milestones: []Milestone{{Key: "M1", Title: "m", Surfaces: []string{"logic"}, Grade: "C3",
+			Criteria: []string{
+				"origin integration branch contains the changes and both issues are closed",
+				"the implemented behavior holds",
+				"이슈가 닫힌다",
+			},
+			DeliveryCriteria: []flowdelivery.Criterion{
+				{ID: "c1", Checks: []flowdelivery.Check{{Kind: flowdelivery.RemotePush}, {Kind: flowdelivery.IssuesClosed}}},
+				{ID: "c9", Checks: []flowdelivery.Check{{Kind: flowdelivery.RemotePush}}},
+			}}}}}}
+	plan := compileOne(t, in, nil)
+	var rules []string
+	for _, w := range plan.Warnings {
+		rules = append(rules, w.Rule)
+	}
+	for _, want := range []string{"delivery_after_publish", "delivery_criteria_invalid", "delivery_criterion_unmarked"} {
+		var found int
+		for _, r := range rules {
+			if r == want {
+				found++
+			}
+		}
+		if found != 1 {
+			t.Errorf("rule %s seen %d times in %v", want, found, rules)
 		}
 	}
 }

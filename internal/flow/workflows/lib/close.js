@@ -30,7 +30,7 @@
 // fix when the stop has them), and the script halts the milestone as it does for any other call that did not complete.
 
 import { QA_CAPTURE, QA_PASS, QA_RECEIPT, RECEIPT } from 'crw:lib/schemas'
-import { qaCapturePacket, qaPassPacket, qaSynthesisPacket, qaSelfReviewPacket, crosscheckPacket, crosscheckFixPacket, closeFixPacket } from 'crw:lib/packets'
+import { qaCapturePacket, qaPassPacket, qaSynthesisPacket, qaSelfReviewPacket, crosscheckPacket, crosscheckFixPacket, closeFixPacket, answerPacket } from 'crw:lib/packets'
 
 // The rounds the gate makes evidence in before it gives up: the head moves while the evidence is made, and each round judges the
 // head it finds. The attempts the close makes before it gives up on a target that keeps moving.
@@ -165,7 +165,13 @@ export async function closeMilestone(ms, opts) {
         x = await crosscheckRound(ms, g, { round: 2, prior, evidence: asked.answers, evidence_round: 1 })
       } else {
         await crw.spawnDecision('EXEC_1', 'spawn', { node, role: 'executor', tier: 'executor', inputs: { milestone: ms.id, head: g.head, label: 'close-fix:' + ms.id } })
-        const ex = await agent.call(closeFixPacket(ms, g, prior), { agentType: 'executor', node, head: g.head, schema: RECEIPT, label: 'close-fix:' + ms.id })
+        let ex = await agent.call(closeFixPacket(ms, g, prior), { agentType: 'executor', node, head: g.head, schema: RECEIPT, label: 'close-fix:' + ms.id })
+        for (let round = 1; crw.classify(ex) === 'research'; round++) {
+          const asked = await crw.explore('research', [{ id: ex.callId, question: ex.output.research_question, scope: '', files_needed: null }], { node, milestone: ms.id, tier: 'executor', regions, head: g.head })
+          if (asked.failed) return stop('explorer', 'held', asked.failed.reason || asked.failed.status, asked.failed.callId)
+          if (asked.escalate.length) return stop('executor', 'failed', 'blocked_scope', ex.callId, { detail: asked.escalate[0].reason })
+          ex = await agent.call(answerPacket(asked.answers), { resume: ex, schema: RECEIPT, label: 'research:' + node + ':executor:r' + round })
+        }
         const state = crw.classify(ex)
         if (state === 'host_held' || state === 'null_unknown') return stop('executor', 'held', state === 'null_unknown' ? 'dispatch_unknown' : ex.reason, ex.callId)
         if (state !== 'ready' && state !== 'self_failed') return stop('executor', ex.status === 'completed' ? 'failed' : ex.status, ex.reason || 'close_fix_' + state, ex.callId)
@@ -179,7 +185,7 @@ export async function closeMilestone(ms, opts) {
     }
     if (!accepts(x)) return crosscheckStop(ms, x)
     const close = await crw.milestoneClose(ms.id, { gate: g, crosscheck: x.verdict, repair })
-    if (!close.moved) return { state: 'closed', tip: close.tip, close, gate: g, crosscheck: x.verdict }
+    if (!close.moved) return { state: 'closed', tip: close.tip, close, gate: g, crosscheck: x.verdict, ...((ms.delivery_criteria || []).length ? { delivery: { state: 'pending', head: close.tip, criteria: ms.delivery_criteria } } : {}) }
     // A correction gets one recheck, including when publication loses its compare-and-swap.
     if (remediated) return stop('final_gate', 'unsettled', 'close_head_moved', null, {})
   }
