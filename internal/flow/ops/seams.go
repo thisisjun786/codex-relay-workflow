@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
+	flowdelivery "github.com/thisisjun786/codex-relay-workflow/internal/flow/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/tracking"
 )
 
@@ -48,6 +49,9 @@ type Milestone struct {
 	Surfaces         []string `json:"surfaces"`
 	Grade            string   `json:"grade"`
 	RequiredCommands []string `json:"required_commands"`
+	// DeliveryCriteria names whole criteria deferred to post-publication readback (CRW-1609): valid annotations only reach the
+	// lane (normalizeMilestone); the build crosscheck never sees their criteria.
+	DeliveryCriteria []flowdelivery.Criterion `json:"delivery_criteria,omitempty"`
 }
 
 // ReleaseRequest releases an issue node to an executor of the run: the node is admitted by the scheduler (the regions it edits

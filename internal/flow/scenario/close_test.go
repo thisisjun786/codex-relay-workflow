@@ -1170,3 +1170,184 @@ func TestCRW1610CloseFixResearchUsesTheExistingCap(t *testing.T) {
 	}
 	noTierStep(t, l)
 }
+
+// CRW-1609: an explicit delivery_criteria annotation moves a whole criterion to
+// post-publication readback. The build crosscheck never sees it, the close stays
+// pending for crw flow audit --delivery, and the run's result says so.
+type crw1609Check struct {
+	t      *testing.T
+	inner  ops.UnitChecker
+	prompt *string
+}
+
+func (c *crw1609Check) Check(ctx context.Context, req reviewadapter.Request) (reviewadapter.Result, error) {
+	res, err := c.inner.Check(ctx, req)
+	if err != nil {
+		return res, err
+	}
+	if c.prompt != nil {
+		*c.prompt = req.Prompt
+	}
+	section := req.Prompt
+	if i := strings.Index(section, "CRITERIA OF THE MILESTONE:\n"); i >= 0 {
+		section = section[i:]
+		if j := strings.Index(section, "\n\n"); j >= 0 {
+			section = section[:j]
+		}
+	}
+	if strings.Contains(section, "delivery evidence the owner reads back after publication") {
+		f := reviewadapter.Finding{ID: reviewadapter.FindingID("", "delivery criterion still judged"), Severity: "P2", Text: "a criterion left for post-publication readback was judged", Kind: "evidence_missing", EvidenceQuestion: &reviewadapter.EvidenceQuestion{Question: "which delivery evidence applies?", FilesNeeded: []string{}}}
+		res.Verdict = "needs_changes"
+		res.Findings = append(res.Findings, f)
+	}
+	return res, nil
+}
+
+func TestCRW1609DeliveryCriteriaCloseBeforePublication(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		criteria []string
+		deferred []string
+	}{
+		{"mixed", []string{"delivery evidence the owner reads back after publication", "the functional requirement holds"}, []string{"c2"}},
+		{"all_delivery", []string{"delivery evidence the owner reads back after publication"}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			nodes := twoNodes()
+			nodes[0].Issue = "acme:work:11"
+			nodes[1].Issue = "acme:work:12"
+			l := NewLab(t, nodes...)
+			l.Relay.MilestoneEdit = func(ms *ops.Milestone) {
+				raw, err := json.Marshal(ms)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var m map[string]any
+				if err := json.Unmarshal(raw, &m); err != nil {
+					t.Fatal(err)
+				}
+				m["criteria"] = tc.criteria
+				m["delivery_criteria"] = []any{map[string]any{"id": "c1", "checks": []any{map[string]any{"kind": "remote_push"}, map[string]any{"kind": "issues_closed"}}}}
+				raw, err = json.Marshal(m)
+				if err != nil || json.Unmarshal(raw, ms) != nil {
+					t.Fatalf("milestone edit: %v", err)
+				}
+			}
+			l.Crosschecks("M1", 1, 0, "A", 1, Crosscheck{Verdict: "verified"})
+			var prompt string
+			l.crosscheck.Checker = &crw1609Check{t: t, inner: l.Crosschecker, prompt: &prompt}
+			res := l.Run()
+			if res.Status != engine.RunCompleted {
+				t.Fatalf("run %s: %s: %s\ncalls: %v", res.Status, res.ErrorKind, res.Error, l.Labels())
+			}
+			got := Value[map[string]any](t, res)
+			if got["state"] != "closed" || got["crosscheck"] != "verified" {
+				t.Fatalf("close %v; calls %v", got, l.Labels())
+			}
+			delivery, _ := got["delivery"].(map[string]any)
+			if delivery["state"] != "pending" {
+				t.Fatalf("delivery %v, want pending; close %v", delivery, got)
+			}
+			section := prompt
+			if i := strings.Index(section, "CRITERIA OF THE MILESTONE:\n"); i >= 0 {
+				section = section[i:]
+				if j := strings.Index(section, "\n\n"); j >= 0 {
+					section = section[:j]
+				}
+			}
+			if strings.Contains(section, "c1:") {
+				t.Errorf("deferred criterion c1 stayed in the crosscheck criteria: %s", section)
+			}
+			for _, id := range tc.deferred {
+				if !strings.Contains(section, id+":") {
+					t.Errorf("criteria %s lost its original id: %s", id, section)
+				}
+			}
+		})
+	}
+}
+
+// crw1609Audit runs `crw flow audit --run --delivery` against the lab's real
+// journal with a real temporary Git remote and fake tracking reads.
+func crw1609Audit(t *testing.T, l *Lab, issues map[string][2]string) (int, map[string]any) {
+	t.Helper()
+	reader := flowcli.DefaultDeliveryReader()
+	reader.Issue = func(_ context.Context, ref string) (string, string, error) {
+		got, ok := issues[ref]
+		if !ok {
+			return "", "", fmt.Errorf("unknown issue %s", ref)
+		}
+		return got[0], got[1], nil
+	}
+	reader.Milestone = func(context.Context, string) (string, error) { return "", fmt.Errorf("no milestone") }
+	oldEnv := flowcli.AuditEnv
+	flowcli.AuditEnv = func(context.Context, flowcli.AuditRequest) (flowcli.AuditSetup, error) {
+		return flowcli.AuditSetup{RunID: l.RunID, Journal: l.journal, Finished: true, DeliveryReader: reader,
+			DeliveryTarget: func(string) (string, string, error) {
+				return l.Repo, strings.TrimPrefix(IntegrationRef, "refs/heads/"), nil
+			}}, nil
+	}
+	t.Cleanup(func() { flowcli.AuditEnv = oldEnv })
+	var out, errOut bytes.Buffer
+	code := flowcli.RunAudit(t.Context(), []string{"audit", "--run", l.RunID, "--delivery", "--json"}, &out, &errOut)
+	var report map[string]any
+	_ = json.Unmarshal(out.Bytes(), &report)
+	if report == nil && errOut.Len() > 0 {
+		t.Logf("audit stderr: %s", errOut.String())
+	}
+	return code, report
+}
+
+func TestCRW1609DeliveryAuditReadback(t *testing.T) {
+	nodes := twoNodes()
+	nodes[0].Issue = "acme:work:11"
+	nodes[1].Issue = "acme:work:12"
+	l := NewLab(t, nodes...)
+	l.Relay.MilestoneEdit = func(ms *ops.Milestone) {
+		raw, _ := json.Marshal(ms)
+		var m map[string]any
+		_ = json.Unmarshal(raw, &m)
+		m["criteria"] = []string{"delivery evidence the owner reads back after publication", "the functional requirement holds"}
+		m["delivery_criteria"] = []any{map[string]any{"id": "c1", "checks": []any{map[string]any{"kind": "remote_push"}, map[string]any{"kind": "issues_closed"}}}}
+		raw, _ = json.Marshal(m)
+		_ = json.Unmarshal(raw, ms)
+	}
+	l.Crosschecks("M1", 1, 0, "A", 1, Crosscheck{Verdict: "verified"})
+	res := l.Run()
+	if res.Status != engine.RunCompleted {
+		t.Fatalf("run %s: %s", res.Status, res.Error)
+	}
+	got := Value[map[string]any](t, res)
+	if got["state"] != "closed" {
+		t.Fatalf("close %v", got)
+	}
+	remote := filepath.Join(t.TempDir(), "remote.git")
+	l.GitIn(t.TempDir(), "init", "--bare", remote)
+	l.Git("remote", "add", "origin", remote)
+	// Before publication the remote branch cannot be observed and the issues are open.
+	issues := map[string][2]string{"acme/work#11": {"open", ""}, "acme/work#12": {"open", ""}}
+	if code, report := crw1609Audit(t, l, issues); code != 1 || report["state"] == "passed" {
+		t.Fatalf("unpublished audit %d %v", code, report)
+	}
+	l.Git("push", "origin", IntegrationRef)
+	issues["acme/work#11"] = [2]string{"closed", "completed"}
+	issues["acme/work#12"] = [2]string{"closed", "completed"}
+	code, report := crw1609Audit(t, l, issues)
+	if code != 0 || report["state"] != "passed" || report["head"] != l.Tip() {
+		t.Fatalf("published audit %d %v, tip %s", code, report, l.Tip())
+	}
+	var checked []engine.Event
+	for _, ev := range l.journal.Events() {
+		if ev.Kind == engine.KindRun && ev.Event == "delivery_checked" {
+			checked = append(checked, ev)
+		}
+	}
+	if len(checked) != 2 || str(checked[1].Data, "state") != "passed" || str(checked[1].Data, "head") != l.Tip() {
+		t.Errorf("delivery_checked rows %+v, want the passed readback at %s", checked, l.Tip())
+	}
+	// A not_planned issue is not a delivery.
+	issues["acme/work#12"] = [2]string{"closed", "not_planned"}
+	if code, _ := crw1609Audit(t, l, issues); code != 1 {
+		t.Errorf("not_planned audit %d, want 1", code)
+	}
+}

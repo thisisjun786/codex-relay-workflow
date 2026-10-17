@@ -303,6 +303,12 @@ func (c *command) start(args []string) int {
 		if f, ok := issueReadyFact(*handoffIn, planOf(spec.Args), milestoneArg(spec.Args)); ok {
 			plan.Facts = append(plan.Facts, f)
 		}
+		// delivery criteria are read back after publication, not judged by the build crosscheck (CRW-1609): a warning, recorded
+		if p, ok := HandoffProject(*handoffIn, planOf(spec.Args)); ok {
+			for _, w := range compile.DeliveryWarnings(p, milestoneArg(spec.Args)) {
+				plan.Facts = append(plan.Facts, Fact{Name: w.Rule, Level: LevelWarn, Reading: w.Path + ": " + w.Detail, Reason: "delivery criteria require post-publication readback"}.leveled())
+			}
+		}
 	}
 	// Repository resolution is a prerequisite, including for --preview. Keep
 	// it before handoff pinning, binding writes, spec creation and spawning.

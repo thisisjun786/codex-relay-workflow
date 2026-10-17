@@ -185,7 +185,7 @@ export async function closeMilestone(ms, opts) {
     }
     if (!accepts(x)) return crosscheckStop(ms, x)
     const close = await crw.milestoneClose(ms.id, { gate: g, crosscheck: x.verdict, repair })
-    if (!close.moved) return { state: 'closed', tip: close.tip, close, gate: g, crosscheck: x.verdict }
+    if (!close.moved) return { state: 'closed', tip: close.tip, close, gate: g, crosscheck: x.verdict, ...((ms.delivery_criteria || []).length ? { delivery: { state: 'pending', head: close.tip, criteria: ms.delivery_criteria } } : {}) }
     // A correction gets one recheck, including when publication loses its compare-and-swap.
     if (remediated) return stop('final_gate', 'unsettled', 'close_head_moved', null, {})
   }

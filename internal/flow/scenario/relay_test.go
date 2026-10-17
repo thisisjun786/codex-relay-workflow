@@ -91,6 +91,8 @@ type FakeRelay struct {
 	Repairs []ops.MilestoneRepairRequest
 	// Landed are the nodes in the order they landed.
 	Landed []string
+	// MilestoneEdit, when set, adjusts the milestone the fake is about to answer.
+	MilestoneEdit func(*ops.Milestone)
 }
 
 func newRelay(l *Lab) *FakeRelay {
@@ -123,6 +125,9 @@ func (r *FakeRelay) Milestone(_ context.Context, plan, milestone string) (ops.Mi
 		pn.CriteriaDigest = sha(strings.Join(pn.Criteria, "\n"))
 		pn.SliceDigest = sliceOf(n)
 		ms.Nodes = append(ms.Nodes, pn)
+	}
+	if r.MilestoneEdit != nil {
+		r.MilestoneEdit(&ms)
 	}
 	return ms, nil
 }
