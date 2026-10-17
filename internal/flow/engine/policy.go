@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
@@ -63,7 +64,7 @@ type Policy struct {
 	Aliases []AliasRule
 	// Source is where the table was read from and Digest the digest the run pins; both are empty for the fake policy. For
 	// the table of a production flow command (LoadPolicy) Source is the helper role store's path and Digest the canonical
-	// digest of the six (model, effort) pairs (role.FlowSnapshot.Digest); for a table PolicyFromExecution built from a policy
+	// digest of the seven (model, effort) pairs (role.FlowSnapshot.Digest); for a table PolicyFromExecution built from a policy
 	// file they are the file's path and the SHA-256 of its bytes. A run records them when it starts and a resumed run that
 	// reads another digest records the change.
 	Source, Digest string
@@ -72,8 +73,15 @@ type Policy struct {
 	// its started row.
 	Warnings []string
 	// States is where each role's pair came from in a table built from the helper role store (store, compiled_default,
-	// undecided); nil for any other table.
+	// undecided, reviewer, environment); nil for any other table.
 	States map[string]string
+	// UnitCheck is the pair the shipped unit check's review tool runs on (CRW-1589): a tool run, not an agent call, so it is
+	// no role of Roles and nothing spawns it. The snapshot's unit-check row gives it; tables not built from the store carry
+	// the tool's compiled default.
+	UnitCheck Pair
+	// UnitCheckOverrides are the environment values applied to the unit check's pair (role.UnitCheckModelEnv,
+	// role.UnitCheckEffortEnv), nil when none applied; a run records them in its started row.
+	UnitCheckOverrides map[string]string
 }
 
 // Refusal is why a call is refused before any thread starts.
@@ -174,8 +182,9 @@ func (p *Policy) RoleKey(name string) bool {
 
 // FakePolicy is the role table of the fake backend: the six roles with placeholder pairs and the alias table of the
 // design (opus -> architect; haiku with isolation worktree -> executor; sonnet -> executor-t1; ocx-gpt-6-1-sol -> reviewer
-// at any effort; haiku without isolation is ambiguous). The critic (CRW-1434) is named by agentType only (no alias row), on a
-// gpt pair like its compiled default (execution.DefaultCriticPair).
+// at any effort; haiku without isolation is ambiguous). The critic (CRW-1434) is named by agentType only (no alias row) and
+// holds the reviewer's placeholder pair, as a store without a critic resolves it (CRW-1589); the unit check's tool pair is
+// the tool's compiled default.
 func FakePolicy() *Policy {
 	roles := map[string]RoleSpec{
 		"architect":   {Family: "architect", Pair: Pair{"claude-fake-opus", "high"}, ModelAliases: []string{"opus"}},
@@ -183,14 +192,15 @@ func FakePolicy() *Policy {
 		"executor-t1": {Family: "executor", Pair: Pair{"claude-fake-sonnet", "xhigh"}, ModelAliases: []string{"sonnet"}},
 		"reviewer":    {Family: "reviewer", Pair: Pair{"gpt-fake-sol", "high"}, ModelAliases: []string{"ocx-gpt-6-1-sol"}},
 		"explorer":    {Family: "explorer", Pair: Pair{"claude-fake-haiku", "high"}, ModelAliases: []string{"haiku"}},
-		"critic":      {Family: "critic", Pair: Pair{"gpt-fake-sol", "xhigh"}, ModelAliases: []string{"ocx-gpt-6-1-sol"}},
+		"critic":      {Family: "critic", Pair: Pair{"gpt-fake-sol", "high"}, ModelAliases: []string{"ocx-gpt-6-1-sol"}},
 	}
 	for name, spec := range roles {
 		spec.Sandbox = roleSandbox(name)
 		roles[name] = spec
 	}
 	return &Policy{
-		Roles: roles,
+		Roles:     roles,
+		UnitCheck: Pair{role.UnitCheckDefaultModel, role.UnitCheckDefaultEffort},
 		Aliases: []AliasRule{
 			{Key: "opus", Role: "architect"},
 			{Key: "haiku", Isolation: "worktree", Role: "executor"},
@@ -227,7 +237,7 @@ func PolicyFromExecution(p execution.Policy, source string) (*Policy, error) {
 	if !ok {
 		return nil, fmt.Errorf("the execution policy %s declares no agent-roles section: a flow run needs one pair for each of %v", source, execution.AgentRoleNames)
 	}
-	out := &Policy{Roles: map[string]RoleSpec{}, Source: source, Digest: p.Digest()}
+	out := &Policy{Roles: map[string]RoleSpec{}, Source: source, Digest: p.Digest(), UnitCheck: Pair{role.UnitCheckDefaultModel, role.UnitCheckDefaultEffort}}
 	for _, role := range declared.Roles {
 		out.Roles[role.Name] = RoleSpec{
 			Family: roleFamily(role.Name), Pair: Pair{Model: role.Pair.Model, Effort: role.Pair.Effort},
@@ -244,11 +254,18 @@ func PolicyFromExecution(p execution.Policy, source string) (*Policy, error) {
 // roles runs the pair of the helper role store's snapshot (an undecided role has the empty pair, so a call of it names no
 // model and no effort), with its family, its sandbox and the design's model aliases; the alias table is the code's
 // (execution.DefaultAliasRows), nothing of it read from a file. Source is the store's path and Digest the snapshot's
-// canonical digest of the six pairs. The snapshot's warnings are kept.
+// canonical digest of the seven pairs (the six agent roles and the unit check's tool pair, which is no role of Roles).
+// The snapshot's warnings are kept.
 func PolicyFromRoleHelper(snap role.FlowSnapshot) *Policy {
-	out := &Policy{Roles: map[string]RoleSpec{}, Source: snap.Path, Digest: snap.Digest(), Warnings: slices.Clone(snap.Warnings), States: map[string]string{}}
+	out := &Policy{Roles: map[string]RoleSpec{}, Source: snap.Path, Digest: snap.Digest(), Warnings: slices.Clone(snap.Warnings), States: map[string]string{}, UnitCheckOverrides: maps.Clone(snap.Overrides)}
 	for _, r := range snap.Roles {
 		name := string(r.Role)
+		if r.Role == role.UnitCheck {
+			// the unit check's tool pair (CRW-1589): a tool run, never a role a call resolves to
+			out.UnitCheck = Pair{Model: r.Model, Effort: r.Effort}
+			out.States["unit-check"] = string(r.State)
+			continue
+		}
 		out.Roles[name] = RoleSpec{Family: roleFamily(name), Pair: Pair{Model: r.Model, Effort: r.Effort}, Sandbox: roleSandbox(name), ModelAliases: execution.DefaultModelAliases(name)}
 		out.States[name] = string(r.State)
 	}
