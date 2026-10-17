@@ -2010,6 +2010,53 @@ func TestVerifiedWithABlockingImpactIsVerdictInvalid(t *testing.T) {
 	}
 }
 
+// CRW-1505: a verdict recorded before impact was a closed set may hold the impact "": the decoder reads stored verdicts with a
+// reader schema that permits exactly the old empty word (it stays empty in the decoded verdict and follows premerge.Blocks, so a
+// verified P3 defect without an impact does not block), while Validate, the schema a new reviewer answers, keeps refusing it.
+// A stored impact of any other shape (another word, null, absent) or another member of a defect is still refused.
+func TestDecodeVerdictReadsStoredEmptyImpact(t *testing.T) {
+	raw := impactVerdicts("verified", "P3", "")[SchemaVerdict]
+	if err := Validate(SchemaVerdict, raw); err == nil {
+		t.Fatal("the producer schema accepted a stored empty impact before the reader ran")
+	}
+	v, err := DecodeVerdict(raw)
+	if err != nil {
+		t.Fatalf("a stored verdict with an empty impact: %v", err)
+	}
+	if len(v.Defects) != 1 || v.Defects[0].Impact != "" {
+		t.Fatalf("the decoded verdict %+v does not keep the empty impact", v)
+	}
+	if err := Validate(SchemaVerdict, raw); err == nil {
+		t.Fatal("the producer schema accepted the empty impact after the reader ran")
+	}
+	for _, severity := range []string{"P0", "P1", "P2"} {
+		if _, err := DecodeVerdict(impactVerdicts("verified", severity, "")[SchemaVerdict]); err == nil {
+			t.Errorf("verified over a %s defect with an empty impact decoded", severity)
+		}
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	for name, mutate := range map[string]func(d map[string]any){
+		"an unknown impact":      func(d map[string]any) { d["impact"] = "cosmetic" },
+		"a null impact":          func(d map[string]any) { d["impact"] = nil },
+		"a missing impact":       func(d map[string]any) { delete(d, "impact") },
+		"an extra defect member": func(d map[string]any) { d["extra"] = true },
+	} {
+		m := map[string]any{}
+		b, _ := json.Marshal(doc)
+		if err := json.Unmarshal(b, &m); err != nil {
+			t.Fatal(err)
+		}
+		mutate(m["defects"].([]any)[0].(map[string]any))
+		mut, _ := json.Marshal(m)
+		if _, err := DecodeVerdict(mut); err == nil {
+			t.Errorf("%s decoded", name)
+		}
+	}
+}
+
 // CRW-1438: the reviewer is told the closed impact set its verdict answers with: the reviewer overlay names every value of
 // premerge.Impacts, that only minor_separable does not block, and that verified over a blocking defect is refused, under Output. The
 // node reviewer's packet is retired with its path (CRW-1447); the overlay stays, as the critic is built on the reviewer's definition.
@@ -2446,6 +2493,159 @@ func TestAuditOfAnUpperCaseUnitCheckAcceptanceIsNoMismatch(t *testing.T) {
 			t.Errorf("%s: the audit of the acceptance: mismatch %d, %+v", c.what, aud.Mismatch, r)
 		}
 	}
+}
+
+// CRW-1505: crw.accept reads the verdict a review recorded. A verdict written before impact was a closed set, whose one P3 defect
+// carries the impact "", is still a verdict: the empty impact follows premerge.Blocks (it does not block), so the acceptance assembles
+// the premerge record of the stored review and the record keeps the defect with no impact. The journal row is read, never rewritten:
+// its result and the verdict bytes are exactly what the review recorded.
+func TestAcceptReadsStoredEmptyImpact(t *testing.T) {
+	a := newAcceptRows(t)
+	a.committed("t-head")
+	verdict := map[string]any{
+		"verdict": "verified",
+		"criteria": []any{
+			map[string]any{"id": "c1", "met": true, "evidence": "e1"},
+			map[string]any{"id": "c2", "met": true, "evidence": "e2"},
+		},
+		"defects": []any{map[string]any{"ref": "d1", "kind": "correctness", "severity": "P3", "introduced": true,
+			"impact": "", "inPromise": false, "file": "f.go", "line": 3, "finding": "a stored finding with no impact word", "evidence_question": nil}},
+		"summary": "legacy review",
+	}
+	raw, err := json.Marshal(verdict)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: "c_legacy", Op: "agent", Event: engine.EvPrepared,
+		Data: map[string]any{"role": "reviewer", "node": "A", "model": "gpt-x", "effort": "high", "prompt_digest": "pd-legacy"}})
+	rr, _ := json.Marshal(ReviewResult{State: StateVerdict, Verdict: raw, Findings: []FindingRef{}, Head: a.head,
+		CriteriaDigest: strings.Repeat("e", 64), Call: Brief{CallID: "c_legacy"}})
+	a.row(OpReview, "c_review", map[string]any{"node": "A", "head": a.head, "criteria_digest": strings.Repeat("e", 64),
+		"state": StateVerdict, "verdict": "verified", "call": "c_legacy", "result": string(rr)})
+	var before engine.Event
+	for _, ev := range a.j.Events() {
+		if ev.Op == OpReview && ev.CallID == "c_review" {
+			before = ev
+		}
+	}
+	saved, _ := before.Data["result"].(string)
+	if saved == "" {
+		t.Fatal("the review row recorded no result")
+	}
+	if _, err := a.op("accept", "A", a.head); err != nil || len(a.relay.got) != 1 || a.relay.got[0].ReviewerCall != "c_legacy" {
+		t.Fatalf("crw.accept %v %+v, want one acceptance on c_legacy", err, a.relay.got)
+	}
+	rec, err := premerge.Decode(a.relay.got[0].Premerge)
+	if err != nil {
+		t.Fatalf("the premerge record: %v", err)
+	}
+	if len(rec.Defects) != 1 || rec.Defects[0].Severity != "P3" || rec.Defects[0].Impact != "" {
+		t.Fatalf("premerge defects %+v, want one P3 defect with an empty impact", rec.Defects)
+	}
+	if g := rec.Grader; g.Model != "gpt-x" || g.Effort != "high" || g.PromptDigest != "pd-legacy" {
+		t.Fatalf("grader %+v, want gpt-x high pd-legacy", g)
+	}
+	var after engine.Event
+	for _, ev := range a.j.Events() {
+		if ev.Op == OpReview && ev.CallID == "c_review" {
+			after = ev
+		}
+	}
+	if after.Data["result"] != saved {
+		t.Errorf("the review row's result was rewritten")
+	}
+	var read ReviewResult
+	if err := json.Unmarshal([]byte(saved), &read); err != nil || !bytes.Equal(read.Verdict, raw) {
+		t.Errorf("the stored verdict bytes changed: %v", err)
+	}
+}
+
+// CRW-1505: a unit check that names no commit binds to the head through its tree, read once from the head's commit row, the land
+// release or git. When the tree cannot be read the check is on no known head: it is skipped, not an error that ends the op, and the
+// acceptance rests on the newest judgment bound to the head — a review of either verdict, or a check that names the head. The read is
+// tried once for all such checks, and only when the journal holds a worktree to ask git in.
+func TestAcceptSkipsUnitChecksWithUnknownTree(t *testing.T) {
+	worktree := func(a *acceptRows) {
+		a.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindFlow, Event: engine.EvWorktreeRestored,
+			Data: map[string]any{"node": "A", "path": a.t.TempDir()}})
+	}
+	countGit := func(a *acceptRows) *int {
+		calls := new(int)
+		a.lane.d.Git = func(context.Context, string, []string, ...string) (string, error) {
+			*calls++
+			return "", errors.New("tree object unavailable")
+		}
+		return calls
+	}
+	for _, c := range []struct {
+		what      string
+		older     func(a *acceptRows)
+		wantCall  string
+		wantError string
+	}{
+		{"a verified review", func(a *acceptRows) { a.review("c_review", "c_rev", "verified") }, "c_rev", ""},
+		{"a review that needs changes", func(a *acceptRows) { a.review("c_review", "c_rev", "needs_changes") }, "", "reviewer_not_verified"},
+		{"no review", func(a *acceptRows) {}, "", "reviewer_missing"},
+		{"a commit-bound unit check", func(a *acceptRows) { a.unitCheck("c_bound", map[string]any{"commit": a.head}) }, "c_bound", ""},
+	} {
+		t.Run(c.what, func(t *testing.T) {
+			a := newAcceptRows(t)
+			a.committed("")
+			worktree(a)
+			c.older(a)
+			a.unitCheck("c_uc1", map[string]any{"tree": "t-one"})
+			a.unitCheck("c_uc2", map[string]any{"tree": "t-two"})
+			calls := countGit(a)
+			_, err := a.op("accept", "A", a.head)
+			if c.wantError != "" {
+				if err == nil || ReasonOf(err.Error()) != c.wantError {
+					t.Fatalf("crw.accept %v, want refused %s", err, c.wantError)
+				}
+				if len(a.relay.got) != 0 {
+					t.Fatalf("the relay was asked to accept: %+v", a.relay.got)
+				}
+			} else {
+				if err != nil || len(a.relay.got) != 1 || a.relay.got[0].ReviewerCall != c.wantCall {
+					t.Fatalf("crw.accept %v %+v, want accepted on %s", err, a.relay.got, c.wantCall)
+				}
+				if _, err := premerge.Decode(a.relay.got[0].Premerge); err != nil {
+					t.Fatalf("the premerge record: %v", err)
+				}
+			}
+			if *calls != 1 {
+				t.Errorf("git was asked for the tree %d times, want once for all commitless checks", *calls)
+			}
+		})
+	}
+	t.Run("no worktree", func(t *testing.T) {
+		a := newAcceptRows(t)
+		a.committed("")
+		a.review("c_review", "c_rev", "verified")
+		a.unitCheck("c_uc1", map[string]any{"tree": "t-one"})
+		a.unitCheck("c_uc2", map[string]any{"tree": "t-two"})
+		calls := countGit(a)
+		if _, err := a.op("accept", "A", a.head); err != nil || len(a.relay.got) != 1 || a.relay.got[0].ReviewerCall != "c_rev" {
+			t.Fatalf("crw.accept %v %+v, want accepted on c_rev", err, a.relay.got)
+		}
+		if *calls != 0 {
+			t.Errorf("git was asked for the tree %d times with no worktree, want none", *calls)
+		}
+	})
+	t.Run("a known commit-row tree", func(t *testing.T) {
+		a := newAcceptRows(t)
+		a.committed("t-head")
+		worktree(a)
+		a.review("c_review", "c_rev", "verified")
+		a.unitCheck("c_uc1", map[string]any{"tree": "t-head"})
+		a.unitCheck("c_uc2", map[string]any{"tree": "t-head"})
+		calls := countGit(a)
+		if _, err := a.op("accept", "A", a.head); err != nil || len(a.relay.got) != 1 || a.relay.got[0].ReviewerCall != "c_uc2" {
+			t.Fatalf("crw.accept %v %+v, want accepted on the newest matching check c_uc2", err, a.relay.got)
+		}
+		if *calls != 0 {
+			t.Errorf("git was asked for the tree %d times with the commit row's tree, want none", *calls)
+		}
+	})
 }
 
 // ---- crw.unitCheck (CRW-1463) ----

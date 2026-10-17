@@ -83,3 +83,54 @@ func TestCRW1330_StartPlanCarriesTheSnapshotAndItsWarnings(t *testing.T) {
 		t.Fatalf("the printed plan:\n%s", text)
 	}
 }
+
+// TestCRW1589_StartPreviewListsTheUnitCheckPair (CRW-1589): the preview a start prints carries the unit check's pair
+// from the same snapshot as the six agent roles — the pair the run's shipped unit check runs on — and an environment
+// override is shown as the effective pair.
+func TestCRW1589_StartPreviewListsTheUnitCheckPair(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "crw")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, role.StoreFile), []byte(`{"roles": {
+  "executor": {"mode": "model", "model": "anthropic/claude-haiku-5", "effort": "medium"},
+  "reviewer": {"mode": "model", "model": "gpt-6.1-sol", "effort": "low"},
+  "unit-check": {"mode": "model", "model": "gpt-7-sol", "effort": "medium"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CRW_HOME", dir)
+	t.Setenv(execution.EnvPolicy, "")
+	w := newWorld(t)
+	td := w.deps()
+	lane := []string{"--args", `{"plan":"plan-1","milestone":"M1"}`, "--handoff", defaultHandoff(t)}
+	preview := func() StartAnswer {
+		t.Helper()
+		_, out, errOut := td.do(append([]string{"start", "project-lane", "--thread", "thread-owner", "--state", w.state, "--preview", "--json"}, lane...)...)
+		var ans StartAnswer
+		if err := json.Unmarshal([]byte(out), &ans); err != nil {
+			t.Fatalf("%v: %s%s", err, out, errOut)
+		}
+		return ans
+	}
+	ans := preview()
+	found := false
+	for _, r := range ans.Plan.Roles {
+		if r.Role == "unit-check" {
+			found = r.Model == "gpt-7-sol" && r.ReasoningEffort == "medium"
+		}
+	}
+	if !found {
+		t.Fatalf("the preview's roles have no unit-check gpt-7-sol/medium row: %+v", ans.Plan.Roles)
+	}
+	_, text, _ := td.do(append([]string{"start", "project-lane", "--thread", "thread-owner", "--state", w.state, "--preview"}, lane...)...)
+	if !strings.Contains(text, "unit-check") || !strings.Contains(text, "gpt-7-sol") {
+		t.Fatalf("the printed plan does not name the unit check's pair:\n%s", text)
+	}
+	// An environment override is the effective pair of the snapshot the preview shows.
+	t.Setenv("CRW_UNIT_CHECK_EFFORT", "low")
+	for _, r := range preview().Plan.Roles {
+		if r.Role == "unit-check" && (r.Model != "gpt-7-sol" || r.ReasoningEffort != "low") {
+			t.Fatalf("the overridden unit-check row %+v, want gpt-7-sol at low", r)
+		}
+	}
+}

@@ -454,8 +454,11 @@ with the relay's reason, and the release goes on as for an undeclared node.
 review tool itself, in Go through the review adapter, over the uncommitted changes the executor call `call` left in the node's
 worktree, so no reviewer agent is called and no reviewer thread is made for a node (row `crw.unitCheck`,
 [journal.md](journal.md#the-proofs)). The tool is a Codex review by default (`codex review --uncommitted`, CRW-1517; its model and
-effort are the lane's settings `CRW_UNIT_CHECK_MODEL` and `CRW_UNIT_CHECK_EFFORT`, blank or unset for the defaults, and a setting the
-lane refuses stops the run when the lane is built), and Bugbot on a Codex quota: a check whose Codex call ends `quota` is asked once
+effort are the `unit-check` key of the helper role store — `crw role helper set unit-check --mode model --model <model>
+--effort <effort>` (CRW-1589; with no entry, or one in mode default, the tool default `gpt-6-astra` at `high`, and a stored
+model with no effort takes `high`) — which a non-blank `CRW_UNIT_CHECK_MODEL` or `CRW_UNIT_CHECK_EFFORT` overrides per field
+in the run's role snapshot, each applied override named in a warning and recorded in the started row's `unit_check_overrides`,
+and a setting codex cannot be given stops the run when the lane is built, naming the field or the environment variable that supplied it), and Bugbot on a Codex quota: a check whose Codex call ends `quota` is asked once
 more, with the same request, of Bugbot, the row's `result` is Bugbot's and the row keeps the Codex call (`fallback`, `fallback_from`,
 `fallback_state`, `fallback_model`); a Bugbot call that ends `quota` too holds the node as below. Codex prints no mark of a finished
 review, so a Codex answer with no findings list is clean when its summary is neither Codex's own text for a review that gave no answer
@@ -985,7 +988,7 @@ A held row records whether the
 call's packet reached the host (`input_state`: `delivered` or `not_delivered`) and the `codexErrorInfo` verbatim; on a backend
 that places calls an executor's held row also carries `p_held`, the working snapshot of its worktree when the failure was
 classified, and its completed row `pending_tree`, the working snapshot when the turn ended. The run record holds the workflow name, the script digest, the helper digests, the digest of `args`, the meta, and
-the path of the helper role store with the canonical digest of the six role pairs (`policy_source`, `policy_digest`),
+the path of the helper role store with the canonical digest of the seven configured pairs (the six agent roles and unit-check) (`policy_source`, `policy_digest`),
 the role table's warnings (`policy_warnings`) when it has any, and the `backend` the run's calls run on (`session` or
 `app-server`).
 
@@ -1036,7 +1039,7 @@ process finished `completed` with nothing left to go on with is `blocked` when n
 in its last process (`item_error` rows: a lane of `crw.dag` whose `crw.release` failed is one). The engine's status of the run stays
 `completed`. A node the scheduler held back unreleased in the last process (capacity, a region in use: a wait a resume asks again) keeps the
 run `completed`, and so does a node that started. Another script run (a judge panel, a scout) that names no plan never meant to start a
-node: an item of it that threw is shown, and the run stays `completed`.
+node: an item of it that threw is shown, and the run stays `completed`. The run views keep superseded questions as history and do not count them as waiting. Escalations with no ask appear separately from answerable questions; a finished escalated outcome keeps the run held without adding a waiting question. A later completion of the same escalation operation can make its recorded question current again.
 
 The intent rows say what a later process needs to find the request again. `thread_requested` and `fork_requested` carry the
 `cwd` the thread is to run in, the `send` ordinal of the request (1, then one more each time reconcile proved the previous

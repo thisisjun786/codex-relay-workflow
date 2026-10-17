@@ -2,6 +2,7 @@ package crwconfig
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"go/version"
@@ -56,6 +57,11 @@ func ProbeVerifierTools(ctx context.Context, env []string, flagPath string) Veri
 	tools, err := LoadVerifierTools(getenv, flagPath)
 	if err != nil {
 		p.Problems = append(p.Problems, "the verifier section could not be read: "+err.Error())
+		p.Tools = tools
+		return p
+	}
+	if tools.VerifierKind() == VerifierGitHubActions {
+		return probeGitHubActions(ctx, env, tools)
 	}
 	if tools.Ignored != "" {
 		p.Problems = append(p.Problems, "the verifier section is ignored ("+tools.Ignored+"): the verifier takes crw-dev and go from PATH (fail-open)")
@@ -133,6 +139,63 @@ func ProbeVerifierTools(ctx context.Context, env []string, flagPath string) Veri
 		}
 	}
 	return p
+}
+
+// probeGitHubActions is the probe of a remote verifier (CRW-1594): no Go and no crw-dev is needed — git and
+// gitleaks on PATH, gh logged in to github.com, write permission on the repository and an active configured
+// workflow. The gh probes are read-only and keep the caller's HOME and GH_CONFIG_DIR, so gh reads its own
+// login; they never write auth configuration.
+func probeGitHubActions(ctx context.Context, env []string, tools VerifierTools) VerifierProbe {
+	p := VerifierProbe{Tools: tools, Mode: VerifierGitHubActions}
+	workflow, repository := tools.GitHubWorkflow(), tools.Repository
+	p.Command = []string{"gh", "workflow", "run", workflow, "--repo", repository}
+	pathEnv := envGetter(env)("PATH")
+	for _, tool := range []string{"git", "gitleaks"} {
+		if lookExecutable(tool, pathEnv) == "" {
+			p.Problems = append(p.Problems, tool+" is not on PATH: the remote verifier needs it")
+		}
+	}
+	gh := lookExecutable("gh", pathEnv)
+	if gh == "" {
+		p.Problems = append(p.Problems, "gh is not on PATH: the remote verifier needs it")
+	} else {
+		if _, err := verifierProbeAuth(ctx, env, gh, "auth", "status", "--hostname", "github.com"); err != nil {
+			p.Problems = append(p.Problems, "gh is not logged in to github.com (gh auth status): "+err.Error())
+		}
+		if out, err := verifierProbeAuth(ctx, env, gh, "repo", "view", repository, "--json", "viewerPermission"); err != nil {
+			p.Problems = append(p.Problems, "the repository "+repository+" could not be read: "+err.Error())
+		} else {
+			var view struct {
+				Permission string `json:"viewerPermission"`
+			}
+			if err := json.Unmarshal(out, &view); err != nil {
+				p.Problems = append(p.Problems, "the repository "+repository+" answered no viewerPermission")
+			} else {
+				switch view.Permission {
+				case "WRITE", "MAINTAIN", "ADMIN":
+				default:
+					p.Problems = append(p.Problems, "gh has "+view.Permission+" permission to "+repository+": the remote verifier needs write permission to push the verification branch")
+				}
+			}
+		}
+		if out, err := verifierProbeAuth(ctx, env, gh, "api", "--paginate", "repos/"+repository+"/actions/workflows?per_page=100"); err != nil {
+			p.Problems = append(p.Problems, "the workflows of "+repository+" could not be read: "+err.Error())
+		} else if _, err := DecodeGitHubWorkflow(out, workflow); err != nil {
+			p.Problems = append(p.Problems, err.Error())
+		}
+	}
+	p.Runnable = len(p.Problems) == 0
+	return p
+}
+
+// verifierProbeAuth runs one read-only probe with the caller's environment as it is — HOME and GH_CONFIG_DIR
+// included, so gh reads the login it would use — bounded in time. Nothing of the host's is written.
+func verifierProbeAuth(ctx context.Context, env []string, name string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, verifierProbeTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Env = append(append([]string{}, env...), "GH_PROMPT_DISABLED=1", "GIT_TERMINAL_PROMPT=0")
+	return cmd.CombinedOutput()
 }
 
 // goRootCandidates are the Go toolchain roots found on the host: the root of the go on PATH (`go env GOROOT`), then the usual

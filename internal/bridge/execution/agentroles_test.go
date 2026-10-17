@@ -337,14 +337,11 @@ func TestAgentRolesDigestAndSummary(t *testing.T) {
 }
 
 // CRW-1434 (D1-1): the critic is the last agent role, the design audit's. A policy file written before it (no critic) still loads:
-// its critic takes the compiled default pair with one warning that says so, a file that declares the critic keeps its own pair
-// without that warning, and a file that misses another role is still ignored with the old warning.
+// its critic inherits the file's reviewer pair with one warning that says so (CRW-1589), a file that declares the critic keeps
+// its own pair without that warning, and a file that misses another role is still ignored with the old warning.
 func TestAgentRoleNamesIncludeCriticAndOldPolicyFilesStillLoad(t *testing.T) {
 	if AgentRoleNames[len(AgentRoleNames)-1] != AgentCritic || AgentCritic != "critic" {
 		t.Fatalf("the critic is the last agent role: %v", AgentRoleNames)
-	}
-	if DefaultCriticPair.Model != agentSol || DefaultCriticPair.Effort != "xhigh" {
-		t.Fatalf("the critic's compiled default pair: %+v", DefaultCriticPair)
 	}
 	critic := func(p Policy) AgentRole {
 		t.Helper()
@@ -357,6 +354,11 @@ func TestAgentRoleNamesIncludeCriticAndOldPolicyFilesStillLoad(t *testing.T) {
 		}
 		role, _ := declared.Role(AgentCritic)
 		return role
+	}
+	declared_reviewer := func(p Policy) AgentRole {
+		declared, _ := p.AgentRoles()
+		r, _ := declared.Role(AgentReviewer)
+		return r
 	}
 	filled := func(p Policy) []string {
 		var out []string
@@ -372,10 +374,10 @@ func TestAgentRoleNamesIncludeCriticAndOldPolicyFilesStillLoad(t *testing.T) {
 	old := rolesBeforeCriticDoc()
 	p := mustLoad(t, agentPolicy(old))
 	role := critic(p)
-	if role.Pair.Model != agentSol || role.Pair.Effort != "xhigh" || !reflect.DeepEqual(role.Aliases, []string{"ocx-gpt-6-1-sol"}) {
-		t.Fatalf("the filled critic %+v", role)
+	if role.Pair != declared_reviewer(p).Pair || role.Pair.Effort != "high" || !reflect.DeepEqual(role.Aliases, []string{"ocx-gpt-6-1-sol"}) {
+		t.Fatalf("the filled critic %+v, want the reviewer's pair", role)
 	}
-	if got := filled(p); len(got) != 1 || len(p.Warnings()) != 1 || !strings.Contains(got[0], "gpt-6.1-sol/xhigh") {
+	if got := filled(p); len(got) != 1 || len(p.Warnings()) != 1 || !strings.Contains(got[0], "inherits the reviewer pair") {
 		t.Fatalf("one fill warning, got %q", p.Warnings())
 	}
 	if !p.DeclaresAgentRoles() {
@@ -386,7 +388,7 @@ func TestAgentRoleNamesIncludeCriticAndOldPolicyFilesStillLoad(t *testing.T) {
 	older := rolesBeforeCriticDoc()
 	older["reviewer-final"] = pairDoc(agentSol, "xhigh")
 	p = mustLoad(t, agentPolicy(older))
-	if role := critic(p); role.Pair.Model != agentSol || len(filled(p)) != 1 || len(p.Warnings()) != 2 || !strings.Contains(strings.Join(p.Warnings(), "\n"), RetiredRoleKeyNotice) {
+	if role := critic(p); role.Pair != declared_reviewer(p).Pair || len(filled(p)) != 1 || len(p.Warnings()) != 2 || !strings.Contains(strings.Join(p.Warnings(), "\n"), RetiredRoleKeyNotice) {
 		t.Fatalf("a file of the time before the critic: %+v %q", role, p.Warnings())
 	}
 

@@ -62,6 +62,8 @@ func DescribePolicy(table *Policy, exec execution.Policy) PolicyReport {
 		}
 		report.Roles = append(report.Roles, RoleReport{Role: name, Family: spec.Family, Model: spec.Pair.Model, ReasoningEffort: spec.Pair.Effort, Sandbox: spec.Sandbox, Aliases: spec.ModelAliases, AutoCompactTokenLimit: spec.AutoCompactTokenLimit, State: table.States[name]})
 	}
+	// the unit check's tool pair (CRW-1589): a tool run, never a spawned agent — shown, with no aliases to resolve it
+	report.Roles = append(report.Roles, RoleReport{Role: execution.AgentUnitCheck, Family: "unit-check", Model: table.UnitCheck.Model, ReasoningEffort: table.UnitCheck.Effort, Sandbox: SandboxReadOnly, Aliases: []string{}, State: table.States["unit-check"]})
 	report.Warnings = append(append(report.Warnings, table.Warnings...), exec.Warnings()...)
 	for _, row := range table.Aliases {
 		report.Aliases = append(report.Aliases, AliasReport{Key: row.Key, Effort: row.Effort, Isolation: row.Isolation, Role: row.Role, Refuse: row.Cause, Detail: row.Detail})
@@ -91,8 +93,13 @@ func (r PolicyReport) Text() string {
 			pair = role.Model + " at an undecided effort"
 		}
 		state := ""
-		if role.State == "compiled_default" {
+		switch role.State {
+		case "compiled_default":
 			state = " [compiled default]"
+		case "reviewer":
+			state = " [inherits the reviewer's pair]"
+		case "environment":
+			state = " [environment override]"
 		}
 		fmt.Fprintf(&b, "  %-15s %s (%s, %s)%s%s aliases: %s\n", role.Role, pair, role.Family, role.Sandbox, limit, state, strings.Join(role.Aliases, ", "))
 	}

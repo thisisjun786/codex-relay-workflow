@@ -34,7 +34,12 @@ type VerificationRecord struct {
 	Arch         string            `json:"arch"`
 	Result       string            `json:"result"`
 	Jobs         []json.RawMessage `json:"jobs"`
-	Digest       string            `json:"digest"`
+	// VerifierKind, VerifierRules and GitHub are the additive remote-verifier members (CRW-1594): absent from
+	// every local record, required and judged for runner "github-actions".
+	VerifierKind  string              `json:"verifierKind,omitempty"`
+	VerifierRules string              `json:"verifierRules,omitempty"`
+	GitHub        *GitHubVerification `json:"github,omitempty"`
+	Digest        string              `json:"digest"`
 }
 
 // VerificationRecordResultPass is the one result word a reusable record carries (CRW-964 writes "pass").
@@ -159,6 +164,14 @@ func JudgeVerificationRecord(raw []byte, want VerificationKeys) (VerificationRec
 	}
 	if len(record.PinMismatch) > 0 {
 		return record, refuse(contract.RefusalDispositionConflict, "the verification record carries a tool pin mismatch (%s), so it is not reusable", strings.Join(record.PinMismatch, ", "))
+	}
+	// a record that claims remote provenance or the remote kind but is not a remote record is refused before
+	// the local checks; a local record's verifierKind local/ci-local/1 continues through them unchanged.
+	if record.Runner != GitHubRunner && (record.GitHub != nil || record.VerifierKind == GitHubVerifierKind) {
+		return record, refuse(contract.RefusalDispositionConflict, "the verification record names runner %q with GitHub provenance or the github-actions kind: only a github-actions record carries them", record.Runner)
+	}
+	if record.Runner == GitHubRunner {
+		return judgeGitHubRecord(record, members, want)
 	}
 	if err := judgeRecordPins(record, members, want); err != nil {
 		return record, err
