@@ -85,7 +85,7 @@ func TestC1AllowedTransitions(t *testing.T) {
 	}
 }
 
-// The four refusals C2 names, plus the rest of the format's checks, each with its named error.
+// Named validation failures and literal punctuation accepted by the JSON fields.
 func TestC2ValidationRefusals(t *testing.T) {
 	valid := func() Record {
 		return Record{Schema: Schema, Kind: KindPolicy, Context: "a question", State: StateOpen,
@@ -109,9 +109,11 @@ func TestC2ValidationRefusals(t *testing.T) {
 		{"bad needed_by", func(r *Record) { r.NeededBy = "tomorrow" }, ErrBadNeededBy},
 		{"comma fractional needed_by", func(r *Record) { r.NeededBy = "2026-10-10T00:00:00,5Z" }, ErrBadNeededBy},
 		{"recommendation off the option set", func(r *Record) { r.Recommendation = &Recommendation{Option: "z"} }, ErrRecommendation},
-		{"context with a separator", func(r *Record) { r.Context = "a | b" }, ErrAmbiguousField},
-		{"option id with a comma", func(r *Record) { r.Options[0].ID = "a,b" }, ErrAmbiguousField},
-		{"blocking ref with a colon", func(r *Record) { r.Blocking = []Blocking{{Kind: "issue", Ref: "x:y"}} }, ErrAmbiguousField},
+		{"context with a separator", func(r *Record) { r.Context = "a | b" }, nil},
+		{"option id with a comma", func(r *Record) { r.Options[0].ID = "a,b" }, nil},
+		{"blocking ref with a colon", func(r *Record) { r.Blocking = []Blocking{{Kind: "issue", Ref: "x:y"}} }, nil},
+		{"blocking ref with a comma", func(r *Record) { r.Blocking = []Blocking{{Kind: "issue", Ref: "x,y"}} }, nil},
+		{"GitHub plan node", func(r *Record) { r.Blocking = []Blocking{{Kind: BlockingPlanNode, Ref: "run-x/owner:repo:53"}} }, nil},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			record := valid()
