@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/report"
 )
 
@@ -547,5 +548,90 @@ func TestTokensShowCachedFreshAndOutput(t *testing.T) {
 	}
 	if budget != "4218362 of 5000000 tokens spent (cached input 4006518, fresh input 165096, output 46748, reasoning 31200)" {
 		t.Errorf("the digest's token budget: %q", budget)
+	}
+}
+
+// CRW-1595 (finding 3): `crw flow show` and `ps` read the superseded and the ask-less escalation rows: the retired
+// question stays as history ("superseded by resume"), the final escalation is listed as an escalation that needs no
+// answer but the action of the held run, and the run is held without a waiting question.
+func TestCRW1595ShowReadsSupersededAndAsklessEscalations(t *testing.T) {
+	w := newWorld(t)
+	r := w.newRun("run-esc", "thread-owner")
+	r.j.Append(engine.Event{RunID: r.id, Kind: engine.KindFlow, CallID: "c_esc", Op: ops.OpEscalate, Event: engine.EvEscalation,
+		Data: map[string]any{"call_id": "c_exec", "escalation_id": "esc_old", "node": "n1", "ask": "land", "reason": "verification_failed"}})
+	r.j.Append(engine.Event{RunID: r.id, Kind: engine.KindCall, CallID: "c_esc", Op: ops.OpEscalate, Event: engine.EvCompleted, Data: map[string]any{"escalation_id": "esc_old"}})
+	r.j.Append(engine.Event{RunID: r.id, Kind: engine.KindCall, CallID: "c_esc", Event: engine.EvSuperseded, Data: map[string]any{"reason": "superseded_by_resume"}})
+	r.j.Append(engine.Event{RunID: r.id, Kind: engine.KindFlow, CallID: "c_final", Op: ops.OpEscalate, Event: engine.EvEscalation,
+		Data: map[string]any{"call_id": "c_exec", "escalation_id": "esc_final", "node": "n1", "reason": "test_failed"}})
+	r.j.Append(engine.Event{RunID: r.id, Kind: engine.KindCall, CallID: "c_final", Op: ops.OpEscalate, Event: engine.EvCompleted, Data: map[string]any{"escalation_id": "esc_final"}})
+	r.j.Append(engine.Event{RunID: r.id, Kind: engine.KindRun, Event: "finished", Data: map[string]any{"status": engine.RunCompleted,
+		"outcome": map[string]any{"state": "escalated", "reason": "test_failed", "escalation": "esc_final"}}})
+	r.close()
+	td := w.deps()
+	code, out, errOut := td.do("show", "run-esc", "--state", w.state)
+	if code != 0 {
+		t.Fatalf("show: exit %d %s", code, errOut)
+	}
+	for _, want := range []string{
+		"run run-esc  project-lane  held",
+		"question esc_old r1  node n1  verification_failed  superseded by resume",
+		"escalation esc_final  node n1  test_failed  action required; no answer requested",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("show lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "verification_failed  waiting") {
+		t.Errorf("the superseded question still waits:\n%s", out)
+	}
+	code, js, errOut := td.do("show", "run-esc", "--state", w.state, "--json")
+	var d RunDetail
+	if code != 0 || json.Unmarshal([]byte(js), &d) != nil {
+		t.Fatalf("show --json: %d %s", code, errOut)
+	}
+	if len(d.Questions) != 1 || !d.Questions[0].Superseded || d.Questions[0].Current || len(d.Escalations) != 1 || d.Escalations[0].ID != "esc_final" {
+		t.Fatalf("the json: questions %+v escalations %+v", d.Questions, d.Escalations)
+	}
+	code, out, errOut = td.do("ps", "--all", "--state", w.state)
+	if code != 0 {
+		t.Fatalf("ps: exit %d %s", code, errOut)
+	}
+	var line string
+	for _, l := range strings.Split(out, "\n") {
+		if strings.HasPrefix(l, "run-esc") {
+			line = l
+		}
+	}
+	fields := strings.Fields(line)
+	if len(fields) < 8 || fields[1] != "held" || fields[7] != "0" {
+		t.Errorf("the ps line of the held run (STATE/ASKS): %q", line)
+	}
+}
+
+// CRW-1595: a run that is over — here cancelled after a paused end — keeps its paused history but gets no resume or
+// recover advice: nothing can go on with it.
+func TestCRW1595ShowOfAnOverRunGivesNoResumeAdvice(t *testing.T) {
+	w := newWorld(t)
+	r := w.newRun("run-cx", "thread-owner")
+	r.hold("c_h", "executor", "n1")
+	r.call("c_inflight", "executor", "n2", 1, []string{engine.EvPrepared}, nil)
+	r.endPaused()
+	r.j.Append(engine.Event{RunID: r.id, Kind: engine.KindRun, Event: "finished", Data: map[string]any{"status": engine.RunScriptError, "error_kind": engine.ErrKindCancelled, "by": "operator"}})
+	r.close()
+	td := w.deps()
+	code, out, errOut := td.do("show", "run-cx", "--state", w.state)
+	if code != 0 {
+		t.Fatalf("show: exit %d %s", code, errOut)
+	}
+	if !strings.Contains(out, "run run-cx  project-lane  cancelled") {
+		t.Errorf("the state line:\n%s", out)
+	}
+	if !strings.Contains(out, "previously paused by operator: crw flow pause") {
+		t.Errorf("the paused history is gone:\n%s", out)
+	}
+	for _, bad := range []string{"crw flow resume", "crw flow recover"} {
+		if strings.Contains(out, bad) {
+			t.Errorf("an over run got %q advice:\n%s", bad, out)
+		}
 	}
 }

@@ -1071,6 +1071,48 @@ func (l *laneLab) legacyChildDesign(key string) {
 	}
 }
 
+// CRW-1595 (finding 2): a node whose integration verification failed carries the batch's bounded diagnostic in the
+// refusal detail — the failed check line survives the temporary worktree the verification ran in — through
+// IntegrateResult.Detail and the refused crw.integrate row.
+func TestCRW1595IntegrateCarriesTheSplitDiagnostic(t *testing.T) {
+	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+	l.mergeVerifyFail = func(map[string]string) error {
+		return fmt.Errorf("the verification command failed: exit status 1: --- FAIL: TestCRW1595Verifier (step build/go test ./pkg: failed)")
+	}
+	spec := l.start("start", "project-lane", "--args", `{"plan":"plan-1","milestone":"M1"}`, "--handoff", l.file)
+	res := l.runToEnd(spec.RunID)
+	// the refused crw.integrate row kept the diagnostic
+	found := false
+	for _, ev := range l.events() {
+		if ev.Kind == engine.KindCall && ev.Op == ops.OpIntegrate && ev.Event == engine.EvRefused {
+			found = true
+			if !strings.Contains(str(ev.Data, "detail"), "--- FAIL: TestCRW1595Verifier") {
+				t.Fatalf("the refused integrate row's detail lacks the failed check line: %v", ev.Data)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("the run wrote no refused crw.integrate row (result %s %s)", res.Status, res.ErrorKind)
+	}
+	// and the direct call answers it again: same refusal, same diagnostic
+	node := l.nodeOf["A-1"]
+	var acceptRow engine.Event
+	for _, ev := range l.events() {
+		if ev.Kind == engine.KindCall && ev.Op == ops.OpAccept && ev.Event == engine.EvCompleted && str(ev.Data, "node") == node {
+			acceptRow = ev
+		}
+	}
+	r := l.relayFor(spec.RunID+"-check", l.handoffBytes(nil), 1)
+	out, err := r.Integrate(ctx, ops.IntegrateRequest{Plan: l.plan, Node: node, Actor: labOwner, RunID: spec.RunID,
+		AcceptanceID: str(acceptRow.Data, "acceptance_id"), Head: str(acceptRow.Data, "head")})
+	if err != nil {
+		t.Fatalf("integrate: %v", err)
+	}
+	if out.Landed || out.Reason != "verification_failed" || !strings.Contains(out.Detail, "--- FAIL: TestCRW1595Verifier") {
+		t.Fatalf("the integrate answer: %+v", out)
+	}
+}
+
 // TestIntegrationReuseLeavesPendingPlanChangesToRelease (CRW-1597): a node with no integrated acceptance answers
 // not-integrated even when the slice the caller reads is an older pinned one - the plan supersession of a pending node is the
 // ordinary release path's to decide, never a refusal of the reuse read.

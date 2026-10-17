@@ -359,8 +359,19 @@ A warning never stops anything, so a host short of space or sharing a directory 
 
 ### The verifier's tools
 
-A run's verifier (the node verifier `CILocalVerifier` and the verification of an integration batch's
-merged tree) starts `crw-dev ci local`, and every step of that command runs `go`. A process a bridge
+`verifier.kind` selects `local` (the default) or `github-actions` for node verification,
+integration and milestone close. GitHub mode is configured with
+`crw config verifier --kind github-actions --repository OWNER/REPO`; its optional
+`--workflow` and `--branch-prefix` default to `CRW CI` and `ci/`.
+The preflight and doctor check `gh` authentication, repository write permission,
+workflow availability, `git` and `gitleaks`, using the caller's GitHub credentials.
+They do not require local Go or `crw-dev` for this mode. Invalid explicit remote
+configuration refuses verification instead of falling back to local tools.
+See [Choosing the verifier](CI.md#choosing-the-verifier) for the receipt, retry and
+same-tree reuse rules and the integration queue's common command.
+
+The following tool settings and probe behavior apply to the local verifier.
+It starts `crw-dev ci local`, and every step of that command runs `go`. A process a bridge
 or a service starts has neither on its `PATH`, so the configuration file names them in its `verifier`
 section, and the run reads that section, not the login `PATH`:
 

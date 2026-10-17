@@ -210,12 +210,13 @@ func TestEventStatementKeyIsUnchanged(t *testing.T) {
 }
 
 // The proxy attribution report-up writes above a report made by a thread that is not the lead, and
-// the base bodies of the three Step-0 proxy messages: sha256 of the packet body that composeDirect at
-// cc0941cd7 wrote for Text = proxyAttribution + "\n\n" + text (no Preface field then).
+// the base bodies of the three Step-0 proxy messages: sha256 of the packet body composeDirect writes
+// for Text = proxyAttribution + "\n\n" + text (the long one's cut carries the truncation marker,
+// CRW-1595).
 const (
 	proxyAttribution = "Reported by thread 01someone, which is not the initiative's lead (01lead)."
 	otherAttribution = "Reported by thread 01other, which is not the initiative's lead (01lead)."
-	baseBodyLong     = "2c97de34d1fd66f021c6a6758612c5af6853ec10244823a4ac8de0fd76980133" // a 7000-byte text
+	baseBodyLong     = "c95c92c062c2b008f280fab41a14aefc4c414b311087e95546dd61b9885d067f" // a 7000-byte text, cut and marked (CRW-1595)
 	baseBodyIndented = "d3203a7747465df0826b9104225b59e660d8c12b8bc1ade1add03ec3395f77e3" // "   indented text"
 	baseBodyTitle    = "70d4312796e07dafb7cc952ed4c5599d3de29ac600a679bb8b324bebb8e892e8" // no text (title only)
 )

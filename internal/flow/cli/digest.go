@@ -120,13 +120,15 @@ func BuildDigest(in DigestInput) BatchDigest {
 		}
 	}
 	escalated, asking := map[string][]string{}, map[string][]string{}
-	for _, e := range in.Events {
-		if e.Kind == engine.KindFlow && e.Event == engine.EvEscalation {
-			if node := str(e.Data, "node"); node != "" {
-				escalated[node] = append(escalated[node], str(e.Data, "reason"))
-				if !reportUpAsks[str(e.Data, "ask")] {
-					asking[node] = append(asking[node], str(e.Data, "reason"))
-				}
+	// only a current, unanswered escalation still stops a lane: superseded and replaced rows are history (CRW-1595)
+	for _, q := range escalationRows(in.Events, true) {
+		if !q.Current || q.Applied != "" {
+			continue
+		}
+		if node := q.Node; node != "" {
+			escalated[node] = append(escalated[node], q.Reason)
+			if !q.ReportUp {
+				asking[node] = append(asking[node], q.Reason)
 			}
 		}
 	}

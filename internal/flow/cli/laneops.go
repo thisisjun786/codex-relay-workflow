@@ -131,7 +131,7 @@ func BuildLane(ctx context.Context, req LaneRequest, opt LaneOptions) (LaneWorld
 	}
 	verify := opt.IntegrationVerify
 	if verify == nil {
-		verify = CILocalIntegration(tools, os.Stderr)
+		verify = ConfiguredIntegration(tools, os.Stderr)
 	}
 	sched := &dagsched.Scheduler{Store: req.Store, Tips: mergeturn.TargetReader{}, Ancestry: dagsched.GitAncestry{}.Ancestry}
 	if opt.Now != nil {
@@ -149,8 +149,9 @@ func BuildLane(ctx context.Context, req LaneRequest, opt LaneOptions) (LaneWorld
 		Verifier: dagsched.VerifierRule{SkillsDigest: skills, Model: review.Model, Effort: review.Effort}}
 	verifier := opt.Verifier
 	if verifier == nil {
-		verifier = ops.CILocalVerifier{Tools: tools}
-		// the shipped verifier runs crw-dev ci local only: a milestone that requires another command is refused before the run starts
+		verifier = ops.NewVerifier(tools)
+		// the shipped verifier runs the repository's CI command only — the configured kind's own
+		// implementation: a milestone that requires another command is refused before the run starts
 		// (CheckHandoff) and again when the run reads it
 		relay.RunnableCommand = ShippedRunnableCommand
 	}
