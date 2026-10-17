@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -212,7 +213,7 @@ func TestDesignDispositionsAreNullableAndClosed(t *testing.T) {
 	design := func(dispositions string) []byte {
 		head := `{"decisions":[],"issues":[{"issue":"CRW-1","node":"n1","size_fit":"executor","size_reason":"","issue_size_decision":"ok",` +
 			`"edit_regions":["a.go"],"approach":"a","tests_first":["TestA"],"done_condition":"d","decision_refs":[],"order_after":[],"group":null}],` +
-			`"open_questions":[],"risks":[]`
+			`"open_questions":[],"risks":[],"excluded_scope":[]`
 		if dispositions == "" {
 			return []byte(head + `}`)
 		}
@@ -274,7 +275,7 @@ func TestDesignDispositionsAreNullableAndClosed(t *testing.T) {
 func designJSON(t *testing.T, issues ...map[string]any) []byte {
 	t.Helper()
 	b, err := json.Marshal(map[string]any{"decisions": []any{map[string]any{"id": "D1", "evidence": []string{}, "change": "c", "alternatives": []string{}, "assumptions": []string{}}},
-		"issues": issues, "open_questions": []any{}, "risks": []string{}, "dispositions": nil})
+		"issues": issues, "open_questions": []any{}, "risks": []string{}, "excluded_scope": []any{}, "dispositions": nil})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -574,5 +575,115 @@ func TestDesignAuditSendsABrokenDesignRuleBackToTheArchitect(t *testing.T) {
 		Answers: json.RawMessage(`[]`)}
 	if _, err := w.op("designAudit", "M", 1, bad, call("c_arch", "completed", "claude-x", nil), call("c_aud4", "completed", "gpt-y", map[string]any{"verdict": "approved", "findings": []any{}, "summary": "ok"})); err == nil {
 		t.Error("a candidate the DESIGN schema refuses is audited")
+	}
+}
+
+func TestCRW1538DesignExcludedScope(t *testing.T) {
+	base := designJSON(t, designIssueJSON("n1", "executor", []string{"a/"}, nil))
+	document := func(value any, present bool) []byte {
+		t.Helper()
+		var m map[string]any
+		if err := json.Unmarshal(base, &m); err != nil {
+			t.Fatal(err)
+		}
+		delete(m, "excluded_scope")
+		if present {
+			m["excluded_scope"] = value
+		}
+		b, err := json.Marshal(m)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	roundTrip := func(t *testing.T, raw []byte) map[string]any {
+		t.Helper()
+		before := bytes.Clone(raw)
+		d, err := DecodeDesign(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(before, raw) {
+			t.Fatal("decoding changed the stored DESIGN bytes")
+		}
+		b, err := json.Marshal(d)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m map[string]any
+		if err := json.Unmarshal(b, &m); err != nil {
+			t.Fatal(err)
+		}
+		return m
+	}
+	for _, tc := range []struct {
+		name  string
+		value any
+	}{
+		{"empty", []any{}},
+		{"unrecorded", nil},
+		{"recorded", []any{
+			map[string]any{"scope": "live customer records", "reason": "assignment permits synthetic fixtures only", "alternative": "local synthetic fixtures"},
+			map[string]any{"scope": "deployment", "reason": "outside the assignment", "alternative": nil},
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := document(tc.value, true)
+			if err := Validate(SchemaDesign, raw); err != nil {
+				t.Fatalf("valid excluded scope refused: %v", err)
+			}
+			got, has := roundTrip(t, raw)["excluded_scope"]
+			if !has || !reflect.DeepEqual(got, tc.value) {
+				t.Errorf("excluded_scope round trip = %#v (present %v), want %#v", got, has, tc.value)
+			}
+		})
+	}
+	t.Run("fresh answer requires field", func(t *testing.T) {
+		if err := Validate(SchemaDesign, document(nil, false)); err == nil {
+			t.Error("fresh DESIGN accepted without excluded_scope")
+		}
+	})
+	for _, tc := range []struct {
+		name  string
+		value any
+	}{
+		{"not a list", "none"},
+		{"null item", []any{nil}},
+		{"missing reason", []any{map[string]any{"scope": "deployment", "alternative": nil}}},
+		{"missing alternative", []any{map[string]any{"scope": "deployment", "reason": "outside assignment"}}},
+		{"wrong scope type", []any{map[string]any{"scope": 7, "reason": "outside assignment", "alternative": nil}}},
+		{"unknown field", []any{map[string]any{"scope": "deployment", "reason": "outside assignment", "alternative": nil, "approved": true}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := document(tc.value, true)
+			if err := Validate(SchemaDesign, raw); err == nil {
+				t.Error("malformed excluded_scope passed the output schema")
+			}
+			if _, err := DecodeDesign(raw); err == nil {
+				t.Error("decoder replaced a malformed excluded_scope with a default")
+			}
+		})
+	}
+	for _, oldSubTasks := range []bool{false, true} {
+		t.Run(fmt.Sprintf("stored before exclusions pre-S1=%v", oldSubTasks), func(t *testing.T) {
+			raw := document(nil, false)
+			if oldSubTasks {
+				var m map[string]any
+				if err := json.Unmarshal(raw, &m); err != nil {
+					t.Fatal(err)
+				}
+				delete(m, "dispositions")
+				delete(m["issues"].([]any)[0].(map[string]any), "sub_tasks")
+				var err error
+				raw, err = json.Marshal(m)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			got, has := roundTrip(t, raw)["excluded_scope"]
+			if !has || got != nil {
+				t.Errorf("an unrecorded assessment decoded as %#v (present %v), want null", got, has)
+			}
+		})
 	}
 }

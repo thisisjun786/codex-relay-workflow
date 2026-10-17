@@ -96,6 +96,11 @@ export const DESIGN = obj({
   })),
   open_questions: list(obj({ id: text, question: text, scope: text, files_needed: texts })),
   risks: texts,
+  // null means no exclusion assessment was recorded; [] means none were excluded.
+  excluded_scope: {
+    type: ['array', 'null'],
+    items: obj({ scope: text, reason: text, alternative: maybeText }),
+  },
   // dispositions: null in the first DESIGN and in a re-plan answer; a design-fix answer gives one per finding id of the fix
   // packet (r<round>.<index>), folded into the DESIGN or rebutted, with the reason.
   dispositions: {

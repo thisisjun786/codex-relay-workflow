@@ -644,3 +644,43 @@ func TestCRW1540ExecutorPreCommitSelfCheck(t *testing.T) {
 		t.Error("the QA-only prompt inherited the implementation self-check")
 	}
 }
+
+func TestCRW1538ArchitectCutOutScope(t *testing.T) {
+	prompt, err := Prompt("architect", Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := sectionOf(prompt, "## Cut-out scope")
+	if body == "" {
+		t.Fatal("the emitted architect prompt has no cut-out scope section")
+	}
+	for _, want := range []string{
+		"`excluded_scope`", "`scope`", "`reason`", "`alternative`", "`[]`",
+		"fully design the authorized remainder", "accepted criteria", "`open_questions`",
+		"re-plans", "Preserve the relevant authority and risk context",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("cut-out scope instruction lacks %q", want)
+		}
+	}
+}
+
+func TestCRW1538RoleCapabilityGuidance(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join(repoRoot(t), "docs", "role-execution-policy.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := sectionOf(string(b), "## Choosing sufficient capability")
+	if body == "" {
+		t.Fatal("role policy lacks the capability selection guidance")
+	}
+	for _, want := range []string{
+		"cheapest sufficient", "model capability and reasoning effort",
+		"risk", "verification", "explicit user choice", "operator-owned",
+		"does not change any role's allowed pairs",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("capability guidance lacks %q", want)
+		}
+	}
+}
