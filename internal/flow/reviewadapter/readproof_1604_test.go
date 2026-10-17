@@ -35,7 +35,7 @@ func TestReadProof1604GitObjectPaths(t *testing.T) {
 			if out := runShell1603(t, repo, command); out != "the readme\n" {
 				t.Fatalf("%q produced %q, want the tracked readme", command, out)
 			}
-			if !commandReadsCheckout(command, repo) {
+			if !commandReadsCheckout(t.Context(), command, repo) {
 				t.Fatalf("%q is a read of the checkout", command)
 			}
 		})
@@ -44,7 +44,7 @@ func TestReadProof1604GitObjectPaths(t *testing.T) {
 		if out := runShell1603(t, repo, "cat alias/../README.md"); out != "outside1604-marker\n" {
 			t.Fatalf("cat alias/../README.md produced %q, want the outside file", out)
 		}
-		if commandReadsCheckout("cat alias/../README.md", repo) {
+		if commandReadsCheckout(t.Context(), "cat alias/../README.md", repo) {
 			t.Fatal("cat alias/../README.md proves no read of the checkout")
 		}
 	})
@@ -57,7 +57,7 @@ func TestReadProof1604GitObjectPaths(t *testing.T) {
 		"stat then separator":             "git show --stat HEAD --",
 	} {
 		t.Run("not a read: "+name, func(t *testing.T) {
-			if commandReadsCheckout(command, repo) {
+			if commandReadsCheckout(t.Context(), command, repo) {
 				t.Fatalf("%q proves no read of the checkout", command)
 			}
 		})
@@ -77,10 +77,10 @@ func TestReadProof1604GitObjectPaths(t *testing.T) {
 		if out := runShell1603(t, repo, "git --no-pager show HEAD:alias"); strings.TrimSpace(out) != target {
 			t.Fatalf("git show HEAD:alias produced %q, want the stored target %q", out, target)
 		}
-		if !commandReadsCheckout("git show HEAD:alias", repo) {
+		if !commandReadsCheckout(t.Context(), "git show HEAD:alias", repo) {
 			t.Fatal("git show HEAD:alias is a read of the checkout")
 		}
-		if commandReadsCheckout("cat alias", repo) {
+		if commandReadsCheckout(t.Context(), "cat alias", repo) {
 			t.Fatal("cat alias proves no read of the checkout")
 		}
 	})
@@ -100,7 +100,7 @@ func TestReadProof1604StdinAliases(t *testing.T) {
 				if out := runShell1603(t, root, command); !strings.Contains(out, "proof1603-marker") {
 					t.Fatalf("%q produced %q, want the file content", command, out)
 				}
-				if !commandReadsCheckout(command, root) {
+				if !commandReadsCheckout(t.Context(), command, root) {
 					t.Fatalf("%q is a read of the checkout", command)
 				}
 			})
@@ -113,7 +113,7 @@ func TestReadProof1604StdinAliases(t *testing.T) {
 			"inner redirect overrides": "/bin/sh -c 'head -n 1 " + alias + " < /dev/null' < README.md",
 		} {
 			t.Run("not a read: "+name, func(t *testing.T) {
-				if commandReadsCheckout(command, root) {
+				if commandReadsCheckout(t.Context(), command, root) {
 					t.Fatalf("%q proves no read of the checkout", command)
 				}
 			})
@@ -124,7 +124,7 @@ func TestReadProof1604StdinAliases(t *testing.T) {
 		if out := runShell1603(t, root, command); !strings.Contains(out, "proof1603-marker") {
 			t.Fatalf("%q produced %q, want the checkout file", command, out)
 		}
-		if !commandReadsCheckout(command, root) {
+		if !commandReadsCheckout(t.Context(), command, root) {
 			t.Fatalf("%q is a read of the checkout", command)
 		}
 	})
@@ -144,7 +144,7 @@ func TestReadProof1604StdinAliases(t *testing.T) {
 		"proc fd1 alias":   "head -n 1 /proc/self/fd/1 < README.md",
 	} {
 		t.Run("not a read: "+name, func(t *testing.T) {
-			if commandReadsCheckout(command, root) {
+			if commandReadsCheckout(t.Context(), command, root) {
 				t.Fatalf("%q proves no read of the checkout", command)
 			}
 		})
@@ -152,7 +152,7 @@ func TestReadProof1604StdinAliases(t *testing.T) {
 }
 
 func TestReadProof1604AdapterFloors(t *testing.T) {
-	repo, _ := inputTree1603(t)
+	repo := gitRepo1603(t)
 	astra := AstraProfile("/run/answer.strict.json")
 	reads := []string{
 		astraCommandLine(t, "a0", "git --no-pager show HEAD:./alias/../README.md"),
@@ -184,7 +184,7 @@ func TestReadProof1604AdapterFloors(t *testing.T) {
 		"a corrected read no exit": {astraCommandEvent(t, "c", "git --no-pager show HEAD:./alias/../README.md", "completed", nil), turn},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if u, ok := astra.Usage([]byte(strings.Join(lines, "\n")), req); !ok || u.Commands != 0 {
+			if u, ok := astra.Usage(t.Context(), []byte(strings.Join(lines, "\n")), req); !ok || u.Commands != 0 {
 				t.Fatalf("usage %+v %v, want no commands", u, ok)
 			}
 		})

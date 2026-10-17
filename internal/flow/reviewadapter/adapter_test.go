@@ -1294,7 +1294,7 @@ func meteredProfile() Profile {
 			}
 			return out.Answer, nil
 		},
-		Usage: func(stdout []byte, _ Request) (Usage, bool) {
+		Usage: func(_ context.Context, stdout []byte, _ Request) (Usage, bool) {
 			var out struct {
 				Usage *struct {
 					Cache    int64 `json:"cache"`
@@ -1343,6 +1343,30 @@ func checkForWorktree(t *testing.T, p Profile, dir string, f fakeRun, d time.Dur
 		t.Fatalf("Check: %v", err)
 	}
 	return res
+}
+
+// TestAdapterHandsUsageTheCallersContext: the usage reader gets the caller's context, its values included. The adapter has
+// cancelled its own call context by the time it reads usage, so a reader that ran git under that context would start nothing.
+func TestAdapterHandsUsageTheCallersContext(t *testing.T) {
+	type callerKey struct{}
+	p := meteredProfile()
+	usage := p.Usage
+	var value any
+	var err error
+	p.Usage = func(ctx context.Context, stdout []byte, req Request) (Usage, bool) {
+		value, err = ctx.Value(callerKey{}), ctx.Err()
+		return usage(ctx, stdout, req)
+	}
+	req := request(t, p)
+	req.Worktree = t.TempDir()
+	ctx := context.WithValue(t.Context(), callerKey{}, "caller")
+	f := fakeRun{stdout: meteredOutput("{\"verdict\":\"verified\",\"findings\":[]}", 200000, 3)}
+	if _, cerr := (Adapter{Run: f.run, Fingerprint: hashFiles}).Check(ctx, req); cerr != nil {
+		t.Fatalf("Check: %v", cerr)
+	}
+	if value != "caller" || err != nil {
+		t.Fatalf("usage saw value %v and error %v, want the caller's value and no error", value, err)
+	}
 }
 
 // TestAdapterVoidsAPassThatReadNoRepository: a profile with floors (cached tokens, commands, elapsed time) turns an answer that would

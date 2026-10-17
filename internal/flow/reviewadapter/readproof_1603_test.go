@@ -83,7 +83,7 @@ func TestReadProof1603GitSeparators(t *testing.T) {
 			if out := runShell1603(t, repo, tc.command); !strings.Contains(out, tc.marker) {
 				t.Fatalf("%q produced %q, want marker %q", tc.command, out, tc.marker)
 			}
-			if !commandReadsCheckout(tc.command, repo) {
+			if !commandReadsCheckout(t.Context(), tc.command, repo) {
 				t.Fatalf("%q is a read of the checkout", tc.command)
 			}
 		})
@@ -95,7 +95,7 @@ func TestReadProof1603GitSeparators(t *testing.T) {
 		"log":                     "git --no-pager log --",
 	} {
 		t.Run("not a read: "+name, func(t *testing.T) {
-			if commandReadsCheckout(command, repo) {
+			if commandReadsCheckout(t.Context(), command, repo) {
 				t.Fatalf("%q proves no read of the checkout", command)
 			}
 		})
@@ -129,7 +129,7 @@ func TestReadProof1603GitOptionalValues(t *testing.T) {
 			if out := runShell1603(t, repo, command); !strings.Contains(out, "diff --git") {
 				t.Fatalf("%q produced %q, want a patch", command, out)
 			}
-			if !commandReadsCheckout(command, repo) {
+			if !commandReadsCheckout(t.Context(), command, repo) {
 				t.Fatalf("%q is a read of the checkout", command)
 			}
 		})
@@ -144,7 +144,7 @@ func TestReadProof1603GitOptionalValues(t *testing.T) {
 		"status":                     "git status --short",
 	} {
 		t.Run("not a read: "+name, func(t *testing.T) {
-			if commandReadsCheckout(command, repo) {
+			if commandReadsCheckout(t.Context(), command, repo) {
 				t.Fatalf("%q proves no read of the checkout", command)
 			}
 		})
@@ -169,7 +169,7 @@ func TestReadProof1603InheritedInput(t *testing.T) {
 			if out := runShell1603(t, root, command); !strings.Contains(out, "proof1603-marker") {
 				t.Fatalf("%q produced %q, want the file content", command, out)
 			}
-			if !commandReadsCheckout(command, root) {
+			if !commandReadsCheckout(t.Context(), command, root) {
 				t.Fatalf("%q is a read of the checkout", command)
 			}
 		})
@@ -190,7 +190,7 @@ func TestReadProof1603InheritedInput(t *testing.T) {
 		"true":                           "true",
 	} {
 		t.Run("not a read: "+name, func(t *testing.T) {
-			if commandReadsCheckout(command, root) {
+			if commandReadsCheckout(t.Context(), command, root) {
 				t.Fatalf("%q proves no read of the checkout", command)
 			}
 		})
@@ -228,14 +228,14 @@ func TestReadProof1603SymlinkParents(t *testing.T) {
 			if out := runShell1603(t, root, command); !strings.Contains(out, "only-marker") {
 				t.Fatalf("%q produced %q, want the file content", command, out)
 			}
-			if !commandReadsCheckout(command, root) {
+			if !commandReadsCheckout(t.Context(), command, root) {
 				t.Fatalf("%q is a read of the checkout", command)
 			}
 		})
 	}
 	t.Run("reads: output through a symlink parent", func(t *testing.T) {
 		runShell1603(t, root, "cat alias/../only.go > alias/../capture.txt")
-		if !commandReadsCheckout("cat alias/../only.go > alias/../capture.txt", root) {
+		if !commandReadsCheckout(t.Context(), "cat alias/../only.go > alias/../capture.txt", root) {
 			t.Fatal("the output redirect form is a read of the checkout")
 		}
 	})
@@ -261,7 +261,7 @@ func TestReadProof1603SymlinkParents(t *testing.T) {
 					t.Fatalf("%q produced %q, want the outside file", command, out)
 				}
 			}
-			if commandReadsCheckout(command, escape) {
+			if commandReadsCheckout(t.Context(), command, escape) {
 				t.Fatalf("%q proves no read of the checkout", command)
 			}
 		})
@@ -301,7 +301,7 @@ func TestReadProof1603AdapterFloors(t *testing.T) {
 		"a corrected read no exit": {astraCommandEvent(t, "c", "{ cat; } < sub/nested.go", "completed", nil), turn},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if u, ok := astra.Usage([]byte(strings.Join(lines, "\n")), req); !ok || u.Commands != 0 {
+			if u, ok := astra.Usage(t.Context(), []byte(strings.Join(lines, "\n")), req); !ok || u.Commands != 0 {
 				t.Fatalf("usage %+v %v, want no commands", u, ok)
 			}
 		})
