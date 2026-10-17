@@ -282,7 +282,11 @@ func (c *command) start(args []string) int {
 		if probe == nil {
 			probe = StoreProber{}
 		}
-		for _, f := range probe.Facts(c.ctx, PreflightRequest{Reader: r, Thread: spec.Thread, Waits: Dispositions(src), Now: c.now()}) {
+		wake, wakeErr := currentWake(c.ctx, r, cm.socket, spec.Thread)
+		for _, f := range probe.Facts(c.ctx, PreflightRequest{Reader: r, Thread: spec.Thread, Waits: Dispositions(src), Now: c.now(), Wake: wake}) {
+			if f.Name == FactIdleWake && wakeErr != nil && f.Level == LevelWarn {
+				f.Reason, f.Reading = wakeErr.Error(), "unmeasured: "+wakeErr.Error()
+			}
 			plan.Facts = append(plan.Facts, f.leveled())
 		}
 	}
