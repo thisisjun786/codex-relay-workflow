@@ -5,10 +5,12 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -256,6 +258,44 @@ func configureProbeWorker(t *testing.T, w *world, h *probeHostState) {
 			t.Error(err)
 		}
 	})
+}
+
+func TestWakeProbeFinishRetiresBindingAfterHostTimeout(t *testing.T) {
+	w := newWorld(t)
+	host := fakehost.Start(t)
+	host.Respond("thread/turns/list", fakehost.Reply{Delay: time.Hour})
+	a, err := adapter.Open(host.SocketPath, w.state, adapter.Options{Store: w.st})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const id = "probe-timeout"
+	scope := "wake-probe:" + id
+	if _, err := w.st.DB.ExecContext(ctx, "INSERT INTO scope_bindings(binding_id,role,scope_kind,scope_key,task_id,host_id,status,revision,created_at,updated_at) VALUES ('probe-binding','parent','project',?,'probe-1','host','active',1,'now','now')", scope); err != nil {
+		t.Fatal(err)
+	}
+	p := &wakeProbeRun{
+		c: &command{Deps: &Deps{Now: time.Now}, ctx: ctx}, st: w.st, state: w.state, socket: host.SocketPath,
+		owner: "owner", want: &delivery.WakeExpectation{Identity: delivery.WakeIdentity{Role: "parent"}},
+		id: id, thread: "probe-1", bootstrap: "probe-1-turn-1", host: a,
+		registry: &registry.Registry{Store: w.st}, bound: true, archiveSafe: true,
+	}
+	const hostFailure = "probe cleanup left unproved history intact"
+	finishErr := p.finish(errors.New("probe failed"))
+	if finishErr == nil || !strings.Contains(finishErr.Error(), hostFailure) {
+		t.Fatalf("finish must return the host cleanup failure: %v", finishErr)
+	}
+	var active int
+	if err := w.st.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM scope_bindings WHERE scope_key=? AND status='active'", scope).Scan(&active); err != nil || active != 0 {
+		t.Fatalf("probe binding stayed active: rows=%d %v", active, err)
+	}
+	var failures int
+	var reason string
+	if err := w.st.DB.QueryRowContext(ctx, "SELECT COUNT(*), COALESCE(MAX(json_extract(detail,'$.reason')),'') FROM journal WHERE kind=? AND json_extract(detail,'$.probe')=1", delivery.WakeObserved).Scan(&failures, &reason); err != nil || failures != 1 {
+		t.Fatalf("failure evidence=%d %v", failures, err)
+	}
+	if !strings.Contains(reason, "probe failed") || !strings.Contains(reason, hostFailure) {
+		t.Fatalf("failure reason=%q", reason)
+	}
 }
 
 func TestStartWakeProbeEmptyJournal(t *testing.T) {
