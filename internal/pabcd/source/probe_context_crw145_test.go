@@ -3,6 +3,7 @@ package source
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -15,12 +16,20 @@ import (
 // CRW-145 (post-evaluation round 3, d2): a probe owned by a context ends with it, with everything it started.
 
 func gone(pid int) bool {
+	ended, _ := processGone(pid)
+	return ended
+}
+
+func processGone(pid int) (bool, string) {
 	b, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
 	if err != nil {
-		return syscall.Kill(pid, 0) == syscall.ESRCH
+		killErr := syscall.Kill(pid, 0)
+		return killErr == syscall.ESRCH, fmt.Sprintf("stat: %v; kill(0): %v", err, killErr)
 	}
 	rest := string(b[strings.LastIndexByte(string(b), ')')+1:])
-	return strings.HasPrefix(strings.TrimSpace(rest), "Z")
+	state := strings.TrimSpace(rest)
+	// A reaped zombie can still be visible as X (dead) before /proc removes it.
+	return strings.HasPrefix(state, "Z") || strings.HasPrefix(state, "X"), string(b)
 }
 
 // A grandchild that outlives its parent (a clean filter git started) is killed with the group when the deadline passes, and
@@ -63,11 +72,14 @@ func TestRunBoundedCtxLimitAndEndedContext(t *testing.T) {
 		pid, _ := strconv.Atoi(strings.TrimSpace(string(b)))
 		t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGKILL) })
 		deadline := time.Now().Add(3 * time.Second)
-		for !gone(pid) && time.Now().Before(deadline) {
+		ended, state := processGone(pid)
+		for !ended && time.Now().Before(deadline) {
 			time.Sleep(20 * time.Millisecond)
+			ended, state = processGone(pid)
 		}
-		if !gone(pid) {
-			t.Errorf("the grandchild %d outlived the group killed at the output limit", pid)
+		// Keep the observation that ended the wait; do not probe a reaping PID again.
+		if !ended {
+			t.Errorf("the grandchild %d outlived the group killed at the output limit: %s", pid, state)
 		}
 	}
 	ended, cancel := context.WithCancel(context.Background())

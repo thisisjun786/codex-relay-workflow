@@ -168,14 +168,28 @@ func TestTempRootLockCRW980ConcurrentInstallsShareAMissingRoot(t *testing.T) {
 	}
 }
 
-// openFDCount is the number of descriptors this process holds.
-func openFDCount(t *testing.T) int {
+// openFDsUnder identifies descriptors for this test's directories. Other tests'
+// HTTP transports and file finalizers can close unrelated descriptors at any time.
+func openFDsUnder(t *testing.T, root string) map[string]string {
 	t.Helper()
 	entries, err := os.ReadDir("/proc/self/fd")
 	if err != nil {
 		t.Skipf("no /proc/self/fd: %v", err)
 	}
-	return len(entries)
+	fds := make(map[string]string)
+	for _, entry := range entries {
+		target, err := os.Readlink(filepath.Join("/proc/self/fd", entry.Name()))
+		if errors.Is(err, fs.ErrNotExist) {
+			continue // includes the descriptor ReadDir itself closed
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if target == root || strings.HasPrefix(target, root+string(os.PathSeparator)) {
+			fds[entry.Name()] = target
+		}
+	}
+	return fds
 }
 
 // CRW-1045 (1): when the path names another directory after every lock is granted, openLockedDir opens and
@@ -183,6 +197,13 @@ func openFDCount(t *testing.T) int {
 // lock afterwards.
 func TestTempRootLockCRW1045AttemptsAreBoundedAndLeaveNothingHeld(t *testing.T) {
 	base := t.TempDir()
+	// Another owner can close a descriptor while openLockedDir is running.
+	// It must not change the assertion about the lock's own descriptors.
+	unrelated, err := os.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = unrelated.Close() })
 	path := filepath.Join(base, "parent")
 	if err := os.Mkdir(path, 0o755); err != nil {
 		t.Fatal(err)
@@ -193,6 +214,11 @@ func TestTempRootLockCRW1045AttemptsAreBoundedAndLeaveNothingHeld(t *testing.T) 
 	var locked []string
 	tempRootAfterLock = func(p string) {
 		attempts++
+		if attempts == 1 {
+			if err := unrelated.Close(); err != nil {
+				t.Fatal(err)
+			}
+		}
 		// The directory the lock was taken on is moved away and another one takes the name.
 		old := filepath.Join(base, "old", string(rune('a'+attempts)))
 		if err := os.MkdirAll(filepath.Dir(old), 0o755); err != nil {
@@ -207,9 +233,12 @@ func TestTempRootLockCRW1045AttemptsAreBoundedAndLeaveNothingHeld(t *testing.T) 
 			t.Error(err)
 		}
 		locked = append(locked, old)
+		// Exercise the observer while the descriptor is held, including after rename.
+		if fds := openFDsUnder(t, base); len(fds) != 1 {
+			t.Errorf("attempt %d holds descriptors %v, want exactly the locked directory %s", attempts, fds, old)
+		}
 	}
 
-	before := openFDCount(t)
 	dir, held, err := openLockedDir(path)
 	if dir != nil || held {
 		t.Fatalf("openLockedDir kept a descriptor (%v) or a lock (%v) after a path that never held still", dir, held)
@@ -221,8 +250,8 @@ func TestTempRootLockCRW1045AttemptsAreBoundedAndLeaveNothingHeld(t *testing.T) 
 	if attempts != tempRootLockAttempts || tempRootLockAttempts != 8 {
 		t.Fatalf("openLockedDir locked %d times, want %d (the bound is 8)", attempts, tempRootLockAttempts)
 	}
-	if after := openFDCount(t); after != before {
-		t.Errorf("the process holds %d descriptors after the failure, %d before", after, before)
+	if fds := openFDsUnder(t, base); len(fds) != 0 {
+		t.Errorf("openLockedDir left descriptors after the failure: %v", fds)
 	}
 	// No lock stays on any directory that was locked: a non-blocking lock succeeds on each.
 	for _, old := range locked {
