@@ -304,24 +304,24 @@ func sameWakeConfiguration(a, b *delivery.WakeExpectation) bool {
 }
 
 func (p *wakeProbeRun) finish(failure error) error {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(p.c.ctx), 10*time.Second)
-	defer cancel()
+	hostCtx, cancelHost := context.WithTimeout(context.WithoutCancel(p.c.ctx), 10*time.Second)
+	defer cancelHost()
 	var cleanup error
 	request := "wake-probe-" + p.id
 	wakeTurn := ""
 	if p.message != "" {
 		channel := &supervisor.Channel{Store: p.st, Socket: p.socket}
-		_, err := channel.Acknowledge(ctx, supervisor.AcknowledgeRequest{
+		_, err := channel.Acknowledge(hostCtx, supervisor.AcknowledgeRequest{
 			Recipient: p.thread, Actor: p.owner, Messages: []string{p.message},
 		})
 		cleanup = errors.Join(cleanup, err)
-		if attempt, err := p.st.LatestSupervisorAttempt(ctx, p.message); err == nil {
+		if attempt, err := p.st.LatestSupervisorAttempt(hostCtx, p.message); err == nil {
 			request, wakeTurn = attempt.RequestID, attempt.TurnID.String
 		}
 	}
 	if p.host != nil {
 		if p.archiveSafe && p.thread != "" && p.thread != p.owner {
-			turns, err := probeTurnIDs(ctx, p.host, p.thread)
+			turns, err := probeTurnIDs(hostCtx, p.host, p.thread)
 			safe := err == nil && len(turns) > 0 && len(turns) <= 2
 			for _, turn := range turns {
 				if turn != p.bootstrap && turn != wakeTurn {
@@ -329,7 +329,7 @@ func (p *wakeProbeRun) finish(failure error) error {
 				}
 			}
 			if safe {
-				_, err = p.host.HostCall(ctx, "thread/archive", map[string]any{"threadId": p.thread})
+				_, err = p.host.HostCall(hostCtx, "thread/archive", map[string]any{"threadId": p.thread})
 				cleanup = errors.Join(cleanup, err)
 			} else {
 				cleanup = errors.Join(cleanup, fmt.Errorf("probe cleanup left unproved history intact: %v", err))
@@ -337,11 +337,14 @@ func (p *wakeProbeRun) finish(failure error) error {
 		}
 		cleanup = errors.Join(cleanup, p.host.Close())
 	}
+	// A host that never answers can spend hostCtx, but the release and failure evidence must still be written.
+	storeCtx, cancelStore := context.WithTimeout(context.WithoutCancel(p.c.ctx), 10*time.Second)
+	defer cancelStore()
 	if p.bound {
 		// BindScopeAs reuses an active binding without changing its status.
 		// Retire only this disposable scope's original tenure; a handover or
 		// another task's binding must survive cleanup unchanged.
-		err := p.st.Transaction(ctx, func(tx context.Context, _ *sql.Conn) error {
+		err := p.st.Transaction(storeCtx, func(tx context.Context, _ *sql.Conn) error {
 			at := p.c.now().UTC().Format(time.RFC3339Nano)
 			result, err := p.st.Q(tx).ExecContext(tx, `UPDATE scope_bindings SET status='archived', revision=revision+1, updated_at=?
 WHERE role=? AND scope_key=? AND task_id=? AND status='active' AND revision=1 AND superseded_by IS NULL`,
@@ -384,7 +387,7 @@ WHERE role=? AND scope_key=? AND task_id=? AND status='active' AND revision=1 AN
 		}
 		// No actual sending identity is invented for a preparation/observation
 		// failure. A daemon receipt, if any, remains separately in the journal.
-		cleanup = errors.Join(cleanup, delivery.RecordWakeAttempt(ctx, p.st, attempt))
+		cleanup = errors.Join(cleanup, delivery.RecordWakeAttempt(storeCtx, p.st, attempt))
 	}
 	return cleanup
 }
