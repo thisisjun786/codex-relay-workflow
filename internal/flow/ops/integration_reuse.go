@@ -240,12 +240,32 @@ func (o *reuseIntegratedOp) read(ctx context.Context, req engine.OpRequest, forD
 		var srcIssue DesignIssue
 		var sourceDesign Design
 		if land {
-			// A land has no source DESIGN to prove with: its release's own recorded head, tree and base stand in for the
-			// ledger. The head must be the relay's accepted head at the recorded tree, descended from the recorded base.
-			if dataStr(srel, "head") != state.Head || dataStr(srel, "tree") == "" || dataStr(srel, "base") == "" {
+			// A land's release records its initial head, tree and base. A fix in this same
+			// journal may advance it, but the last current commit must be the accepted
+			// head and have a later passing verification before that acceptance.
+			releasedHead := dataStr(srel, "head")
+			if releasedHead == "" || dataStr(srel, "tree") == "" || dataStr(srel, "base") == "" {
 				continue
 			}
-			tree, err := TreeOf(ctx, o.l.d.Git, o.l.d.Repo, state.Head)
+			commit, hasCommit := sr.current(OpCommit).last(func(ev engine.Event) bool {
+				return dataStr(ev, "node") == node && ev.Seq > srel.Seq
+			})
+			if hasCommit {
+				if commit.Seq >= acc.Seq || dataStr(commit, "commit") != state.Head || dataStr(commit, "tree") == "" {
+					continue
+				}
+				verified, ok := sr.current(OpVerify).last(func(ev engine.Event) bool {
+					return dataStr(ev, "node") == node && ev.Seq > commit.Seq && ev.Seq < acc.Seq
+				})
+				if !ok || dataStr(verified, "head") != state.Head || !dataBool(verified, "ran") || !dataBool(verified, "ok") {
+					continue
+				}
+			} else if releasedHead != state.Head {
+				// Another head without this run's commit cannot inherit the release.
+				continue
+			}
+			// Keep the release's own proof, even when a later commit was accepted.
+			tree, err := TreeOf(ctx, o.l.d.Git, o.l.d.Repo, releasedHead)
 			if err != nil {
 				return engine.OpResult{}, err
 			}
@@ -258,6 +278,22 @@ func (o *reuseIntegratedOp) read(ctx context.Context, req engine.OpRequest, forD
 			}
 			if !before {
 				continue
+			}
+			if hasCommit {
+				tree, err := TreeOf(ctx, o.l.d.Git, o.l.d.Repo, state.Head)
+				if err != nil {
+					return engine.OpResult{}, err
+				}
+				if tree != dataStr(commit, "tree") {
+					continue
+				}
+				descends, err := IsAncestor(ctx, o.l.d.Git, o.l.d.Repo, releasedHead, state.Head)
+				if err != nil {
+					return engine.OpResult{}, err
+				}
+				if !descends {
+					continue
+				}
 			}
 		} else {
 			// the DESIGN issue the source integrated under - the ledger revision its release names, still standing and still
