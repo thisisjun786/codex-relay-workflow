@@ -25,6 +25,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/role"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/buildinfo"
 	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
@@ -130,7 +131,7 @@ func BuildLane(ctx context.Context, req LaneRequest, opt LaneOptions) (LaneWorld
 	}
 	verify := opt.IntegrationVerify
 	if verify == nil {
-		verify = CILocalIntegration(tools, os.Stderr)
+		verify = ConfiguredIntegration(tools, os.Stderr)
 	}
 	sched := &dagsched.Scheduler{Store: req.Store, Tips: mergeturn.TargetReader{}, Ancestry: dagsched.GitAncestry{}.Ancestry}
 	if opt.Now != nil {
@@ -148,8 +149,9 @@ func BuildLane(ctx context.Context, req LaneRequest, opt LaneOptions) (LaneWorld
 		Verifier: dagsched.VerifierRule{SkillsDigest: skills, Model: review.Model, Effort: review.Effort}}
 	verifier := opt.Verifier
 	if verifier == nil {
-		verifier = ops.CILocalVerifier{Tools: tools}
-		// the shipped verifier runs crw-dev ci local only: a milestone that requires another command is refused before the run starts
+		verifier = ops.NewVerifier(tools)
+		// the shipped verifier runs the repository's CI command only — the configured kind's own
+		// implementation: a milestone that requires another command is refused before the run starts
 		// (CheckHandoff) and again when the run reads it
 		relay.RunnableCommand = ShippedRunnableCommand
 	}
@@ -166,7 +168,7 @@ func BuildLane(ctx context.Context, req LaneRequest, opt LaneOptions) (LaneWorld
 	}
 	unitCheck := opt.UnitCheck
 	if unitCheck == nil {
-		if unitCheck, err = shippedUnitCheck(getenv); err != nil {
+		if unitCheck, err = shippedUnitCheck(req.Policy); err != nil {
 			return LaneWorld{}, err
 		}
 	}
@@ -186,30 +188,34 @@ func BuildLane(ctx context.Context, req LaneRequest, opt LaneOptions) (LaneWorld
 // shippedUnitCheckLimit is the time limit of one call of the shipped unit check's tool.
 const shippedUnitCheckLimit = 10 * time.Minute
 
-// The settings of the shipped unit check's Codex review (CRW-1517), read from the lane's environment; blank or unset: the defaults
-// (reviewadapter.CodexReviewConfig).
-const (
-	unitCheckModelEnv  = "CRW_UNIT_CHECK_MODEL"
-	unitCheckEffortEnv = "CRW_UNIT_CHECK_EFFORT"
-)
-
 // shippedUnitCheck is the unit check of the shipped lane (CRW-1463, CRW-1517): the review adapter over the tool runner
 // (reviewadapter.ExecRun) with ops.Snapshot as its fingerprint, the value of an executor call's pending tree and of crw.commit's tree, so
 // the tree an uncommitted check saw is the tree of the head its node commits. Both modes run a Codex review by default: the uncommitted
 // mode reviewadapter.CodexReviewProfile, the committed mode (land-head's range, CRW-1468) reviewadapter.CodexReviewCommittedProfile,
-// with the model and effort of CRW_UNIT_CHECK_MODEL and CRW_UNIT_CHECK_EFFORT (getenv). Bugbot is the fallback when Codex's quota is
-// spent: reviewadapter.BugbotProfile and reviewadapter.BugbotCommittedProfile, which the settings do not change. The error is a setting
-// codex cannot be given (reviewadapter.CodexReviewConfig.Validate), naming the variable, so a bad setting stops the lane when it is built.
-func shippedUnitCheck(getenv func(string) (string, bool)) (*ops.UnitCheck, error) {
-	model, _ := getenv(unitCheckModelEnv)
-	effort, _ := getenv(unitCheckEffortEnv)
-	if err := (reviewadapter.CodexReviewConfig{Model: model}).Validate(); err != nil {
-		return nil, fmt.Errorf("%s: %w", unitCheckModelEnv, err)
+// with the model and effort of the policy table's unit-check pair — the role store's unit-check key as the snapshot resolved it,
+// with the overrides the snapshot applied recorded in UnitCheckOverrides (CRW-1589); the pair is read once with the table and
+// nothing here reads the store or the environment again. Bugbot is the fallback when Codex's quota is
+// spent: reviewadapter.BugbotProfile and reviewadapter.BugbotCommittedProfile, which the settings do not change. The error is a pair
+// codex cannot be given (reviewadapter.CodexReviewConfig.Validate), naming the variable of an override and the field otherwise, so a
+// bad value stops the lane when it is built.
+func shippedUnitCheck(policy *engine.Policy) (*ops.UnitCheck, error) {
+	cfg := reviewadapter.CodexReviewConfig{Model: policy.UnitCheck.Model, Effort: policy.UnitCheck.Effort}
+	modelSource, effortSource := "unit-check model", "unit-check effort"
+	if _, ok := policy.UnitCheckOverrides[role.UnitCheckModelEnv]; ok {
+		modelSource = role.UnitCheckModelEnv
 	}
-	if err := (reviewadapter.CodexReviewConfig{Effort: effort}).Validate(); err != nil {
-		return nil, fmt.Errorf("%s: %w", unitCheckEffortEnv, err)
+	if _, ok := policy.UnitCheckOverrides[role.UnitCheckEffortEnv]; ok {
+		effortSource = role.UnitCheckEffortEnv
 	}
-	cfg := reviewadapter.CodexReviewConfig{Model: model, Effort: effort}
+	if strings.TrimSpace(cfg.Model) == "" || strings.TrimSpace(cfg.Effort) == "" {
+		return nil, fmt.Errorf("unit-check needs a resolved model and effort in the role snapshot")
+	}
+	if err := (reviewadapter.CodexReviewConfig{Model: cfg.Model}).Validate(); err != nil {
+		return nil, fmt.Errorf("%s: %w", modelSource, err)
+	}
+	if err := (reviewadapter.CodexReviewConfig{Effort: cfg.Effort}).Validate(); err != nil {
+		return nil, fmt.Errorf("%s: %w", effortSource, err)
+	}
 	git := ops.ExecGit("git")
 	return &ops.UnitCheck{
 		Checker: reviewadapter.Adapter{Run: reviewadapter.ExecRun, Fingerprint: func(ctx context.Context, dir string) (string, error) { return ops.Snapshot(ctx, git, dir) }},

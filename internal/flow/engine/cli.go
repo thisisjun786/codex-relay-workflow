@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
@@ -95,7 +96,19 @@ func LoadPolicy() (*Policy, execution.Policy, error) {
 	}
 	snap := role.ReadFlowSnapshot(host.LookupEnv(lookupEnv))
 	if root, _ := lookupEnv(isolationRootEnv); root != "" && !snap.Present {
-		return FakePolicy(), policy, nil
+		// the placeholder table keeps its empty source and digest, but the unit check's pair is the snapshot's, so a test's
+		// CRW_UNIT_CHECK_* overrides still apply to it (CRW-1589)
+		fake := FakePolicy()
+		if r, ok := snap.Role(role.UnitCheck); ok {
+			fake.UnitCheck = Pair{Model: r.Model, Effort: r.Effort}
+		}
+		fake.UnitCheckOverrides = maps.Clone(snap.Overrides)
+		for _, w := range snap.Warnings {
+			if strings.Contains(w, "environment override") {
+				fake.Warnings = append(fake.Warnings, w)
+			}
+		}
+		return fake, policy, nil
 	}
 	table := PolicyFromRoleHelper(snap)
 	if policy.DeclaresAgentRoles() {

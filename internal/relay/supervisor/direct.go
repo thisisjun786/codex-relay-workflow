@@ -219,16 +219,22 @@ func directLayer(k directKind, r Resolution) (string, string) {
 	return k.layer, k.recipientRole
 }
 
-// truncateText keeps at most limit bytes of text without splitting a character.
+// truncateText keeps at most limit bytes of text — the marker included — without splitting a character: a cut text
+// ends with the marker that names the sender's record as where the whole of it stands (the origin digest of the
+// packet is over the uncut text, so the marker changes the display only) (CRW-1595).
 func truncateText(text string, limit int) string {
 	if len(text) <= limit {
 		return text
 	}
-	cut := limit
+	const marker = "\n(truncated; full text in the sender's record; see evidence above)"
+	cut := limit - len(marker)
+	if cut < 0 {
+		return "" // only the production caller's maxDirectBody (6000) is above the marker's length
+	}
 	for cut > 0 && !utf8.RuneStart(text[cut]) {
 		cut--
 	}
-	return text[:cut]
+	return text[:cut] + marker
 }
 
 // directDumps is the stored encoding of a direct packet (the notice encoding: sorted keys).

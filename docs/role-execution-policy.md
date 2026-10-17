@@ -311,13 +311,19 @@ architect's design). They are not the relay's roles above
 role store, `CRW_HOME/subagents.json` (`~/.crw/subagents.json` when `CRW_HOME` is unset), the store
 `crw role helper` reads and writes. The execution policy file does not decide them.
 
-- **Six keys in one `roles` object.** `architect`, `executor`, `reviewer` and `explorer` are the helper roles that
+- **Seven keys in one `roles` object.** `architect`, `executor`, `reviewer` and `explorer` are the helper roles that
   `crw role helper` and the GUI manage. `executor-t1` and `critic` are flow-only keys in the same
-  object: `crw role helper get|set|reset executor-t1` (and `critic`) read and write them, while
+  object, and `unit-check` is the unit check's tool key beside them (CRW-1589): `crw role helper get|set|reset
+  executor-t1` (and `critic`, `unit-check`) read and write them, while
   `crw role helper` (the list), the settings API, the MCP tools and the GUI show the four helper roles only, as before.
 
       crw role helper set executor-t1 --mode model --model <model> --effort <effort>
       crw role helper set critic --mode model --model <model> --effort <effort>
+      crw role helper set unit-check --mode model --model <model> --effort <effort>
+
+  `unit-check` is the pair the shipped unit check's review tool runs on — a tool run, not an agent call, so it is
+  the seventh configured pair of the snapshot but never an agent role: no `agent()` call resolves to it, no alias
+  names it and no session binding carries it.
 
 - **`reviewer-final` is a retired role key.** No flow run calls it, and run records written before it was retired
   still name it and still read. A store that holds a `reviewer-final` entry loads: the entry is never read into a
@@ -325,13 +331,18 @@ role store, `CRW_HOME/subagents.json` (`~/.crw/subagents.json` when `CRW_HOME` i
   role store <path> holds reviewer-final: reviewer-final is a retired role key and is ignored"). `crw role helper get`
   and `set` of the key are refused with that notice, and so is a set by any other writer of the store; `crw role
   helper reset reviewer-final` removes the entry, and the warning goes with it.
-- **A missing flow-only key has a compiled default.** With no `executor-t1` entry, or one that cannot be used, the
-  flow runs `anthropic/claude-sonnet-5-5` at `xhigh`; with no usable `critic` entry (every store written before the
-  critic), `gpt-6.1-sol` at `xhigh`. The default is never the executor's or the reviewer's pair, so a tier step
-  still moves to another pair, and the critic's default is independently configurable from the architect's. Model family is provenance, not a review constraint. A same-thread review is warning-only if actually observed and is recorded while the run continues. Each default in use is a warning, and `crw role helper reset` of the key brings it back.
+- **A missing flow-only key has a compiled default, except the critic.** With no `executor-t1` entry, or one that
+  cannot be used, the flow runs `anthropic/claude-sonnet-5-5` at `xhigh`; with no `unit-check` entry (every store
+  written before CRW-1589), the unit check's tool default of [the unit check](flow/script.md) applies. The default is never the executor's or the reviewer's pair, so a tier step
+  still moves to another pair, and the unit check's default is independently configurable from any agent's. A `critic` entry that is absent is the
+  exception (CRW-1589): the critic inherits the reviewer's pair, undecided parts included, because the model-family
+  review constraint that motivated a compiled default is gone (CRW-1515); a declared critic keeps its own pair and a
+  critic in mode default stays undecided. Model family is provenance, not a review constraint. A same-thread review is warning-only if actually observed and is recorded while the run continues. Each default in use is a warning, and `crw role helper reset` of the key brings it back (the critic's reset brings back the reviewer pair).
 - **A role in mode default is undecided.** A role in `mode: default` (a helper role or a flow-only key), and a
   helper role with no entry or whose entry cannot be used, inherits the session's model: the flow has no pair for
-  it, a call of the role names no model and no effort, and the snapshot warns. `crw role helper set executor-t1
+  it, a call of the role names no model and no effort, and the snapshot warns. `unit-check` is again the exception
+  (CRW-1589): a tool never inherits a session's pair, so a `unit-check` entry in mode default takes the tool's
+  compiled default, and a stored unit-check model with no effort takes the default effort `high`. `crw role helper set executor-t1
   --effort high` on a missing key stores `mode: default`, so the key is then undecided, and the answer says so
   (`source: undecided`). A role with a model and no effort has an undecided effort, also warned. A store that
   cannot be read leaves every role without a compiled default undecided, with the reason.
@@ -369,8 +380,10 @@ role store, `CRW_HOME/subagents.json` (`~/.crw/subagents.json` when `CRW_HOME` i
   pair, and an `effort` the script states that differs from it is not an error. The call result keeps both,
   `meta.requestedPair` and `meta.configuredPair`, and the journal's intent row both pairs.
 
-`crw flow roles` prints the store's path, the digest, the six pairs (each marked when it is a compiled default or
-undecided), the alias table and every warning. `crw doctor flow-roles` prints the same snapshot as JSON with the
+`crw flow roles` prints the store's path, the digest, the seven configured pairs (six agent roles and
+`unit-check`), their sources (stored, compiled default, inherited reviewer, environment override or undecided),
+the alias table and every warning. `crw flow start --preview` includes the same unit-check pair.
+`crw doctor flow-roles` prints the same snapshot as JSON with the
 warnings of the execution policy file beside it. `get_capabilities` describes the same snapshot under
 `executionPolicy.agentRoles` (its `source`, `digest`, `roles` with each role's `state`, `aliases` and `warnings`)
 when the store has a file or the policy file declares `agent-roles` or `agent-aliases`; the rest of
@@ -384,10 +397,11 @@ roles` and `crw doctor flow-roles`: a section that does not parse (a role missin
 unknown key, `agent-aliases` without `agent-roles`, alias rows that overlap) is ignored with the reason, and of a
 section that parses, a pair the file's `allowed` list does not approve. A same-thread review is warned and recorded only when the host actually reports it, and does not block. The `critic` key is the one
 a section may leave out, because every file written before the critic does: such a section loads, its critic takes
-the compiled default `gpt-6.1-sol` at `xhigh` (with the model alias `ocx-gpt-6-1-sol`), and the loader warns
-"agent-roles declares no critic; the compiled default gpt-6.1-sol/xhigh applies"; the `allowed` list is not
-compared with that default, which the file did not declare. A section that leaves out any other role is ignored as
-before. A section of a file written before `reviewer-final` was retired loads as well: its `reviewer-final` entry
+the reviewer's pair (with the model alias `ocx-gpt-6-1-sol`), and the loader warns
+"agent-roles declares no critic; the critic inherits the reviewer pair". The declared reviewer pair is
+checked against `allowed`; the inherited critic does not add another check. A section that leaves out
+any other agent role is ignored as before. The `unit-check` tool key belongs to the helper role store,
+not to this legacy `agent-roles` section. A section of a file written before `reviewer-final` was retired loads as well: its `reviewer-final` entry
 and every `agent-aliases` row that names the key are skipped (a call such a row covered resolves by the other rows),
 and the loader warns once, naming the sections that hold the key ("the execution policy's agent-roles names
 reviewer-final: reviewer-final is a retired role key and is ignored"). Every other unknown key still has the
@@ -402,12 +416,16 @@ run, which never reads it).
 
 A `crw flow` process reads the store once when it starts and records the store's path and the canonical digest of
 every role's pair in the run record (`flow_runs` and the journal's `started` row, `policy_source` and
-`policy_digest`), with the table's warnings (`policy_warnings`) when there are any. The digest is SHA-256 of the
-compact JSON array of `[role, model, effort]` in the order above, an undecided value empty; prompt overrides,
-fallbacks and every other member of the store are outside it. A run keeps its snapshot: editing the store changes
+`policy_digest`), with the table's warnings (`policy_warnings`) when there are any. The digest is SHA-256 of the compact JSON array of `[role, model, effort]` in the order above,
+including `unit-check` last and any effective environment overrides; an undecided agent value is empty.
+Prompt overrides, fallbacks and every other member of the store are outside it. The journal's `started`
+row records all seven effective pairs under `role_pairs` on every backend. Non-blank
+`CRW_UNIT_CHECK_MODEL` and `CRW_UNIT_CHECK_EFFORT` values override only their own fields at snapshot time;
+values are trimmed, blank values are ignored, and applied values are recorded by variable name in
+`unit_check_overrides` and named in `policy_warnings`. A run keeps its snapshot: editing the store changes
 nothing for a run in progress. A run process that resumes a run and reads another digest writes a
 `policy_repinned` event with the old and the new digest to the journal before its first live call. From then on
-only the calls that start a new thread take the new pairs; a continuation keeps the pair of the thread in its
+new agent threads and subsequent unit checks take the new snapshot's pairs; a continuation keeps the pair of the thread in its
 handle, since the pair of a thread never changes. `crw flow show RUN` prints the path and digest the run holds on a
 `policy` line (and `policy_path` and `policy_digest` in `--json`), the latest of its start and any `policy_repinned`
 event, with the digest a repin replaced (`repinned from <old digest>`); a later start of the run, which pins the

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/bound"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/crwcmd"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
@@ -505,6 +506,11 @@ func withPinnedPairs(table *engine.Policy, pinned map[string]engine.Pair, digest
 		out.Roles = map[string]engine.RoleSpec{}
 	}
 	for role, pair := range pinned {
+		if role == execution.AgentUnitCheck {
+			// the unit check's tool pair is pinned beside the agent roles, never among them (CRW-1589)
+			out.UnitCheck = pair
+			continue
+		}
 		spec := out.Roles[role]
 		spec.Pair = pair
 		out.Roles[role] = spec

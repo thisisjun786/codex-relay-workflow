@@ -30,11 +30,12 @@ func cutText(text string, limit int) string {
 	if len(text) <= limit {
 		return text
 	}
-	cut := limit
+	const marker = "\n(truncated; full text in the sender's record; see evidence above)"
+	cut := limit - len(marker)
 	for cut > 0 && !utf8.RuneStart(text[cut]) {
 		cut--
 	}
-	return text[:cut]
+	return text[:cut] + marker
 }
 
 // parkedReport binds the management seat 01mgmtA over the lead 01lead of INI-1, reports lrp-proxy

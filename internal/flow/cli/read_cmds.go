@@ -133,16 +133,19 @@ func (c *command) printDetail(d RunDetail) {
 	case d.State == StatePaused && !d.Live:
 		// the operator paused the run and its process ended paused (CRW-1487)
 		notes = append(notes, "paused by "+d.Paused+"; no process holds the run: crw flow resume "+d.RunID+" goes on")
+	case d.Paused != "" && Over(d.State):
+		// a run that is over keeps the pause as history; nothing resumes or recovers it (CRW-1595)
+		notes = append(notes, "previously paused by "+d.Paused)
 	case d.Paused != "":
 		notes = append(notes, "paused by "+d.Paused)
 	}
 	if len(d.HeldReasons) > 0 {
 		notes = append(notes, "calls held for "+strings.Join(d.HeldReasons, ", "))
 	}
-	if d.Holds > 0 {
+	if d.Holds > 0 && !Over(d.State) {
 		notes = append(notes, fmt.Sprintf("%d call(s) in recovery_hold: crw flow recover", d.Holds))
 	}
-	if d.Unsettled-d.Holds > 0 && !d.Live {
+	if d.Unsettled-d.Holds > 0 && !d.Live && !Over(d.State) {
 		// while a process holds the run lock the run goes on by itself, and a resume is refused
 		notes = append(notes, fmt.Sprintf("%d call(s) to go on with: crw flow resume %s", d.Unsettled-d.Holds, d.RunID))
 	}
@@ -204,12 +207,28 @@ func (c *command) printDetail(d RunDetail) {
 		switch {
 		case q.Applied != "":
 			state = "answered by " + q.Applied
+		case q.Superseded:
+			state = "superseded by resume"
 		case !q.Current:
 			state = "replaced by a later question"
 		case q.ReportUp:
 			state = "a request to send up with crw flow report-up (" + q.Ask + "); the run waits for no answer"
 		}
 		fmt.Fprintf(w, "question %s r%d  node %s  %s  %s\n", q.ID, q.Revision, cell(q.Node), q.Reason, state)
+	}
+	// the escalation rows that asked nothing: recorded history, or — when the run's escalated outcome names the
+	// current one — what still needs the orchestrator (CRW-1595)
+	for _, q := range d.Escalations {
+		state := "recorded; no answer requested"
+		switch {
+		case q.Superseded:
+			state = "superseded by resume"
+		case !q.Current:
+			state = "replaced by a later escalation"
+		case d.State == StateHeld && d.Outcome != nil && d.Outcome.Escalation == q.ID:
+			state = "action required; no answer requested"
+		}
+		fmt.Fprintf(w, "escalation %s  node %s  %s  %s\n", q.ID, cell(q.Node), q.Reason, state)
 	}
 }
 

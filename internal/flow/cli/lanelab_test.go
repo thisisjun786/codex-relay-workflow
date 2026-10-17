@@ -92,6 +92,9 @@ type laneLab struct {
 	// verifyFail, when a test sets it, is asked by labVerifier for every verification request and a true answer fails the
 	// verification of that head (CRW-1490 close repair tests).
 	verifyFail func(req ops.VerifyRequest) bool
+	// mergeVerifyFail, when a test sets it, is the error verifyMerged answers for the integration batch's merged tree
+	// (CRW-1595): the batch's verification fails with it.
+	mergeVerifyFail func(vars map[string]string) error
 	// turn, when a test sets it, is asked first for every turn of the model: a plan it answers with true is the turn's, false leaves
 	// the turn to the happy path below (CRW-1452).
 	turn func(c labCall, r fakehost.TurnRequest) (fakehost.TurnPlan, bool)
@@ -608,6 +611,12 @@ func (l *laneLab) verifyMerged(ctx context.Context, dir string, env []string) er
 		if k, v, ok := strings.Cut(kv, "="); ok {
 			vars[k] = v
 		}
+	}
+	l.mu.Lock()
+	fail := l.mergeVerifyFail
+	l.mu.Unlock()
+	if fail != nil {
+		return fail(vars)
 	}
 	raw, err := l.sealed(ctx, dir, vars["CRW_VERIFY_HEAD"], vars["CRW_VERIFY_BASE"])
 	if err != nil {

@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/storeseed"
 )
@@ -268,5 +270,66 @@ func TestDirectStageReaddressesAnUnsentMessage(t *testing.T) {
 	}
 	if recipient, _ := packet["envelope"].(map[string]any)["recipient"].(map[string]any); recipient["scopeKind"] != "management" {
 		t.Fatalf("the re-addressed packet still names %v", recipient)
+	}
+}
+
+// CRW-1595 (finding 4): a body over the 6000-byte cap is cut inside the cap with a marker naming the sender's record
+// as where the whole text stands; a body at the cap is untouched, the cut lands on a rune boundary, the origin digest
+// is still the whole text's, and staging the same message again stays the same message.
+func TestCRW1595DirectTruncationIsMarked(t *testing.T) {
+	w := newStoreRecipientWorld(t)
+	w.superviseInitiative()
+	w.manage(directManagement, directManagement, storeRecipientInitiative, storeRecipientSupervisor)
+	c := w.channel()
+	const marker = "(truncated; full text in the sender's record; see evidence above)"
+	stage := func(m DirectMessage) map[string]any {
+		t.Helper()
+		answer, err := c.StageDirect(w.ctx, m, nil)
+		if err != nil || answer["staged"] != true {
+			t.Fatalf("staging %s: %v %v", m.Subject, answer, err)
+		}
+		row, err := w.s.SupervisorMessage(w.ctx, answer["messageId"].(string))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var packet map[string]any
+		if err := json.Unmarshal([]byte(row.Packet), &packet); err != nil {
+			t.Fatal(err)
+		}
+		return packet
+	}
+	// exactly 6000 bytes: no cut, no marker
+	exact := DirectMessage{Kind: KindLeadReport, Relationship: "initiative:" + storeRecipientInitiative, Subject: "s-exact", Text: strings.Repeat("a", maxDirectBody)}
+	if body := stage(exact)["body"]; body != exact.Text {
+		t.Fatalf("a body at the cap was touched")
+	}
+	// a longer text with a preface: cut inside the cap, marked, the preface kept
+	long := DirectMessage{Kind: KindLeadReport, Relationship: "initiative:" + storeRecipientInitiative, Subject: "s-long",
+		Text: strings.Repeat("b", 6293), Preface: "reported by thread thr-9", Evidence: []string{"run:evidence-1"}}
+	packet := stage(long)
+	body, _ := packet["body"].(string)
+	if len(body) > maxDirectBody || !strings.HasSuffix(body, marker) || !strings.HasPrefix(body, "reported by thread thr-9") {
+		t.Fatalf("the cut body is %d bytes, marker %v, preface %v", len(body), strings.HasSuffix(body, marker), strings.HasPrefix(body, "reported by thread thr-9"))
+	}
+	// the origin digest is the whole text's, computed before the cut
+	origin, _ := packet["origin"].(map[string]any)
+	if want := "sha256:" + pyvalue.SHA256Hex(composedText(long)); origin["text"] != want {
+		t.Fatalf("the origin digest is %v, want the whole text's %s", origin["text"], want)
+	}
+	// the rendered message carries the marker and the evidence pointer
+	rendered := c.render(Packet(packet), "req-1", "tok-1")
+	if !strings.Contains(rendered, marker) || !strings.Contains(rendered, "evidence: run:evidence-1") {
+		t.Fatalf("the rendered message lacks the marker or the evidence:\n%s", rendered)
+	}
+	// the cut lands on a rune boundary: multi-byte text stays valid UTF-8
+	multi := DirectMessage{Kind: KindLeadReport, Relationship: "initiative:" + storeRecipientInitiative, Subject: "s-multi", Text: strings.Repeat("한", 2001)}
+	body, _ = stage(multi)["body"].(string)
+	if len(body) > maxDirectBody || !utf8.ValidString(body) || !strings.HasSuffix(body, marker) {
+		t.Fatalf("the cut multi-byte body is %d bytes, valid %v", len(body), utf8.ValidString(body))
+	}
+	// staging the same message again is the same message
+	again, err := c.StageDirect(w.ctx, long, nil)
+	if err != nil || again["staged"] != false {
+		t.Fatalf("the same message staged again: %v %v", again, err)
 	}
 }
