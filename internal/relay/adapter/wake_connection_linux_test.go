@@ -19,6 +19,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/supervisor"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc/tmploctest"
 )
 
 func TestWakeConnectionReplacementHelper(t *testing.T) {
@@ -26,6 +27,7 @@ func TestWakeConnectionReplacementHelper(t *testing.T) {
 	if socket == "" {
 		return
 	}
+	tmploctest.CheckSocket(t, filepath.Dir(socket), socket)
 	listener, err := net.Listen("unix", socket)
 	if err != nil {
 		t.Fatal(err)
