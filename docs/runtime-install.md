@@ -427,8 +427,16 @@ command for the first. Each probe runs in a home of its own below `TMPDIR` (`/tm
 relative or unusable `TMPDIR` is reported among the `warnings` with its reason. A missing or broken tool, and a section that names nothing, are `warnings`
 there and never a fault. `crw flow start` shows the same reading as the preflight fact
 `verifier_prerequisites`: `pass`, or `warn` with the reason (it also warns when the go is older than
-the repository's `go.mod` asks, and when a `tree` verification's repository has no `cmd/crw-dev`),
-and it never stops the start.
+the repository's `go.mod` asks, and when a `tree` verification's repository has no `cmd/crw-dev`).
+Relay, session and verifier facts are advisory and never stop the start; non-passing readings
+are warned and recorded for a run that starts.
+
+Repository resolution is a prerequisite: if `repository_available` is `fail`, start sets
+`blocked` and refuses both `crw flow start` and `--preview` with exit 1, before pinning a
+handoff, writing the run's spec or starting its process. `--repo` names the repository;
+without it the current directory must be inside one. The refusal retains the guidance
+"not inside a git repository (name one with --repo)". A valid repository adds no repository
+fact. `--force` does not bypass this refusal.
 
 ### Where work tracking lives
 
