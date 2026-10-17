@@ -850,6 +850,42 @@ func TestPlanHandoffNamesTheCompilerKeys(t *testing.T) {
 	})
 }
 
+// CRW-1623: the docs distinguish advisory facts from the repository prerequisite.
+// This checks wording only; CRW-1613's CLI tests cover the actual start behavior.
+func TestPreflightDocsDistinguishRepositoryBlocker(t *testing.T) {
+	for _, path := range []string{
+		"plugins/crw/skills/crw-canon/references/flow/preview.md",
+		"docs/runtime-install.md",
+	} {
+		t.Run(path, func(t *testing.T) {
+			text := readRepoText(t, path)
+			var repository, advisory string
+			for _, paragraph := range strings.Split(text, "\n\n") {
+				if strings.Contains(paragraph, "`repository_available`") {
+					repository = normalized(paragraph)
+				}
+				if strings.Contains(paragraph, "facts are advisory") {
+					advisory = normalized(paragraph)
+				}
+			}
+			for _, missing := range wordingMissing(repository, []string{
+				"`repository_available`.{0,20}`fail`",
+				"`blocked`",
+				"refuses both `crw flow start` and `--preview`",
+				"exit 1", "`--repo`", "`--force`",
+			}) {
+				t.Errorf("repository paragraph lacks %s", missing)
+			}
+			if !strings.Contains(strings.ToLower(advisory), "relay, session and verifier facts are advisory and never stop the start") {
+				t.Error("the advisory statement does not distinguish relay, session and verifier facts")
+			}
+			if strings.Contains(strings.ToLower(normalized(text)), "a fact never stops the start") {
+				t.Error("the document still gives every fact a non-blocking guarantee")
+			}
+		})
+	}
+}
+
 // The project key of a plan is the scope_key of the child's project binding, which is OWNER:NAME:N for a milestone plan (CRW-1379,
 // the documents of the plan-input change): crw-plan and flow.md no longer call it the project's UUID, the order edge limit counts the
 // ".N" suffix a re-plan adds, and the key warnings of plan-input are said to reach a pipe through the project's warnings member.
