@@ -455,10 +455,19 @@ func flagSet(names ...string) map[string]bool {
 
 var readerSpecs = map[string]argSpec{"cat": catSpec, "nl": nlSpec, "head": headSpec, "tail": tailSpec}
 
+func stdinOperand(p string) bool {
+	switch p {
+	case "-", "/dev/stdin", "/dev/fd/0", "/proc/self/fd/0":
+		return true
+	default:
+		return false
+	}
+}
+
 func (st *proofState) readerPathsRead(operands, stdinFiles []string, directory bool) bool {
 	readsStdin := len(operands) == 0
 	for _, p := range operands {
-		if p == "-" {
+		if stdinOperand(p) {
 			readsStdin = true
 			continue
 		}
@@ -706,11 +715,12 @@ func (st *proofState) repoPathInside(p, repo string) bool {
 	if !ok {
 		return false
 	}
-	if resolved, err := filepath.EvalSymlinks(raw); err == nil {
-		info, err := os.Stat(resolved)
-		return err == nil && info.Mode().IsRegular() && insideRoot(resolved, st.root)
+	clean := filepath.Clean(raw)
+	if !insideRoot(clean, st.root) {
+		return false
 	}
-	return insideRoot(filepath.Clean(raw), st.root)
+	info, err := os.Lstat(clean)
+	return err != nil || info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0
 }
 
 func looksLikeHex(s string) bool {
@@ -726,7 +736,7 @@ func looksLikeHex(s string) bool {
 }
 
 func (st *proofState) pathReads(path string, directory bool) bool {
-	if path == "-" {
+	if stdinOperand(path) {
 		return false
 	}
 	return checkoutPath(path, st.cwd, st.root, directory)
