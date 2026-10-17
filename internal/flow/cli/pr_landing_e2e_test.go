@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,7 +12,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/pullrequest"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/reviewadapter"
 	"github.com/thisisjun786/codex-relay-workflow/internal/integrator"
 	"github.com/thisisjun786/codex-relay-workflow/internal/tracking"
 	"github.com/thisisjun786/codex-relay-workflow/internal/tracking/trackingfake"
@@ -159,5 +163,304 @@ func TestPRUnitLandingEndToEnd(t *testing.T) {
 	}
 	if got := fake.Pulls(); len(got) != 1 {
 		t.Errorf("%d pull requests: one pull request carries the milestone", len(got))
+	}
+}
+
+// ---- the bundle's native pull request flow (CRW-1423, step 3) ----
+
+// bundleRequester is the parent's merge-request delivery of a bundle run: it feeds the request to the production decision
+// flow of the dev queue, never to a direct EnqueuePR.
+type bundleRequester func(context.Context, ops.MergeRequest) (string, error)
+
+func (f bundleRequester) MergeRequest(ctx context.Context, m ops.MergeRequest) (string, error) {
+	return f(ctx, m)
+}
+
+// bundleGH is the tracking adapter of a bundle's end to end: the real GitHub adapter over the fake, whose checks answer
+// success for whatever head the pull request currently carries (the lane's head moves as the milestone lands) and whose
+// OpenPullRequest lets a test crash the process right after the POST, before the op's row is written.
+type bundleGH struct {
+	*tracking.GitHub
+	fake      *trackingfake.Server
+	afterOpen func()
+	posts     int
+}
+
+func (g *bundleGH) Checks(ctx context.Context, ref tracking.Ref) (tracking.Checks, error) {
+	pr, err := g.GitHub.PullRequest(ctx, ref)
+	if err != nil {
+		return tracking.Checks{}, err
+	}
+	g.fake.SetChecks(pr.HeadSHA, []trackingfake.FakeCheckRun{{Name: "ci", Status: "completed", Conclusion: "success"}}, nil)
+	return g.GitHub.Checks(ctx, ref)
+}
+
+func (g *bundleGH) OpenPullRequest(ctx context.Context, in tracking.NewPullRequest) (tracking.PullRequest, error) {
+	g.posts++
+	pr, err := g.GitHub.OpenPullRequest(ctx, in)
+	if err == nil && g.afterOpen != nil {
+		g.afterOpen()
+		if ctx.Err() != nil {
+			return pr, ctx.Err()
+		}
+	}
+	return pr, err
+}
+
+// bundleLab is a two-issue PR-unit lab whose handoff's target names pr_base dev: the milestone's own project lane opens the
+// pull request (crw.prOpen after the close is reported) and asks for its merge (crw.mergeRequest), which the requester
+// closure lands through the queue's decide flow. answers the lab, the fake, the opened-count, the queue's pass, the count of
+// merge requests and the landing the requester saw.
+func bundleLab(t *testing.T, onOpen func()) (*laneLab, *trackingfake.Server, *bundleGH, *integrator.Runner, *int, **integrator.Report, string) {
+	t.Helper()
+	l := newLaneLabFor(t, labOwner, "crw/m1", labIssue{Key: "o:r:10", Milestone: "M1"}, labIssue{Key: "o:r:11", Milestone: "M1", After: []string{"o:r:10"}})
+	root := t.TempDir()
+	bare := filepath.Join(root, "remote.git")
+	l.git(root, "init", "-q", "--bare", "-b", "dev", bare)
+	l.git(l.repo, "remote", "add", "origin", bare)
+	l.git(l.repo, "push", "-q", "origin", "main:refs/heads/dev")
+	// the bundle's handoff: the milestone integrates on crw/m1 and its pull request goes onto dev (written before start)
+	l.input.Projects[0].Target.PRBase = "dev"
+	raw, err := json.MarshalIndent(l.input, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(l.file, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fake := trackingfake.New(t, "o/r")
+	fake.HeadSHA = func(branch string) string {
+		out, _ := exec.Command("git", "-C", bare, "rev-parse", "--verify", "-q", "refs/heads/"+branch).Output()
+		return strings.TrimSpace(string(out))
+	}
+	gh, err := tracking.NewGitHub("o/r", tracking.StaticToken(trackingfake.Token), tracking.WithBaseURL(fake.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrapped := &bundleGH{GitHub: gh, fake: fake, afterOpen: onOpen}
+	l.prFactory = func(repo string) (tracking.PullRequests, error) { return wrapped, nil }
+	l.prRepo = "o/r"
+	scripts := filepath.Join(root, "scripts")
+	if err := os.MkdirAll(scripts, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	verify := filepath.Join(scripts, "verify.sh")
+	if err := os.WriteFile(verify, []byte(e2eVerify), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gate := filepath.Join(scripts, "gate.sh")
+	if err := os.WriteFile(gate, []byte("#!/bin/sh\necho gate >> \"$0.calls\"\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	checkout := filepath.Join(root, "queue-checkout")
+	l.git(root, "clone", "-q", bare, checkout)
+	cfg, err := integrator.Config{
+		Checkout: checkout, QueueDir: filepath.Join(root, "queue"), LockFile: filepath.Join(root, "lock"), RunsDir: filepath.Join(root, "runs"),
+		WorkRoot: filepath.Join(root, "work"), Remote: "origin", Branch: "dev", GateCommand: []string{gate}, VerifyCommand: []string{verify},
+		RecordVersionCommand: []string{"true"}, PullRequestRepo: "o/r",
+	}.Resolved()
+	if err != nil {
+		t.Fatal(err)
+	}
+	queue := integrator.NewRunner(cfg)
+	queue.PullRequests = wrapped
+	queue.Now = func() time.Time { return time.Date(2026, 10, 15, 4, 0, 0, 0, time.UTC) }
+	requests := 0
+	var landing *integrator.Report
+	l.mergeRequester = bundleRequester(func(ctx context.Context, m ops.MergeRequest) (string, error) {
+		requests++
+		dec, err := pullrequest.Decide(ctx, queue, pullrequest.DecideInput{PR: m.PR, Head: m.Head, ReleaseImpact: "none"})
+		if err != nil || dec.State != "enqueued" {
+			return "", fmt.Errorf("the parent's decision: %v %v", dec, err)
+		}
+		rep := queue.Pass(ctx)
+		if rep.Exit != integrator.ExitPushed {
+			return "", fmt.Errorf("the queue's pass: %+v", rep)
+		}
+		landing = &rep
+		return "req_" + m.Head[:8], nil
+	})
+	return l, fake, wrapped, queue, &requests, &landing, bare
+}
+
+// bundleRows are the completed rows of op in the run's journal.
+func bundleRows(l *laneLab, op string) []engine.Event {
+	var out []engine.Event
+	for _, e := range l.events() {
+		if e.Kind == engine.KindCall && e.Op == op && e.Event == engine.EvCompleted {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// TestBundlePRFlowEndToEnd (CRW-1423): a bundle's own lane opens the pull request after its milestone closes and reports
+// (crw.prOpen), asks the parent for the merge with the persisted review record, and the parent's decision enqueues it —
+// one pull request, both issues' heads on dev, no manual open or enqueue step.
+func TestBundlePRFlowEndToEnd(t *testing.T) {
+	l, fake, gh, _, requests, landing, bare := bundleLab(t, nil)
+	spec := l.start("start", "project-lane", "--args", `{"plan":"plan-1","milestone":"M1"}`, "--handoff", l.file)
+	v := l.closed(l.runToEnd(spec.RunID))
+	l.effectsOnce("o:r:10", "o:r:11")
+	// one pull request, opened by the lane itself, carrying both issues
+	if pulls := fake.Pulls(); len(pulls) != 1 {
+		t.Fatalf("%d pull requests", len(pulls))
+	}
+	if *requests != 1 || landing == nil || *landing == nil {
+		t.Fatalf("%d merge requests, landing %v", *requests, landing)
+	}
+	for _, key := range []string{"o:r:10", "o:r:11"} {
+		var head string
+		if err := l.w.st.DB.QueryRow("SELECT head FROM dag_agent_acceptances WHERE node_id = ?", l.nodeOf[key]).Scan(&head); err != nil {
+			t.Fatal(err)
+		}
+		if err := exec.Command("git", "-C", bare, "merge-base", "--is-ancestor", head, "dev").Run(); err != nil {
+			t.Errorf("the head of %s is not on dev", key)
+		}
+	}
+	// the journal's order: gate and report rows precede the open, the open precedes the merge request
+	gate := bundleRows(l, "crw."+ops.NameFinalGate)
+	report := bundleRows(l, ops.OpReportUp)
+	open := bundleRows(l, ops.OpPROpen)
+	merges := bundleRows(l, ops.OpMergeRequest)
+	if len(open) != 1 || len(merges) != 1 || len(gate) == 0 || len(report) == 0 {
+		t.Fatalf("rows: %d gate %d report %d open %d merge", len(gate), len(report), len(open), len(merges))
+	}
+	if !(gate[len(gate)-1].Seq < open[0].Seq && report[len(report)-1].Seq < open[0].Seq && open[0].Seq < merges[0].Seq) {
+		t.Errorf("row order gate/report %d,%d open %d merge %d", gate[len(gate)-1].Seq, report[len(report)-1].Seq, open[0].Seq, merges[0].Seq)
+	}
+	if str(open[0].Data, "state") != "opened" || str(merges[0].Data, "state") != "requested" {
+		t.Errorf("open %v merge %v", open[0].Data, merges[0].Data)
+	}
+	// the persisted review record: no review bots are connected in the lab
+	records, err := filepath.Glob(filepath.Join(RunDir(l.w.state, spec.RunID), "pr-review-*.json"))
+	if err != nil || len(records) != 1 {
+		t.Fatalf("review records %v %v", records, err)
+	}
+	rec, err := tracking.ReadPRReviewHistory(records[0], tracking.Ref{Repo: "o/r", Number: 1})
+	if err != nil || rec.Bots != tracking.ReviewBotsNotConnected || rec.Note != "리뷰 봇 미연결" {
+		t.Errorf("the review record: %+v %v", rec, err)
+	}
+	// the pull request holds the parent's ready comment and the queue's landing comment
+	comments := fake.Comments(1)
+	var ready, landed bool
+	for _, c := range comments {
+		ready = ready || strings.Contains(c, "state: ready")
+		landed = landed || strings.Contains(c, "result: pushed")
+	}
+	if !ready || !landed {
+		t.Errorf("comments ready %v landed %v: %q", ready, landed, comments)
+	}
+	if land := (*landing).Landing; land == nil || land.PullRequest != "o/r#1" || land.Verification.Status != 0 {
+		t.Errorf("the landing %+v", (*landing).Landing)
+	}
+	// the run's value carries the opened pull request
+	if v.State != "closed" {
+		t.Fatalf("the run ended %s", v.State)
+	}
+	if posts := gh.posts; posts != 1 {
+		t.Errorf("%d open POST(s), want 1", posts)
+	}
+}
+
+// TestResumeAfterPROpenDoesNotOpenASecondPR: a crash after the lane's completed prOpen row, and a crash between the open's
+// POST and its row, both resume to one pull request and one merge request — the first by the op's record, the second by the
+// head/base lookup (FindPullRequest) that finds the pull request the killed process made.
+func TestResumeAfterPROpenDoesNotOpenASecondPR(t *testing.T) {
+	t.Run("after the completed row", func(t *testing.T) {
+		l, fake, gh, _, requests, landing, _ := bundleLab(t, nil)
+		l.afterRow = func(e engine.Event) {
+			if e.Kind == engine.KindCall && e.Op == ops.OpPROpen && e.Event == engine.EvCompleted {
+				l.mu.Lock()
+				cur := l.cur
+				l.mu.Unlock()
+				if f, ok := cur.Journal.(interface{ Flush() error }); ok {
+					if err := f.Flush(); err != nil {
+						t.Fatal(err)
+					}
+				}
+				l.kill()
+			}
+		}
+		spec := l.start("start", "project-lane", "--args", `{"plan":"plan-1","milestone":"M1"}`, "--handoff", l.file)
+		l.closed(l.runToEnd(spec.RunID))
+		if l.processes != 2 {
+			t.Fatalf("%d processes, want 2", l.processes)
+		}
+		if got := len(fake.Pulls()); got != 1 || gh.posts != 1 {
+			t.Fatalf("%d pull requests, %d POST(s)", got, gh.posts)
+		}
+		if *requests != 1 || *landing == nil {
+			t.Fatalf("%d merge requests", *requests)
+		}
+	})
+	t.Run("after the POST before the row", func(t *testing.T) {
+		var l *laneLab
+		var fake *trackingfake.Server
+		var gh *bundleGH
+		var requests *int
+		var landing **integrator.Report
+		l, fake, gh, _, requests, landing, _ = bundleLab(t, func() {
+			// the process dies between the successful POST and the op's row; the resumed lookup must find this pull request
+			l.mu.Lock()
+			cur := l.cur
+			l.mu.Unlock()
+			if cur != nil {
+				l.kill()
+			}
+		})
+		spec := l.start("start", "project-lane", "--args", `{"plan":"plan-1","milestone":"M1"}`, "--handoff", l.file)
+		l.closed(l.runToEnd(spec.RunID))
+		if got := len(fake.Pulls()); got != 1 || gh.posts != 1 {
+			t.Fatalf("%d pull requests, %d POST(s): the killed open made one and the retry reused it", got, gh.posts)
+		}
+		if *requests != 1 || *landing == nil {
+			t.Fatalf("%d merge requests", *requests)
+		}
+		open := bundleRows(l, ops.OpPROpen)
+		if len(open) != 1 || str(open[0].Data, "pr") != "o/r#1" {
+			t.Errorf("the opened row: %v", open)
+		}
+	})
+}
+
+// TestNoPRIsOpenedForAnIncompleteOrCrosscheckPendingMilestone: a run that does not close — a lane that escalates (all lanes
+// not landed: incomplete) or a crosscheck that stays needs_changes — opens no pull request and asks for no merge, whatever
+// state the value reports.
+func TestNoPRIsOpenedForAnIncompleteOrCrosscheckPendingMilestone(t *testing.T) {
+	for name, script := range map[string]func(l *laneLab){
+		"a lane that escalates": func(l *laneLab) {
+			bad := func(text string) labCheck {
+				return labCheck{Verdict: reviewadapter.VerdictNeedsChanges, Findings: []reviewadapter.Finding{{Severity: "P1", Text: text, File: "README.md", Line: 1}}}
+			}
+			l.UnitChecks("o:r:10", ops.UnitCheckUncommitted, bad("wrong once"), bad("wrong twice"), bad("a third thing is wrong"))
+		},
+		"a crosscheck that stays needs_changes": func(l *laneLab) {
+			f := reviewadapter.Finding{Severity: "P1", Text: "the close does not hold", File: "README.md", Line: 1}
+			needs := reviewadapter.Result{State: reviewadapter.StateOK, Verdict: reviewadapter.VerdictNeedsChanges, Findings: []reviewadapter.Finding{f}}
+			l.Crosschecks("M1", 1, 0, "A", 1, needs)
+			l.Crosschecks("M1", 2, 0, "A", 1, needs)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			l, fake, gh, _, requests, _, _ := bundleLab(t, nil)
+			script(l)
+			spec := l.start("start", "project-lane", "--args", `{"plan":"plan-1","milestone":"M1"}`, "--handoff", l.file)
+			res := l.runToEnd(spec.RunID)
+			var v map[string]any
+			_ = json.Unmarshal(res.Value, &v)
+			if v["state"] == "closed" {
+				t.Fatalf("%s closed: %s", name, res.Value)
+			}
+			if got := len(fake.Pulls()); got != 0 || gh.posts != 0 {
+				t.Errorf("%d pull requests, %d POST(s): none may exist for a milestone that did not close", got, gh.posts)
+			}
+			if *requests != 0 {
+				t.Errorf("%d merge requests", *requests)
+			}
+			if open := bundleRows(l, ops.OpPROpen); len(open) != 0 {
+				t.Errorf("crw.prOpen ran on a milestone that did not close: %v", open)
+			}
+		})
 	}
 }

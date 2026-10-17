@@ -29,6 +29,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/storeseed"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tracking"
 )
 
 // The lane lab of CRW-1277: the run process of the shipped binary (ProductionWorld, with the lane operations SchedulerLane builds) over a
@@ -68,6 +69,11 @@ type laneLab struct {
 	killed  bool
 	cancel  context.CancelFunc
 	effects []string
+	// the pull request seams of a bundle's e2e (CRW-1423): prFactory the tracking adapter factory, prRepo the tracking
+	// repository override, mergeRequester the parent's merge-request delivery (nil records nothing).
+	prFactory      func(string) (tracking.PullRequests, error)
+	prRepo         string
+	mergeRequester ops.MergeRequester
 	// verifications counts the verifications of merged trees; processes the run processes the lab ran.
 	verifications int
 	processes     int
@@ -310,7 +316,7 @@ func newLaneLabFor(t *testing.T, owner, target string, issues ...labIssue) *lane
 			t.Errorf("the run's world hands the lane no reporter of F11: %T", req.Reporter)
 		}
 		return BuildLane(ctx, req, LaneOptions{Verifier: labVerifier{l}, IntegrationVerify: l.verifyMerged, SkillsDigest: "sha256:lab-skills", Reporter: &labReporter{l: l},
-			UnitCheck: l.uc.seam(), Crosscheck: l.cc.seam(),
+			UnitCheck: l.uc.seam(), Crosscheck: l.cc.seam(), NewPullRequests: l.prFactory, PRRepository: l.prRepo,
 			Relay: func(r *SchedRelay) ops.Relay {
 				r.testAfterBatch = func() error {
 					l.mu.Lock()
@@ -556,6 +562,17 @@ func (r *labReporter) ReportUp(_ context.Context, rep ops.Report) (string, error
 	r.l.reports = append(r.l.reports, rep.Plan+"/"+rep.Milestone)
 	r.l.reportBodies = append(r.l.reportBodies, string(report.MilestoneBody(rep)))
 	return "rep_" + rep.Milestone, nil
+}
+
+// MergeRequest delegates to the mergeRequester a test set; without one the call records nothing (a direct landing never asks).
+func (r *labReporter) MergeRequest(ctx context.Context, mr ops.MergeRequest) (string, error) {
+	r.l.mu.Lock()
+	m := r.l.mergeRequester
+	r.l.mu.Unlock()
+	if m == nil {
+		return "", nil
+	}
+	return m.MergeRequest(ctx, mr)
 }
 
 // ---- the verifications ----
