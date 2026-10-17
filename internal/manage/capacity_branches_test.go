@@ -82,6 +82,9 @@ type branchRevisionFixture struct {
 
 func branchNewFixture(t *testing.T, ready ...string) *branchFixture {
 	t.Helper()
+	for _, name := range []string{dagsched.EnvHostMinAvailableGiB, dagsched.EnvHostMaxSwapPercent, dagsched.EnvHostMaxPressure, dagsched.EnvHostMaxPressureFull} {
+		t.Setenv(name, "")
+	}
 	coreTempHome(t)
 	dir := t.TempDir()
 	f := &branchFixture{t: t, dir: dir, stateDir: filepath.Join(dir, "state"), relayDir: filepath.Join(dir, "relay"),
@@ -1171,4 +1174,42 @@ func TestBranchCandidatesReadyFromTheSnapshotNotTheEarlierPass(t *testing.T) {
 	plan := f.run()
 	branchWant(t, branchSummaries(branchList(t, plan)),
 		"B+C pkg/B.go,pkg/C.go ready=1 edges=1", "X+Y pkg/X.go,pkg/Y.go ready=1 edges=1")
+}
+
+func TestBranchCandidatesIgnoreTheCallersHostThresholds(t *testing.T) {
+	for name, poison := range map[string]struct{ key, value string }{
+		"a valid floor":        {dagsched.EnvHostMinAvailableGiB, "100"},
+		"a malformed floor":    {dagsched.EnvHostMinAvailableGiB, "lots"},
+		"a malformed swap cap": {dagsched.EnvHostMaxSwapPercent, "lots"},
+		"a malformed pressure": {dagsched.EnvHostMaxPressure, "lots"},
+		"a malformed full":     {dagsched.EnvHostMaxPressureFull, "lots"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(poison.key, poison.value)
+			f := branchNewFixture(t, "CRW-1", "CRW-2")
+			bound, err := dagsched.HostMemoryFromEnvironment(f.env.Getenv)
+			if err != nil {
+				t.Errorf("fixture host thresholds: %v", err)
+			} else if bound.Limits != dagsched.DefaultHostMemoryLimits() || bound.LimitsFrom != dagsched.LimitsDefault {
+				t.Errorf("fixture inherited thresholds: %+v", bound)
+			}
+			f.node("A", "CRW-1").node("B", "CRW-2").node("C", "CRW-3")
+			f.edge("e1", "A", "B")
+			for _, node := range []string{"A", "B", "C"} {
+				f.region(node, "pkg/"+node+".go", "file", "", "edit", false)
+			}
+			branchWant(t, branchSummaries(branchList(t, f.publish().run())), "A+B pkg/A.go,pkg/B.go ready=1 edges=1")
+		})
+	}
+}
+
+func TestBranchCandidatesHonorExplicitHostThresholds(t *testing.T) {
+	f := branchNewFixture(t, "CRW-1", "CRW-2")
+	t.Setenv(dagsched.EnvHostMinAvailableGiB, "100")
+	f.node("A", "CRW-1").node("B", "CRW-2").node("C", "CRW-3")
+	f.edge("e1", "A", "B")
+	for _, node := range []string{"A", "B", "C"} {
+		f.region(node, "pkg/"+node+".go", "file", "", "edit", false)
+	}
+	branchWant(t, branchSummaries(branchList(t, f.publish().run())), "A+B pkg/A.go,pkg/B.go ready=0 edges=1")
 }

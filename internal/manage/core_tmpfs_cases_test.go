@@ -24,9 +24,10 @@ const tmpfsLateBaseEnv = "CRW_MANAGE_TEST_TMPFS_LATE_BASE"
 // tmpfsFakeHost is a host with the free space and the exec answer a case names; processes 4242 and only 4242 are alive.
 func tmpfsFakeHost(bytes, inodes uint64, probe error) tmpfsHost {
 	return tmpfsHost{
-		Free:  func(string) (uint64, uint64, error) { return bytes, inodes, nil },
-		Probe: func(string) error { return probe },
-		Alive: func(pid int) bool { return pid == 4242 },
+		Free:      func(string) (uint64, uint64, error) { return bytes, inodes, nil },
+		Probe:     func(string) error { return probe },
+		Alive:     func(pid int) bool { return pid == 4242 },
+		Namespace: "effffffc",
 	}
 }
 
@@ -51,15 +52,18 @@ func TestTmpfsRootIsChosenAtTheFloorAndIsTheCallersToRemove(t *testing.T) {
 	if root == "" || !owner {
 		t.Fatalf("root %q owner %v, want a root this call owns", root, owner)
 	}
-	if want := filepath.Join(base, tmpfsRootPrefix+strconv.Itoa(os.Getpid())); root != want {
+	if want := filepath.Join(base, "crw-m-"+strconv.Itoa(os.Getpid())+"-effffffc"); root != want {
 		t.Errorf("root %q, want %q", root, want)
-	}
-	// the fake hosts bind unix sockets under TMPDIR (107 bytes at most, TMPDIR plus 67 for the longest): /dev/shm and this name leave 9 bytes
-	if n := len("/dev/shm/") + len(tmpfsRootPrefix) + len(strconv.Itoa(1<<22)); n > 31 {
-		t.Errorf("a root under /dev/shm is %d bytes, over the 31 the socket paths of the tests allow", n)
 	}
 	if fi, err := os.Stat(root); err != nil || !fi.IsDir() {
 		t.Errorf("root %q: %v", root, err)
+	}
+}
+
+// Helpers can still inherit legacy roots, whose original path-length bound must hold too.
+func TestTmpfsLegacyRootKeepsControlSocketPathsShort(t *testing.T) {
+	if n := len("/dev/shm/") + len(tmpfsRootPrefix) + len(strconv.Itoa(1<<22)); n > 31 {
+		t.Errorf("a legacy root is %d bytes, over its original 31-byte bound", n)
 	}
 }
 
@@ -87,7 +91,7 @@ func TestTmpfsRootRejectsASmallOrFullTmpfs(t *testing.T) {
 	}
 	t.Run("a root of the same name is there", func(t *testing.T) {
 		base := t.TempDir()
-		stale := filepath.Join(base, tmpfsRootPrefix+strconv.Itoa(os.Getpid()))
+		stale := filepath.Join(base, "crw-m-"+strconv.Itoa(os.Getpid())+"-effffffc")
 		if err := os.Mkdir(stale, 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -276,7 +280,7 @@ func TestTmpfsRootLeavesNothingAfterHelpersReexec(t *testing.T) {
 		role, tmp, _ := strings.Cut(line, " ")
 		seen[role] = tmp
 	}
-	if seen["parent"] == "" || filepath.Dir(seen["parent"]) != base || !strings.HasPrefix(filepath.Base(seen["parent"]), tmpfsRootPrefix) {
+	if seen["parent"] == "" || filepath.Dir(seen["parent"]) != base || !strings.HasPrefix(filepath.Base(seen["parent"]), tmpfsNamespacedPrefix) {
 		t.Fatalf("the run's TMPDIR %q is not a root made under %s", seen["parent"], base)
 	}
 	if seen["helper"] != seen["parent"] {
