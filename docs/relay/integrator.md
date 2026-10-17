@@ -107,18 +107,27 @@ use up the run another member is owed. A new head under the same issue number st
 A project session lands its milestone through one pull request. The plan's target `base_ref` is the milestone integration branch, so
 `crw.integrate` lands each node there exactly as it lands one on `dev` (merge commit, verification of the merged tree, compare-and-swap
 of the branch). The project session then opens one pull request from that branch toward `dev`, naming the issues it carries
-(`crw flow pr open`, which pushes the branch first), and puts it into this queue with `crw manage integrate --enqueue-pr OWNER/NAME#N`.
+(`crw flow pr open`, which pushes the branch first). The parent decides it with
+`crw flow pr decide --pr OWNER/NAME#N --head SHA --release-impact TEXT`; the equivalent queue entry command is
+`crw manage integrate --enqueue-pr OWNER/NAME#N --head SHA --release-impact TEXT`.
 Nobody merges the pull request on GitHub: the queue does, and the pull request is the place of its record and its review. The gate is
 the verification-record of the merged tree; the review is a step of the queue the repository configures.
 
-- `--enqueue-pr` reads the pull request through the tracking adapter of `pull_request_repo` and writes its head to `pending/pr-<N>`
+- Both commands hold the integration lock and check the expected head, remote base tip, successful head checks and overlapping
+  earlier pending PRs, without reading diff content. `--update-base` permits a no-ff base merge and a non-forced push guarded
+  by the advertised old head; that path answers `needs_ci` and does not enqueue. An overlapping earlier PR answers `hold_order`.
+  The release impact is required and stored in a `crw-pr-decision/1` record (`--record PATH`, default
+  `<runs_dir>/decisions/pr-N-SHA.json`). An all-green decision posts an idempotent `ready` comment before enqueueing;
+  the final disk record says `enqueued` only after the queue write succeeds.
+- `--enqueue-pr` uses that decision and writes its pinned head to `pending/pr-<N>`
   (written beside the queue and renamed in, replacing an earlier head of the same pull request). A pull request of another repository,
   one that is closed or merged, one toward another branch than `branch`, one whose head branch is in another repository (a fork), or
   one that names no head commit is refused and nothing is written. A queue without `pull_request_repo` takes no `pr-<N>` file: it is reported as ignored, as before. The adapter also lists the comments of a pull request (a GET with the token that already reads the pull request, paginated): a pass uses it to find a landing comment by its header before it posts one again.
 - A pull request entry is keyed by its number and its head. A head that already landed (`done/pr-<N>-<head>`, or a landing record of that
   number and head that moved the branch) is refused by `--enqueue-pr`, and a pass moves such a pending file to `done/` with no run and no
   new record; the only comment it posts is the one its record still lacks (`comment` is `not written yet` and no comment with its header is on the pull request, see the record below).
-  `--dry-run` reports such a file as `landed` and plans no run for it, and neither it nor `--enqueue-pr` posts anything. After new commits on its branch the project session
+  `--dry-run` reports such a file as `landed`, plans no run and posts nothing. `--enqueue-pr` may have posted its readiness comment
+  before the queue detects a previously landed head; a refusal never records a successful enqueue. After new commits on its branch the project session
   enqueues the same pull request again and the queue lands the new head.
 - A pass lands one pull request alone, the lowest number first, before the issue heads, and runs no `gate_command` for it. It reads the
   pull request again and fetches the branch. A head that is already in the branch with no landing record (a pass that ended after its
@@ -177,7 +186,8 @@ the verification-record of the merged tree; the review is a step of the queue th
     crw manage integrate                      one pass
     crw manage integrate --watch              passes until the stop file (--interval <duration>, default interval_seconds)
     crw manage integrate --dry-run            read the queue and the checkout and report; --with-gate also runs the gate
-    crw manage integrate --enqueue-pr REF     put pull request REF (OWNER/NAME#N of pull_request_repo) into the queue
+    crw manage integrate --enqueue-pr REF --head SHA --release-impact TEXT
+                                              decide and enqueue REF; optional --record PATH and --update-base
 
 `--dry-run` makes nothing: no directory, no file move, no lock (it is only probed for `free`, `held` or `absent`), no fetch, no worktree.
 It reports the pending heads with whether each commit is in the checkout and already in the last-fetched branch, the retry markers, the

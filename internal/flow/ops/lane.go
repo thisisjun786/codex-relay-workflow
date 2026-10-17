@@ -57,6 +57,7 @@ const (
 	NameAudit          = "audit"
 	NameArchive        = "archive"
 	NameMergeRequest   = "mergeRequest"
+	NamePROpen         = "prOpen"
 	NameCrosscheck     = "crosscheck"
 	NameDesignReuse    = "designReuse"
 )
@@ -82,6 +83,7 @@ const (
 	OpAudit          = "crw." + NameAudit
 	OpArchive        = "crw." + NameArchive
 	OpMergeRequest   = "crw." + NameMergeRequest
+	OpPROpen         = "crw." + NamePROpen
 	// OpCommitName is OpCommit under the name the agent allocator and the engine use for the rows of crw.commit.
 	OpCommitName = OpCommit
 )
@@ -131,6 +133,11 @@ type Deps struct {
 	// Crosscheck is what crw.crosscheck runs the crosscheck of a milestone with (CRW-1473); nil answers that no crosschecker is wired,
 	// never a pass.
 	Crosscheck *Crosscheck
+	// PRTarget is the plan's pull request handoff for crw.prOpen: the target its pinned descriptor names (nil Deps side: the
+	// operation answers not_required for the existing custom lane callers; the production wiring always sets it).
+	PRTarget func(ctx context.Context, plan string) (BundlePRTarget, error)
+	// PROpen is the parent's pull request opener for crw.prOpen; nil answers that no opener is wired.
+	PROpen func(ctx context.Context, req BundlePROpenRequest) (BundlePRResult, error)
 }
 
 // Lane is the set of operations of the project lane.
@@ -193,6 +200,7 @@ func (l *Lane) Ops() map[string]engine.Op {
 		NameRegionsOverlap:   &regionsOverlapOp{l},
 		NameAdmissionRegions: &admissionRegionsOp{l},
 		NameMergeRequest:     &mergeRequestOp{l},
+		NamePROpen:           &prOpenOp{l},
 		NameReuseIntegrated:  &reuseIntegratedOp{l},
 	}
 }

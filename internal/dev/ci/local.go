@@ -65,6 +65,14 @@ type localOptions struct {
 	// Jobs is the maximum number of CI job/legs running at once; zero selects the CPU-based
 	// default (CRW-1584).
 	Jobs int
+	// CPUs is the verification's CPU budget (CRW-1591). The command always resolves a positive
+	// value; zero is the legacy and injected-plan behavior, running without a budget.
+	CPUs int
+	// cpuMethod is the backend the budget was applied with once decided: the re-entered verifier
+	// observes its scope from the kernel, a scope that never started selects the fallback.
+	cpuMethod string
+	// cpu is the immutable resolved budget the workers share (localCPUOptions).
+	cpu  *recordCPU
 	Plan []localJob
 	// Env is extra environment for every step, after the isolated home and TZ (tests use it).
 	Env []string
@@ -129,6 +137,7 @@ func Local(args []string, stdout, stderr io.Writer) int {
 	workRoot := flags.String("work-root", "", "the directory the clean worktree is made in (default: the XDG state directory)")
 	parallel := flags.Int("parallel", 4, "the Go test parallelism every step runs with (GOFLAGS=-p=N)")
 	jobs := flags.Int("jobs", 0, "concurrent CI job/legs (0: CPU count divided by Go parallelism)")
+	cpus := flags.Int("cpus", localCPUDefault, "CPU budget for this verification (default $"+localCPUEnvName+" or 4)")
 	fresh := flags.Bool("fresh", false, "run every step even when a matching record is cached")
 	description := "Verify .github/workflows/ci.yml locally and write a verification-record/1.\n" +
 		"A matching sealed PASS in the repository cache or --reuse supplies tree-scoped steps.\n" +
@@ -136,6 +145,12 @@ func Local(args []string, stdout, stderr io.Writer) int {
 		"Range checks, their setup and the aggregate run afresh. --fresh disables reuse."
 	if code := parseFlags(flags, description, args, stdout, stderr); code >= 0 {
 		return code
+	}
+	// The budget is resolved before the repository, the configuration or a scope: a bad value
+	// refuses without touching any of them.
+	cpusValue, err := localCPUOption(*cpus, given(flags, "cpus"), os.Getenv(localCPUEnvName))
+	if err != nil {
+		return failf(stderr, "local: %s", err)
 	}
 	root, err := repositoryRoot()
 	if err != nil {
@@ -157,6 +172,7 @@ func Local(args []string, stdout, stderr io.Writer) int {
 		WorkRoot:  *workRoot,
 		Parallel:  *parallel,
 		Jobs:      *jobs,
+		CPUs:      cpusValue,
 		Cache:     true,
 		Fresh:     *fresh,
 	}
@@ -175,7 +191,11 @@ func Local(args []string, stdout, stderr io.Writer) int {
 	if *fresh && reusePath != "" {
 		return failf(stderr, "local: --fresh and --reuse cannot be used together")
 	}
-	return localRunAndReport(opts, reusePath, stdout, stderr)
+	exe, err := os.Executable()
+	if err != nil {
+		return failf(stderr, "local: %s", err)
+	}
+	return localRunWithCPU(opts, append([]string{exe, "ci", "local"}, args...), reusePath, stdout, stderr)
 }
 
 // localRunAndReport runs the table (or answers from a validated record), writes the output
@@ -210,6 +230,12 @@ func localRunAndReport(opts localOptions, reusePath string, stdout, stderr io.Wr
 // localVerify reuses matching tree evidence and executes the remaining steps,
 // returning a record for the requested head and range.
 func localVerify(opts localOptions, reusePath string, stdout io.Writer) (verificationRecord, bool, error) {
+	// The CPU budget resolves before any write or reuse decision: a bad one refuses the run.
+	var cpuErr error
+	opts, cpuErr = localCPUOptions(opts)
+	if cpuErr != nil {
+		return verificationRecord{}, false, cpuErr
+	}
 	if opts.Fresh && reusePath != "" {
 		return verificationRecord{}, false, fmt.Errorf("--fresh and --reuse cannot be used together")
 	}
@@ -362,6 +388,12 @@ func localVerify(opts localOptions, reusePath string, stdout io.Writer) (verific
 // versions, the dependency digests and the platform. It is computed from the verified commit, not
 // from the caller's working tree, so a dirty checkout does not change it (comment-c6).
 func localCurrentKeys(opts localOptions) (verificationRecord, error) {
+	// Direct callers normalize here too; localCPUOptions is pure and idempotent on an
+	// already-resolved options.
+	opts, err := localCPUOptions(opts)
+	if err != nil {
+		return verificationRecord{}, err
+	}
 	hostOS, hostArch := opts.platform()
 	head, err := localRev(opts.Root, opts.Commit+"^{commit}")
 	if err != nil {
@@ -428,6 +460,8 @@ func localCurrentKeys(opts localOptions) (verificationRecord, error) {
 		Dependencies: dependencies,
 		OS:           hostOS,
 		Arch:         hostArch,
+		// The resolved budget is a reuse key: a record answers only a run under the same one.
+		CPU: opts.cpu,
 	}
 	// The verifier identity (CRW-1590) and the plan digest are part of the state a record answers.
 	current.VerifierKind, current.VerifierRules = localVerifierKind, localVerifierRules
@@ -612,7 +646,13 @@ func localExecute(opts localOptions, plan []localJob, current verificationRecord
 
 	// Flatten job/legs into tasks in plan order; a job carrying the aggregate step is a barrier:
 	// it runs alone, after every task before it finished and its records are complete (CRW-1584).
-	limit := localJobLimit(opts.Jobs, opts.Parallel, runtime.NumCPU())
+	// A budgeted run bounds its concurrent jobs by the budget rather than the host's CPUs; the
+	// resolved opts.Jobs already holds it, and the cpus here only feed a still-automatic value.
+	cpus := runtime.NumCPU()
+	if opts.CPUs > 0 {
+		cpus = opts.CPUs
+	}
+	limit := localJobLimit(opts.Jobs, opts.Parallel, cpus)
 	var addMu sync.Mutex
 	var tasks []localTask
 	for _, job := range plan {
@@ -747,6 +787,9 @@ func localRunStepOutput(opts localOptions, step localStep, worktree, leg string,
 		dir = filepath.Join(worktree, step.workdir)
 	}
 	stepEnv := append(append([]string{}, env...), localStepEnvValues(step.env, opts, leg)...)
+	// The budget applies after the step's own env: a step cannot widen GOFLAGS, GOMAXPROCS or
+	// GODEBUG past it (CRW-1591). Unbudgeted runs keep the step's env exactly as given.
+	stepEnv = localCPUEnv(stepEnv, opts)
 	// The command runs as a script file through bash, so a ci.yml run text that is a block scalar
 	// (a loop, a heredoc) runs as the runner runs it, and a gate between this process and bash
 	// never sees the command's own characters. systemd-run, for one, expands the arguments it is
@@ -880,7 +923,8 @@ func localStepEnv(home, temp string, opts localOptions) ([]string, error) {
 	}
 	env = sealed.Apply(env)
 	env = append(env, opts.Env...)
-	return env, nil
+	// The CPU budget seals last: a caller-supplied Env cannot widen it (CRW-1591).
+	return localCPUEnv(env, opts), nil
 }
 
 // localMkStepDir makes <parent>/<prefix><8 lowercase hex> (mode 0700). The name has a fixed width
