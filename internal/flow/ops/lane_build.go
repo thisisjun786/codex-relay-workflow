@@ -989,6 +989,7 @@ func (o *verifyOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResu
 			}
 			if out.Note != "" {
 				data["verifier_note"] = out.Note
+				res.Warnings = append(res.Warnings, out.Note)
 			}
 			// a record that says how many packages ran tests is recorded with the count, and one that says none ran warns: the pass is
 			// the record's, and the warning is the row's and the result's (CRW-1328)

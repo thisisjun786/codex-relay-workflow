@@ -70,8 +70,10 @@ func CommandVerifierEnv(argv []string, base func() []string) IntegrationBatchVer
 func UpdateIntegrationRef(ctx context.Context, checkout, ref, newCommit, oldCommit string) error {
 	// a branch a worktree has checked out never moves (CRW-1595): git's own update-ref would move it and leave the
 	// worktree's files and index on the old head
-	if err := checkIntegrationCheckout(ctx, checkout, ref); err != nil {
-		return err
+	if newCommit != oldCommit {
+		if err := checkIntegrationCheckout(ctx, checkout, ref); err != nil {
+			return err
+		}
 	}
 	cmd := exec.CommandContext(ctx, "git", "-C", checkout, "update-ref", "refs/heads/"+ref, newCommit, oldCommit)
 	// inherited GIT_* variables would redirect the write to another repository (finding d4)

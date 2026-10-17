@@ -6,10 +6,20 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
+	"github.com/thisisjun786/codex-relay-workflow/internal/execgroup"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // VerificationRecord is the verification-record/1 document CRW-964's writer (crw-dev ci local) leaves: the
@@ -36,11 +46,23 @@ type VerificationRecord struct {
 	Jobs         []json.RawMessage `json:"jobs"`
 	// VerifierKind, VerifierRules and GitHub are the additive remote-verifier members (CRW-1594): absent from
 	// every local record, required and judged for runner "github-actions".
-	VerifierKind  string              `json:"verifierKind,omitempty"`
-	VerifierRules string              `json:"verifierRules,omitempty"`
-	GitHub        *GitHubVerification `json:"github,omitempty"`
-	Digest        string              `json:"digest"`
-	Raw           json.RawMessage     `json:"-"`
+	VerifierKind        string               `json:"verifierKind,omitempty"`
+	VerifierRules       string               `json:"verifierRules,omitempty"`
+	GitHub              *GitHubVerification  `json:"github,omitempty"`
+	CommandVerification *CommandVerification `json:"commandVerification,omitempty"`
+	Digest              string               `json:"digest"`
+	Raw                 json.RawMessage      `json:"-"`
+}
+
+const RepositoryCommandRunner = "repository-command"
+const RepositoryCommandRules = "repository-command/1"
+
+// CommandVerification records the actual command exit and the digest of both
+// output streams. ExitCode is a pointer so a missing exit cannot mean success.
+type CommandVerification struct {
+	Command   string `json:"command"`
+	ExitCode  *int   `json:"exitCode"`
+	LogDigest string `json:"logDigest"`
 }
 
 // VerificationRecordResultPass is the one result word a reusable record carries (CRW-964 writes "pass").
@@ -61,11 +83,12 @@ var verificationRequired = []string{"schema", "repository", "baseCommit", "treeH
 // VerificationKeys are what a reusable record must agree with: the tree it names, the base the range covers, the
 // ci.yml and dependency digests of that commit, and the platform the relay host runs on.
 type VerificationKeys struct {
-	Tree         string
-	Base         string
-	CiDigest     string
-	Dependencies map[string]string
-	OS, Arch     string
+	RepositoryCommand string
+	Tree              string
+	Base              string
+	CiDigest          string
+	Dependencies      map[string]string
+	OS, Arch          string
 	// Pins are the tool versions the verified commit declares (DeclaredToolPins): the required pin set of a record.
 	// CommitVerificationKeys reads them from the commit; they are never read from the local PATH.
 	Pins map[string]string
@@ -173,9 +196,21 @@ func JudgeVerificationRecord(raw []byte, want VerificationKeys) (VerificationRec
 		return record, refuse(contract.RefusalDispositionConflict, "the verification record names runner %q with GitHub provenance or the github-actions kind: only a github-actions record carries them", record.Runner)
 	}
 	if record.Runner == GitHubRunner {
+		if want.RepositoryCommand != "" || record.CommandVerification != nil {
+			return record, refuse(contract.RefusalDispositionConflict, "a repository command requires its own verification record")
+		}
 		return judgeGitHubRecord(record, members, want)
 	}
-	if err := judgeRecordPins(record, members, want); err != nil {
+	if record.Runner == RepositoryCommandRunner || record.CommandVerification != nil || record.VerifierKind == RepositoryCommandRules || want.RepositoryCommand != "" {
+		c := record.CommandVerification
+		if record.Runner != RepositoryCommandRunner || record.VerifierKind != RepositoryCommandRules || record.VerifierRules != RepositoryCommandRules || c == nil || c.ExitCode == nil || *c.ExitCode != 0 || want.RepositoryCommand == "" || c.Command != want.RepositoryCommand {
+			return record, refuse(contract.RefusalDispositionConflict, "the verification record does not prove the configured repository command %q exited zero", want.RepositoryCommand)
+		}
+		digest, err := hex.DecodeString(strings.TrimPrefix(c.LogDigest, "sha256:"))
+		if !strings.HasPrefix(c.LogDigest, "sha256:") || err != nil || len(digest) != sha256.Size || record.HeadCommit == "" {
+			return record, refuse(contract.RefusalDispositionConflict, "the repository command record needs its head and log digest")
+		}
+	} else if err := judgeRecordPins(record, members, want); err != nil {
 		return record, err
 	}
 	if !strings.EqualFold(record.TreeHash, want.Tree) {
@@ -257,10 +292,24 @@ func pinNames(pins map[string]string) []string {
 	return append(names, rest...)
 }
 
-// CommitVerificationKeys reads, in a local checkout, what a record must agree with for one commit: its tree, the
-// digest of its ci.yml, the digests of its dependency files and the tool pins it declares. A file the commit does not
-// have digests to "".
+// CommitVerificationKeys reads the keys for flow acceptance and DAG integration,
+// including the repository command those paths run. The integration queue uses
+// QueueVerificationKeys because its verifier is configured independently.
 func CommitVerificationKeys(ctx context.Context, checkout, commit string) (VerificationKeys, error) {
+	commands, err := crwconfig.LoadRepositoryCommands(ctx, os.Getenv, checkout)
+	if err != nil {
+		return VerificationKeys{}, err
+	}
+	keys, err := QueueVerificationKeys(ctx, checkout, commit)
+	keys.RepositoryCommand = commands.VerifyCommand
+	return keys, err
+}
+
+// QueueVerificationKeys reads the commit's tree, CI and dependency digests and
+// declared tool pins without selecting flow's repository command. A file absent
+// from the commit digests to "". Queue local/GitHub evidence stays bound to these
+// keys even when the same repository has a flow command override.
+func QueueVerificationKeys(ctx context.Context, checkout, commit string) (VerificationKeys, error) {
 	var keys VerificationKeys
 	tree, err := runGit(ctx, checkout, nil, "rev-parse", commit+"^{tree}")
 	if err != nil {
@@ -284,6 +333,96 @@ func CommitVerificationKeys(ctx context.Context, checkout, commit string) (Verif
 		return keys, err
 	}
 	return keys, nil
+}
+
+// VerifyRepositoryCommand runs the configured verifier in a clean detached
+// worktree of head. CRW writes the receipt, including failures; the command need
+// not know the receipt format. Output is hashed in full and only a bounded tail
+// is retained. A failed process is a failed record, not a missing host tool.
+func VerifyRepositoryCommand(ctx context.Context, checkout, head, base, command string) (VerificationRecord, error) {
+	if strings.TrimSpace(command) == "" {
+		return VerificationRecord{}, fmt.Errorf("empty repository verify command")
+	}
+	head, err := resolveIntegrationCommit(ctx, checkout, head)
+	if err != nil {
+		return VerificationRecord{}, err
+	}
+	if base == "" {
+		base = head
+	}
+	base, err = resolveIntegrationCommit(ctx, checkout, base)
+	if err != nil {
+		return VerificationRecord{}, err
+	}
+	keys, err := CommitVerificationKeys(ctx, checkout, head)
+	if err != nil {
+		return VerificationRecord{}, err
+	}
+	if keys.RepositoryCommand != command {
+		return VerificationRecord{}, fmt.Errorf("repository verify command changed from %q to %q", command, keys.RepositoryCommand)
+	}
+	tmp, err := tmploc.MkdirTemp("crw-command-verify-")
+	if err != nil {
+		return VerificationRecord{}, err
+	}
+	wt := filepath.Join(tmp, "tree")
+	defer func() {
+		_, _ = runGit(context.WithoutCancel(ctx), checkout, nil, "worktree", "remove", "--force", wt)
+		_ = os.RemoveAll(tmp)
+	}()
+	if _, err := runGit(ctx, checkout, nil, "worktree", "add", "--detach", wt, head); err != nil {
+		return VerificationRecord{}, err
+	}
+	cmd := exec.CommandContext(ctx, "sh", "-c", command)
+	cmd.Dir, cmd.Env = wt, repositoryCommandEnv()
+	logHash, tail := sha256.New(), &integrationOutputTail{}
+	output := io.MultiWriter(logHash, tail)
+	cmd.Stdout, cmd.Stderr = output, output
+	execgroup.Bind(cmd, execgroup.KillGrace)
+	err = cmd.Run()
+	code := 0
+	if err != nil {
+		var exit *exec.ExitError
+		if errors.As(err, &exit) {
+			code = exit.ExitCode()
+		} else if !(errors.Is(err, exec.ErrWaitDelay) && cmd.ProcessState != nil && cmd.ProcessState.Success()) {
+			return VerificationRecord{}, err
+		}
+	}
+	result, stepResult, reason := "pass", "passed", ""
+	if code != 0 {
+		result, stepResult, reason = "fail", "failed", fmt.Sprintf("exit %d: %s", code, tail.String())
+	}
+	// A command that rewrites the checkout did not verify the immutable tree.
+	after, aerr := resolveIntegrationCommit(ctx, wt, "HEAD")
+	status, serr := runGit(ctx, wt, nil, "status", "--porcelain", "--untracked-files=no")
+	if aerr != nil || serr != nil || after != head || strings.TrimSpace(status) != "" {
+		result, stepResult, reason = "fail", "failed", "the verification command changed HEAD or tracked files"
+	}
+	job, err := json.Marshal(map[string]any{"name": "repository-command", "result": stepResult, "steps": []any{map[string]string{"name": command, "result": stepResult, "reason": reason}}})
+	if err != nil {
+		return VerificationRecord{}, err
+	}
+	record := VerificationRecord{Runner: RepositoryCommandRunner, Repository: checkout, BaseCommit: base, HeadCommit: head,
+		TreeHash: keys.Tree, CiDigest: keys.CiDigest, Tools: map[string]string{}, Pins: map[string]string{}, PinMismatch: []string{}, Dependencies: keys.Dependencies,
+		OS: runtime.GOOS, Arch: runtime.GOARCH, Result: result, Jobs: []json.RawMessage{job}, VerifierKind: RepositoryCommandRules, VerifierRules: RepositoryCommandRules,
+		CommandVerification: &CommandVerification{Command: command, ExitCode: &code, LogDigest: "sha256:" + hex.EncodeToString(logHash.Sum(nil))}}
+	raw, err := SealVerificationRecord(record)
+	if err != nil {
+		return record, err
+	}
+	return DecodeVerificationRecord(raw)
+}
+
+// Git environment inherited from a caller must never redirect a repository command.
+func repositoryCommandEnv() []string {
+	env := []string{}
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "GIT_") {
+			env = append(env, kv)
+		}
+	}
+	return env
 }
 
 // commitFileBody is a file as a commit has it, and whether the commit has it at all.

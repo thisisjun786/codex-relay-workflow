@@ -8,6 +8,8 @@ The repository verification is selected by `verifier.kind`: `local` (the default
 `crw-dev ci local`, and `github-actions` dispatches the configured GitHub workflow.
 Both produce a `verification-record/1`; a passing record is the integration evidence.
 The node, integration and milestone-close paths use the same configured verifier.
+For a flow targeting another repository, `repositories` can override its verification
+command as described below; an absent override preserves this selection.
 
 ## Development loop
 
@@ -75,6 +77,48 @@ integration adapter and `crw.verify` use the same selection. Existing plans keep
 `crw-dev ci local` as their repository-CI requirement string; the selected verifier
 satisfies that requirement, while the receipt's `runner` and `verifierKind` say where
 verification actually ran.
+
+### Repository commands for flow runs
+
+The top-level `repositories` object in `crw-config/1` selects commands by absolute
+checkout path or origin's `OWNER/NAME`. An exact checkout path takes precedence,
+then the main worktree path, another configured checkout of the same repository,
+then the origin slug. Conflicting sibling checkout settings are refused:
+
+```json
+{
+  "repositories": {
+    "owner/project": {
+      "verify_command": "node scripts/foundation.mjs",
+      "integrate_command": "node scripts/integrate.mjs"
+    }
+  }
+}
+```
+
+These are shell command strings (`sh -c`), configured by the repository operator.
+`crw.verify` and DAG batch verification run `verify_command` in a clean detached
+worktree of the requested commit. CRW seals the result as `verification-record/1`:
+`runner: repository-command`, `verifierKind` and `verifierRules: repository-command/1`,
+and `commandVerification` containing `command`, `exitCode` and the SHA-256 `logDigest`
+of combined output. The record retains the head, base, tree and dependency digests;
+failures retain a bounded output tail in the job's step reason. This command owns
+its tool checks; the receipt does not claim CRW's Go or CI tool pins were executed.
+Acceptance reads the same record and requires the currently configured command,
+zero exit, passing result and matching tree/base keys. A command that changes its
+verification worktree's HEAD or tracked files fails. Command receipts are not reused
+as local or GitHub CI evidence.
+
+An absent command preserves the existing verifier or merge behavior and records a
+warning. A present empty command is invalid. A nonempty `required_commands` entry is
+accepted; an unknown command is warned about and recorded when verification runs,
+and the configured verification command still runs. The final gate resolves these
+requirements, including the default when none are declared, to that same verifier;
+the journal and receipt keep the command actually executed. An empty requirement is refused.
+The [DAG integration command](relay/integrator.md#repository-commands-for-dag-integration)
+receives a branch for the accepted node head. These overrides apply to flow nodes
+and DAG batches; the standalone `crw flow verify` and queue's `manage.integrate`
+settings retain their existing interfaces.
 
 Before a GitHub push, Gitleaks must report the version the verified commit declares
 as `scan_version` in `scripts/ci/secrets.sh`; an absent pin or a version mismatch

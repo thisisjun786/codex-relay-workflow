@@ -55,7 +55,11 @@ func TestCRW1595UpdateIntegrationRefRefusesACheckedOutBranch(t *testing.T) {
 	linked := filepath.Join(t.TempDir(), "linked wt\nint")
 	repo.git("worktree", "add", linked, "dev-int")
 	t.Cleanup(func() { repo.git("worktree", "remove", "--force", linked) })
-	err := UpdateIntegrationRef(context.Background(), repo.path, "dev-int", base, base)
+	if err := UpdateIntegrationRef(context.Background(), repo.path, "dev-int", base, base); err != nil {
+		t.Fatalf("observing a checked-out branch with no-op CAS: %v", err)
+	}
+	moved := repo.commit("other.txt", "other\n")
+	err := UpdateIntegrationRef(context.Background(), repo.path, "dev-int", moved, base)
 	if err == nil || !strings.Contains(err.Error(), "checked out") {
 		t.Fatalf("moving a checked-out branch: %v", err)
 	}
@@ -67,7 +71,6 @@ func TestCRW1595UpdateIntegrationRefRefusesACheckedOutBranch(t *testing.T) {
 	}
 	// an unchecked branch moves by the compare-and-swap as before
 	repo.git("branch", "other", base)
-	moved := repo.commit("other.txt", "other\n")
 	if err := UpdateIntegrationRef(context.Background(), repo.path, "other", moved, base); err != nil {
 		t.Fatalf("the CAS of an unchecked branch: %v", err)
 	}

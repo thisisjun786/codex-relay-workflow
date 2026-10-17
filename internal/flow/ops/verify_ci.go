@@ -16,6 +16,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"github.com/thisisjun786/codex-relay-workflow/internal/execgroup"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
 )
 
 // RunCommand runs a command in a directory, with env set over the inherited environment (nil: inherited as it is), and answers
@@ -69,6 +70,59 @@ type CILocalVerifier struct {
 
 // CILocalCommand is the command string the verification record of a head names.
 const CILocalCommand = "crw-dev ci local"
+
+// RepositoryVerifier selects the repository's command, preserving local or GitHub
+// verification when none is configured. Required commands are advisory: unknown
+// names are recorded as warnings and never executed as extra shell commands.
+type RepositoryVerifier struct {
+	Commands crwconfig.RepositoryCommands
+	Fallback Verifier
+}
+
+// ResolveCommand maps an advisory requirement to the command this verifier runs.
+// Verification and the final gate use the same mapping; receipts and journal rows
+// always name the actual command, including for the milestone's default requirement.
+func (v RepositoryVerifier) ResolveCommand(required string) (string, string) {
+	command, note := v.Commands.VerifyCommand, ""
+	if command == "" {
+		command = CILocalCommand
+		note = crwconfig.RepositoryCommandsFallback
+	}
+	if required != "" && required != command {
+		note += fmt.Sprintf("; unknown required command %q; running configured %q", required, command)
+	}
+	return command, strings.Trim(note, "; ")
+}
+
+func (v RepositoryVerifier) Verify(ctx context.Context, req VerifyRequest) (VerifyOutcome, error) {
+	command, note := v.ResolveCommand(req.Command)
+	req.Command = command
+	if v.Commands.VerifyCommand == "" {
+		out, err := v.Fallback.Verify(ctx, req)
+		out.Note = strings.Trim(note+"; "+out.Note, "; ")
+		return out, err
+	}
+	record, err := dagsched.VerifyRepositoryCommand(ctx, req.Worktree, req.Head, req.Base, command)
+	if err != nil {
+		return VerifyOutcome{}, err
+	}
+	dir, err := ciRecordDir(req.Worktree)
+	if err != nil {
+		return VerifyOutcome{}, err
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return VerifyOutcome{}, err
+	}
+	if err := os.WriteFile(filepath.Join(dir, "verification-record-"+record.HeadCommit+".json"), record.Raw, 0o600); err != nil {
+		return VerifyOutcome{}, err
+	}
+	out := VerifyOutcome{Command: command, Digest: record.Digest, Record: record.Raw, Pass: record.Result == "pass", Summary: record.Result, Note: strings.Trim(note, "; "), Failures: []string{}}
+	if !out.Pass {
+		out.Summary = fmt.Sprintf("%s exited %d: %s", command, *record.CommandVerification.ExitCode, record.Result)
+		out.Failures = append(out.Failures, out.Summary)
+	}
+	return out, nil
+}
 
 type ciRecord struct {
 	Schema string `json:"schema"`
