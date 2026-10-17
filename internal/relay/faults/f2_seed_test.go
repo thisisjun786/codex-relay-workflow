@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 func TestF2SeededCLIOracle(t *testing.T) {
@@ -46,7 +47,7 @@ func TestF2SeededCLIOracle(t *testing.T) {
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			home, e := os.MkdirTemp("/dev/shm", "f2-seeded-")
+			home, e := tmploc.MkdirTemp("f2-seeded-")
 			if e != nil {
 				t.Fatal(e)
 			}

@@ -370,7 +370,7 @@ func goBuild(t *testing.T, output, version string) {
 	}
 	cmd := exec.Command(goTool, "build", "-trimpath", "-ldflags=-X main.version="+version, "-o", output, "./cmd/crw")
 	cmd.Dir = moduleRoot
-	cmd.Env = append(append([]string{}, toolchainEnv...), "CGO_ENABLED=0", "TMPDIR="+os.Getenv("TMPDIR"))
+	cmd.Env = append(append([]string{}, toolchainEnv...), "CGO_ENABLED=0", "TMPDIR="+tmploc.Env())
 	started := time.Now()
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("go build %s: %v\n%s", version, err, out)

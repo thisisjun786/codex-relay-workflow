@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // storageDoc is a configuration document with a paths section and, optionally, a manage object.
@@ -52,7 +53,7 @@ func storageEnvCalls(t *testing.T, path string) []map[string]string {
 // overridden by a derived value.
 func TestStorageRelayStateIsLeftToTheRelaysSelection(t *testing.T) {
 	_, codexHome, _ := coreTempHome(t)
-	short, err := os.MkdirTemp("", "rs")
+	short, err := tmploc.MkdirTemp("rs")
 	if err != nil {
 		t.Fatal(err)
 	}

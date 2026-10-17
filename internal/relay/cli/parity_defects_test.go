@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 var evidenceTimestamp = regexp.MustCompile(`\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}\+00:00`)
@@ -82,9 +84,10 @@ func assertEvidenceBytes(t *testing.T, env []string, alias, binary, scenario str
 // envAnchors are the placeholder anchors of a process run with args in env: its arguments and
 // each environment value that names a temporary or fixed directory.
 func envAnchors(env []string, args ...string) []string {
+	tmpRoot, _ := tmploc.Lookup(os.Getenv)
 	anchors := append([]string{}, args...)
 	for _, entry := range env {
-		if _, value, ok := strings.Cut(entry, "="); ok && (strings.Contains(value, os.TempDir()) || strings.Contains(value, fixedRoot)) {
+		if _, value, ok := strings.Cut(entry, "="); ok && (strings.Contains(value, tmpRoot) || strings.Contains(value, fixedRoot)) {
 			anchors = append(anchors, value)
 		}
 	}

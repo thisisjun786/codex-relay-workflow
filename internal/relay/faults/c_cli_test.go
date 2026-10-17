@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // Fresh disposable state per process; compare the actual CLI JSON bytes, not selected fields, and
@@ -24,7 +26,7 @@ func TestCCLIOracle(t *testing.T) {
 	}
 	for _, args := range cases {
 		t.Run(strings.Join(args, "_"), func(t *testing.T) {
-			home, e := os.MkdirTemp("/dev/shm", "fault-c-oracle-")
+			home, e := tmploc.MkdirTemp("fault-c-oracle-")
 			if e != nil {
 				t.Fatal(e)
 			}

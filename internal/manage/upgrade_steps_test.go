@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // C1: a stop at each of steps 1 to 4 calls no later step, proven by the fakes' received calls.
@@ -63,7 +65,7 @@ func TestUpgradeStopsBeforeTheNextStep(t *testing.T) {
 // The temp directory is part of the doctor arguments. A path that contains the
 // letters "install" is not an install call, and the stop above must still hold.
 func TestUpgradeStopsBeforeTheNextStepWhenTheTempPathContainsInstall(t *testing.T) {
-	dir, err := os.MkdirTemp("", "it-install-spee-")
+	dir, err := tmploc.MkdirTemp("it-install-spee-")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +153,7 @@ func TestUpgradeDryRunCallsNoServiceCommand(t *testing.T) {
 // call. The dry-run check must still hold, and so must a refusal that comes after that doctor
 // call: an unreadable doctor answer stops the run only once the call has carried the temp path.
 func TestUpgradeDryRunCallsNoServiceCommandWhenTheTempPathContainsService(t *testing.T) {
-	dir, err := os.MkdirTemp("", "it-service-spee-")
+	dir, err := tmploc.MkdirTemp("it-service-spee-")
 	if err != nil {
 		t.Fatal(err)
 	}

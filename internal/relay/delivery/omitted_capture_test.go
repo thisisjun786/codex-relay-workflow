@@ -20,6 +20,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // omittedCall is one observe call an omission test makes: its arguments, the statements a writer
@@ -163,7 +164,8 @@ func replayOmittedCalls(t *testing.T, method string) {
 		if err := json.Unmarshal(raw, &gotMap); err != nil {
 			t.Fatal(err)
 		}
-		golden.CheckJSON(t, fmt.Sprintf("call %d", i), gotMap, golden.Substitute(root, "<root>"), golden.Substitute(os.TempDir(), "<tmp>"))
+		tmpRoot, _ := tmploc.Lookup(os.Getenv)
+		golden.CheckJSON(t, fmt.Sprintf("call %d", i), gotMap, golden.Substitute(root, "<root>"), golden.Substitute(tmpRoot, "<tmp>"))
 	}
 }
 

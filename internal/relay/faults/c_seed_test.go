@@ -7,11 +7,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 func TestCSeededCLIOracle(t *testing.T) {
 	goldenParent(t)
-	home, err := os.MkdirTemp("/dev/shm", "fault-c-seed-")
+	home, err := tmploc.MkdirTemp("fault-c-seed-")
 	if err != nil {
 		t.Fatal(err)
 	}

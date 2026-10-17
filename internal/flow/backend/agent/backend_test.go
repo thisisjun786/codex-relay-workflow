@@ -15,6 +15,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/roles"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 func q(s string) string { return fmt.Sprintf("%q", s) }
@@ -359,7 +360,8 @@ func TestRunCommitsAndReadsHead(t *testing.T) {
 	if len(e.gitCalls()) == 0 {
 		t.Errorf("no git command was recorded")
 	}
-	if home := realPath(t, os.Getenv("HOME")); !strings.HasPrefix(home, realPath(t, os.TempDir())) {
+	tmpRoot, _ := tmploc.Lookup(os.Getenv)
+	if home := realPath(t, os.Getenv("HOME")); !strings.HasPrefix(home, realPath(t, tmpRoot)) {
 		t.Errorf("HOME %s is not a temporary directory", home)
 	}
 }
