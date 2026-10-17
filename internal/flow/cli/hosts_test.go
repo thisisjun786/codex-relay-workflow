@@ -7,6 +7,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"github.com/thisisjun786/codex-relay-workflow/internal/executor"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc/tmploctest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,11 +16,12 @@ import (
 
 func TestHostCLIEnrollmentDisabledAndExplicitEnable(t *testing.T) {
 	state := t.TempDir()
-	sel, err := ResolveState(state, filepath.Join(state, "synthetic.sock"))
+	socket := tmploctest.SocketPath(t, "synthetic.sock")
+	sel, err := ResolveState(state, socket)
 	if err != nil {
 		t.Fatal(err)
 	}
-	st, err := store.Open(context.Background(), sel.DBPath(), filepath.Join(state, "synthetic.sock"))
+	st, err := store.Open(context.Background(), sel.DBPath(), socket)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +34,7 @@ func TestHostCLIEnrollmentDisabledAndExplicitEnable(t *testing.T) {
 	}
 	run := func(args ...string) (string, int) {
 		var out, errout bytes.Buffer
-		code := HostRun(context.Background(), append(args, "--state", state, "--socket", filepath.Join(state, "synthetic.sock")), &out, &errout)
+		code := HostRun(context.Background(), append(args, "--state", state, "--socket", socket), &out, &errout)
 		return out.String() + errout.String(), code
 	}
 	if out, code := run("add", "--file", file); code != 0 {

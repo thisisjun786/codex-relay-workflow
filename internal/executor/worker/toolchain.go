@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/executor"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 type ToolFile struct {
@@ -134,7 +135,7 @@ func InstallToolchain(root string, m Toolchain) (ToolchainReadback, error) {
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return ToolchainReadback{}, err
 	}
-	stage, err := os.MkdirTemp(versions, ".stage-")
+	stage, err := tmploc.MkdirTempIn(versions, ".stage-")
 	if err != nil {
 		return ToolchainReadback{}, err
 	}
@@ -192,11 +193,15 @@ func ActivateToolchain(root string, m Toolchain) error {
 	if err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(root, ".active-")
+	stage, err := tmploc.MkdirTempIn(root, ".active-")
 	if err != nil {
 		return err
 	}
-	defer os.Remove(f.Name())
+	defer os.RemoveAll(stage)
+	f, err := os.OpenFile(filepath.Join(stage, "profile.json"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
 	_, writeErr := f.Write(raw)
 	err = errors.Join(writeErr, f.Sync(), f.Close())
 	if err != nil {
