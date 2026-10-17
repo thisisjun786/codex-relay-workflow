@@ -613,8 +613,12 @@ func runtimeNames() map[string]bool {
 // judged by its cmdline, which every user may read, and is not ruled out when that is hidden
 // too (a procfs mounted hidepid) or when it starts one of this runtime's executables by a bare
 // name, which could be this runtime's. A process of this user whose exe or cmdline cannot be
-// read for any other reason is not ruled out. A relative operand is opened against the
-// process's working directory (its cwd link, which also needs ptrace access), and a process whose
+// read for any other reason is not ruled out. A readable exe with an empty cmdline is also unknown:
+// Linux can expose the new exe before publishing argv during exec, including after
+// the close-on-exec handshake that lets the parent's Start return. The executable
+// alone does not rule out an interpreter about to run a script inside the runtime.
+// A relative operand is opened against the process's working directory (its cwd link,
+// which also needs ptrace access), and a process whose
 // argv runs something relative to a working directory that cannot be read is not ruled out,
 // whatever its uid: that working directory may itself be inside, whatever the relative path
 // names. The one exception is another user's process, not root's, whose working directory the
@@ -668,6 +672,9 @@ func liveProcesses(proc string, d *runtimeDir) (found, unruled []any, err error)
 			exe = strings.TrimSuffix(exe, " (deleted)")
 			if inside(exe) {
 				hits = append(hits, exe)
+			} else if len(raw) == 0 {
+				unknown(int64(uid), "its executable is readable but its command line is empty (argv may not yet be published during exec), so what it runs is unknown")
+				continue
 			}
 		case !strings.Contains(words[0], "/") && runtimeNames()[words[0]]:
 			unknown(int64(uid), "its executable could not be read ("+exeErr.Error()+") and its command line starts "+words[0]+" by a bare name, which may be this runtime's, so what it runs is unknown")
