@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -1083,4 +1084,89 @@ func TestQAOverEditedSourceIsInconclusiveAndEscalates(t *testing.T) {
 	if got := closeOf(t, l2); got.State != "closed" {
 		t.Errorf("a capture that left artifacts only: %+v; calls %v", got, l2.Labels())
 	}
+}
+
+func TestCRW1610CloseFixResearchPreservesTheRepair(t *testing.T) {
+	l := NewLab(t, oneNode()...)
+	gap := Finding("P2", "the regression assertion is missing")
+	gap.Kind = "test_gap"
+	missing := Finding("P2", "the deadline evidence needs an answer")
+	missing.Kind = "evidence_missing"
+	missing.EvidenceQuestion = &reviewadapter.EvidenceQuestion{Question: "which deadline applies?", FilesNeeded: []string{"config/deadline.md"}}
+	l.Crosschecks("M1", 1, 0, "A", 1, Crosscheck{Verdict: "needs_changes", Findings: []reviewadapter.Finding{gap, missing}})
+	const repair = "the regression assertion was added before research\n"
+	l.On("^close-fix:M1$", func(c *Call) *fakehostPlan {
+		c.EditPath("a/close-fix.txt", repair)
+		p := Say(ReceiptWith("needs_research", map[string]any{"research_question": "which deadline applies?"}))
+		return &p
+	})
+	l.On("^explore:milestone:M1:", func(*Call) *fakehostPlan {
+		p := Say(map[string]any{"answer": "the deadline is 30 seconds", "evidence": []string{"config/deadline.md:1"}, "verified": []string{"config/deadline.md"}, "inferred": []string{}, "unknown": []string{}})
+		return &p
+	})
+	l.On("^research:milestone:M1:executor:r1$", func(c *Call) *fakehostPlan {
+		b, err := os.ReadFile(filepath.Join(c.Cwd, "a/close-fix.txt"))
+		if err != nil || string(b) != repair {
+			t.Errorf("research lost the uncommitted repair: %q, %v", b, err)
+		}
+		p := Say(Receipt("ready_for_review"))
+		return &p
+	})
+	got := closeOf(t, l)
+	if got.State != "closed" || got.Crosscheck != "verified" {
+		t.Fatalf("close %+v; calls %v", got, l.Labels())
+	}
+	fix, resumed := callNamed(t, l, "close-fix:M1"), callNamed(t, l, "research:milestone:M1:executor:r1")
+	if resumed.Resume != fix.ID {
+		t.Errorf("research resumed %q, want close-fix %s", resumed.Resume, fix.ID)
+	}
+	if text := textOfCall(l, resumed.ID); !strings.Contains(text, "the deadline is 30 seconds") {
+		t.Errorf("research answer missing: %s", text)
+	}
+	if actual := l.Git("show", l.Tip()+":a/close-fix.txt"); actual != strings.TrimSpace(repair) {
+		t.Errorf("published repair %q", actual)
+	}
+	commits := closeRepairCommits(l)
+	if len(commits) != 1 || str(commits[0].Data, "commit") != got.Tip {
+		t.Errorf("repair commits %+v, tip %s", commits, got.Tip)
+	}
+	if len(l.Rows("crw.crosscheck")) != 2 || len(l.Relay.Repairs) != 1 {
+		t.Errorf("the repaired head was not rechecked and published once")
+	}
+	var researchRoutes int
+	for _, row := range l.Rows("crw.exploreRoute") {
+		if str(row.Data, "kind") == "research" {
+			researchRoutes++
+		}
+	}
+	if researchRoutes != 1 {
+		t.Errorf("research routes %d, want one", researchRoutes)
+	}
+	noTierStep(t, l)
+}
+
+func TestCRW1610CloseFixResearchUsesTheExistingCap(t *testing.T) {
+	l := NewLab(t, oneNode()...)
+	l.Crosschecks("M1", 1, 0, "A", 1, Crosscheck{Verdict: "needs_changes", Findings: []reviewadapter.Finding{Finding("P1", "the range needs a correction")}})
+	l.On("^(close-fix:M1|research:milestone:M1:executor:r[0-9]+)$", func(*Call) *fakehostPlan {
+		p := Say(ReceiptWith("needs_research", map[string]any{"research_question": "which deadline applies?"}))
+		return &p
+	})
+	got := closeOf(t, l)
+	if got.State != "escalated" || got.Reason != "blocked_scope" {
+		t.Fatalf("close %+v; calls %v", got, l.Labels())
+	}
+	var capSeen bool
+	for _, row := range l.SpawnRows() {
+		if row.Reason == "research_cap" {
+			capSeen = true
+		}
+	}
+	if !capSeen {
+		t.Errorf("no existing research_cap decision; calls %v", l.Labels())
+	}
+	if len(closeRepairCommits(l)) != 0 || len(l.Relay.Repairs) != 0 {
+		t.Error("an unresolved research turn published a repair")
+	}
+	noTierStep(t, l)
 }

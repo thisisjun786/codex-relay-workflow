@@ -68,8 +68,9 @@ red-first and mutation-red lines against the receipts. A receipt that cannot be 
 (`crosscheck_receipt_missing`, also when a reused node's source journal cannot be read or its unit check or accepted copy is missing;
 `crosscheck_receipt_unverified`; `crosscheck_receipt_not_copied`, also when a reused node's accepted receipt names no copy - the original
 path is never re-read; `crosscheck_receipt_mismatch`, the row naming the node). The prompt carries refs, never diff bytes: one over `CrosscheckPromptLimit`
-(120 KiB, since the engine takes it as one command-line word) is not sent (`crosscheck_prompt_too_large`). The op serves round 1 only: a
-prior verdict, or another round (an explicit 0 included; a round not given is 1), is refused `crosscheck_prior_invalid`.
+(120 KiB, since the engine takes it as one command-line word) is not sent (`crosscheck_prompt_too_large`). The first round is round 1;
+the close's correction is followed by round 2 with the prior verdict. A prior verdict or round that does not describe that continuation
+is refused `crosscheck_prior_invalid`.
 
 **The run directory and the checkouts.** Every file the crosscheck writes lies under the run's directory (`Deps.LandRoot`,
 `<state>/flow/<run>` in the run process), which must be an absolute path: an empty or relative one fails the round before anything is
@@ -119,7 +120,17 @@ judged, and refuses, recording no close, evidence whose crosscheck is not a veri
 of a close made before the crosscheck, evidence with no crosscheck whose `final` member, the old close's `crw.reviewerFinal` review,
 is not verified, or evidence with neither):
 `close_unverified`. When the target is no longer the head the gate judged, the close is judged again from the new head, at most three
-times. A crosscheck that does not verify the range keeps the milestone open, and the close stops:
+times.
+
+**The close's correction.** A first `needs_changes` verdict gets one correction before the close stops. When every finding is
+`evidence_missing`, the run asks the explorer and rechecks the same head with its answers. A mixed set, including a `test_gap` and
+`evidence_missing`, goes to one close-fix executor. If that executor returns `needs_research`, the run uses the existing research route:
+the explorer answers the question and `answerPacket` resumes the same executor handle, retaining its worktree edits. The existing
+research limit still applies; an unavailable explorer holds the close, and an exhausted research limit escalates `blocked_scope`.
+Once the executor is ready, the run commits the correction, repeats the final gate and crosscheck at the repaired head, and publishes
+the local repair only when both pass. A research request alone never discards the correction or becomes `close_fix_research`.
+
+A crosscheck that still does not verify the range keeps the milestone open, and the close stops:
 
 - `needs_changes`: the run ends escalated `crosscheck_pending`, ask `crosscheck_pending`, with V in the escalation's evidence and in the
   run's value (`crosscheck`, V as the op recorded it) and the fix packet (`fix`, `crosscheckFixPacket`: the blocking findings by id, the
@@ -127,7 +138,7 @@ times. A crosscheck that does not verify the range keeps the milestone open, and
   landed, so the route is a correction node of a new plan revision: a correction issue of the milestone naming the finding ids
   (`crw-add-issue`, a plan revision), fixed by a new executor subagent on a branch from the integration tip, landed with
   `crw flow start land-head`, and the verdict and the landed head reported up. The child hands V and the fix packet up to the parent
-  (repository session) with `crw flow report-up`; the run makes no executor call for it. The escalation's id is of the run, the call and
+  (repository session) with `crw flow report-up`; the run makes no further close-fix executor call for it. The escalation's id is of the run, the call and
   V's canonical digest: a resume that judges the range again (the target moved, or a proof error ran the gate again at the same head)
   and gives another V is a new escalation with the new V, the current question of the milestone, told again, while the earlier
   escalation keeps its V; the same V again is the same escalation.
