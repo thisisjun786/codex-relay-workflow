@@ -18,6 +18,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // plain renders an ordered answer the way the CLI prints it and decodes it back.
@@ -671,7 +672,8 @@ func contested(t *testing.T, name string) (home, root, socket string) {
 // the Python tests' run_in_home does, for the rest of the test.
 func withHome(t *testing.T, home string) {
 	t.Helper()
-	if !strings.HasPrefix(home, os.TempDir()) && !strings.HasPrefix(home, fixedRoot+"/") {
+	tmpRoot, _ := tmploc.Lookup(os.Getenv)
+	if !strings.HasPrefix(home, tmpRoot) && !strings.HasPrefix(home, fixedRoot+"/") {
 		t.Fatalf("%s is not a test directory", home)
 	}
 	// This HOME is a t.TempDir, and its default state root is exactly what these properties

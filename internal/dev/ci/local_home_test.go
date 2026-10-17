@@ -148,7 +148,7 @@ func localStepTmpName(prefix string) *regexp.Regexp {
 // started with (before any t.Setenv), and removed when the test ends.
 func localShortWorkRoot(t *testing.T) string {
 	t.Helper()
-	w, err := os.MkdirTemp(os.TempDir(), "w")
+	w, err := tmploc.MkdirTemp("w")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +225,9 @@ func TestLocal_a_callers_TMPDIR_below_a_repository_is_refused(t *testing.T) {
 // judged: the run passes with its step TMPDIR directly below the 27-byte TMPDIR. A TMPDIR below a .git is
 // refused by its content (TestLocal_never_moves_the_step_TMPDIR), not by its length.
 func TestLocal_the_1209_shape_runs(t *testing.T) {
-	short, err := os.MkdirTemp("/tmp", "crw1209-")
+	// Preserve the recorded 27-byte fixture under the fixed default root;
+	// inheriting a long TMPDIR would change the scenario being checked.
+	short, err := tmploc.MkdirTempIn(tmploc.DefaultDir, "crw1209-")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,7 +247,7 @@ func TestLocal_the_1209_shape_runs(t *testing.T) {
 	t.Setenv("TMPDIR", callerTmp)
 	opts := localRunOptions(repo, localFixturePlan(localMarkerStep("true", marker)), filepath.Join(t.TempDir(), "record.json"))
 	// The .git walk stops below /tmp, so a stray /tmp/.git on the test host does not decide this run.
-	opts.gitCeilings = []string{"/tmp"}
+	opts.gitCeilings = []string{tmploc.DefaultDir}
 	made, _, err := localVerify(opts, "", io.Discard)
 	if err != nil {
 		t.Fatalf("the 1209 shape is refused: %v", err)

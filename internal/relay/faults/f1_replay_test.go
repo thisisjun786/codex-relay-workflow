@@ -15,6 +15,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // Every replay compares CLI bytes and every SQLite table with the golden, including refused
@@ -90,7 +91,7 @@ func TestF1ReplayWholeCLI(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			home, e := os.MkdirTemp("/dev/shm", "f1-replay-")
+			home, e := tmploc.MkdirTemp("f1-replay-")
 			if e != nil {
 				t.Fatal(e)
 			}

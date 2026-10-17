@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 func TestF2CLIOracle(t *testing.T) {
@@ -31,7 +33,7 @@ func TestF2CLIOracle(t *testing.T) {
 		{"fault-update", "--fault", "missing", "--op", "add_label", "--value", "not-json"},
 	} {
 		t.Run(args[0], func(t *testing.T) {
-			home, e := os.MkdirTemp("/dev/shm", "f2-oracle-")
+			home, e := tmploc.MkdirTemp("f2-oracle-")
 			if e != nil {
 				t.Fatal(e)
 			}

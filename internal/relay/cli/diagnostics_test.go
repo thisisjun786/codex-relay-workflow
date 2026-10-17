@@ -13,6 +13,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // scenario is one test_diagnostics.py scenario as the Python relay left it: its store, the
@@ -51,7 +52,7 @@ var (
 func scenarioFixture(t *testing.T) (string, scenarioSet) {
 	t.Helper()
 	scenarioSetOnce.Do(func() {
-		if scenarioSetDir, scenarioSetErr = os.MkdirTemp("", "crw-cli-scenarios-"); scenarioSetErr == nil {
+		if scenarioSetDir, scenarioSetErr = tmploc.MkdirTemp("crw-cli-scenarios-"); scenarioSetErr == nil {
 			fixtureJSON(t, "diagnostics-scenarios.json", &scenarioSetData, [2]string{"<scenarios>", scenarioSetDir})
 		}
 	})
@@ -94,7 +95,7 @@ var (
 func packageBinary(t *testing.T) (string, string) {
 	t.Helper()
 	binaryOnce.Do(func() {
-		binaryDir, binaryErr = os.MkdirTemp("", "crw-cli-binary-")
+		binaryDir, binaryErr = tmploc.MkdirTemp("crw-cli-binary-")
 		if binaryErr != nil {
 			return
 		}

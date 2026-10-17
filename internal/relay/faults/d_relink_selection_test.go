@@ -7,10 +7,11 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 func TestDRelinkOutstandingWriteSelection(t *testing.T) {
-	home, e := os.MkdirTemp("/dev/shm", "fault-d-link-")
+	home, e := tmploc.MkdirTemp("fault-d-link-")
 	if e != nil {
 		t.Fatal(e)
 	}

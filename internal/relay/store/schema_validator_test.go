@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // The frozen record schemas, as the repository's own jsonschema Draft7Validator judged each case
@@ -74,7 +75,10 @@ type draft7Verdict struct {
 var (
 	// judgedTemporary is a temporary directory an instance names: this run's, or the one the
 	// fixture's Python run named, <TMP:name>/NNN. The validator judged a path's form only.
-	judgedTemporary = regexp.MustCompile(regexp.QuoteMeta(filepath.Clean(os.TempDir())) + `/[^/"\\]+/[0-9]+|<TMP:[^>]*>/[0-9]+`)
+	judgedTemporary = func() *regexp.Regexp {
+		tmpRoot, _ := tmploc.Lookup(os.Getenv)
+		return regexp.MustCompile(regexp.QuoteMeta(filepath.Clean(tmpRoot)) + `/[^/"\\]+/[0-9]+|<TMP:[^>]*>/[0-9]+`)
+	}()
 )
 
 // normalInstance is an instance as the verdict fixture keeps it: its JSON with sorted keys, every

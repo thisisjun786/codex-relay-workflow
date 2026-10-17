@@ -10,6 +10,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 	_ "modernc.org/sqlite"
 )
 
@@ -29,7 +30,7 @@ func TestMain(m *testing.M) {
 // mirror its stamp implies.
 func supervisorFixture(t *testing.T, id string) string {
 	t.Helper()
-	root, err := os.MkdirTemp("", "crw-supervisor-")
+	root, err := tmploc.MkdirTemp("crw-supervisor-")
 	if err != nil {
 		t.Fatal(err)
 	}
