@@ -337,6 +337,9 @@ func TestSessionAdoptStopBindsTheAdoptedStepOnce(t *testing.T) {
 	if len(spawns) != 1 || rowStr(spawns[0].Data, "action") != StepSpawn || len(rowsNamed(dead, EvThreadStarted)) != 1 {
 		t.Fatalf("the dead process's rows %s, want the spawn step and its thread_started once", eventsOf(dead))
 	}
+	if ts := rowsNamed(dead, EvThreadStarted)[0]; rowStr(ts.Data, "thread_id") != "agent-1" || rowInt(ts.Data, "attempt") != 1 {
+		t.Fatalf("the dead process's thread_started %v, want the spawned subagent agent-1 at attempt 1", ts.Data)
+	}
 	// the dead process's turn is hidden and the subagent idle: not gone, and no turn carries the spawn marker for the adoption to bind
 	k.host.set("agent-1", func(a *fakeAgent, _ *SessionTurn) {
 		a.turns, a.Status = nil, "idle"
