@@ -81,8 +81,11 @@ command groups and a private artifact spool. Remote workers connect through an
 authenticated SSH transport to a fixed worker command with structured input;
 task text is never interpolated into a remote shell command.
 
+The diagram uses the child (project session) from the
+[layer table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels).
+
 ```text
-project owner / crw.dag
+child (project session) / crw.dag
         |
         v
 relay admission + host registry + execution journal
@@ -461,7 +464,8 @@ Required implementation scenarios:
 8. Every enabled adapter demonstrates the same envelope/check outcomes;
    unsupported lifecycle capabilities are explicit, not guessed.
 
-The document-only delivery has no red test. Its checks are `make lint-changed`,
+This document-only delivery adds no runtime test. Its checks include the existing
+layer-naming documentation tests, `make lint-changed`,
 `go run -tags dev ./cmd/crw-dev ci validate`, one independent review and the
 repository's configured GitHub CI for the merged task head.
 
