@@ -523,8 +523,12 @@ func TestToolsReview836RecordsALocationThatSurvivesAVanishedComponent(t *testing
 	if !found {
 		t.Fatalf("createRoot recorded %v, want the dot-dot component", created)
 	}
-	if made.parent != real || made.name != "p" {
-		t.Fatalf("the record reaches %q by %q, want %q by \"p\"", made.parent, made.name, real)
+	wantParent, err := filepath.EvalSymlinks(real)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if made.parent != wantParent || made.name != "p" {
+		t.Fatalf("the record reaches %q by %q, want %q by \"p\"", made.parent, made.name, wantParent)
 	}
 	removeCreated(created)
 	// The link is not this call's: it was there before the call and is never recorded.
@@ -606,8 +610,12 @@ func TestToolsReview836KeepsTheParentLocationWhenItCannotBeOpened(t *testing.T) 
 	if !found {
 		t.Fatalf("createRoot recorded %v, want %s", created, target)
 	}
-	if made.parent != drop || made.name != "downloads" {
-		t.Fatalf("the record kept parent %q and name %q, want %q and \"downloads\"", made.parent, made.name, drop)
+	wantParent, err := filepath.EvalSymlinks(drop)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if made.parent != wantParent || made.name != "downloads" {
+		t.Fatalf("the record kept parent %q and name %q, want %q and \"downloads\"", made.parent, made.name, wantParent)
 	}
 	removeCreated(created)
 	if _, statErr := os.Lstat(target); !errors.Is(statErr, fs.ErrNotExist) {

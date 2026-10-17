@@ -379,9 +379,25 @@ func TestCriticRoleHasOverlayAndDefinition(t *testing.T) {
 	if base != reviewer {
 		t.Error("the critic is not built on the reviewer definition")
 	}
-	for _, want := range []string{"DESIGN_AUDIT", "PRIOR FINDINGS", "rollback", "same `ref`"} {
+	for _, want := range []string{"DESIGN_AUDIT", "PRIOR FINDINGS", "rollback", "same `ref`",
+		"load-bearing objection", "`root`", "`first_check`", "observation that would refute",
+		"unexplained gap stays open", "never drops another blocker"} {
 		if !strings.Contains(overlay, want) {
 			t.Errorf("the critic overlay lacks %q", want)
+		}
+	}
+}
+
+// TestCRW1539ReviewerKeepsCrosscheckViewsSeparate (CRW-1539): the reviewer's crosscheck section keeps the
+// coverage and bug-hunt views of a diff distinct rather than averaging them.
+func TestCRW1539ReviewerKeepsCrosscheckViewsSeparate(t *testing.T) {
+	overlay, err := Overlay("reviewer", Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Keep coverage and bug-hunt verdicts separate", "conflicting evidence", "smallest check", "Never average verdicts", "severity and impact rules"} {
+		if !strings.Contains(overlay, want) {
+			t.Errorf("crosscheck guidance lacks %q", want)
 		}
 	}
 }

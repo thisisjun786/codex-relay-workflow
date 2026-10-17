@@ -113,6 +113,8 @@ export const DESIGN = obj({
 // separate review execution; an observed same-thread review is warning-only and recorded without blocking; needs_changes sends the DESIGN back to the architect (the same thread), and the executors
 // start only on an approved audit. The findings name what must change, by the decision or issue they concern.
 export const DESIGN_AUDIT = obj({
+  root: maybeText,
+  first_check: maybeText,
   verdict: { type: 'string', enum: ['approved', 'needs_changes'] },
   findings: list(obj({
     ref: text,

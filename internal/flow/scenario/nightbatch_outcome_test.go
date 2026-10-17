@@ -21,7 +21,7 @@ func TestNightBatchTellsTheMilestoneState(t *testing.T) {
 	}{
 		{"escalated", "escalated", "design_audit_rounds", func(l *Lab) {
 			l.Sequence("^design-audit:r\\d+$", func(*Call) fakehostPlan {
-				return Say(map[string]any{"verdict": "needs_changes", "findings": []any{map[string]any{"ref": "D1", "severity": "P2", "finding": "no", "evidence": []string{}}}, "summary": "no"})
+				return Say(map[string]any{"verdict": "needs_changes", "findings": []any{map[string]any{"ref": "D1", "severity": "P2", "finding": "no", "evidence": []string{}}}, "summary": "no", "root": nil, "first_check": nil})
 			})
 		}},
 		{"held", "held", "verify_unavailable", func(l *Lab) {
