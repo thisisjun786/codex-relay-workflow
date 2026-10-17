@@ -48,10 +48,10 @@ type Plan struct {
 	Decision    string              `json:"decision,omitempty"`
 	// Handoff is the sha256 of the crw-plan handoff the run reads its compiled milestone from ("" when it names none).
 	Handoff string `json:"handoff,omitempty"`
-	// Facts are the preflight facts, each pass, warn or fail with its reading. They never stop the start: the ones that did not
-	// pass are printed and recorded in the run's spec.
+	// Facts are the preflight readings. Advisory failures are printed and
+	// recorded; a repository failure also sets Blocked and refuses the start.
 	Facts []Fact `json:"facts"`
-	// Blocked says why the run cannot start (a build without the lane operations, a lane without its compiled milestone).
+	// Blocked says why the run cannot start (repository, lane operations or compiled milestone prerequisites).
 	Blocked string `json:"blocked,omitempty"`
 	// Backend is the backend the run starts on (session or app-server).
 	Backend string `json:"backend"`
@@ -91,7 +91,7 @@ func (c *command) start(args []string) int {
 	repo := fs.String("repo", "", "the git repository the run's worktrees are made from (default: the working directory's)")
 	handoff := fs.String("handoff", "", "the crw-plan handoff (crw-flow-compile-input/1) that produced the plan's current revision: the run reads its compiled milestone from a copy of it")
 	previewOnly := fs.Bool("preview", false, "show the preview and the preflight facts and start nothing")
-	_ = fs.Bool("force", false, "accepted and without effect: a preflight fact never stops the start")
+	_ = fs.Bool("force", false, "accepted and without effect: advisory preflight facts never stop the start")
 	asJSON := fs.Bool("json", false, "print the answer as JSON")
 	positional, code, ok := parse(fs, args)
 	if !ok {
@@ -304,6 +304,14 @@ func (c *command) start(args []string) int {
 			plan.Facts = append(plan.Facts, f)
 		}
 	}
+	// Repository resolution is a prerequisite, including for --preview. Keep
+	// it before handoff pinning, binding writes, spec creation and spawning.
+	resolvedRepo, repoProblem := repositoryFact(c.ctx, *repo)
+	spec.Repo = resolvedRepo
+	if repoProblem != nil {
+		plan.Facts = append(plan.Facts, *repoProblem)
+		plan.Blocked = repoProblem.Reading
+	}
 	// the facts of a session run (CRW-1316 §11): warnings, never a refusal
 	if session {
 		req := sessionFactRequest{Thread: spec.Thread, Table: table, Getenv: c.getenv, Socket: cm.socket, State: cm.state}
@@ -313,15 +321,14 @@ func (c *command) start(args []string) int {
 		if req.Socket == "" {
 			req.Socket, _ = store.DefaultSocket()
 		}
-		req.Repo, _ = repository(c.ctx, *repo)
+		req.Repo = spec.Repo
 		plan.Facts = append(plan.Facts, sessionFacts(req)...)
 	}
 	if c.Verifier != nil {
 		// the verifier's prerequisites (CRW-1319) do not depend on the store; the fact is a pass or a warning with its reason
-		tree, _ := repository(c.ctx, *repo)
-		plan.Facts = append(plan.Facts, c.Verifier(c.ctx, tree).leveled())
+		plan.Facts = append(plan.Facts, c.Verifier(c.ctx, spec.Repo).leveled())
 	}
-	// the facts that did not pass are printed with the preview and recorded in the run's spec; none of them stops the start
+	// Non-passing advisory facts are printed and recorded for runs that are not blocked.
 	var short []Fact
 	var shortNames []string
 	for _, f := range plan.Facts {
@@ -330,7 +337,7 @@ func (c *command) start(args []string) int {
 		}
 	}
 
-	if c.LaneOps != nil && !c.LaneOps() {
+	if plan.Blocked == "" && c.LaneOps != nil && !c.LaneOps() {
 		if need := LaneOperations(src); len(need) > 0 {
 			plan.Blocked = fmt.Sprintf("this build installs no project lane operations (cli.OpsFor is not set) and %s calls %s: the run would end in a script error at its first call", spec.Workflow, strings.Join(need, ", "))
 		}
@@ -403,11 +410,6 @@ func (c *command) start(args []string) int {
 				return c.fail("the run's binding cannot be pinned: %v", err)
 			}
 		}
-	}
-	if resolved, err := repository(c.ctx, *repo); err == nil {
-		spec.Repo = resolved
-	} else if *repo != "" {
-		return c.fail("%v", err)
 	}
 	if err := WriteSpec(sel.Path, spec); err != nil {
 		return c.fail("the run's spec cannot be written: %v", err)
