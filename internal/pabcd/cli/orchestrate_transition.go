@@ -407,7 +407,7 @@ func orchestrateCommitPublish(ctx context.Context, seams *orchestrateCommitSeams
 			}
 		}
 		if bindCheck := attest.ValidateWorkPhaseBinding(a.Attest, goalplan.EffectiveActiveWorkPhaseID(plan)); !bindCheck.OK {
-			return orchestrateCommitOutcome{refusal: &CliResult{Code: 1, Output: "orchestrate " + VerbText(a.Verb) + ": " + RenderPhaseContext(cur, sessionID) + "; " + workDiagnostic(bindCheck.Reason)}}, nil
+			return orchestrateCommitOutcome{refusal: &CliResult{Code: 1, Output: "orchestrate " + VerbText(a.Verb) + ": " + RenderPhaseContext(cur, sessionID) + "; " + workPhaseDiagnostic(bindCheck.Reason)}}, nil
 		}
 		// CRW-975: the A>B review binding is judged again on the plan this lock read, so a reviewer verdict
 		// recorded between the first check (before the lock) and this publication is not ignored. The
@@ -470,7 +470,7 @@ func orchestrateCommitPublish(ctx context.Context, seams *orchestrateCommitSeams
 		if err := ctx.Err(); err != nil {
 			return orchestrateCommitOutcome{err: err}
 		}
-		return orchestrateCommitOutcome{refusal: &CliResult{Code: 1, Output: "orchestrate " + VerbText(a.Verb) + ": " + RenderPhaseContext(cur, sessionID) + "; " + workDiagnostic(locked.Reason)}}
+		return orchestrateCommitOutcome{refusal: &CliResult{Code: 1, Output: "orchestrate " + VerbText(a.Verb) + ": " + RenderPhaseContext(cur, sessionID) + "; " + locked.Reason}}
 	}
 	// A plan the lock read and withholds from writers (bytes that are not UTF-8, a repeated key, stored data
 	// a write would lose) is a refusal with the lock's reason: nothing was judged under the lock for it, so
@@ -479,7 +479,7 @@ func orchestrateCommitPublish(ctx context.Context, seams *orchestrateCommitSeams
 		if err := ctx.Err(); err != nil {
 			return orchestrateCommitOutcome{err: err}
 		}
-		return orchestrateCommitOutcome{refusal: &CliResult{Code: 1, Output: "orchestrate " + VerbText(a.Verb) + ": " + RenderPhaseContext(cur, sessionID) + "; " + workDiagnostic(locked.Reason) + ". Nothing was written."}}
+		return orchestrateCommitOutcome{refusal: &CliResult{Code: 1, Output: "orchestrate " + VerbText(a.Verb) + ": " + RenderPhaseContext(cur, sessionID) + "; " + locked.Reason + ". Nothing was written."}}
 	}
 	// unreadable: an absent or unreachable plan is fail-open, as the unlocked read did and as the oracle
 	// does when it cannot open the plan (orchestrate-cli.ts 606-622). The publication runs outside the lock.
@@ -661,7 +661,7 @@ func orchestrateTransitionApply(ctx context.Context, a OrchestrateCliArgs, sessi
 	// state.slug, so unbound HITL cycles are untouched, and on the ENTRY edges only: A>P is a re-plan.
 	if to == state.PhaseP && (cur.Phase == state.PhaseIdle || cur.Phase == state.PhaseI) && cur.Slug != "" {
 		if gate := session.CheckBound(cwd, sessionID); !gate.OK {
-			return CliResult{Code: 1, Output: "orchestrate " + VerbText(verb) + ": " + workDiagnostic(gate.Reason) + "\nNothing was written."}, nil
+			return CliResult{Code: 1, Output: "orchestrate " + VerbText(verb) + ": " + workSourceDiagnostic(gate.Reason) + "\nNothing was written."}, nil
 		}
 	}
 	// P>A plan-artifact gate (DIFFLEVEL-ROADMAP-01): the plan must exist as numbered on-disk docs before Audit.
@@ -670,7 +670,7 @@ func orchestrateTransitionApply(ctx context.Context, a OrchestrateCliArgs, sessi
 	if cur.Phase == state.PhaseP && to == state.PhaseA {
 		planCheck := attest.ValidatePlanArtifacts(a.Attest, cwd)
 		if !planCheck.OK {
-			return CliResult{Code: 1, Output: "orchestrate " + VerbText(verb) + ": " + RenderPhaseContext(cur, sessionID) + "; " + workDiagnostic(planCheck.Reason)}, nil
+			return CliResult{Code: 1, Output: "orchestrate " + VerbText(verb) + ": " + RenderPhaseContext(cur, sessionID) + "; " + workPlanDiagnostic(planCheck.Reason)}, nil
 		}
 		epoch, err := orchestrateTransitionMintEpoch("e")
 		if err != nil {
@@ -689,7 +689,7 @@ func orchestrateTransitionApply(ctx context.Context, a OrchestrateCliArgs, sessi
 			effective = goalplan.EffectiveActiveWorkPhaseID(plan)
 		}
 		if bindCheck := attest.ValidateWorkPhaseBinding(a.Attest, effective); !bindCheck.OK {
-			return CliResult{Code: 1, Output: "orchestrate " + VerbText(verb) + ": " + RenderPhaseContext(cur, sessionID) + "; " + workDiagnostic(bindCheck.Reason)}, nil
+			return CliResult{Code: 1, Output: "orchestrate " + VerbText(verb) + ": " + RenderPhaseContext(cur, sessionID) + "; " + workPhaseDiagnostic(bindCheck.Reason)}, nil
 		}
 	}
 	// I>P: the interview soft gate. transition() has no override support, so this adds the equivalent of
@@ -754,7 +754,7 @@ func orchestrateTransitionApply(ctx context.Context, a OrchestrateCliArgs, sessi
 				orchestrateCommitWarn("orchestrate P", published, rowErr, from, to)...)}, nil
 		default:
 			return CliResult{Code: 1, Output: "orchestrate " + VerbText(verb) + ": " + RenderPhaseContext(cur, sessionID) +
-				"; interview soft-gate: " + workDiagnostic(strings.Join(gate.Warnings, "; ")) + ". Pass override:true in --attest to proceed."}, nil
+				"; interview soft-gate: " + strings.Join(workInterviewDiagnostics(gate.Warnings), "; ") + ". Pass override:true in --attest to proceed."}, nil
 		}
 	}
 	// 050 wp5 §5: a marker-matched D retry resumes a transition the first attempt already made legally;
@@ -768,7 +768,7 @@ func orchestrateTransitionApply(ctx context.Context, a OrchestrateCliArgs, sessi
 		result = fsm.Transition(cur, to, a.Attest)
 	}
 	if !result.OK || result.State == nil {
-		reason := workDiagnostic(result.Reason)
+		reason := workTransitionDiagnostic(result.Reason)
 		if reason == "" {
 			reason = "transition refused"
 		}
