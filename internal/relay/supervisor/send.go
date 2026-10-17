@@ -743,6 +743,9 @@ func (a *attemptRun) fence(tx context.Context, out *transportOutcome) error {
 	if current.State != "sending" || current.AttemptCount != a.claimed.attemptNo || current.LeaseOwner.String != a.owner {
 		return nil
 	}
+	if done, err := a.fenceFlowReportAck(tx, current); done {
+		return err
+	}
 	if done, err := a.fenceHierarchy(tx, out); done {
 		return err
 	}

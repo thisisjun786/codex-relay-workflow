@@ -902,9 +902,12 @@ loosen a protection merely to land a change.
 
 A passing `verification-record/1` alone does not satisfy the required status check:
 the successful `dev-gate` status must belong to the exact commit being pushed to
-`dev`. Local verification and reuse of a passing tree receipt do not publish that
-status themselves. An integration queue without a step that supplies it must remain
-blocked; do not remove or bypass protection to make such a push succeed.
+`dev`. Set `integration.required_status` to `dev-gate` to let the product integration
+paths publish that commit status from a validated receipt before the target push,
+including local verification and same-tree reuse. See [required integration status](relay/integrator.md#required-integration-status)
+for run links, the retained staging branch and token permissions. Without this
+setting, the existing behavior is unchanged; missing status or publication failure
+must remain blocked, never bypassed by weakening protection.
 
 Protect version tags (`v*`) against update, deletion and non-fast-forward with no bypass actors.
 The main rules protect ancestry, while owner-only workflow checks govern its release route;
