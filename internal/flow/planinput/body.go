@@ -54,17 +54,52 @@ type section struct {
 // its descendants through the next peer or shallower heading. Text before the
 // first heading belongs to no section.
 func sections(body string) []section {
+	const (
+		noParagraph = iota
+		rootParagraph
+		listParagraph
+		quoteParagraph
+	)
 	var out []section
-	fence := ""
 	excludedDepth := 0
-	// Only a paragraph outside a list can become a section-level Setext heading.
-	listParagraph, itemText := false, 0
-	lines := strings.Split(body, "\n")
-	for i := 0; i < len(lines); i++ {
-		line := strings.TrimRight(lines[i], "\r")
+	state := struct {
+		paragraph   []string
+		kind        int
+		itemText    int
+		fence       string
+		htmlComment bool
+	}{}
+	emit := func(lines ...string) {
+		if excludedDepth == 0 && len(out) > 0 {
+			out[len(out)-1].lines = append(out[len(out)-1].lines, lines...)
+		}
+	}
+	flush := func() {
+		emit(state.paragraph...)
+		state.paragraph, state.kind = nil, noParagraph
+	}
+	heading := func(title string, depth int) {
+		state.itemText = 0
+		if excludedDepth > 0 && depth > excludedDepth {
+			return
+		}
+		excludedDepth = 0
+		if skill.ReadyOutOfScopeHeading(title) {
+			excludedDepth = depth
+			return
+		}
+		out = append(out, section{heading: normalizeHeading(title), depth: depth})
+	}
+	for _, raw := range strings.Split(body, "\n") {
+		line := strings.TrimRight(raw, "\r")
 		rest := strings.TrimLeft(line, " \t")
 		col := indentOf(line[:len(line)-len(rest)])
-		inItem := itemText > 0 && col >= itemText
+		inItem := state.itemText > 0 && col >= state.itemText
+		if state.htmlComment {
+			state.htmlComment = headingCommentOpen(line, true)
+			emit(line)
+			continue
+		}
 		t := strings.TrimLeft(line, " ")
 		marker := ""
 		switch {
@@ -74,56 +109,62 @@ func sections(body string) []section {
 			marker = "~~~"
 		}
 		if marker != "" {
-			switch fence {
+			flush()
+			switch state.fence {
 			case "":
-				fence = marker
-				if col < itemText {
-					itemText = 0
+				state.fence = marker
+				if col < state.itemText {
+					state.itemText = 0
 				}
 			case marker:
-				fence = ""
-				listParagraph = false
+				state.fence = ""
 			}
 			continue
 		}
-		if fence != "" {
+		if state.fence != "" {
 			continue
 		}
-		title, depth := "", 0
+		if col <= 3 && strings.HasPrefix(rest, "<!--") {
+			flush()
+			if !inItem {
+				state.itemText = 0
+			}
+			state.htmlComment = headingCommentOpen(rest, false)
+			emit(line)
+			continue
+		}
 		if m := headingLine.FindStringSubmatch(line); m != nil {
-			title, depth = m[2], len(m[1])
-		} else if !listParagraph && !inItem && col <= 3 && setextParagraph(rest) &&
-			i+1 < len(lines) && setextLine.MatchString(strings.TrimRight(lines[i+1], "\r")) {
-			title, depth = strings.TrimSpace(line), 1
-			if strings.HasPrefix(strings.TrimSpace(lines[i+1]), "-") {
+			flush()
+			heading(m[2], len(m[1]))
+			continue
+		}
+		if state.kind == rootParagraph && setextLine.MatchString(line) {
+			parts := make([]string, len(state.paragraph))
+			for i, part := range state.paragraph {
+				parts[i] = strings.TrimSpace(part)
+			}
+			title := strings.Join(parts, " ")
+			depth := 1
+			if strings.HasPrefix(strings.TrimSpace(line), "-") {
 				depth = 2
 			}
-			i++ // the underline belongs to the heading, not to either section's data
-		}
-		if depth > 0 {
-			listParagraph, itemText = false, 0
-			s := section{heading: normalizeHeading(title), depth: depth}
-			if excludedDepth > 0 && s.depth > excludedDepth {
-				continue
-			}
-			excludedDepth = 0
-			if skill.ReadyOutOfScopeHeading(title) {
-				excludedDepth = s.depth
-				continue
-			}
-			out = append(out, s)
+			// The complete paragraph and underline are the heading, not body data.
+			state.paragraph, state.kind = nil, noParagraph
+			heading(title, depth)
 			continue
 		}
 		switch m := setextListLine.FindStringSubmatch(rest); {
 		case rest == "":
-			listParagraph = false
+			flush()
+			emit(line)
 		case col <= 3 && setextBreakLine.MatchString(rest):
-			listParagraph = false
+			flush()
 			if !inItem {
-				itemText = 0
+				state.itemText = 0
 			}
+			emit(line)
 		case col <= 3 && m != nil:
-			listParagraph = true
+			flush()
 			if !inItem {
 				gap := 0
 				for _, r := range m[2] {
@@ -136,16 +177,73 @@ func sections(body string) []section {
 				if gap == 0 || gap > 4 {
 					gap = 1
 				}
-				itemText = col + len(m[1]) + gap
+				state.itemText = col + len(m[1]) + gap
 			}
-		case !listParagraph && !inItem:
-			itemText = 0
-		}
-		if excludedDepth == 0 && len(out) > 0 {
-			out[len(out)-1].lines = append(out[len(out)-1].lines, line)
+			if strings.TrimSpace(m[3]) == "" {
+				emit(line)
+			} else {
+				state.kind = listParagraph
+				state.paragraph = append(state.paragraph, line)
+			}
+		case col <= 3 && strings.HasPrefix(rest, ">"):
+			flush()
+			if !inItem {
+				state.itemText = 0
+			}
+			text := strings.TrimSpace(rest)
+			for strings.HasPrefix(text, ">") {
+				text = strings.TrimSpace(strings.TrimPrefix(text, ">"))
+			}
+			if setextParagraph(text) && !strings.HasPrefix(text, "```") &&
+				!strings.HasPrefix(text, "~~~") && !strings.HasPrefix(text, "<!--") {
+				state.kind = quoteParagraph
+				state.paragraph = append(state.paragraph, line)
+			} else {
+				emit(line)
+			}
+		case setextParagraph(rest):
+			if state.kind == noParagraph {
+				switch {
+				case inItem:
+					state.kind = listParagraph
+				case col <= 3:
+					state.kind = rootParagraph
+					state.itemText = 0
+				default:
+					emit(line)
+					continue
+				}
+			}
+			// Unmarked continuations keep the paragraph's origin, including a
+			// list paragraph that began after a blank line.
+			state.paragraph = append(state.paragraph, line)
+		default:
+			flush()
+			if !inItem {
+				state.itemText = 0
+			}
+			emit(line)
 		}
 	}
+	flush()
 	return out
+}
+
+// headingCommentOpen carries an HTML comment block across lines. A comment may
+// close and another open on the same line; its contents never become headings.
+func headingCommentOpen(line string, open bool) bool {
+	for {
+		marker := "<!--"
+		if open {
+			marker = "-->"
+		}
+		at := strings.Index(line, marker)
+		if at < 0 {
+			return open
+		}
+		line = line[at+len(marker):]
+		open = !open
+	}
 }
 
 // setextParagraph rejects block markers that an underline cannot turn into a
