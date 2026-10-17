@@ -9,12 +9,19 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/skill"
 )
 
-// The headings of an issue body that carry an issue line's fields. A heading is matched without regard to case, level, bold marks and a
-// trailing colon; a section runs to the next heading, and a heading inside a code fence is not a heading.
+// headingSet selects release-gate kinds using issue-ready's single alias list,
+// plus exact legacy headings that plan-input has always supported.
+type headingSet struct {
+	kinds, legacy []string
+}
+
+// The compile input carries criteria, the decided answer, red tests and the done
+// condition in its criteria list. Regions remain separate. A section runs to the
+// next heading; headings and bullets inside code fences are not read.
 var (
-	criteriaHeadings = []string{"끝 조건", "done when", "acceptance", "acceptance criteria"}
-	regionHeadings   = []string{"수정 범위", "edit regions", "regions"}
-	sizeHeadings     = []string{"크기", "size", "size fit"}
+	criteriaHeadings = headingSet{kinds: []string{"criteria", "decided_answer", "red_test", "done_condition"}, legacy: []string{"acceptance"}}
+	regionHeadings   = headingSet{kinds: []string{"edit_region"}, legacy: []string{"수정 범위", "regions"}}
+	sizeHeadings     = headingSet{legacy: []string{"크기", "size", "size fit"}}
 )
 
 // sizeFields are the "name: value" lines of a size section and the closed set of each value; compile judges the same sets.
@@ -82,14 +89,12 @@ func normalizeHeading(s string) string {
 	return strings.ToLower(s)
 }
 
-// linesOf joins the lines of every section whose heading is one of names.
-func linesOf(secs []section, names []string) (lines []string, found bool) {
+// linesOf joins the lines of every section whose heading belongs to names.
+func linesOf(secs []section, names headingSet) (lines []string, found bool) {
 	for _, s := range secs {
-		for _, n := range names {
-			if s.heading == n {
-				found = true
-				lines = append(lines, s.lines...)
-			}
+		if contains(names.legacy, s.heading) || contains(names.kinds, skill.ReadyHeadingKind(s.heading)) {
+			found = true
+			lines = append(lines, s.lines...)
 		}
 	}
 	return lines, found
