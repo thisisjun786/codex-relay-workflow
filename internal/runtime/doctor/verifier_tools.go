@@ -33,8 +33,15 @@ func VerifierToolsReport(ctx context.Context, env scope.Env) Object {
 	for _, c := range p.Candidates {
 		candidates = append(candidates, Object{{Key: "root", Value: c.Root}, {Key: "version", Value: c.Version}})
 	}
+	var workflow any
+	if p.Tools.VerifierKind() == crwconfig.VerifierGitHubActions {
+		workflow = p.Tools.GitHubWorkflow()
+	}
 	return Object{
 		{Key: "config", Value: config},
+		{Key: "kind", Value: p.Tools.VerifierKind()},
+		{Key: "repository", Value: nullable(p.Tools.Repository)},
+		{Key: "workflow", Value: workflow},
 		{Key: "goRoot", Value: nullable(p.Tools.GoRoot)},
 		{Key: "go", Value: nullable(p.Go)},
 		{Key: "goSource", Value: nullable(p.GoSource)},

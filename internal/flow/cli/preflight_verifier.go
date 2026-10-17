@@ -25,6 +25,17 @@ const FactVerifier = "verifier_prerequisites"
 func VerifierPrerequisites(ctx context.Context, env []string, repo string) Fact {
 	p := crwconfig.ProbeVerifierTools(ctx, env, "")
 	problems := append([]string{}, p.Problems...)
+	if p.Tools.VerifierKind() == crwconfig.VerifierGitHubActions {
+		// the remote verifier needs no local Go or crw-dev: its prerequisites are the probe's own (CRW-1594)
+		reading := fmt.Sprintf("github-actions %s workflow %q, runnable %t", p.Tools.Repository, p.Tools.GitHubWorkflow(), p.Runnable)
+		if len(p.Notes) > 0 {
+			reading += "; " + strings.Join(p.Notes, "; ")
+		}
+		if len(problems) == 0 {
+			return Fact{Name: FactVerifier, Level: LevelPass, Pass: true, Reading: reading}
+		}
+		return Fact{Name: FactVerifier, Level: LevelWarn, Reading: reading, Reason: strings.Join(problems, "; ")}
+	}
 	if repo != "" && p.Mode == "tree" {
 		if info, err := os.Stat(filepath.Join(repo, "cmd", "crw-dev")); err != nil || !info.IsDir() {
 			problems = append(problems, fmt.Sprintf("the repository %s has no cmd/crw-dev for a tree verification to run: set verifier.crw_dev to an installed crw-dev (crw config verifier --crw-dev <path>)", repo))
