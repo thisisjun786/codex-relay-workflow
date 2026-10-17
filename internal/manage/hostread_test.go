@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // hostReadAllowedMethods is every method crw manage host-read may read.
@@ -24,7 +25,7 @@ func hostReadConfig(socket string) *Config {
 // which would push the socket past the 108-byte unix socket bound.
 func hostReadEnv(t *testing.T, socket string) {
 	t.Helper()
-	home, err := os.MkdirTemp("", "crw686-")
+	home, err := tmploc.MkdirTemp("crw686-")
 	if err != nil {
 		t.Fatal(err)
 	}

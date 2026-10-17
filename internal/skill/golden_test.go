@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // The command tests in this package hold what the Go skill commands answer to goldens
@@ -71,7 +72,8 @@ func goldenKey(sub, key string) string {
 func argsQuestion(dir string, args []string) ([]golden.Option, string) {
 	root := repositoryRoot()
 	pairs := [][2]string{{root, "<ROOT>"}}
-	tmp := filepath.Clean(os.TempDir()) + string(filepath.Separator)
+	tmp, _ := tmploc.Lookup(os.Getenv)
+	tmp = filepath.Clean(tmp) + string(filepath.Separator)
 	seen := map[string]bool{}
 	for _, value := range append([]string{dir}, args...) {
 		value = strings.ReplaceAll(value, root, "")

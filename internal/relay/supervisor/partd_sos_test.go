@@ -25,6 +25,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/supervisor"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // sosOperation is one command or store derivation a Python SOS test made: its kind and arguments,
@@ -72,7 +73,7 @@ var sosCases = map[string][]string{
 // returns write them, the tree and the repository back as placeholders.
 func captureSOS(t *testing.T, method string) (string, sosCapture, []golden.Option) {
 	t.Helper()
-	root, err := os.MkdirTemp("", "crw-sos-")
+	root, err := tmploc.MkdirTemp("crw-sos-")
 	if err != nil {
 		t.Fatal(err)
 	}

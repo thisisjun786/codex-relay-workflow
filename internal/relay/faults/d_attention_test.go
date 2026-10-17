@@ -7,10 +7,11 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 func TestDAttentionWholeOutput(t *testing.T) {
-	home, e := os.MkdirTemp("/dev/shm", "fault-d-attention-")
+	home, e := tmploc.MkdirTemp("fault-d-attention-")
 	if e != nil {
 		t.Fatal(e)
 	}

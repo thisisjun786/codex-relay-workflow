@@ -10,6 +10,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // FLT-26: a failed issued write is uncertain and stays write-once, with an
@@ -18,7 +19,7 @@ func TestF2WholeOutput(t *testing.T) {
 	goldenParent(t)
 	for _, action := range []string{"fail", "fail_issued", "fail_ended", "move", "adopt", "update", "update_owned", "update_project"} {
 		t.Run(action, func(t *testing.T) {
-			home, e := os.MkdirTemp("/dev/shm", "f2-whole-")
+			home, e := tmploc.MkdirTemp("f2-whole-")
 			if e != nil {
 				t.Fatal(e)
 			}

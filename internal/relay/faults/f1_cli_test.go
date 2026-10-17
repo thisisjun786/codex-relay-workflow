@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 func TestF1ClaimCLIOracle(t *testing.T) {
@@ -25,7 +27,7 @@ func TestF1ClaimCLIOracle(t *testing.T) {
 	cases = append(cases, [][]string{{"fault-target", "--product", "crw", "--team", "team", "--project-ref", "P"}, {"fault-observe", "--observation", `{"schema":"fault-observation/1","product":"crw","faultClass":"delivery_stalled","severity":"broken","signature":{"recipient":"a"},"occurrenceKey":"o","scope":{},"detail":"d","evidence":[],"cleared":false}`}, {"fault-claim", "--publication", id, "--owner", "operator"}, {"fault-reconcile", "--publication", id, "--observed-fields", "not-json"}, {"fault-complete", "--publication", id, "--observed-fields", "not-json"}})
 	for n, steps := range cases {
 		t.Run(string(rune('a'+n)), func(t *testing.T) {
-			home, err := os.MkdirTemp("/dev/shm", "f1-cli-")
+			home, err := tmploc.MkdirTemp("f1-cli-")
 			if err != nil {
 				t.Fatal(err)
 			}

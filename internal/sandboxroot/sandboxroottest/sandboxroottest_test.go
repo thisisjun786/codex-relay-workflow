@@ -18,7 +18,7 @@ const helperEnv = "CRW_SANDBOXROOTTEST_HELPER"
 
 func TestMain(m *testing.M) {
 	if os.Getenv(helperEnv) == "1" {
-		if _, err := Install(os.TempDir()); err != nil {
+		if _, err := InstallTemp(); err != nil {
 			os.Exit(2)
 		}
 		os.Exit(0)

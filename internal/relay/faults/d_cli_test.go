@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // The golden, which began as the independent Python process's answer rather than a duplicated Go
@@ -34,7 +36,7 @@ func TestDCLIOracle(t *testing.T) {
 	}
 	for _, args := range cases {
 		t.Run(args[0]+"_"+strings.Join(args[1:], "_"), func(t *testing.T) {
-			home, err := os.MkdirTemp("/dev/shm", "fault-d-oracle-")
+			home, err := tmploc.MkdirTemp("fault-d-oracle-")
 			if err != nil {
 				t.Fatal(err)
 			}

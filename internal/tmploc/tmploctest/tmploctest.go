@@ -1,5 +1,6 @@
 // Package tmploctest holds the test helpers of tmploc: socket directories and paths for tests, each
-// measured against tmploc.SocketTailMax whoever composes the path (CRW-1568).
+// measured against tmploc.SocketTailMax whoever composes the path (CRW-1568), and the conventional
+// roots test harnesses pick scratch work below (CRW-1580).
 package tmploctest
 
 import (
@@ -69,4 +70,26 @@ func CheckSocket(tb testing.TB, dir, path string) {
 		}
 		tb.Fatalf("tmploctest: socket %q is %d bytes, over the %d-byte bound of a unix socket path", path, len(path), tmploc.SocketBound)
 	}
+}
+
+// MemoryBase is the memory-backed test harness's configured base, or its
+// conventional candidate when no override was supplied. The harness still
+// checks suitability and owns the directory it creates.
+func MemoryBase(override string) string {
+	if override != "" {
+		return override
+	}
+	return "/dev/shm"
+}
+
+// FallbackDir chooses the first conventional base accepted by a test's path
+// predicate. Tests whose command fixtures reject particular path words use
+// this only after rejecting their configured temporary directory.
+func FallbackDir(usable func(string) bool) (string, bool) {
+	for _, dir := range []string{tmploc.DefaultDir, "/var/tmp"} {
+		if usable(dir) {
+			return dir, true
+		}
+	}
+	return "", false
 }

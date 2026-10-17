@@ -4,13 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // checkout is the repository root, which fixtures and goldens name <repo>.
@@ -23,7 +23,7 @@ func checkout() string {
 // state directory) as given, then the checkout as <repo> and TMPDIR as <tmpdir>. The Python
 // scenarios' temporary directories are named <tmpdir>/python-temporary-N in the fixtures.
 func runPaths(extra ...[2]string) [][2]string {
-	return append(extra, [2]string{checkout(), "<repo>"}, [2]string{os.Getenv("TMPDIR"), "<tmpdir>"})
+	return append(extra, [2]string{checkout(), "<repo>"}, [2]string{tmploc.Env(), "<tmpdir>"})
 }
 
 // scenarioInputs reads the named fixture, the calls a Python scenario made, with its paths put back
