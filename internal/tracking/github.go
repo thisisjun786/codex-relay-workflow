@@ -273,8 +273,11 @@ func (g *GitHub) HasComment(ctx context.Context, ref Ref, header string) (bool, 
 		return false, err
 	}
 	for _, c := range comments {
-		first, _, _ := strings.Cut(c.Body, "\n")
-		if strings.TrimSuffix(first, "\r") == header {
+		first, _, hasLF := strings.Cut(c.Body, "\n")
+		if hasLF {
+			first = strings.TrimSuffix(first, "\r")
+		}
+		if first == header {
 			return true, nil
 		}
 	}
