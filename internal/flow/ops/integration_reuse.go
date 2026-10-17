@@ -100,6 +100,13 @@ func auditSubjectOf(events []engine.Event, plan, ms, node, head, acceptanceID, c
 type reuseIntegratedOp struct{ l *Lane }
 
 func (o *reuseIntegratedOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResult, error) {
+	return o.read(ctx, req, false)
+}
+
+// read shares the landing proof between design discovery and build. Design discovery
+// has no current ledger to compare; it returns the source issue and its decisions.
+// Build still requires the current DESIGN to match that same proven source.
+func (o *reuseIntegratedOp) read(ctx context.Context, req engine.OpRequest, forDesign bool) (engine.OpResult, error) {
 	var ms, node string
 	if err := args(req.Args, &ms, &node); err != nil {
 		return engine.OpResult{}, fmt.Errorf("crw.reuseIntegrated(milestone, node): %w", err)
@@ -114,14 +121,19 @@ func (o *reuseIntegratedOp) Run(ctx context.Context, req engine.OpRequest) (engi
 		return engine.OpResult{}, fmt.Errorf("crw.reuseIntegrated: milestone %s of plan %s has no node %s", ms, plan, node)
 	}
 	led, hasLedger := currentLedger(r, ms)
-	if !hasLedger {
+	if !hasLedger && !forDesign {
 		return engine.OpResult{}, fmt.Errorf("crw.reuseIntegrated: milestone %s has no design revision", ms)
 	}
 	out := ReuseIntegratedResult{Plan: plan, Milestone: ms, Node: node}
+	var fixed *IntegratedDesign
 	finish := func() (engine.OpResult, error) {
 		data := map[string]any{}
 		raw, _ := json.Marshal(out)
 		_ = json.Unmarshal(raw, &data)
+		if fixed != nil {
+			fixed.ReuseIntegratedResult = out
+			return engine.OpResult{Result: result(fixed)}, nil
+		}
 		return engine.OpResult{Result: result(out), Data: data}, nil
 	}
 	reader, ok := o.l.d.Relay.(IntegratedReader)
@@ -152,12 +164,16 @@ func (o *reuseIntegratedOp) Run(ctx context.Context, req engine.OpRequest) (engi
 	if o.l.d.DesignHistory == nil {
 		return unproven("no run history is wired to prove the integration with")
 	}
-	curIssue, found, err := designIssue(led, node)
-	if err != nil {
-		return engine.OpResult{}, err
-	}
-	if !found {
-		return unproven("the current design revision holds no issue of the node")
+	var curIssue DesignIssue
+	if !forDesign {
+		var found bool
+		curIssue, found, err = designIssue(led, node)
+		if err != nil {
+			return engine.OpResult{}, err
+		}
+		if !found {
+			return unproven("the current design revision holds no issue of the node")
+		}
 	}
 	sources, err := o.l.d.DesignHistory(ctx, plan)
 	if err != nil {
@@ -206,7 +222,7 @@ func (o *reuseIntegratedOp) Run(ctx context.Context, req engine.OpRequest) (engi
 		if err != nil {
 			return engine.OpResult{}, err
 		}
-		if !found || !reflect.DeepEqual(canonicalIssue(srcIssue), canonicalIssue(curIssue)) {
+		if !found || (!forDesign && !reflect.DeepEqual(canonicalIssue(srcIssue), canonicalIssue(curIssue))) {
 			continue
 		}
 		// the design decisions the issue stands on must be the same ones, not only the same ids: a decision whose content
@@ -215,14 +231,17 @@ func (o *reuseIntegratedOp) Run(ctx context.Context, req engine.OpRequest) (engi
 		if err != nil {
 			return engine.OpResult{}, err
 		}
-		currentDesign, err := ledgerDesign(led)
-		if err != nil {
-			return engine.OpResult{}, err
+		var currentDesign Design
+		if !forDesign {
+			currentDesign, err = ledgerDesign(led)
+			if err != nil {
+				return engine.OpResult{}, err
+			}
 		}
 		decisionsKept := true
 		for _, ref := range srcIssue.DecisionRefs {
 			srcDec := canonicalDecisions(decisionsOf(sourceDesign, ref))
-			if srcDec == "[]" || srcDec != canonicalDecisions(decisionsOf(currentDesign, ref)) {
+			if srcDec == "[]" || (!forDesign && srcDec != canonicalDecisions(decisionsOf(currentDesign, ref))) {
 				decisionsKept = false
 				break
 			}
@@ -264,9 +283,156 @@ func (o *reuseIntegratedOp) Run(ctx context.Context, req engine.OpRequest) (engi
 		out.SliceDigest, out.CriteriaDigest = n.SliceDigest, n.CriteriaDigest
 		// the run's own ledger stands behind the reuse: its revision and digest, not the source's
 		out.Revision, out.DesignDigest = dataStr(led, "revision"), dataStr(led, "digest")
+		if forDesign {
+			fixed = &IntegratedDesign{SourceRevision: dataStr(sled, "revision"), Issue: srcIssue, Decisions: []Decision{}}
+			for _, ref := range srcIssue.DecisionRefs {
+				fixed.Decisions = append(fixed.Decisions, decisionsOf(sourceDesign, ref)...)
+			}
+		}
 		return finish()
 	}
 	return unproven("the relay reads the node as integrated, but no earlier run of the plan proves it: no matching release, acceptance, integration and audit under the same slice, criteria and DESIGN")
+}
+
+// IntegratedDesign is the source DESIGN of a proven landing, or an unproven
+// observation. Only Reused entries may pin an issue or a decision.
+type IntegratedDesign struct {
+	ReuseIntegratedResult
+	SourceRevision string      `json:"source_revision,omitempty"`
+	Issue          DesignIssue `json:"issue"`
+	Decisions      []Decision  `json:"decisions"`
+	Detail         string      `json:"detail,omitempty"`
+}
+
+// designReuseWithIntegratedOp adds discovery to the existing designReuse row.
+// No new call or optional field is recorded when no integration is found, keeping
+// the packets and journal of an ordinary run unchanged.
+type designReuseWithIntegratedOp struct{ l *Lane }
+
+func (o *designReuseWithIntegratedOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResult, error) {
+	var ms string
+	if err := args(req.Args, &ms); err != nil {
+		return engine.OpResult{}, fmt.Errorf("crw.designReuse(milestone): %w", err)
+	}
+	m, plan, err := milestoneOf(rows(req.Journal.Events()), ms)
+	if err != nil {
+		return engine.OpResult{}, err
+	}
+	// Read history once for the phase. Failure means no reusable design, and
+	// stays a failed proof for any integrated node; it never authorizes a build.
+	lane := *o.l
+	var sources []DesignRun
+	var historyErr error
+	if o.l.d.DesignHistory != nil {
+		sources, historyErr = o.l.d.DesignHistory(ctx, plan)
+		if ctx.Err() != nil {
+			return engine.OpResult{}, ctx.Err()
+		}
+		lane.d.DesignHistory = func(context.Context, string) ([]DesignRun, error) {
+			if historyErr != nil {
+				return nil, nil
+			}
+			return sources, nil
+		}
+	}
+	out, err := (&designReuseOp{&lane}).Run(ctx, req)
+	if err != nil {
+		return out, err
+	}
+	var d DesignReuseResult
+	if err := json.Unmarshal(out.Result, &d); err != nil {
+		return engine.OpResult{}, err
+	}
+	if d.Reused {
+		return out, nil
+	}
+	if o.l.d.DesignHistory != nil {
+		lane.d.DesignHistory = func(context.Context, string) ([]DesignRun, error) { return sources, historyErr }
+	}
+	// Without a reader, only earlier recorded landings are candidates. A fresh
+	// run on an adapter without integration support retains its existing packet.
+	hinted := map[string]bool{}
+	if _, ok := o.l.d.Relay.(IntegratedReader); !ok {
+		for _, src := range sources {
+			for _, ev := range rows(src.Events).current(OpIntegrate) {
+				if dataStr(ev, "plan") == plan {
+					hinted[dataStr(ev, "node")] = true
+				}
+			}
+		}
+	}
+	var fixed []IntegratedDesign
+	for _, n := range m.Nodes {
+		readReq := req
+		readReq.Args = result([]string{m.ID, n.ID})
+		res, readErr := (&reuseIntegratedOp{&lane}).read(ctx, readReq, true)
+		if ctx.Err() != nil {
+			return engine.OpResult{}, ctx.Err()
+		}
+		item := IntegratedDesign{ReuseIntegratedResult: ReuseIntegratedResult{Plan: plan, Milestone: m.ID, Node: n.ID}}
+		if readErr != nil {
+			item.Reason, item.Detail = ReasonIntegrationUnproven, readErr.Error()
+		} else if err := json.Unmarshal(res.Result, &item); err != nil {
+			return engine.OpResult{}, err
+		}
+		if item.Reason == ReuseIntegratedNot || (item.Reason == ReuseReaderUnavailable && !hinted[n.ID] && historyErr == nil) {
+			continue
+		}
+		fixed = append(fixed, item)
+	}
+	if len(fixed) == 0 {
+		return out, nil
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(out.Result, &payload); err != nil {
+		return engine.OpResult{}, err
+	}
+	payload["integrated_design"] = fixed
+	out.Result = result(payload)
+	out.Data["integrated_design"] = fixed
+	return out, nil
+}
+
+func (o *designReuseWithIntegratedOp) Proven(ctx context.Context, ev []engine.Event, row engine.Event) (bool, string, error) {
+	// This is the recorded basis of the design phase, not permission to rebuild
+	// or reuse a landing. The build op proves it again against the live relay.
+	return provenAlways(ctx, ev, row)
+}
+
+func integratedDesigns(r rows, ms string) ([]IntegratedDesign, error) {
+	row, ok := r.current(OpDesignReuse).last(func(ev engine.Event) bool { return dataStr(ev, "milestone") == ms })
+	if !ok {
+		return nil, nil
+	}
+	var payload struct {
+		Integrated []IntegratedDesign `json:"integrated_design"`
+	}
+	if err := json.Unmarshal(resultOf(row), &payload); err != nil {
+		return nil, err
+	}
+	return payload.Integrated, nil
+}
+
+func keepsIntegratedDesign(r rows, ms string, design Design) error {
+	fixed, err := integratedDesigns(r, ms)
+	if err != nil {
+		return err
+	}
+	for _, f := range fixed {
+		if !f.Reused {
+			continue
+		}
+		at := slices.IndexFunc(design.Issues, func(is DesignIssue) bool { return is.Node == f.Node })
+		if at < 0 || !reflect.DeepEqual(canonicalIssue(f.Issue), canonicalIssue(design.Issues[at])) {
+			return fmt.Errorf("integrated node %s must keep its DESIGN issue from run %s", f.Node, f.SourceRun)
+		}
+		for _, ref := range f.Issue.DecisionRefs {
+			if canonicalDecisions(decisionsOf(Design{Decisions: f.Decisions}, ref)) != canonicalDecisions(decisionsOf(design, ref)) {
+				return fmt.Errorf("integrated node %s must keep decision %s from run %s", f.Node, ref, f.SourceRun)
+			}
+		}
+	}
+	return nil
 }
 
 // Proven is the effect proof of a recorded decision. A nonreused decision stays recorded: the node it read may land later in

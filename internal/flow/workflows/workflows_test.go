@@ -42,6 +42,51 @@ func TestBuiltinWorkflowsLoad(t *testing.T) {
 	}
 }
 
+func TestDesignPhasePinsIntegratedIssueBeforeEveryAudit(t *testing.T) {
+	const original = `{"issue":"A-1","node":"n1","size_fit":"executor","size_reason":"","issue_size_decision":"ok","edit_regions":["a.go"],"approach":"original","tests_first":[],"done_condition":"go test ./a","decision_refs":["D1"],"order_after":[],"group":null,"sub_tasks":null}`
+	const decision = `{"id":"D1","evidence":[],"change":"kept","alternatives":[],"assumptions":[]}`
+	const src = `import { designPhase } from 'crw:lib/project-design'
+import { DESIGN } from 'crw:lib/schemas'
+export const meta = {name:'integrated-design'}
+const ms = {id:'M',plan:'P',nodes:[{id:'n1'},{id:'n2'}]}
+crw.explore = async () => ({answers:[], carried:[]})
+const saved = [{reused:true,node:'n1',head:'h1',source_run:'old',source_revision:'r0',issue:` + original + `,decisions:[` + decision + `]}]
+const issue = ` + original + `
+issue.approach += '!'
+const design = {decisions:[` + decision + `], issues:[issue,Object.assign({},issue,{node:'n2',issue:'A-2'})],open_questions:[],risks:[],excluded_scope:null,dispositions:null}
+design.decisions[0].change += '!'
+const first = {status:'completed', callId:'architect', output:design, meta:{}}
+const phase = designPhase(ms, [], DESIGN, saved)
+const audited = await phase.auditedDesign(first, '', undefined, 'tip')
+return audited.arch.output
+`
+	p, err := script.Load(script.Source{Name: "integrated-design.js", Text: []byte(src)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := engine.NewFake()
+	audits := 0
+	fake.Handler = func(req engine.FakeRequest) engine.FakeReply {
+		audits++
+		if !strings.Contains(req.Prompt, `"approach":"original"`) || strings.Contains(req.Prompt, `"change":"kept!"`) {
+			t.Errorf("critic saw a rewritten integrated issue or decision: %s", req.Prompt)
+		}
+		return engine.FakeReply{Text: `{"verdict":"approved","findings":[],"summary":"remaining node approved","root":null,"first_check":null}`}
+	}
+	lane := ops.NewLane(ops.Deps{})
+	res, err := engine.Run(context.Background(), p, engine.Config{Backend: fake, Policy: engine.FakePolicy(), Ops: lane.Ops()})
+	if err != nil || res.Status != engine.RunCompleted {
+		t.Fatalf("%v %+v", err, res)
+	}
+	var d ops.Design
+	if err := json.Unmarshal(res.Value, &d); err != nil {
+		t.Fatal(err)
+	}
+	if audits != 1 || d.Issues[0].Approach != "original" || d.Decisions[0].Change != "kept" {
+		t.Fatalf("integrated DESIGN drifted: audits=%d design=%s", audits, res.Value)
+	}
+}
+
 // Keep actual engine placement/snapshots and research operations; only agent answers
 // and unrelated review/relay operations are fake.
 type researchBackend struct {

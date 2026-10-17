@@ -21,11 +21,15 @@ const ms = await crw.milestone(args.plan, args.milestone)
 const END_CONDITIONS = []
 for (const n of ms.nodes) for (const c of n.end_condition || []) END_CONDITIONS.push({ issue: n.issue, command: c })
 
-const { auditedDesign, askOrchestrator, replan, onSignal } = designPhase(ms, END_CONDITIONS, DESIGN)
-
 // the DESIGN of an earlier run of this plan and repository is reused when crw.designReuse finds it approved over the same slices
 // and milestone digest (CRW-1329): the run's design phase is skipped and its ledger's first revision imports it
 const reused = await crw.designReuse(ms.id)
+// The same read records proven integrations before any design call. Their source
+// issues and decisions are fixed; only the remaining nodes need fresh design.
+const integrated = reused.integrated_design || []
+const designNodes = ms.nodes.filter((n) => !integrated.some((i) => i.reused && i.node === n.id))
+const { auditedDesign, askOrchestrator, replan, onSignal } = designPhase(ms,
+  END_CONDITIONS.filter((c) => designNodes.some((n) => n.issue === c.issue)), DESIGN, integrated)
 let initialDesign
 if (reused.reused) {
   phase('design')
@@ -37,12 +41,12 @@ if (reused.reused) {
   // one design head for the phase (crw.designHead): every background explorer and the architect's first call read it, whatever lands on
   // the integration target meanwhile, and the architect's checkout, and so the head r0 records the DESIGN ran at, is made at it
   const designAt = await crw.designHead(ms.id)
-  const background = await crw.explore('background', ms.nodes.map((n) => ({ id: 'bg-' + n.id, question: backgroundQuestion(n), scope: '', files_needed: n.regions.length ? n.regions : null })), { milestone: ms.id, head: designAt.head }, {})
+  const background = await crw.explore('background', designNodes.map((n) => ({ id: 'bg-' + n.id, question: backgroundQuestion(n), scope: '', files_needed: n.regions.length ? n.regions : null })), { milestone: ms.id, head: designAt.head }, {})
   if (background.failed) return crw.milestoneHalt(ms, 'explorer', background.failed.status, background.failed.reason, background.failed.callId)
 
   phase('design')
   await crw.spawnDecision('ARCH_1', 'spawn', { role: 'architect', inputs: { milestone: ms.id, nodes: ms.nodes.length } })
-  const first = await agent.call(architectPacket(ms, background.answers, designAt.head), { agentType: 'architect', schema: DESIGN, head: designAt.head, label: 'architect' })
+  const first = await agent.call(architectPacket(ms, background.answers, designAt.head, integrated), { agentType: 'architect', schema: DESIGN, head: designAt.head, label: 'architect' })
   if (first.status !== 'completed') return crw.milestoneHalt(ms, 'architect', first.status, first.reason, first.callId)
   const designed0 = await auditedDesign(first, '', undefined, designAt.head)
   if (!designed0.ok) return designed0.result
