@@ -20,6 +20,7 @@ import (
 	"github.com/dop251/goja"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
+	"github.com/thisisjun786/codex-relay-workflow/internal/executor"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/script"
 )
 
@@ -110,7 +111,8 @@ type Config struct {
 	// any goroutine, to resolve the op with the recorded result (a test orders replays with it). No row, position or digest changes.
 	ReplayHold func(row Event, settle func()) bool
 	// Tools are the repository tools the configuration names (CRW-1488), given to every agent call the run starts; nil gives none.
-	Tools *RepositoryTools
+	Tools             *RepositoryTools
+	ExecutorAdmission func(context.Context, SnapshotRequest) (executor.Admission, error)
 }
 
 // SnapshotRequest is a call as the input snapshot sees it.

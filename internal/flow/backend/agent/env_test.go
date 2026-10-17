@@ -17,6 +17,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
+	"github.com/thisisjun786/codex-relay-workflow/internal/executor"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/backend/agent"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/bound"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
@@ -190,8 +191,9 @@ type envConfig struct {
 	owner               string
 	// bound makes the backend write the flow-bound binding of every turn (F14); writer is the binding writer it uses (nil: the
 	// default one, over the isolated home).
-	bound  bool
-	writer *bound.Writer
+	bound             bool
+	writer            *bound.Writer
+	executorAdmission func(context.Context, engine.SnapshotRequest) (executor.Admission, error)
 }
 
 // hexThreadID is the id the fake host gives its threads when a test needs the shape of a real one (lower-case hexadecimal and
@@ -319,7 +321,7 @@ func (e *env) config() engine.Config {
 	if e.killable != nil {
 		backend = e.killable
 	}
-	return engine.Config{Backend: backend, Policy: e.policy, Journal: e.journal, RunID: e.runID, Pool: e.pool, TokenBudget: e.budget, Now: e.now, Resume: e.resume, Tools: e.tools}
+	return engine.Config{Backend: backend, Policy: e.policy, Journal: e.journal, RunID: e.runID, Pool: e.pool, TokenBudget: e.budget, Now: e.now, Resume: e.resume, Tools: e.tools, ExecutorAdmission: e.cfg.executorAdmission}
 }
 
 // run executes the script body and returns its result.
