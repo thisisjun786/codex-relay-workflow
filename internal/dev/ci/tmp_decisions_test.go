@@ -326,6 +326,7 @@ esac
 var tmpShellSites = []string{
 	"plugins/crw/skills/crw-dev-scaffolding/scripts/scaffold-audit.sh",
 	"plugins/crw/skills/crw-dev-visualizer/scripts/diagram-to-html.sh",
+	"scripts/ci/lint-changed.sh",
 }
 
 func TestShellTempSitesUseTheSharedForm(t *testing.T) {
