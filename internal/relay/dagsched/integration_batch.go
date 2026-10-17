@@ -128,7 +128,7 @@ func (s *Scheduler) IntegrateBatch(ctx context.Context, in IntegrationBatchInput
 		return out, refuse(contract.RefusalDispositionConflict, "repository integrate_command is only used for dev, never main or a release target")
 	}
 	if commands.VerifyCommand != "" {
-		deps.Verify = repositoryIntegrationVerifier(commands.VerifyCommand)
+		deps.Verify = repositoryIntegrationVerifier(in.Checkout, commands.VerifyCommand)
 	}
 	// a branch a worktree has checked out is refused before the verification runs; it is checked again inside the
 	// fenced move transaction below (CRW-1595)
@@ -1471,15 +1471,15 @@ func verifiedKeysOf(ctx context.Context, checkout, head string) (map[string]stri
 
 // repositoryIntegrationVerifier transports CRW's command receipt to the same
 // record reader as the local and GitHub verifiers.
-func repositoryIntegrationVerifier(command string) IntegrationBatchVerifier {
-	return func(ctx context.Context, dir string, env []string) error {
+func repositoryIntegrationVerifier(checkout, command string) IntegrationBatchVerifier {
+	return func(ctx context.Context, _ string, env []string) error {
 		vars := map[string]string{}
 		for _, kv := range env {
 			if k, v, ok := strings.Cut(kv, "="); ok {
 				vars[k] = v
 			}
 		}
-		record, err := VerifyRepositoryCommand(ctx, dir, vars["CRW_VERIFY_HEAD"], vars["CRW_VERIFY_BASE"], command)
+		record, err := VerifyRepositoryCommand(ctx, checkout, vars["CRW_VERIFY_HEAD"], vars["CRW_VERIFY_BASE"], command)
 		if err != nil {
 			return &IntegrationVerifierHostError{Detail: err.Error()}
 		}
@@ -1601,6 +1601,9 @@ func (s *Scheduler) integrateWithCommand(ctx context.Context, in IntegrationBatc
 		}
 		out.merged = append(out.merged, integrationMerge{Candidate: c, MergeCommit: tip})
 		out.head, out.record, out.digest = tip, record, digest
+		if err := s.recordVerifiedHead(ctx, in, batch, tip, digest, record, mergedCandidates(out.merged)); err != nil {
+			return out, err
+		}
 		previous = tip
 	}
 	return out, nil
@@ -1700,27 +1703,32 @@ func (s *Scheduler) reconcilePlannedMoves(ctx context.Context, in IntegrationBat
 			moved[r.BatchID] = true
 		}
 	}
-	seen := map[string]bool{}
+	var batches []string
+	matches := map[string]bool{}
 	for _, r := range rows {
-		if r.Stage != "intent" || r.NodeID != "" || moved[r.BatchID] || seen[r.BatchID] {
+		if r.Stage != "intent" || r.NodeID != "" || moved[r.BatchID] {
 			continue
 		}
 		var d map[string]string
 		if json.Unmarshal([]byte(r.Detail), &d) != nil || d["verified_head"] == "" || d["integration_ref"] != in.IntegrationRef {
 			continue
 		}
-		seen[r.BatchID] = true
-		if d["verified_head"] != tip {
-			out.Abandoned = append(out.Abandoned, r.BatchID)
+		if _, seen := matches[r.BatchID]; !seen {
+			batches = append(batches, r.BatchID)
+		}
+		matches[r.BatchID] = matches[r.BatchID] || d["verified_head"] == tip
+	}
+	for _, batch := range batches {
+		if !matches[batch] {
+			out.Abandoned = append(out.Abandoned, batch)
 			continue
 		}
-		batch, head := r.BatchID, tip
 		if err := s.IntegrationWrite(ctx, in.Plan, in.Actor, func(txCtx context.Context) error {
-			return s.stageRow(txCtx, in, batch, "ref_moved", Candidate{}, head)
+			return s.stageRow(txCtx, in, batch, "ref_moved", Candidate{}, tip)
 		}); err != nil {
 			return err
 		}
-		out.Reconciled = append(out.Reconciled, r.BatchID)
+		out.Reconciled = append(out.Reconciled, batch)
 	}
 	return nil
 }
