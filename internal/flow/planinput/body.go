@@ -33,16 +33,15 @@ var sizeFields = map[string][]string{
 }
 
 var (
-	headingLine      = regexp.MustCompile(`^ {0,3}(#{1,6})\s+(.*?)\s*#*\s*$`)
-	setextLine       = regexp.MustCompile(`^ {0,3}(=+|-+)[ \t]*$`)
-	setextListLine   = regexp.MustCompile(`^(\d{1,9}[.)]|[-*+])(?:([ \t]+)(.*))?$`)
-	setextBreakLine  = regexp.MustCompile(`^ {0,3}(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})$`)
-	headingBlankLine = regexp.MustCompile(`\n[ \t]*\n`)
-	bulletLine       = regexp.MustCompile(`^(\s*)(?:[-*+]|\d+[.)])(?:\s+(.*))?$`)
-	checkbox         = regexp.MustCompile(`^\[[ xX]\]\s*`)
-	blockedLine      = regexp.MustCompile(`(?i)^(?:\*\*)?blocked by:`)
-	sizeFieldRe      = regexp.MustCompile("^(size_fit|size_reason|issue_size)\\s*:\\s*`?([A-Za-z0-9_]+)`?\\s*$")
-	backtickSpan     = regexp.MustCompile("`([^`]+)`")
+	headingLine     = regexp.MustCompile(`^ {0,3}(#{1,6})\s+(.*?)\s*#*\s*$`)
+	setextLine      = regexp.MustCompile(`^ {0,3}(=+|-+)[ \t]*$`)
+	setextListLine  = regexp.MustCompile(`^(\d{1,9}[.)]|[-*+])(?:([ \t]+)(.*))?$`)
+	setextBreakLine = regexp.MustCompile(`^ {0,3}(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})$`)
+	bulletLine      = regexp.MustCompile(`^(\s*)(?:[-*+]|\d+[.)])(?:\s+(.*))?$`)
+	checkbox        = regexp.MustCompile(`^\[[ xX]\]\s*`)
+	blockedLine     = regexp.MustCompile(`(?i)^(?:\*\*)?blocked by:`)
+	sizeFieldRe     = regexp.MustCompile("^(size_fit|size_reason|issue_size)\\s*:\\s*`?([A-Za-z0-9_]+)`?\\s*$")
+	backtickSpan    = regexp.MustCompile("`([^`]+)`")
 )
 
 // section is the non-fence lines under one heading.
@@ -50,6 +49,50 @@ type section struct {
 	heading string
 	lines   []string
 	depth   int
+}
+
+// headingBlockLine is the shared classification of a physical line. Paragraph
+// readers and reference-definition readers must agree on these boundaries.
+type headingBlockLine struct {
+	text                       string
+	indent                     int
+	fence                      string
+	html                       int
+	atx, list                  []string
+	blank, setext, rule, quote bool
+}
+
+func readHeadingBlock(line string, inParagraph bool) headingBlockLine {
+	text := strings.TrimLeft(line, " \t")
+	b := headingBlockLine{
+		text: text, indent: indentOf(line[:len(line)-len(text)]),
+		atx: headingLine.FindStringSubmatch(line), blank: text == "",
+	}
+	t := strings.TrimLeft(line, " ")
+	switch {
+	case strings.HasPrefix(t, "```"):
+		b.fence = "```"
+	case strings.HasPrefix(t, "~~~"):
+		b.fence = "~~~"
+	}
+	if b.indent <= 3 {
+		b.html = headingHTMLStart(text, inParagraph)
+		b.setext = setextLine.MatchString(line)
+		b.rule = setextBreakLine.MatchString(text)
+		b.list = setextListLine.FindStringSubmatch(text)
+		b.quote = strings.HasPrefix(text, ">")
+	}
+	return b
+}
+
+func (b headingBlockLine) interruptsParagraph() bool {
+	return b.blank || b.fence != "" || b.html != 0 || b.atx != nil ||
+		b.setext || b.rule || b.list != nil || b.quote
+}
+
+func headingReferenceBoundary(s string) bool {
+	line, _, _ := strings.Cut(s, "\n")
+	return readHeadingBlock(strings.TrimRight(line, "\r"), true).interruptsParagraph()
 }
 
 // sections splits a body at its ATX or Setext headings, omitting an out-of-scope heading and
@@ -65,11 +108,13 @@ func sections(body string) []section {
 	var out []section
 	excludedDepth := 0
 	state := struct {
-		paragraph []string
-		kind      int
-		itemText  int
-		fence     string
-		html      int // zero: none; otherwise index + 1 in headingHTMLBlocks
+		paragraph    []string
+		kind         int
+		itemText     int
+		fence        string
+		html         int // zero: none; otherwise index + 1 in headingHTMLBlocks
+		quoteDepth   int
+		htmlItemText int // zero: root HTML; otherwise its owning list's text column
 	}{}
 	emit := func(lines ...string) {
 		if excludedDepth == 0 && len(out) > 0 {
@@ -78,7 +123,7 @@ func sections(body string) []section {
 	}
 	flush := func() {
 		emit(state.paragraph...)
-		state.paragraph, state.kind = nil, noParagraph
+		state.paragraph, state.kind, state.quoteDepth = nil, noParagraph, 0
 	}
 	heading := func(title string, depth int) {
 		state.itemText = 0
@@ -97,23 +142,23 @@ func sections(body string) []section {
 		var raw string
 		raw, remaining, _ = strings.Cut(remaining, "\n")
 		line := strings.TrimRight(raw, "\r")
-		rest := strings.TrimLeft(line, " \t")
-		col := indentOf(line[:len(line)-len(rest)])
+		block := readHeadingBlock(line, state.kind != noParagraph)
+		rest, col := block.text, block.indent
 		inItem := state.itemText > 0 && col >= state.itemText
 		if state.html != 0 {
-			if headingHTMLEnd(state.html, line, true) {
-				state.html = 0
+			if state.htmlItemText > 0 && !block.blank && col < state.htmlItemText {
+				// A container exit ends its HTML block. Re-read this line as a
+				// normal block; it may itself be a heading or a new container.
+				state.html, state.htmlItemText, state.itemText = 0, 0, 0
+				inItem = false
+			} else {
+				if headingHTMLEnd(state.html, line, true) {
+					state.html, state.htmlItemText = 0, 0
+				}
+				continue
 			}
-			continue
 		}
-		t := strings.TrimLeft(line, " ")
-		marker := ""
-		switch {
-		case strings.HasPrefix(t, "```"):
-			marker = "```"
-		case strings.HasPrefix(t, "~~~"):
-			marker = "~~~"
-		}
+		marker := block.fence
 		if marker != "" {
 			flush()
 			switch state.fence {
@@ -130,13 +175,17 @@ func sections(body string) []section {
 		if state.fence != "" {
 			continue
 		}
-		if html := headingHTMLStart(rest, state.kind != noParagraph); col <= 3 && html != 0 {
+		if html := block.html; html != 0 {
 			flush()
+			state.htmlItemText = 0
 			if !inItem {
 				state.itemText = 0
 			}
 			if !headingHTMLEnd(html, rest, false) {
 				state.html = html
+				if inItem {
+					state.htmlItemText = state.itemText
+				}
 			}
 			// An omitted block must also end bullet continuation in the section.
 			emit("")
@@ -150,12 +199,12 @@ func sections(body string) []section {
 				continue
 			}
 		}
-		if m := headingLine.FindStringSubmatch(line); m != nil {
+		if m := block.atx; m != nil {
 			flush()
 			heading(m[2], len(m[1]))
 			continue
 		}
-		if state.kind == rootParagraph && setextLine.MatchString(line) {
+		if state.kind == rootParagraph && block.setext {
 			parts := make([]string, len(state.paragraph))
 			for i, part := range state.paragraph {
 				parts[i] = strings.TrimSpace(part)
@@ -166,21 +215,21 @@ func sections(body string) []section {
 				depth = 2
 			}
 			// The complete paragraph and underline are the heading, not body data.
-			state.paragraph, state.kind = nil, noParagraph
+			state.paragraph, state.kind, state.quoteDepth = nil, noParagraph, 0
 			heading(title, depth)
 			continue
 		}
-		switch m := setextListLine.FindStringSubmatch(rest); {
-		case rest == "":
+		switch m := block.list; {
+		case block.blank:
 			flush()
 			emit(line)
-		case col <= 3 && setextBreakLine.MatchString(rest):
+		case block.rule:
 			flush()
 			if !inItem {
 				state.itemText = 0
 			}
 			emit(line)
-		case col <= 3 && m != nil:
+		case m != nil:
 			flush()
 			if !inItem {
 				gap := 0
@@ -202,18 +251,26 @@ func sections(body string) []section {
 				state.kind = listParagraph
 				state.paragraph = append(state.paragraph, line)
 			}
-		case col <= 3 && strings.HasPrefix(rest, ">"):
-			continued := state.kind == quoteParagraph
+		case block.quote:
+			text, depth := headingQuoteText(line)
+			continued := state.kind == quoteParagraph && state.quoteDepth == depth &&
+				(state.itemText == 0 || inItem)
 			flush()
 			if !inItem {
 				state.itemText = 0
 			}
-			text := headingQuoteText(line)
 			content := strings.TrimLeft(text, " ")
-			if (len(text)-len(content) < 4 || continued) && setextParagraph(content) &&
-				!strings.HasPrefix(content, "```") && !strings.HasPrefix(content, "~~~") &&
-				headingHTMLStart(content, continued) == 0 {
-				state.kind = quoteParagraph
+			paragraph := false
+			if len(text)-len(content) >= 4 {
+				// Indented text in this same open paragraph cannot start a
+				// nested HTML block, fence or heading.
+				paragraph = continued && content != ""
+			} else {
+				paragraph = setextParagraph(content) && !strings.HasPrefix(content, "```") &&
+					!strings.HasPrefix(content, "~~~") && headingHTMLStart(content, continued) == 0
+			}
+			if paragraph {
+				state.kind, state.quoteDepth = quoteParagraph, depth
 				state.paragraph = append(state.paragraph, line)
 			} else {
 				emit(line)
@@ -282,8 +339,9 @@ func headingHTMLEnd(kind int, line string, open bool) bool {
 }
 
 // headingQuoteText removes quote markers and their one optional space, keeping
-// code indentation. Expand tabs at their original columns before stripping.
-func headingQuoteText(line string) string {
+// code indentation, and returns the text and quote depth. Expand tabs at their
+// original columns before stripping.
+func headingQuoteText(line string) (string, int) {
 	var expanded strings.Builder
 	col := 0
 	for _, r := range line {
@@ -297,12 +355,14 @@ func headingQuoteText(line string) string {
 		}
 	}
 	text := expanded.String()
+	depth := 0
 	for {
 		rest := strings.TrimLeft(text, " ")
 		if len(text)-len(rest) > 3 || !strings.HasPrefix(rest, ">") {
-			return text
+			return text, depth
 		}
 		text = strings.TrimPrefix(rest[1:], " ")
+		depth++
 	}
 }
 
@@ -318,14 +378,12 @@ func headingReference(s string) int {
 	if !strings.HasPrefix(s, "[") {
 		return 0
 	}
-	// Unlike the document checker, this caller supplies the unconsumed body.
-	// A definition's label and title cannot cross a blank paragraph boundary.
-	if blank := headingBlankLine.FindStringIndex(s); blank != nil {
-		s = s[:blank[0]]
-	}
 	i, characters := 1, 0 // the label holds at most 999 characters (not UTF-8 bytes)
 	for ; ; i++ {
 		if i >= len(s) || s[i] == '[' || characters > 999 {
+			return 0
+		}
+		if s[i] == '\n' && headingReferenceBoundary(s[i+1:]) {
 			return 0
 		}
 		if s[i] == '\\' && i+1 < len(s) && headingPunctuation(rune(s[i+1])) {
@@ -393,12 +451,12 @@ func headingReference(s string) int {
 	return 0
 }
 
-// headingDefinitionSpace is the index after the spaces and tabs at s[i:], with at most one line end.
+// headingDefinitionSpace skips horizontal space and at most one non-boundary line end.
 func headingDefinitionSpace(s string, i int) int {
 	lineEnd := false
 	for ; i < len(s); i++ {
 		if s[i] == '\n' {
-			if lineEnd {
+			if lineEnd || headingReferenceBoundary(s[i+1:]) {
 				break
 			}
 			lineEnd = true
@@ -418,6 +476,8 @@ func headingTitleEnd(s string, open int) (int, bool) {
 	}
 	for i := open + 1; i < len(s); i++ {
 		switch {
+		case s[i] == '\n' && headingReferenceBoundary(s[i+1:]):
+			return 0, false
 		case s[i] == '\\' && i+1 < len(s) && headingPunctuation(rune(s[i+1])):
 			i++
 		case s[i] == closing:
