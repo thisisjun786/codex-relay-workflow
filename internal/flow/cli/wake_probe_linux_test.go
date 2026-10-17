@@ -281,20 +281,23 @@ func TestWakeProbeFinishRetiresBindingAfterHostTimeout(t *testing.T) {
 	}
 	const hostFailure = "probe cleanup left unproved history intact"
 	finishErr := p.finish(errors.New("probe failed"))
-	if finishErr == nil || !strings.Contains(finishErr.Error(), hostFailure) {
-		t.Fatalf("finish must return the host cleanup failure: %v", finishErr)
-	}
+	// Both outcomes are read before either is judged, so one failing run reports both (CRW-1672).
 	var active int
-	if err := w.st.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM scope_bindings WHERE scope_key=? AND status='active'", scope).Scan(&active); err != nil || active != 0 {
-		t.Fatalf("probe binding stayed active: rows=%d %v", active, err)
-	}
+	activeErr := w.st.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM scope_bindings WHERE scope_key=? AND status='active'", scope).Scan(&active)
 	var failures int
 	var reason string
-	if err := w.st.DB.QueryRowContext(ctx, "SELECT COUNT(*), COALESCE(MAX(json_extract(detail,'$.reason')),'') FROM journal WHERE kind=? AND json_extract(detail,'$.probe')=1", delivery.WakeObserved).Scan(&failures, &reason); err != nil || failures != 1 {
-		t.Fatalf("failure evidence=%d %v", failures, err)
+	evidenceErr := w.st.DB.QueryRowContext(ctx, "SELECT COUNT(*), COALESCE(MAX(json_extract(detail,'$.reason')),'') FROM journal WHERE kind=? AND json_extract(detail,'$.probe')=1", delivery.WakeObserved).Scan(&failures, &reason)
+	if finishErr == nil || !strings.Contains(finishErr.Error(), hostFailure) {
+		t.Errorf("finish must return the host cleanup failure: %v", finishErr)
+	}
+	if activeErr != nil || active != 0 {
+		t.Errorf("probe binding stayed active: active=%d, want 0 (query error: %v)", active, activeErr)
+	}
+	if evidenceErr != nil || failures != 1 {
+		t.Errorf("failure evidence: WakeObserved=%d, want 1 (query error: %v)", failures, evidenceErr)
 	}
 	if !strings.Contains(reason, "probe failed") || !strings.Contains(reason, hostFailure) {
-		t.Fatalf("failure reason=%q", reason)
+		t.Errorf("failure reason=%q", reason)
 	}
 }
 
