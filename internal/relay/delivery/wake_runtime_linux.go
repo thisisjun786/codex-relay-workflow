@@ -40,7 +40,7 @@ func wakeProcess(pid int) (string, error) {
 	return strings.TrimSpace(string(boot)) + ":" + strconv.Itoa(pid) + ":" + fields[19], nil
 }
 
-func wakeRuntime(ctx context.Context, socket string, workerPID int) (WakeIdentity, error) {
+func wakeRuntime(ctx context.Context, socket string, workerPID int, connections ...net.Conn) (WakeIdentity, error) {
 	var identity WakeIdentity
 	canonical, err := store.CanonicalSocket(socket)
 	if err != nil || socket == "" {
@@ -50,12 +50,24 @@ func wakeRuntime(ctx context.Context, socket string, workerPID int) (WakeIdentit
 	if err != nil {
 		return identity, err
 	}
-	conn, err := (&net.Dialer{Timeout: time.Second}).DialContext(ctx, "unix", canonical)
-	if err != nil {
-		return identity, err
+	var conn net.Conn
+	switch len(connections) {
+	case 0:
+		conn, err = (&net.Dialer{Timeout: time.Second}).DialContext(ctx, "unix", canonical)
+		if err != nil {
+			return identity, err
+		}
+		defer conn.Close()
+	case 1:
+		conn = connections[0]
+	default:
+		return identity, fmt.Errorf("one sending connection is required")
 	}
-	defer conn.Close()
-	raw, err := conn.(*net.UnixConn).SyscallConn()
+	unixConn, ok := conn.(*net.UnixConn)
+	if !ok || unixConn == nil {
+		return identity, fmt.Errorf("sending connection is not a Unix socket")
+	}
+	raw, err := unixConn.SyscallConn()
 	if err != nil {
 		return identity, err
 	}

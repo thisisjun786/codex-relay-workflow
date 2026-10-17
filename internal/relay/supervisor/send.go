@@ -456,6 +456,8 @@ type attemptRun struct {
 	wake      *delivery.WakeAttempt
 	wakeTurns []any
 	wakeRead  bool
+	// wakeConnection is the client generation the send used; evidence counts only while it still holds (CRW-1664).
+	wakeConnection uint64
 }
 
 // transportOutcome is what the transport-start transaction decided.
@@ -964,6 +966,15 @@ func (a *attemptRun) transmit(ctx context.Context) sentReceipt {
 // the message where the answer put it. A claim that no longer holds the message keeps its receipt on
 // the attempt and leaves the message alone.
 func (a *attemptRun) settle(ctx context.Context, sent sentReceipt) (map[string]any, error) {
+	// A completed transport receipt outlives optional wake observation. Keep its
+	// context values, but give persistence an independent cancellation bound.
+	// Cancellation before any completed receipt still leaves an uncertain send
+	// for the existing lease recovery; it is not a cancelled observation.
+	if sent.facts.ReceiptStatus == delivery.Accepted || sent.facts.ReceiptStatus == delivery.FailedStatus {
+		persist, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+		ctx = persist
+	}
 	c, id, requestID, attemptNo, owner, now := a.c, a.id, a.claimed.requestID, a.claimed.attemptNo, a.owner, a.now
 	facts, settledAt := sent.facts, sent.settledAt
 	err := c.Store.Transaction(ctx, func(tx context.Context, _ *sql.Conn) error {

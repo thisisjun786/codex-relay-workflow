@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"syscall"
 	"time"
 
@@ -54,13 +55,22 @@ func (c *Client) connect(ctx context.Context) error {
 	}}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, Timeout: c.bounds.Establish}
-	ws, _, err := websocket.Dial(ctx, "ws://localhost/", &websocket.DialOptions{HTTPClient: client, CompressionMode: websocket.CompressionDisabled})
+	var networkConn net.Conn
+	dialCtx := httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+		GotConn: func(info httptrace.GotConnInfo) {
+			c.mu.Lock()
+			networkConn = info.Conn
+			c.mu.Unlock()
+		},
+	})
+	ws, _, err := websocket.Dial(dialCtx, "ws://localhost/", &websocket.DialOptions{HTTPClient: client, CompressionMode: websocket.CompressionDisabled})
 	if err != nil {
 		return fmt.Errorf("appserver dial: %w", err)
 	}
 	ws.SetReadLimit(int64(c.maxFrame))
 	c.mu.Lock()
 	c.conn = ws
+	c.networkConn = networkConn
 	c.connSeq++
 	c.connID = c.connSeq
 	c.mu.Unlock()
@@ -242,6 +252,7 @@ func (c *Client) retire(ws *websocket.Conn) {
 	c.mu.Lock()
 	if c.conn == ws {
 		c.conn = nil
+		c.networkConn = nil
 	}
 	c.mu.Unlock()
 	_ = ws.CloseNow()
@@ -253,6 +264,7 @@ func (c *Client) Close() error {
 	c.mu.Lock()
 	ws := c.conn
 	c.conn = nil
+	c.networkConn = nil
 	c.mu.Unlock()
 	if ws == nil {
 		return nil

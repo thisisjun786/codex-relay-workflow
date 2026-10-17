@@ -8,21 +8,26 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/daemon"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/service"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/supervisor"
 )
 
 type wakeHost struct {
 	delivery.Adapter
-	status string
-	now    float64
-	sends  int
-	folded bool
+	status     string
+	now        float64
+	sends      int
+	folded     bool
+	connection delivery.WakeConnection
 }
+
+func (h *wakeHost) WakeConnection() delivery.WakeConnection { return h.connection }
 
 func (h *wakeHost) ReadThread(context.Context, string) (delivery.ThreadFacts, error) {
 	return delivery.ThreadFacts{RuntimeStatus: h.status, CanAcceptInput: true}, nil
@@ -49,6 +54,16 @@ func TestStartReadsRealSupervisorWake(t *testing.T) {
 		t.Run(status, func(t *testing.T) {
 			w := newWorld(t)
 			host := fakehost.Start(t)
+			// A live worker's store is socket-bound. Leave probe creation explicitly
+			// unsupported here so negative wake evidence remains a warning without
+			// depending on a lock timeout in an unbound test store.
+			w.close()
+			var err error
+			w.st, err = store.Open(ctx, w.db, host.SocketPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			host.Respond("thread/start", fakehost.Reply{Error: &fakehost.RPCError{Code: -32601, Message: "probe creation unsupported"}})
 			policy := filepath.Join(t.TempDir(), "roles.json")
 			if err := os.WriteFile(policy, []byte(`{"roles":{"parent":{"model":"model-a","reasoningEffort":"high"},"supervisor":{"expectation":"record"}}}`), 0600); err != nil {
 				t.Fatal(err)
@@ -108,7 +123,13 @@ func TestStartReadsRealSupervisorWake(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			h := &wakeHost{status: status, now: now}
+			client, err := appserver.Dial(ctx, host.SocketPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer client.Close()
+			peer, connID := client.ConnectionSnapshot()
+			h := &wakeHost{status: status, now: now, connection: delivery.WakeConnection{Conn: peer, ID: connID, Socket: host.SocketPath}}
 			if status == "folded" || status == "manual" {
 				h.status = "notLoaded"
 				h.folded = status == "folded"
@@ -141,6 +162,14 @@ func TestStartReadsRealSupervisorWake(t *testing.T) {
 			}
 			if fact.Pass != (status == "notLoaded") {
 				t.Fatalf("start fact 5 for %s: %+v", status, fact)
+			}
+			probeFailures := 1
+			if status == "notLoaded" {
+				probeFailures = 0
+			}
+			var failures int
+			if err := w.st.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM journal WHERE kind=? AND json_extract(detail,'$.probe')=1 AND length(json_extract(detail,'$.reason'))>0`, delivery.WakeObserved).Scan(&failures); err != nil || failures != probeFailures {
+				t.Fatalf("probe failures=%d, want %d: %v", failures, probeFailures, err)
 			}
 			// A bounded no-eviction wait may explicitly require idle; ordinary start may not.
 			if status == "idle" {

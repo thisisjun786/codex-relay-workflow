@@ -309,8 +309,14 @@ one that is usually skipped.
    of the transient `delivery_wakes` scheduling row. Preflight's `idle_wake_observed` compares
    it with independently observed current identities and settings; a pending wake, a manual send,
    an uncertain outcome or a steer into an existing turn cannot pass it. Missing current identity
-   or matching evidence leaves fact 5 unmeasured. A separate probe uses this same record and
-   comparison; the probe's historical record cannot supply the current identity it is compared to.
+   or matching evidence leaves fact 5 unmeasured. When no matching success exists,
+   `crw flow start` (including `--preview`) attempts one separate probe before preflight: it
+   creates a disposable recipient under the same role and authorized settings, establishes
+   `notLoaded`, and stages one wake through the current relay service. Its diagnostic run journal
+   retains the wake row and the relay journal retains the same `relay-wake/1` evidence. The
+   probe is bounded; failure or an unsupported equivalent is recorded and leaves a warning, never
+   a start refusal. A matching success avoids another probe. The probe's historical record
+   cannot supply the independently reread current identity it is compared to.
 
    The wake must also cover the load state the wait will end up in, which is not the one it is
    adjudicated in. An idle recipient and one the host reports `notLoaded` are not woken the same
