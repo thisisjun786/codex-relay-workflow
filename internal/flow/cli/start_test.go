@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -88,7 +89,7 @@ func TestStartPreviewThenDetached(t *testing.T) {
 }
 
 // TestStartPreviewListsFivePreflightFacts: the preview lists the five facts in their order with their level (pass, warn or fail)
-// and the reading each was judged on. A fact never stops the start (CRW-1318): a run whose fact failed is started without --force,
+// and the reading each was judged on. A relay fact never stops the start (CRW-1318): a run whose fact failed is started without --force,
 // the fact is printed and recorded in the run's spec, --force is accepted and changes nothing, and --preview starts nothing. The
 // facts of the store prober are judged on what the relay records. The runs start on the App Server backend: a session run adds the
 // six session facts after them (TestSessionFactsWarnAndNeverBlockTheStart).
@@ -339,5 +340,177 @@ func TestSizeChildPlanInputGivesNoChildHostFact(t *testing.T) {
 		if f.Name == "child_host_unset" {
 			t.Errorf("a child-sized issue gives the fact %+v", f)
 		}
+	}
+}
+
+// CRW-1613: a repository failure belongs to the caller's preflight, before a
+// preview can succeed or a detached run's spec/process can be created.
+func TestStartOutsideRepositoryFailsPreflightWithoutCreatingRun(t *testing.T) {
+	const guidance = "not inside a git repository (name one with --repo)"
+	for _, tc := range []struct {
+		name    string
+		preview bool
+		json    bool
+		session bool
+		named   bool
+		force   bool
+		handoff bool
+	}{
+		{name: "start text"},
+		{name: "start JSON", json: true},
+		{name: "preview text", preview: true},
+		{name: "preview JSON", preview: true, json: true},
+		{name: "session start JSON", json: true, session: true},
+		{name: "session preview JSON", preview: true, json: true, session: true},
+		{name: "force cannot bypass repository", json: true, force: true},
+		{name: "invalid named repository", json: true, named: true, handoff: true},
+		{name: "invalid named repository preview", preview: true, json: true, named: true},
+		{name: "failure does not pin handoff", json: true, handoff: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateGit(t)
+			w := newWorld(t)
+			td := w.deps()
+			script := helloScript(t)
+			t.Chdir(t.TempDir())
+			if _, err := repository(ctx, ""); err == nil {
+				t.Fatal("fixture must be outside a Git repository")
+			}
+			backend := BackendAppServer
+			if tc.session {
+				backend = BackendSession
+			}
+			args := []string{"start", script, "--backend", backend, "--thread", "thread-owner", "--state", w.state}
+			if tc.named {
+				args = append(args, "--repo", t.TempDir())
+			}
+			if tc.force {
+				args = append(args, "--force")
+			}
+			if tc.handoff {
+				args = append(args, "--handoff", defaultHandoff(t), "--args", `{"plan":"plan-1","milestone":"M1"}`)
+			}
+			if tc.preview {
+				args = append(args, "--preview")
+			}
+			if tc.json {
+				args = append(args, "--json")
+			}
+			code, out, errOut := td.do(args...)
+			if code == 0 || !strings.Contains(errOut, guidance) {
+				t.Errorf("outside-repository start must fail with --repo guidance: exit %d\n%s%s", code, out, errOut)
+			}
+			if len(td.spawned) != 0 {
+				t.Errorf("preflight failure spawned %d run processes", len(td.spawned))
+			}
+			if tc.json {
+				var answer StartAnswer
+				if err := json.Unmarshal([]byte(strings.TrimPrefix(out, "<<spawned>>\n")), &answer); err != nil {
+					t.Fatalf("preflight JSON: %v\n%s", err, out)
+				}
+				failed := false
+				for _, fact := range answer.Plan.Facts {
+					if fact.Level == LevelFail && !fact.Pass && strings.Contains(fact.Reading+fact.Reason, guidance) {
+						failed = true
+					}
+				}
+				if !failed || !strings.Contains(answer.Plan.Blocked, guidance) || answer.Run != "" || answer.PID != 0 {
+					t.Errorf("repository failure must be a blocking preflight without a run: %+v", answer)
+				}
+			} else if !strings.Contains(out, "preflight:") || !strings.Contains(out, "FAIL") || !strings.Contains(out, guidance) {
+				t.Errorf("text preview has no repository preflight failure:\n%s", out)
+			}
+			specs, err := filepath.Glob(filepath.Join(w.state, "flow", "*", "run.json"))
+			if err != nil || len(specs) != 0 {
+				t.Errorf("preflight failure left run specs: %v (%v)", specs, err)
+			}
+			entries, err := os.ReadDir(filepath.Join(w.state, "flow"))
+			if err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
+			if len(entries) != 0 {
+				t.Errorf("preflight failure left run directories or pinned handoffs: %v", entries)
+			}
+			var runs int
+			if err := w.st.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM flow_runs").Scan(&runs); err != nil {
+				t.Fatal(err)
+			}
+			if runs != 0 {
+				t.Errorf("preflight failure left %d persisted runs", runs)
+			}
+		})
+	}
+}
+
+func TestStartRepositorySelectionStillStartsAndPreviews(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		named   string
+		preview bool
+	}{
+		{name: "implicit start"},
+		{name: "implicit preview", preview: true},
+		{name: "absolute start", named: "absolute"},
+		{name: "absolute preview", named: "absolute", preview: true},
+		{name: "relative start", named: "relative"},
+		{name: "relative preview", named: "relative", preview: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateGit(t)
+			w := newWorld(t)
+			td := w.deps()
+			script := helloScript(t)
+			root := t.TempDir()
+			repo := filepath.Join(root, "repo")
+			if out, err := exec.Command("git", "init", "--quiet", repo).CombinedOutput(); err != nil {
+				t.Fatalf("git init: %v\n%s", err, out)
+			}
+			subdir := filepath.Join(repo, "nested")
+			if err := os.Mkdir(subdir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			wantRepo, err := filepath.EvalSymlinks(repo)
+			if err != nil {
+				t.Fatal(err)
+			}
+			args := []string{"start", script, "--backend", "app-server", "--thread", "thread-owner", "--state", w.state, "--json"}
+			if tc.named == "" {
+				t.Chdir(subdir)
+			} else {
+				t.Chdir(root)
+				named := subdir
+				if tc.named == "relative" {
+					named = filepath.Join("repo", "nested")
+				}
+				args = append(args, "--repo", named)
+			}
+			if tc.preview {
+				args = append(args, "--preview")
+			}
+			code, out, errOut := td.do(args...)
+			if code != 0 {
+				t.Fatalf("valid repository: exit %d\n%s%s", code, out, errOut)
+			}
+			var answer StartAnswer
+			if err := json.Unmarshal([]byte(strings.TrimPrefix(out, "<<spawned>>\n")), &answer); err != nil {
+				t.Fatal(err)
+			}
+			if answer.Plan.Blocked != "" {
+				t.Fatalf("valid repository blocked: %+v", answer)
+			}
+			if tc.preview {
+				if len(td.spawned) != 0 || answer.Run != "" {
+					t.Fatalf("preview started a run: %+v", answer)
+				}
+				return
+			}
+			if len(td.spawned) != 1 || answer.Run == "" {
+				t.Fatalf("start spawned %d processes: %+v", len(td.spawned), answer)
+			}
+			spec, err := ReadSpec(w.state, answer.Run)
+			if err != nil || spec.Repo != wantRepo || td.spawned[0].Spec.Repo != wantRepo {
+				t.Fatalf("resolved repository: saved %q, spawned %q, want %q (%v)", spec.Repo, td.spawned[0].Spec.Repo, wantRepo, err)
+			}
+		})
 	}
 }
