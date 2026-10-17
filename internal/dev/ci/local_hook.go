@@ -39,8 +39,8 @@ var localHookScript = strings.ReplaceAll(hookScriptTemplate, "@CRW964_GITLEAKS_P
 const hookScriptTemplate = `#!/usr/bin/env bash
 # crw-dev ci local pre-push hook (CRW-964)
 # Refuses a push whose range brings a secret or a blob over 2 MiB into the history. The range is
-# <remote sha>..<local sha>, or for a new ref the local sha minus the commits the push remote's
-# refs already name. A missing scanner, an unreadable range and a finding each exit non-zero.
+# <remote sha>..<local sha>, or for a new ref the local sha minus the push remote's refs when
+# its fetch URL matches the destination. Missing scanners, unreadable ranges and findings fail.
 set -euo pipefail
 
 limit=$((2 * 1024 * 1024))
@@ -59,8 +59,11 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   if [ -z "${remote_sha:-}" ] || [ -z "${remote_sha//0/}" ]; then
     range=("$local_sha")
     remote=${1:-}
-    if [ -n "$remote" ] &&
+    destination=${2:-}
+    if [ -n "$remote" ] && [ -n "$destination" ] &&
       git check-ref-format "refs/remotes/$remote/crw-range-check" >/dev/null 2>&1 &&
+      fetch_url=$(git -C "$root" remote get-url -- "$remote" 2>/dev/null) &&
+      [ -n "$fetch_url" ] && [ "$fetch_url" = "$destination" ] &&
       remote_refs=$(git -C "$root" for-each-ref --format='%(objectname)' "refs/remotes/$remote/") &&
       [ -n "$remote_refs" ]; then
       range+=(--not "--remotes=$remote")

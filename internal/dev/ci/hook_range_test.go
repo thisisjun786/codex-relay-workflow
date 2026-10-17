@@ -132,6 +132,8 @@ func hookGitShim(t *testing.T, mode string) string {
 		body = "for arg in \"$@\"; do\n  if [ \"$arg\" = for-each-ref ]; then\n    exit 1\n  fi\ndone\n"
 	case "rev-list-exclusion":
 		body = "saw_list=false\nsaw_not=false\nfor arg in \"$@\"; do\n  [ \"$arg\" = rev-list ] && saw_list=true\n  [ \"$arg\" = --not ] && saw_not=true\ndone\nif $saw_list && $saw_not; then\n  exit 1\nfi\n"
+	case "fetch-url":
+		body = "saw_remote=false\nsaw_geturl=false\nfor arg in \"$@\"; do\n  [ \"$arg\" = remote ] && saw_remote=true\n  [ \"$arg\" = get-url ] && saw_geturl=true\ndone\nif $saw_remote && $saw_geturl; then\n  exit 1\nfi\n"
 	default:
 		t.Fatalf("unknown git shim mode %q", mode)
 	}
@@ -143,13 +145,22 @@ func hookGitShim(t *testing.T, mode string) string {
 	return dir
 }
 
+const hookRangeFetchURL = "https://example.invalid/published.git"
+
+func newHookRangeRepo(t *testing.T) *fixtureRepo {
+	t.Helper()
+	repo := newRepo(t)
+	repo.git("remote", "add", "publish", hookRangeFetchURL)
+	return repo
+}
+
 func TestHookRangeNewRemoteExcludesPublished(t *testing.T) {
 	for _, zeros := range []struct{ name, sha string }{
 		{"sha1", strings.Repeat("0", 40)},
 		{"sha256", strings.Repeat("0", 64)},
 	} {
 		t.Run(zeros.name, func(t *testing.T) {
-			repo := newRepo(t)
+			repo := newHookRangeRepo(t)
 			repo.write("secret.txt", "token = CRW1598-LEAKED-VALUE\n")
 			repo.write("big.bin", strings.Repeat("x", (2<<20)+1))
 			repo.commit()
@@ -164,7 +175,7 @@ func TestHookRangeNewRemoteExcludesPublished(t *testing.T) {
 			}
 			argvFile, revsFile, capture := hookRangeCapture(t)
 			stdin := fmt.Sprintf("refs/heads/feature %s refs/heads/feature %s\n", head, zeros.sha)
-			res := hookRun(t, repo.root, []string{"publish"}, stdin, hookRangeEnv(t, capture...))
+			res := hookRun(t, repo.root, []string{"publish", hookRangeFetchURL}, stdin, hookRangeEnv(t, capture...))
 			if res.code != 0 {
 				t.Fatalf("a push of unpublished commits only was blocked:\n%s", res.stdout)
 			}
@@ -195,7 +206,7 @@ func TestHookRangeNewRemoteBlocksNewFindings(t *testing.T) {
 		{"blob", "big.bin", strings.Repeat("x", (2<<20)+1), "blob over"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			repo := newRepo(t)
+			repo := newHookRangeRepo(t)
 			repo.write("base.txt", "clean\n")
 			repo.commit()
 			published := strings.TrimSpace(repo.git("rev-parse", "HEAD"))
@@ -211,7 +222,7 @@ func TestHookRangeNewRemoteBlocksNewFindings(t *testing.T) {
 				t.Fatal(err)
 			}
 			stdin := fmt.Sprintf("refs/heads/feature %s refs/heads/feature %s\n", head, strings.Repeat("0", 40))
-			res := hookRun(t, repo.root, []string{"publish"}, stdin, hookRangeEnv(t))
+			res := hookRun(t, repo.root, []string{"publish", hookRangeFetchURL}, stdin, hookRangeEnv(t))
 			if res.code == 0 {
 				t.Fatalf("a push carrying a new %s went through:\n%s", tc.name, res.stdout)
 			}
@@ -224,26 +235,29 @@ func TestHookRangeNewRemoteBlocksNewFindings(t *testing.T) {
 
 func TestHookRangeFallback(t *testing.T) {
 	for _, tc := range []struct {
-		name       string
-		argv       []string
-		publishRef bool
-		otherRef   bool
-		shim       string
+		name     string
+		argv     []string
+		refsFor  string
+		otherRef bool
+		shim     string
 	}{
-		{"remote has no refs", []string{"publish"}, false, false, ""},
-		{"only another remote has refs", []string{"publish"}, false, true, ""},
-		{"missing remote name", nil, true, false, ""},
-		{"url instead of a remote name", []string{"ssh://git@example.invalid/repo.git"}, true, false, ""},
-		{"for-each-ref fails", []string{"publish"}, true, false, "for-each-ref"},
-		{"excluded range unreadable", []string{"publish"}, true, false, "rev-list-exclusion"},
+		{"remote has no refs", []string{"publish", hookRangeFetchURL}, "", false, ""},
+		{"only another remote has refs", []string{"publish", hookRangeFetchURL}, "", true, ""},
+		{"missing remote name", nil, "publish", false, ""},
+		{"missing destination URL", []string{"publish"}, "publish", false, ""},
+		{"unconfigured remote", []string{"unknown", hookRangeFetchURL}, "unknown", false, ""},
+		{"url instead of a remote name", []string{"ssh://git@example.invalid/repo.git"}, "publish", false, ""},
+		{"for-each-ref fails", []string{"publish", hookRangeFetchURL}, "publish", false, "for-each-ref"},
+		{"fetch URL unreadable", []string{"publish", hookRangeFetchURL}, "publish", false, "fetch-url"},
+		{"excluded range unreadable", []string{"publish", hookRangeFetchURL}, "publish", false, "rev-list-exclusion"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			repo := newRepo(t)
+			repo := newHookRangeRepo(t)
 			repo.write("secret.txt", "token = CRW1598-LEAKED-VALUE\n")
 			repo.commit()
 			marked := strings.TrimSpace(repo.git("rev-parse", "HEAD"))
-			if tc.publishRef {
-				repo.git("update-ref", "refs/remotes/publish/dev", marked)
+			if tc.refsFor != "" {
+				repo.git("update-ref", "refs/remotes/"+tc.refsFor+"/dev", marked)
 			}
 			if tc.otherRef {
 				repo.git("update-ref", "refs/remotes/origin/dev", marked)
@@ -278,7 +292,7 @@ func TestHookRangeFallback(t *testing.T) {
 }
 
 func TestHookRangeExistingRef(t *testing.T) {
-	repo := newRepo(t)
+	repo := newHookRangeRepo(t)
 	repo.write("base.txt", "clean\n")
 	repo.commit()
 	base := strings.TrimSpace(repo.git("rev-parse", "HEAD"))
@@ -302,7 +316,7 @@ func TestHookRangeExistingRef(t *testing.T) {
 }
 
 func TestHookRangeUpgrade(t *testing.T) {
-	repo := newRepo(t)
+	repo := newHookRangeRepo(t)
 	repo.write("secret.txt", "token = CRW1598-LEAKED-VALUE\n")
 	repo.write("big.bin", strings.Repeat("x", (2<<20)+1))
 	repo.commit()
@@ -330,8 +344,58 @@ func TestHookRangeUpgrade(t *testing.T) {
 		t.Fatal("the upgraded hook is not the current script")
 	}
 	stdin := fmt.Sprintf("refs/heads/feature %s refs/heads/feature %s\n", head, strings.Repeat("0", 40))
-	res := hookRun(t, repo.root, []string{"publish"}, stdin, hookRangeEnv(t))
+	res := hookRun(t, repo.root, []string{"publish", hookRangeFetchURL}, stdin, hookRangeEnv(t))
 	if res.code != 0 {
 		t.Fatalf("the upgraded hook blocked a push of unpublished commits only:\n%s", res.stdout)
+	}
+}
+
+func TestHookRangePushDestinationMismatch(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		file    string
+		content string
+		want    string
+	}{
+		{"secret", "secret.txt", "token = CRW1598-LEAKED-VALUE\n", "Gitleaks found a secret"},
+		{"blob", "big.bin", strings.Repeat("x", (2<<20)+1), "blob over"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source := newRepo(t)
+			source.write(tc.file, tc.content)
+			source.commit()
+			repo := newRepo(t)
+			repo.git("remote", "add", "publish", source.root)
+			repo.git("fetch", "-q", "publish")
+			repo.git("checkout", "-q", "--detach", "FETCH_HEAD")
+			head := strings.TrimSpace(repo.git("rev-parse", "HEAD"))
+			emptyPush := t.TempDir()
+			repo.git("init", "--bare", "-q", emptyPush)
+			repo.git("remote", "set-url", "--push", "publish", emptyPush)
+			destination := strings.TrimSpace(repo.git("remote", "get-url", "--push", "publish"))
+			if destination != emptyPush {
+				t.Fatalf("the push destination = %q, want %q", destination, emptyPush)
+			}
+			if _, err := localHookInstall(mustHookPath(t, repo.root)); err != nil {
+				t.Fatal(err)
+			}
+			argvFile, revsFile, capture := hookRangeCapture(t)
+			stdin := fmt.Sprintf("refs/heads/feature %s refs/heads/feature %s\n", head, strings.Repeat("0", 40))
+			res := hookRun(t, repo.root, []string{"publish", destination}, stdin, hookRangeEnv(t, capture...))
+			if res.code == 0 {
+				t.Fatalf("a first push to a destination the fetch URL does not name went through:\n%s", res.stdout)
+			}
+			if !strings.Contains(res.stdout, tc.want) {
+				t.Errorf("the refusal does not name the %s finding:\n%s", tc.name, res.stdout)
+			}
+			opts := hookRangeLogOpts(t, argvFile)
+			want := "-m " + head
+			if len(opts) != 1 || opts[0] != want {
+				t.Errorf("scanner log-opts = %v, want [%q]", opts, want)
+			}
+			if !hookRangeRevs(t, revsFile)[head] {
+				t.Errorf("the scanned commits do not contain the pushed head %s", head)
+			}
+		})
 	}
 }
