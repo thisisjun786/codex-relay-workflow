@@ -1690,23 +1690,23 @@ func (s *Scheduler) recordMovedIn(txCtx context.Context, in IntegrationBatchInpu
 }
 
 // reconcilePlannedMoves settles the batches that planned a move (CRW-965, parent decision D6). A planned head the branch
-// holds and no ref_moved row records is recorded as moved, once: the batch died after the swap. A planned head the branch
-// does not hold is abandoned and reported.
+// holds and no ref_moved row records for that batch and head is recorded as moved, once: the batch died after the swap.
+// A batch is abandoned and reported only when none of its planned heads is the current tip.
 func (s *Scheduler) reconcilePlannedMoves(ctx context.Context, in IntegrationBatchInput, tip string, out *IntegrationBatchResult) error {
 	rows, err := store.IntegrationStagesOfPlan(ctx, s.Store, in.Plan)
 	if err != nil {
 		return err
 	}
-	moved := map[string]bool{}
+	moved := map[[2]string]bool{}
 	for _, r := range rows {
 		if r.Stage == "ref_moved" {
-			moved[r.BatchID] = true
+			moved[[2]string{r.BatchID, r.Detail}] = true
 		}
 	}
 	var batches []string
 	matches := map[string]bool{}
 	for _, r := range rows {
-		if r.Stage != "intent" || r.NodeID != "" || moved[r.BatchID] {
+		if r.Stage != "intent" || r.NodeID != "" {
 			continue
 		}
 		var d map[string]string
@@ -1721,6 +1721,9 @@ func (s *Scheduler) reconcilePlannedMoves(ctx context.Context, in IntegrationBat
 	for _, batch := range batches {
 		if !matches[batch] {
 			out.Abandoned = append(out.Abandoned, batch)
+			continue
+		}
+		if moved[[2]string{batch, tip}] {
 			continue
 		}
 		if err := s.IntegrationWrite(ctx, in.Plan, in.Actor, func(txCtx context.Context) error {
