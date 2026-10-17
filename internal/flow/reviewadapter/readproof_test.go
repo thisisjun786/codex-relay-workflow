@@ -416,9 +416,46 @@ func TestReadProof1660GitShowSelections(t *testing.T) {
 	})
 }
 
-// Cancellation must cover both resolution and the subsequent type queries.
+func TestReadProof1665EmptySelections(t *testing.T) {
+	repo := revisionRepo1618(t)
+	commands := []string{
+		"git show '^HEAD' -- old.go",
+		"git show HEAD..HEAD -- old.go",
+		"git show HEAD...HEAD -- old.go",
+		"git show HEAD '^HEAD' -- old.go",
+		"git show '^HEAD' HEAD -- old.go",
+		"git show HEAD..HEAD HEAD -- old.go",
+	}
+	for _, command := range commands {
+		t.Run(command, func(t *testing.T) {
+			cmd := exec.Command("/bin/sh", "-c", command)
+			cmd.Dir = repo
+			out, err := cmd.CombinedOutput()
+			if err != nil || len(out) != 0 {
+				t.Fatalf("%q should succeed without selecting a commit: %v\n%s", command, err, out)
+			}
+			if commandReadsCheckout(t.Context(), command, repo) {
+				t.Errorf("%q emitted nothing but counted as a read", command)
+			}
+		})
+	}
+	t.Run("empty selections cannot satisfy the read floor", func(t *testing.T) {
+		var events []string
+		for i, command := range commands[:3] {
+			events = append(events, astraCommandLine(t, fmt.Sprintf("empty_%d", i), command))
+		}
+		stdout := strings.Join(events, "\n") + "\n" + astraStream(`{"verdict":"verified","findings":[]}`)
+		res := checkForWorktree(t, AstraProfile("/run/answer.strict.json"), repo, fakeRun{stdout: stdout}, 50*time.Second)
+		wantState(t, res, StateNotRead)
+		if res.Commands != 0 {
+			t.Fatalf("empty selections counted as %d reads", res.Commands)
+		}
+	})
+}
+
+// Cancellation must cover resolution, type queries and the final selection walk.
 func TestReadProof1660SelectionCancellation(t *testing.T) {
-	for _, stage := range []string{"first lookup", "type lookup"} {
+	for _, stage := range []string{"first lookup", "type lookup", "selection walk"} {
 		t.Run(stage, func(t *testing.T) {
 			root, _ := readProofCheckout(t)
 			tail := "exec sleep 60"
@@ -431,6 +468,16 @@ func TestReadProof1660SelectionCancellation(t *testing.T) {
 done
 exec sleep 60`
 			}
+			if stage == "selection walk" {
+				tail = `for arg in "$@"; do
+  case "$arg" in
+    rev-parse) printf '%s\n' '1111111111111111111111111111111111111111'; exit 0 ;;
+    cat-file) printf '%s\n' commit; exit 0 ;;
+    rev-list) exec sleep 60 ;;
+  esac
+done
+exit 1`
+			}
 			marker := fakeGit1618(t, tail)
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
@@ -439,7 +486,10 @@ exec sleep 60`
 			deadline := time.Now().Add(10 * time.Second)
 			for {
 				b, err := os.ReadFile(marker)
-				if err == nil && (stage == "first lookup" || strings.Contains(string(b), "cat-file -t")) {
+				ready := stage == "first lookup" ||
+					(stage == "type lookup" && strings.Contains(string(b), "cat-file -t")) ||
+					(stage == "selection walk" && strings.Contains(string(b), "rev-list "))
+				if err == nil && ready {
 					break
 				}
 				select {

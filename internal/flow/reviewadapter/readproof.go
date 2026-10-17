@@ -628,14 +628,12 @@ func (st *proofState) gitShowReads(args []string, repo string) bool {
 				return false
 			}
 			// A proven <rev>:<path> blob is independent read evidence.
-			// Otherwise require commit selections for pathspec evidence:
+			// Otherwise explicit selections must choose at least one commit:
 			// Git expands ranges and peels commit tags, while tree listings
 			// and raw blobs do not read the named paths.
-			if !revPathRead {
-				for _, object := range objects {
-					if gitObjectType(st.ctx, repo, object, filepath.Dir(st.root), true) != "commit" {
-						return false
-					}
+			if !revPathRead && len(objects) > 0 {
+				if gitObjectType(st.ctx, repo, objects, filepath.Dir(st.root), true) != "commit" {
+					return false
 				}
 			}
 			for _, p := range args[i+1:] {
@@ -655,7 +653,7 @@ func (st *proofState) gitShowReads(args []string, repo string) bool {
 			}
 			sawObject, sawRevPath = true, true
 			objects = append(objects, a)
-			if st.repoPathInside(path, repo) && gitObjectType(st.ctx, repo, a, filepath.Dir(st.root), false) == "blob" {
+			if st.repoPathInside(path, repo) && gitObjectType(st.ctx, repo, []string{a}, filepath.Dir(st.root), false) == "blob" {
 				proved, revPathRead = true, true
 			}
 		default:
@@ -741,14 +739,15 @@ func (st *proofState) repoPathInside(p, repo string) bool {
 	return insideRoot(clean, st.root)
 }
 
-// gitObjectType asks Git for an object's type. In commitSelection mode it expands
-// one revision argument and requires every resulting object to peel to a commit.
+// gitObjectType asks Git for a single object's type. In commitSelection mode it
+// expands all revision arguments, requires every boundary to peel to a commit,
+// and asks Git whether the combined inclusion/exclusion expression is nonempty.
 // Each argument is resolved separately: --revs-only can silently omit unknown
 // names, which must not be hidden by a valid argument beside them.
-// Resolution and type queries share the caller's context and one gitprobe.Timeout.
+// Resolution, type queries and the walk share the caller's context and one gitprobe.Timeout.
 // Failures, empty selections and timeouts produce no type.
-func gitObjectType(ctx context.Context, repo, object, ceiling string, commitSelection bool) string {
-	if ctx.Err() != nil {
+func gitObjectType(ctx context.Context, repo string, objects []string, ceiling string, commitSelection bool) string {
+	if ctx.Err() != nil || len(objects) == 0 {
 		return ""
 	}
 	probe, cancel := context.WithTimeout(ctx, gitprobe.Timeout)
@@ -759,30 +758,44 @@ func gitObjectType(ctx context.Context, repo, object, ceiling string, commitSele
 		return strings.TrimSpace(string(out)), err
 	}
 	if commitSelection {
-		out, err := lookup("rev-parse", "--revs-only", "--no-flags", "--end-of-options", object)
-		if err != nil {
-			return ""
-		}
-		revisions := strings.Fields(out)
-		if len(revisions) == 0 {
-			return ""
-		}
-		for _, revision := range revisions {
-			// Exclusions returned by rev-parse have the same object type
-			// requirement as inclusions. Inspect the resolved OID, not a
-			// mutable ref name, and let Git peel annotated/nested tags.
-			oid := strings.TrimPrefix(revision, "^")
-			if !looksLikeHex(oid) {
+		walk := []string{"rev-list", "--max-count=1", "--end-of-options"}
+		for _, object := range objects {
+			out, err := lookup("rev-parse", "--revs-only", "--no-flags", "--end-of-options", object)
+			if err != nil {
 				return ""
 			}
-			kind, err := lookup("cat-file", "-t", oid+"^{commit}")
-			if err != nil || kind != "commit" {
+			revisions := strings.Fields(out)
+			if len(revisions) == 0 {
 				return ""
 			}
+			for _, revision := range revisions {
+				// Inspect resolved OIDs rather than mutable ref names, and
+				// retain each inclusion/exclusion boundary for the full walk.
+				oid := strings.TrimPrefix(revision, "^")
+				if !looksLikeHex(oid) {
+					return ""
+				}
+				commit := oid + "^{commit}"
+				kind, err := lookup("cat-file", "-t", commit)
+				if err != nil || kind != "commit" {
+					return ""
+				}
+				if strings.HasPrefix(revision, "^") {
+					commit = "^" + commit
+				}
+				walk = append(walk, commit)
+			}
+		}
+		out, err := lookup(append(walk, "--")...)
+		if err != nil || !looksLikeHex(out) {
+			return ""
 		}
 		return "commit"
 	}
-	kind, err := lookup("cat-file", "-t", object)
+	if len(objects) != 1 {
+		return ""
+	}
+	kind, err := lookup("cat-file", "-t", objects[0])
 	if err != nil {
 		return ""
 	}
