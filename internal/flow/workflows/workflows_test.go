@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -12,10 +13,12 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	agentbackend "github.com/thisisjun786/codex-relay-workflow/internal/flow/backend/agent"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/reviewadapter"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/script"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/workflows/lib"
 )
@@ -358,4 +361,324 @@ func builtinSources(t *testing.T) map[string][]byte {
 		sources["lib/"+name] = src
 	}
 	return sources
+}
+
+// ccHistoryRelay adds the crosscheck-history seam of CRW-1649 to the stock relay: previous project-lane runs of the plan.
+type ccHistoryRelay struct {
+	ops.Relay
+	history []ops.DesignRun
+}
+
+func (r *ccHistoryRelay) CrosscheckHistory(context.Context, string) ([]ops.DesignRun, error) {
+	return r.history, nil
+}
+
+// TestClose1649PendingCrosscheckIsThePriorOfTheNextRun (CRW-1649): a run that stopped crosscheck_pending leaves its recorded
+// verdict as the next run's round-1 prior: the round-1 prompts of the next run of the same plan and milestone carry the prior's
+// blocking findings, so a finding the last run already found is judged again instead of silently verifying.
+func TestClose1649PendingCrosscheckIsThePriorOfTheNextRun(t *testing.T) {
+	const marker = "prior-red-receipt-1649"
+	finding := map[string]any{"severity": "P1", "impact": "criterion_unmet", "file": "internal/x.go", "line": 3,
+		"text": marker, "kind": "evidence_missing", "evidence_question": map[string]any{"question": "is the receipt read?", "files_needed": []string{}}}
+	answer := func(withFinding bool) []byte {
+		b, _ := json.Marshal(map[string]any{
+			"verdict": map[bool]string{true: "needs_changes", false: "verified"}[withFinding],
+			"findings": func() []any {
+				if withFinding {
+					return []any{finding}
+				}
+				return []any{}
+			}(),
+		})
+		return b
+	}
+	runClose := func(runID string, history []ops.DesignRun, capture, alwaysFinding bool) (*engine.MemoryJournal, []string) {
+		j := engine.NewMemoryJournal()
+		var prompts []string
+		var mu sync.Mutex
+		msJSON, _ := json.Marshal(ops.Milestone{ID: "M", Plan: "plan-1", Title: "test", Criteria: []string{"c"}})
+		j.Append(engine.Event{RunID: runID, Kind: engine.KindCall, CallID: "c_ms", Op: ops.OpMilestone, Event: engine.EvCompleted,
+			Data: map[string]any{"milestone": "M", "plan": "plan-1", "result": string(msJSON)}})
+		adapter := &reviewadapter.Adapter{
+			Fingerprint: func(context.Context, string) (string, error) { return "fp-fixed", nil },
+			Run: func(_ context.Context, p reviewadapter.Profile, req reviewadapter.Request) ([]byte, []byte, int, error) {
+				if capture {
+					mu.Lock()
+					prompts = append(prompts, req.Prompt)
+					mu.Unlock()
+				}
+				return answer(alwaysFinding || strings.Contains(req.Prompt, marker)), nil, 0, nil
+			},
+		}
+		cc := &ops.Crosscheck{Checker: adapter, Limit: time.Minute,
+			Profiles: func(string) ([]reviewadapter.Profile, error) {
+				return []reviewadapter.Profile{
+					reviewadapter.JSONProfile("engine-a", []string{"a"}, "model-a", "high"),
+					reviewadapter.JSONProfile("engine-b", []string{"b"}, "model-b", "high"),
+				}, nil
+			},
+			Checkout: func(context.Context, string, int, int, string, int, string) (string, func() error, error) {
+				return t.TempDir(), func() error { return nil }, nil
+			}}
+		lane := ops.NewLane(ops.Deps{RunID: runID, Journal: j, Relay: &ccHistoryRelay{history: history}, Decisions: &ops.MemoryDecisions{}, Crosscheck: cc, LandRoot: t.TempDir()})
+		opset := lane.Ops()
+		opset["finalGate"] = researchOp(func(engine.OpRequest) any {
+			return map[string]any{"state": "pass", "head": "head-x", "base": "base-x"}
+		})
+		opset["exploreRoute"] = researchOp(func(engine.OpRequest) any {
+			return map[string]any{"routes": []any{map[string]any{"route": "orchestrator", "id": "q1", "digest": "d1", "question": "is the receipt read?"}}}
+		})
+		opset["exploreRecord"] = researchOp(func(engine.OpRequest) any { return map[string]any{} })
+		opset["milestoneClose"] = researchOp(func(engine.OpRequest) any { return map[string]any{"moved": false, "tip": "head-x"} })
+		body := `import { install } from 'crw:lib/lane'
+import { closeMilestone } from 'crw:lib/close'
+export const meta = {name:'cc-prior-1649'}
+install(crw)
+const ms = {id:'M', title:'test', criteria:['c'], nodes:[]}
+const closed = await closeMilestone(ms)
+if (closed.state !== 'closed') return crw.milestoneHalt(ms, closed.source, closed.status, closed.reason, closed.call, { ask: closed.ask, evidence: closed.evidence, fix: closed.fix, detail: closed.detail })
+return closed`
+		prog, err := script.Load(script.Source{Name: "cc-prior-1649.js", Text: []byte(body)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		res, err := engine.Run(context.Background(), prog, engine.Config{RunID: runID, Backend: engine.NewFake(), Policy: engine.FakePolicy(), Journal: j, Ops: opset})
+		if err != nil {
+			t.Fatalf("%s: %v", runID, err)
+		}
+		if res.Status != engine.RunCompleted {
+			t.Fatalf("%s: run status %s value %s", runID, res.Status, res.Value)
+		}
+		return j, prompts
+	}
+
+	j1, _ := runClose("run-1649-a", nil, false, true)
+	var esc []engine.Event
+	for _, ev := range j1.Events() {
+		if ev.Kind == engine.KindFlow && ev.Event == engine.EvEscalation {
+			esc = append(esc, ev)
+		}
+	}
+	if len(esc) != 1 {
+		t.Fatalf("first run escalations: %+v", esc)
+	}
+	if got := fmt.Sprint(esc[0].Data["reason"]); got != "crosscheck_pending" {
+		t.Fatalf("first run stopped for %q, want crosscheck_pending", got)
+	}
+
+	j2, prompts := runClose("run-1649-b", []ops.DesignRun{{Run: "run-1649-a", Events: j1.Events()}}, true, false)
+	for _, ev := range j2.Events() {
+		if ev.Op == ops.OpMilestoneClose {
+			t.Fatalf("the second run closed over a pending verdict it never saw: %+v", ev)
+		}
+	}
+	var esc2 []engine.Event
+	for _, ev := range j2.Events() {
+		if ev.Kind == engine.KindFlow && ev.Event == engine.EvEscalation {
+			esc2 = append(esc2, ev)
+		}
+	}
+	if len(esc2) != 1 || fmt.Sprint(esc2[0].Data["reason"]) != "crosscheck_pending" {
+		t.Fatalf("second run did not stay crosscheck_pending on the carried finding: %+v", esc2)
+	}
+	if len(prompts) != 2 {
+		t.Fatalf("the second run's crosscheck got %d prompts, want 2", len(prompts))
+	}
+	for _, p := range prompts {
+		if !strings.Contains(p, marker) {
+			t.Errorf("a round-1 prompt of the next run lacks the prior finding text: %s", p)
+		}
+	}
+}
+
+// TestClose1649CorrectionNodeOfARevisionLandsInTheCloseRun (CRW-1649): the route the crosscheck fix packet now names - a new run
+// of the same plan reuses the already integrated node, builds the revision's correction node in its ordinary lane, and closes the
+// milestone in that same run; the report carries the previous run's pending verdict and its findings' observed results.
+func TestClose1649CorrectionNodeOfARevisionLandsInTheCloseRun(t *testing.T) {
+	j := engine.NewMemoryJournal()
+	lane := ops.NewLane(ops.Deps{RunID: "run-correction", Journal: j, Decisions: &ops.MemoryDecisions{}, LandRoot: t.TempDir()})
+	opset := lane.Ops()
+	// the lane's own operations of the correction node: plan, check, commit, verify and land
+	opset["issuePlan"] = researchOp(func(req engine.OpRequest) any {
+		return map[string]any{"size_fit": "executor", "regions": []string{"c.txt"}, "criteria": []string{}, "decisions": []any{}}
+	})
+	opset["unitCheck"] = researchOp(func(engine.OpRequest) any {
+		return map[string]any{"state": "ok", "check_id": "check-c", "verdict": "verified", "findings": []any{}}
+	})
+	opset["commit"] = researchOp(func(engine.OpRequest) any { return map[string]any{"commit": "head-C"} })
+	opset["verify"] = researchOp(func(engine.OpRequest) any {
+		return map[string]any{"ran": true, "pass": true, "digest": "dg-C", "base": "base-x"}
+	})
+	opset["accept"] = researchOp(func(engine.OpRequest) any { return map[string]any{"acceptance_id": "acc-C"} })
+	var integrated []string
+	opset["integrate"] = researchOp(func(req engine.OpRequest) any {
+		var call []string
+		_ = json.Unmarshal(req.Args, &call)
+		integrated = append(integrated, call[0])
+		return map[string]any{"batch_commit": "batch-C", "tip": "head-C"}
+	})
+	opset["spawnDecision"] = researchOp(func(engine.OpRequest) any { return map[string]any{"id": "dec-x"} })
+	var reuseCalls []string
+	opset["reuseIntegrated"] = researchOp(func(req engine.OpRequest) any {
+		var call []string
+		_ = json.Unmarshal(req.Args, &call)
+		reuseCalls = append(reuseCalls, call[1])
+		if call[1] == "A" {
+			return map[string]any{"reused": true, "source_run": "run-old", "head": "head-A", "source_kind": "land"}
+		}
+		return map[string]any{"reused": false}
+	})
+	var releases []string
+	opset["release"] = researchOp(func(req engine.OpRequest) any {
+		var call []string
+		_ = json.Unmarshal(req.Args, &call)
+		releases = append(releases, call[1])
+		return map[string]any{"released": true, "kind": "executor"}
+	})
+	var closeArgs []map[string]any
+	opset["finalGate"] = researchOp(func(engine.OpRequest) any {
+		if len(integrated) != 1 || integrated[0] != "C" {
+			t.Errorf("the gate ran before the correction's integration: %v", integrated)
+		}
+		return map[string]any{"state": "pass", "head": "head-C", "base": "base-x"}
+	})
+	prior := map[string]any{"verdict": "needs_changes", "round": 2, "run": "run-old", "head": "head-A",
+		"findings": []any{map[string]any{"id": "f-old", "severity": "P1", "impact": "core_function", "file": "a.txt", "line": 1, "text": "the old finding"}},
+		"carried":  []string{}}
+	opset["crosscheck"] = researchOp(func(engine.OpRequest) any {
+		return map[string]any{"state": "verdict",
+			"verdict": map[string]any{"verdict": "verified", "findings": []any{}, "carried": []string{}, "run": "run-correction", "head": "head-C"},
+			"prior":   prior}
+	})
+	opset["milestoneClose"] = researchOp(func(req engine.OpRequest) any {
+		var call []any
+		_ = json.Unmarshal(req.Args, &call)
+		if len(call) == 2 {
+			if m, ok := call[1].(map[string]any); ok {
+				closeArgs = append(closeArgs, m)
+			}
+		}
+		return map[string]any{"moved": false, "tip": "head-C"}
+	})
+	opset["audit"] = researchOp(func(engine.OpRequest) any {
+		return map[string]any{"ok": 2, "mismatch": 0, "unobserved": 0, "results": []any{}}
+	})
+	var reportArgs []map[string]any
+	opset["reportUp"] = researchOp(func(req engine.OpRequest) any {
+		var call []any
+		_ = json.Unmarshal(req.Args, &call)
+		if len(call) == 2 {
+			if m, ok := call[1].(map[string]any); ok {
+				reportArgs = append(reportArgs, m)
+			}
+		}
+		return map[string]any{"report_id": "rep-1"}
+	})
+	body := `import { install } from 'crw:lib/lane'
+import { lane } from 'crw:lib/project-build'
+import { closeMilestone, reportClose } from 'crw:lib/close'
+export const meta = {name:'correction-1649'}
+install(crw)
+const ms = {id:'M', plan:'plan-1', title:'fix', criteria:['c'], nodes:[
+  {id:'A', regions:['a.txt'], after:[]},
+  {id:'C', regions:['c.txt'], after:['A']},
+]}
+const inherited = []
+const pending = []
+for (const node of ms.nodes) {
+  const saved = await crw.reuseIntegrated(ms.id, node.id)
+  if (saved.reused) inherited.push({node:node.id, state:'landed', reused:true})
+  else pending.push(node)
+}
+const fresh = await crw.dag(ms.plan, lane, {nodes:pending, milestone:ms.id, cap:1})
+const closed = await closeMilestone(ms)
+const reported = await reportClose(ms, closed, 'ALIGNED')
+return {lanes:inherited.concat(fresh), closed, reported}`
+	prog, err := script.Load(script.Source{Name: "correction-1649.js", Text: []byte(body)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := engine.NewFake()
+	fake.Handler = func(req engine.FakeRequest) engine.FakeReply {
+		return engine.FakeReply{Text: `{"outcome":"ready_for_review","files":["c.txt"],"verification":[],"summary":"correction built","gap":null,"research_question":null,"plan_mismatch":null}`}
+	}
+	res, err := engine.Run(context.Background(), prog, engine.Config{RunID: "run-correction", Backend: fake, Policy: engine.FakePolicy(), Journal: j, Ops: opset})
+	if err != nil || res.Status != engine.RunCompleted {
+		t.Fatalf("correction run: %v %+v", err, res)
+	}
+	var out struct {
+		Lanes    []map[string]any `json:"lanes"`
+		Closed   map[string]any   `json:"closed"`
+		Reported map[string]any   `json:"reported"`
+	}
+	if err := json.Unmarshal(res.Value, &out); err != nil {
+		t.Fatalf("result: %v: %s", err, res.Value)
+	}
+	if len(reuseCalls) != 2 || reuseCalls[0] != "A" || reuseCalls[1] != "C" {
+		t.Fatalf("reuseIntegrated calls: %v, want A then C once each", reuseCalls)
+	}
+	if len(releases) != 1 || releases[0] != "C" || len(integrated) != 1 || integrated[0] != "C" {
+		t.Fatalf("only the correction may build: releases %v integrates %v", releases, integrated)
+	}
+	var built bool
+	for _, c := range out.Lanes {
+		if c["node"] == "A" && c["reused"] != true {
+			t.Fatalf("the integrated node was not reused: %v", c)
+		}
+		if c["node"] == "C" && c["state"] == "landed" {
+			built = true
+		}
+	}
+	if !built {
+		t.Fatalf("the correction node did not land: %v", out.Lanes)
+	}
+	if out.Closed["state"] != "closed" || out.Closed["tip"] != "head-C" {
+		t.Fatalf("the milestone did not close on the repaired head: %v", out.Closed)
+	}
+	var closes, seqClose, seqReport int
+	for _, ev := range j.Events() {
+		switch ev.Op {
+		case ops.OpMilestoneClose:
+			if ev.Event == engine.EvCompleted {
+				closes++
+				seqClose = ev.Seq
+			}
+		case ops.OpReportUp:
+			if ev.Event == engine.EvCompleted {
+				seqReport = ev.Seq
+			}
+		}
+	}
+	if closes != 1 || seqClose == 0 || seqReport <= seqClose {
+		t.Fatalf("closes=%d close seq %d report seq %d: want exactly one close before the report", closes, seqClose, seqReport)
+	}
+	if len(closeArgs) != 1 {
+		t.Fatalf("close calls: %+v", closeArgs)
+	}
+	// the V recorded and sent to milestoneClose is never annotated; the report's copy carries the previous verdict
+	if cc, _ := closeArgs[0]["crosscheck"].(map[string]any); cc["previous_crosscheck"] != nil {
+		t.Fatalf("the milestoneClose verdict was annotated: %v", cc)
+	}
+	if cc, _ := out.Closed["crosscheck"].(map[string]any); cc["previous_crosscheck"] != nil {
+		t.Fatalf("closed.crosscheck was annotated: %v", cc)
+	}
+	if len(reportArgs) != 1 {
+		t.Fatalf("reportUp calls: %+v", reportArgs)
+	}
+	cc, _ := reportArgs[0]["crosscheck"].(map[string]any)
+	prev, _ := cc["previous_crosscheck"].(map[string]any)
+	if prev == nil || prev["verdict"] == nil {
+		t.Fatalf("the report carries no previous crosscheck: %v", cc)
+	}
+	pv, _ := prev["verdict"].(map[string]any)
+	if pv["run"] != "run-old" || pv["verdict"] != "needs_changes" {
+		t.Fatalf("the report's previous verdict: %v", pv)
+	}
+	outcomes, _ := prev["outcomes"].([]any)
+	if len(outcomes) != 1 {
+		t.Fatalf("previous outcomes: %v", prev)
+	}
+	if o, _ := outcomes[0].(map[string]any); o["id"] != "f-old" || o["state"] != "not_reported" {
+		t.Fatalf("the old finding's outcome: %v", o)
+	}
 }

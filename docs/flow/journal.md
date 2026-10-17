@@ -254,8 +254,10 @@ verification that could not run. An error of the tool's runner (a bad request, a
 
 **Crosscheck.** A row `crw.crosscheck` is one round of the crosscheck of a milestone at its close (CRW-1473), run by the run itself: the
 op runs the review engine through the review adapter, as the unit check does, with no agent call and no reviewer thread. Its data:
-`milestone`, `plan`, `head` (the head of the gate the close passed), `round` (1: the op serves round 1 only, and a prior verdict or another
-round is refused `crosscheck_prior_invalid`), `evidence_round` (0), `state` (`verdict`, `held`, `refused`, `failed`, `no_verdict`),
+`milestone`, `plan`, `head` (the head of the gate the close passed), `round` (1: the first judgment, carrying the most recent earlier
+project-lane run's recorded `crosscheck_pending` V when it belongs to this plan, repository and milestone; 2: this run's one recheck of
+its recorded round-1 V), `prior` when present (that canonical V), `evidence_round` (0, or 1 for the evidence recheck),
+`state` (`verdict`, `evidence`, `held`, `refused`, `failed`, `no_verdict`),
 `reason` (of a refused, failed or no_verdict round), `detail`, `hold` (of a held round: `crosscheck_quota` and `crosscheck_no_answer` when a
 pass gave no judgment, `crosscheck_receipt_missing`, `crosscheck_receipt_unverified`, `crosscheck_receipt_not_copied` and
 `crosscheck_receipt_mismatch` with the `node` when an executor receipt could not be handed over), `engine_family` and `model` once an engine
@@ -270,6 +272,13 @@ author with its `source` `role` or `call`, its `name`, `model` and `family`), `r
 `receipts_file` and `receipts_sha256`, and `passes`. `engine_family`, `engine_families` and `author_families` remain provenance fields for compatibility; they do not select or refuse a new review. Missing author model information is recorded in `author_warnings` and does not block. A crosscheck is a separate tool invocation with no agent thread id. A same-thread review observation on an agent path is warning-only and recorded, and the run continues. A crosscheck is proven (`ops.CrosscheckProof`) by a completed row of the same
 milestone, head, round and evidence round with a state other than held; a row of another head is no proof, and a held row proves
 nothing, so a resume runs the round again.
+
+For a verdict with a prior, `prior_run`, `prior_head` and `prior_digest` identify it. An explicit round-1 prior must equal the previous
+run's recorded pending V; round 2 must carry this run's exact round-1 needs_changes V. A changed, unrelated or unreadable prior is
+`crosscheck_prior_invalid`; no third round is served. The historical reader excludes the current run, later runs and other plans,
+and checks the source repository. The close report annotates its crosscheck with `previous_crosscheck`, containing the previous
+run's V and the observed disposition of each blocking finding: `blocking`, `follow_up` or `not_reported`. This report annotation
+does not change the V stored by `crw.crosscheck` or the V used by `crw.milestoneClose`.
 
 **Close.** A row `crw.milestoneClose` is the close of a milestone over its evidence `{gate, crosscheck}`: the gate that passed and the
 crosscheck's V. The op refuses, writing no completed row (reason `close_unverified`), evidence whose `crosscheck` is not a verified V of

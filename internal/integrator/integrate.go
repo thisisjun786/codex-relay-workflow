@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"github.com/thisisjun786/codex-relay-workflow/internal/tracking"
@@ -119,7 +120,18 @@ func (r *Runner) integrate(ctx context.Context, tag string, entries []Entry, pr 
 	if rc, err := r.git(ctx, c.Checkout, logf, "worktree", "add", "--detach", wt, base); err != nil || rc != 0 {
 		// A failed add may have left a half-made worktree; remove it as an added one.
 		added = true
-		return fail("worktree add failed")
+		detail := fmt.Sprintf("worktree add failed (status %d)", rc)
+		if err != nil {
+			detail += ": " + err.Error()
+		}
+		output, readErr := os.ReadFile(logPath)
+		if readErr != nil {
+			return fail("%s; read worktree log: %v", detail, readErr)
+		}
+		if text := strings.TrimSpace(string(output)); text != "" {
+			detail += ": " + text
+		}
+		return fail("%s", detail)
 	}
 	added = true
 

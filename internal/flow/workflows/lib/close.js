@@ -146,6 +146,7 @@ export async function closeMilestone(ms, opts) {
     if (g.state === 'stop') return g
     if (g.state !== 'pass') return gateStop(g)
     let x = await crosscheckRound(ms, g, opts)
+    const previous = x.prior || null
     let repair = null
     let remediated = false
     // A needs_changes verdict gets the close's one correction (CRW-1490): findings that are only missing evidence are asked of an
@@ -184,8 +185,17 @@ export async function closeMilestone(ms, opts) {
       }
     }
     if (!accepts(x)) return crosscheckStop(ms, x)
+    // the previous run's recorded verdict this round carried (CRW-1649): the close reports each of its blocking findings'
+    // observed result under the new verdict - blocking, carried as a follow-up, or not reported again.
+    const previousCrosscheck = previous ? {
+      verdict: previous,
+      outcomes: (previous.findings || []).filter((f) => !(previous.carried || []).includes(f.id)).map((f) => {
+        const found = (x.verdict.findings || []).find((now) => now.id === f.id)
+        return { id: f.id, state: !found ? 'not_reported' : (x.verdict.carried || []).includes(f.id) ? 'follow_up' : 'blocking' }
+      }),
+    } : null
     const close = await crw.milestoneClose(ms.id, { gate: g, crosscheck: x.verdict, repair })
-    if (!close.moved) return { state: 'closed', tip: close.tip, close, gate: g, crosscheck: x.verdict, ...((ms.delivery_criteria || []).length ? { delivery: { state: 'pending', head: close.tip, criteria: ms.delivery_criteria } } : {}) }
+    if (!close.moved) return { state: 'closed', tip: close.tip, close, gate: g, crosscheck: x.verdict, ...(previousCrosscheck ? { previous_crosscheck: previousCrosscheck } : {}), ...((ms.delivery_criteria || []).length ? { delivery: { state: 'pending', head: close.tip, criteria: ms.delivery_criteria } } : {}) }
     // A correction gets one recheck, including when publication loses its compare-and-swap.
     if (remediated) return stop('final_gate', 'unsettled', 'close_head_moved', null, {})
   }
@@ -208,6 +218,11 @@ export async function auditAcceptances(ms) {
 // NOT_ASSESSED from the project lane). A milestone that is re-planned is audited and reported first.
 export async function reportClose(ms, closed, reflection) {
   const audited = await auditAcceptances(ms)
-  const report = await crw.reportUp(ms.id, Object.assign({}, closed.close, { audit: audited.audit, crosscheck: closed.crosscheck, reflection }))
+  // reportUp keeps only CloseResultOutcome's fields, so the previous run's verdict rides inside the crosscheck object: the
+  // report carries the earlier V and each blocking finding's observed result without changing the recorded V (CRW-1649).
+  const crosscheck = closed.previous_crosscheck
+    ? Object.assign({}, closed.crosscheck, { previous_crosscheck: closed.previous_crosscheck })
+    : closed.crosscheck
+  const report = await crw.reportUp(ms.id, Object.assign({}, closed.close, { audit: audited.audit, crosscheck, reflection }))
   return { audit: audited.audit, report }
 }

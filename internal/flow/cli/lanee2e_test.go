@@ -3,13 +3,16 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/compile"
@@ -1203,7 +1206,7 @@ func TestCloseLeavesSecondNeedsChangesPending(t *testing.T) {
 		t.Errorf("the escalation's evidence.crosscheck %v, want the last row's verdict %v", evidence["crosscheck"], recorded)
 	}
 	fix, _ := v["fix"].(string)
-	for _, want := range []string{reviewadapter.FindingID(f2.File, f2.Text), "crw flow start land-head", "crw flow report-up", "부모"} {
+	for _, want := range []string{reviewadapter.FindingID(f2.File, f2.Text), "crw flow start project-lane", "crw flow report-up", "부모"} {
 		if !strings.Contains(fix, want) {
 			t.Errorf("the fix packet lacks %q:\n%s", want, fix)
 		}
@@ -2612,5 +2615,343 @@ func TestProjectLaneRestoresChangedIntegratedDecision(t *testing.T) {
 	}
 	if tip := l.git(l.repo, "rev-parse", l.target); tip != savedTip {
 		t.Errorf("the integration tip moved to %s, want %s", tip, savedTip)
+	}
+}
+
+// TestProjectLane1649ReusesLandHeadAndCarriesPendingPrior (CRW-1649): over the real shipped lane, in order L, P, P2: run L is
+// a land-head run landing A-1's outside head (no source DESIGN ledger); run P is a project-lane run that reuses that proven land
+// and stops crosscheck_pending; the plan is then really revised with correction issue C-1, and run P2 of the revised plan reuses
+// A-1 again, builds the correction in its ordinary lane with an actual red-to-green check and the executor's RECEIPT summary,
+// re-judges run P's recorded pending verdict as its round-1 prior and closes, and its report carries the previous V and each
+// finding's observed result. This app-server fixture has no session evidence assignment, so the correction's receipt body is
+// not an accepted evidence receipt here; accepted-receipt transport into the crosscheck's receipts file is exercised by
+// TestCrosscheck1649CorrectionReceiptAndPriorReachBothPasses.
+func TestProjectLane1649ReusesLandHeadAndCarriesPendingPrior(t *testing.T) {
+	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+	node := l.nodeOf["A-1"]
+
+	// run L: a land-head run lands A-1's outside head; it records no source DESIGN ledger.
+	head := l.outsideHead("A-1", "outside-a1")
+	author := l.authorThread("claude-fake-sonnet", "high")
+	specL := l.start("start", "land-head", "--args", landArgs(l, "A-1", "outside-a1", author), "--handoff", l.file)
+	resL := l.runToEnd(specL.RunID)
+	var lv landValue
+	if resL.Status != engine.RunCompleted || json.Unmarshal(resL.Value, &lv) != nil || lv.State != "landed" || lv.Head != head {
+		t.Fatalf("the land-head run did not land: %s %s", resL.Status, resL.Value)
+	}
+	landJournal := journalBytes(t, l, specL.RunID)
+
+	// run P: a project-lane run reuses the proven land and stops crosscheck_pending on an evidence_missing finding whose
+	// question names the execution the correction must actually run.
+	f := reviewadapter.Finding{Severity: "P1", Impact: "criterion_unmet", File: "node-C-1.txt", Line: 1,
+		Text: "the red-to-green receipt is missing", Kind: reviewadapter.KindEvidenceMissing,
+		EvidenceQuestion: &reviewadapter.EvidenceQuestion{
+			Question:    "Run test -s node-C-1.txt with the failing and corrected source and report the actual results",
+			FilesNeeded: []string{"node-C-1.txt"}}}
+	needs := func(fd reviewadapter.Finding) reviewadapter.Result {
+		return reviewadapter.Result{State: reviewadapter.StateOK, Verdict: reviewadapter.VerdictNeedsChanges, Findings: []reviewadapter.Finding{fd}}
+	}
+	l.Crosschecks("M1", 1, 0, "A", 1, needs(f))
+	l.Crosschecks("M1", 2, 1, "A", 1, needs(f))
+	l.Crosschecks("M1", 2, 0, "A", 1, needs(f))
+	specP := l.start("start", "project-lane", "--args", fmt.Sprintf(`{"plan":%q,"milestone":"M1"}`, l.plan), "--handoff", l.file)
+	v1 := l.runToEnd(specP.RunID)
+	if v1.Status != engine.RunCompleted {
+		t.Fatalf("run P: %s %s %s", v1.Status, v1.Error, v1.Value)
+	}
+	var out1 map[string]any
+	if err := json.Unmarshal(v1.Value, &out1); err != nil || out1["reason"] != "crosscheck_pending" {
+		t.Fatalf("run P did not stop crosscheck_pending: %v %s", err, v1.Value)
+	}
+	for _, e := range l.events() {
+		if e.RunID == specP.RunID && e.Op == ops.OpMilestoneClose {
+			t.Fatalf("run P closed over a pending crosscheck: %+v", e)
+		}
+	}
+	reuses := reuseIntegratedRows(t, l)
+	var reused bool
+	for _, r := range reuses {
+		if r["node"] == node && r["reason"] == "integrated_reused" {
+			reused = true
+			if r["source_run"] != specL.RunID || r["source_kind"] != "land" {
+				t.Fatalf("A-1's reuse does not name the land source: %+v", r)
+			}
+		}
+	}
+	if !reused {
+		t.Fatalf("A-1 was not reused from the land-head run: %+v", reuses)
+	}
+	pJournal := journalBytes(t, l, specP.RunID)
+
+	// the revision: correction issue C-1 joins milestone M1 of the same plan, after A-1
+	raw := l.handoffBytes(func(in *compile.Input) {
+		in.Projects[0].Issues = append(in.Projects[0].Issues, compile.Issue{
+			Key: "C-1", Title: "supply the missing red-to-green receipt", Milestone: "M1",
+			Criteria: []string{"node-C-1.txt exists and its red-to-green check is recorded"},
+			After:    []string{"A-1"}, Regions: []compile.Region{{Path: "node-C-1.txt", Kind: "file"}},
+		})
+	})
+	edited, err := DecodeHandoff(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim, hasClaim, err := dag.LatestClaim(context.Background(), l.w.st.DB, l.plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasClaim {
+		edited.Projects[0].CoordinatorEpoch = claim.Epoch
+	}
+	compiled, err := compile.Compile(edited, compile.Options{
+		Bases: map[string]dag.State{l.plan: dag.StateFromSnapshot(l.snapshot(0))},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if compiled.Plans[0].Change == nil {
+		t.Fatal("adding C-1 made no plan revision")
+	}
+	if _, err := (&dag.Repo{Store: l.w.st}).Put(context.Background(), *compiled.Plans[0].Change); err != nil {
+		t.Fatal(err)
+	}
+	for _, is := range compiled.Plans[0].Preview.Issues {
+		l.nodeOf[is.Key], l.issue[is.NodeID] = is.NodeID, is.Key
+	}
+	cNode := l.nodeOf["C-1"]
+	if cNode == "" {
+		t.Fatalf("the revision holds no node for C-1: %+v", compiled.Plans[0].Preview.Issues)
+	}
+	l.input = edited
+	revRaw, _ := json.Marshal(edited)
+	file2 := filepath.Join(t.TempDir(), "handoff.json")
+	if err := os.WriteFile(file2, revRaw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// run P2's correction executor: actually run the named check red, then green after the fix, and carry the receipt
+	var redGreen int
+	l.turn = func(c labCall, r fakehost.TurnRequest) (fakehost.TurnPlan, bool) {
+		if !strings.HasPrefix(c.Label, "build:"+cNode+":") {
+			return fakehost.TurnPlan{}, false
+		}
+		if c.Cwd == "" {
+			t.Error("the correction executor has no checkout")
+			return fakehost.TurnPlan{Message: "fixture has no checkout"}, true
+		}
+		cmd := exec.Command("test", "-s", "node-C-1.txt")
+		cmd.Dir = c.Cwd
+		redErr := cmd.Run()
+		var redExit *exec.ExitError
+		if !errors.As(redErr, &redExit) || redExit.ExitCode() != 1 {
+			t.Errorf("the named check did not run red: %v", redErr)
+			return fakehost.TurnPlan{Message: "the named check did not run red"}, true
+		}
+		headC := l.git(c.Cwd, "rev-parse", "HEAD")
+		if err := os.WriteFile(filepath.Join(c.Cwd, "node-C-1.txt"), []byte("correction evidence\n"), 0o644); err != nil {
+			t.Errorf("the correction cannot write its evidence file: %v", err)
+			return fakehost.TurnPlan{Message: "the correction cannot write its evidence file"}, true
+		}
+		cmd = exec.Command("test", "-s", "node-C-1.txt")
+		cmd.Dir = c.Cwd
+		if err := cmd.Run(); err != nil {
+			t.Errorf("the named check did not run green: %v", err)
+			return fakehost.TurnPlan{Message: "the named check did not run green"}, true
+		}
+		redGreen++
+		summary := "actual-red-green-1649: command=test -s node-C-1.txt; red_exit=1; green_exit=0; base=" + headC +
+			"; green overlay=node-C-1.txt (uncommitted when checked)"
+		t.Log(summary)
+		return labSay(map[string]any{"outcome": "ready_for_review", "files": []string{"node-C-1.txt"},
+			"verification": []any{}, "summary": summary, "gap": nil, "research_question": nil, "plan_mismatch": nil}), true
+	}
+	l.Crosschecks("M1", 1, 0, "A", 1, reviewadapter.Result{State: reviewadapter.StateOK, Verdict: reviewadapter.VerdictVerified})
+	specP2 := l.start("start", "project-lane", "--args", fmt.Sprintf(`{"plan":%q,"milestone":"M1"}`, l.plan), "--handoff", file2)
+	l.closed(l.runToEnd(specP2.RunID))
+
+	if redGreen != 1 {
+		t.Fatalf("the fixture ran the actual red and green check %d times, want 1", redGreen)
+	}
+	var correctionResults int
+	for _, e := range l.events() {
+		if e.RunID == specP2.RunID && e.Kind == engine.KindCall && e.Event == engine.EvCompleted &&
+			e.Op == "agent" && strings.HasPrefix(e.Label, "build:"+cNode+":") {
+			correctionResults++
+			for _, want := range []string{"actual-red-green-1649", "red_exit=1", "green_exit=0"} {
+				if !strings.Contains(str(e.Data, "result"), want) {
+					t.Errorf("the recorded correction executor result lacks %q: %+v", want, e)
+				}
+			}
+		}
+	}
+	if correctionResults != 1 {
+		t.Fatalf("recorded correction executor results = %d, want 1", correctionResults)
+	}
+	// run P2's crosscheck was given the prior findings and the receipts-file reference: its two round-1 pass prompts are the
+	// last round-1 requests the checker saw
+	var p2reqs []string
+	for _, c := range l.cc.requests() {
+		if strings.HasPrefix(c.Key, "M1/r1/e0/") {
+			p2reqs = append(p2reqs, c.Request.Prompt)
+		}
+	}
+	if len(p2reqs) > 2 {
+		p2reqs = p2reqs[len(p2reqs)-2:]
+	}
+	if len(p2reqs) != 2 {
+		t.Fatalf("run P2 made %d crosscheck requests, want the two passes", len(p2reqs))
+	}
+	for _, p := range p2reqs {
+		if !strings.Contains(p, "the red-to-green receipt is missing") {
+			t.Errorf("a round-1 prompt of run P2 lacks the prior finding text")
+		}
+	}
+	// The app-server fixture has no session evidence assignment. Check its receipt-file reference here; the accepted body is tested by TestCrosscheck1649CorrectionReceiptAndPriorReachBothPasses.
+	var ccRow2 *engine.Event
+	for _, e := range l.events() {
+		if e.RunID == specP2.RunID && e.Op == ops.OpCrosscheck && e.Event == engine.EvCompleted {
+			cp := e
+			ccRow2 = &cp
+		}
+	}
+	var out2 struct {
+		Verdict struct {
+			ReceiptsFile string `json:"receipts_file"`
+		} `json:"verdict"`
+	}
+	if ccRow2 == nil || json.Unmarshal([]byte(str(ccRow2.Data, "result")), &out2) != nil || out2.Verdict.ReceiptsFile == "" {
+		t.Fatalf("run P2's crosscheck names no receipts file: %+v", ccRow2)
+	}
+	receiptsFile := out2.Verdict.ReceiptsFile
+	receiptBody, rerr := os.ReadFile(receiptsFile)
+	if rerr != nil {
+		t.Fatalf("the receipts file of run P2's crosscheck: %v", rerr)
+	}
+	if !strings.Contains(string(receiptBody), "# Executor receipts of milestone M1") {
+		t.Errorf("the receipts file of run P2's crosscheck: %s", receiptBody)
+	}
+	for _, p := range p2reqs {
+		if !strings.Contains(p, receiptsFile) {
+			t.Errorf("a round-1 prompt of run P2 does not name the receipts file %s", receiptsFile)
+		}
+	}
+	// the verdict of run P2's crosscheck names run P as its prior
+	if str(ccRow2.Data, "state") != ops.CrosscheckStateVerdict || ccRow2.Data["prior"] == nil {
+		t.Fatalf("run P2's crosscheck row records no prior: %+v", ccRow2)
+	}
+	var rec struct {
+		Verdict struct {
+			PriorRun string `json:"prior_run"`
+		} `json:"verdict"`
+	}
+	if err := json.Unmarshal([]byte(str(ccRow2.Data, "result")), &rec); err != nil || rec.Verdict.PriorRun != specP.RunID {
+		t.Fatalf("run P2's verdict does not name run P as its prior: %q", rec.Verdict.PriorRun)
+	}
+	// the real report of the close carries the previous V and f's observed result (not_reported) under its crosscheck
+	last := l.reportBodies[len(l.reportBodies)-1]
+	if !strings.Contains(last, "previous_crosscheck") || !strings.Contains(last, specP.RunID) ||
+		!strings.Contains(last, reviewadapter.FindingID(f.File, f.Text)) || !strings.Contains(last, "not_reported") {
+		t.Errorf("the close's report lacks the previous crosscheck and its outcome: %s", last)
+	}
+	// C-1 was released, accepted and integrated by run P2; A-1 was reused and never rebuilt; the milestone closed in run P2
+	var cRows, closes int
+	for _, e := range l.events() {
+		if e.RunID != specP2.RunID || e.Event != engine.EvCompleted {
+			continue
+		}
+		switch e.Op {
+		case ops.OpRelease, ops.OpAccept, ops.OpIntegrate:
+			if str(e.Data, "node") == cNode {
+				cRows++
+			}
+		case ops.OpMilestoneClose:
+			closes++
+		}
+	}
+	if cRows != 3 || closes != 1 {
+		t.Fatalf("run P2 wrote %d C-1 release/accept/integrate rows and %d closes, want 3 and 1", cRows, closes)
+	}
+	for _, c := range labCalls(l) {
+		if strings.HasPrefix(c.Label, "build:"+node+":") {
+			t.Errorf("the reused node was built again: %s", c.Label)
+		}
+	}
+	if !slices.Equal(journalBytes(t, l, specL.RunID), landJournal) || !slices.Equal(journalBytes(t, l, specP.RunID), pJournal) {
+		t.Fatal("a source journal changed")
+	}
+}
+
+// TestRecordedRuns1649Boundaries (CRW-1649): the production history readers over real persisted flow_runs rows: only earlier runs
+// of the same plan, newest first, with whole-second and variable-fraction timestamps ordered by their real time, the current and
+// later rows excluded, land-head in integration history only, other plans/workflows excluded, and another repository answered as
+// a reasoned placeholder instead of its events.
+func TestRecordedRuns1649Boundaries(t *testing.T) {
+	w := newWorld(t)
+	ctx := context.Background()
+	local, other := filepath.Join(t.TempDir(), "repo"), filepath.Join(t.TempDir(), "other")
+	base := time.Date(2026, 10, 18, 0, 0, 0, 120000000, time.UTC)
+	rows := []struct {
+		id       string
+		workflow string
+		plan     string
+		repo     string
+		stamp    time.Time
+	}{
+		{"run-164900000001", "project-lane", "plan-1", local, base.Add(-120 * time.Millisecond)},
+		{"run-164900000002", "project-lane", "plan-1", local, base.Add(-20 * time.Millisecond)},
+		{"run-164900000003", "land-head", "plan-1", local, base},
+		{"run-164900000004", "project-lane", "plan-1", other, base},
+		{"run-164900000005", "project-lane", "plan-other", local, base},
+		{"run-164900000006", "unrelated", "plan-1", local, base},
+		{"run-164900000007", "project-lane", "plan-1", local, base.Add(3 * time.Millisecond)},
+		{"run-164900000008", "project-lane", "plan-1", local, base},
+		{"run-164900000009", "project-lane", "plan-1", local, base},
+		{"run-164900000010", "project-lane", "plan-1", local, base.Add(-2 * time.Minute)},
+	}
+	for _, r := range rows {
+		stamp := r.stamp
+		j, err := journal.Open(ctx, w.st, r.id,
+			journal.Identity{PlanID: r.plan, ActorTaskID: "reader-owner"},
+			journal.Options{Now: func() time.Time { return stamp }})
+		if err != nil {
+			t.Fatalf("journal.Open %s: %v", r.id, err)
+		}
+		j.Append(engine.Event{RunID: r.id, Kind: engine.KindRun, Event: "started",
+			Data: map[string]any{"workflow": r.workflow, "script_digest": "s", "args_digest": "a"}})
+		if err := j.Close(); err != nil {
+			t.Fatalf("journal %s: %v", r.id, err)
+		}
+		if err := WriteSpec(w.state, Spec{Schema: SpecSchema, RunID: r.id, Repo: r.repo, Workflow: r.workflow, CreatedAt: r.stamp.Format(time.RFC3339Nano)}); err != nil {
+			t.Fatalf("WriteSpec %s: %v", r.id, err)
+		}
+	}
+	r := &SchedRelay{Sched: &dagsched.Scheduler{Store: w.st}, State: w.state, Repo: local, RunID: "run-164900000008"}
+	check := func(name string, runs []ops.DesignRun, err error, want []string) {
+		t.Helper()
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		var ids []string
+		for _, run := range runs {
+			ids = append(ids, run.Run)
+			if run.Run == "run-164900000004" {
+				if run.Reason != ops.ReuseRepoMismatch || len(run.Events) != 0 {
+					t.Fatalf("%s: the other-repository run: %+v", name, run)
+				}
+				continue
+			}
+			if run.Reason != "" || len(run.Events) == 0 {
+				t.Fatalf("%s: run %s: %+v", name, run.Run, run)
+			}
+		}
+		if !slices.Equal(ids, want) {
+			t.Fatalf("%s: %v, want %v", name, ids, want)
+		}
+	}
+	integ, err := r.IntegrationHistory(ctx, "plan-1")
+	check("IntegrationHistory", integ, err, []string{"run-164900000004", "run-164900000003", "run-164900000002", "run-164900000001", "run-164900000010"})
+	cc, err := r.CrosscheckHistory(ctx, "plan-1")
+	check("CrosscheckHistory", cc, err, []string{"run-164900000004", "run-164900000002", "run-164900000001", "run-164900000010"})
+	if out, err := r.CrosscheckHistory(ctx, "plan-other"); err != nil || len(out) != 0 {
+		t.Fatalf("another plan's history: %v %v", out, err)
 	}
 }

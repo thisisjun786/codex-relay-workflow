@@ -682,11 +682,9 @@ export function closeFixPacket(ms, g, v) {
   ].join('\n\n')
 }
 
-// The fix packet of a crosscheck that needs changes (CRW-1473): what the 자식 gives a new executor subagent, and the route the fix
-// takes. Every node of the milestone has landed, so the fix lands as a correction node of a new plan revision through land-head, and
-// the verdict goes up to the 부모 with the landed head. The run itself calls no executor of its own beyond the one in-run
-// correction (closeFixPacket, CRW-1490): this packet is the hand-off after that correction is spent or not enough. The findings
-// that block are those V does not carry.
+// The fix packet after the close's one correction is spent or not enough: add a correction node to a revision of the same plan,
+// then one new project-lane run reuses the proven integrations, builds the correction in its ordinary lane and closes the milestone.
+// The findings that block are those V does not carry.
 export function crosscheckFixPacket(ms, v) {
   const carried = v.carried || []
   const blocking = (v.findings || []).filter((f) => !carried.includes(f.id))
@@ -697,11 +695,14 @@ export function crosscheckFixPacket(ms, v) {
     section('BLOCKING FINDINGS', list(blocking.map((f) => f.id + ' [' + f.severity + '/' + (f.impact || 'none') + '] ' + f.file + ':' + f.line + ' ' + f.text))),
     'RANGE: git diff ' + v.base + '..' + v.head + (files.length ? ' -- ' + files.join(' ') : ''),
     section('CRITERIA OF THE MILESTONE', criteriaList(ms.criteria)),
-    section('ROUTE (every node of the milestone has landed: the fix is a correction node of a new plan revision)', [
+    section('ROUTE (one new project-lane run of the same plan builds the correction and closes the milestone)', [
       '- register a correction issue of milestone ' + ms.id + ' naming these finding ids: ' + (blocking.map((f) => f.id).join(', ') || 'none') + ' (crw-add-issue, a plan revision)',
-      '- a new executor subagent fixes it on a branch from the integration tip',
-      '- land the correction node with `crw flow start land-head`',
-      '- then report this verdict and the landed head up to the 부모 (`crw flow report-up`)',
+      '- compile the revised handoff of the same plan, retaining its integrated nodes and adding the correction node',
+      '- start one new run with `crw flow start project-lane` for this milestone and the revised handoff',
+      '- let that run reuse the proven integrations and build the correction node in its ordinary lane',
+      '- in the same run, pass the final gate and the crosscheck with the previous blocking findings as prior, then close the milestone',
+      '- for evidence_missing that requires execution, run the named tests with the failing source and then the corrected source; attach the actual red-to-green commands, revisions, test overlay or diff, results and receipts to the correction node',
+      '- report the previous verdict, each finding\'s result and the closed head up to the 부모 (`crw flow report-up`)',
     ]),
   ].join('\n\n')
 }
