@@ -285,7 +285,12 @@ func (o *reuseIntegratedOp) read(ctx context.Context, req engine.OpRequest, forD
 		out.Revision, out.DesignDigest = dataStr(led, "revision"), dataStr(led, "digest")
 		if forDesign {
 			fixed = &IntegratedDesign{SourceRevision: dataStr(sled, "revision"), Issue: srcIssue, Decisions: []Decision{}}
+			seen := map[string]bool{}
 			for _, ref := range srcIssue.DecisionRefs {
+				if seen[ref] {
+					continue
+				}
+				seen[ref] = true
 				fixed.Decisions = append(fixed.Decisions, decisionsOf(sourceDesign, ref)...)
 			}
 		}
