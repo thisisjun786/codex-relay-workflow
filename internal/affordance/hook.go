@@ -114,7 +114,7 @@ func RunPostCompactAffordance(raw string) string {
 type RoleReader func(cwd, sessionID string) pabcdhook.PromptRole
 
 // coordinates is whether the registry verifies the session as a coordinating seat (a project parent or a supervisor), whose hooks
-// carry no loop pointer (CRW-386, decision 6: a non-implementing seat does not run PABCD). The registry decides the role of any
+// carry no loop pointer (CRW-386, decision 6: a non-implementing seat does not perform task work). The registry decides the role of any
 // session id the payload names, as it does for Stop and UserPromptSubmit: validSessionID is the rule for printing an id into a
 // pointer, not for whether the id is a session. A missing id, no reader and every role but parent and supervisor keep the
 // oracle's pointers, and so does a seat that took an explicit request to implement a task in this session

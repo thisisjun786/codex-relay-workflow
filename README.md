@@ -263,15 +263,16 @@ Ask `$crw-run <Linear project link>` explicitly for a parent goal to get goal mo
 native parent goal and automatic continuation of that same project execution. Run owns
 scheduling and delivery; goal mode creates or restores the parent's goal and keeps it
 across continuations. Both fill available capacity and serialize shared-target merges.
-`$crw-loop <Linear project link>` is not a second way in: it starts no loop and hands the
-request to goal mode. A loop is the PABCD completion loop of one task, and the project
-parent never follows it. Children keep their own issue goals and `crw-loop` implementation
+`$crw:crw-continue <Linear project link>` is not a second way in: it starts no loop and hands the
+request to goal mode. Continuation (formerly `crw-loop`) completes the
+task work (formerly PABCD/IPABCD) of one task under `$crw:crw-work`; the project
+parent never follows it. Children keep their own issue goals and `$crw:crw-continue` implementation
 workflow. Parent completion uses verified scoped deliveries, without requiring a
-parent-local diff or PABCD implementation phases.
+parent-local diff or task work implementation steps.
 
 Goal activation requires the [parent goal preflight](plugins/crw/skills/crw-run/references/goal-mode.md#preflight-before-starting-workers),
 including compatible goal/Stop hooks and a supported observation/continuation path.
-A hook that forces every active goal into PABCD phases blocks activation even in a fresh
+A hook that forces every active goal into task work steps blocks activation even in a fresh
 parent. Goal mode does not install a wake service or silently migrate existing goals.
 An explicit no-goal limit prevents goal mode; goal-free Run remains a separately
 authorized option. Keep narrower scope, pause and delivery limits in either mode.
@@ -284,11 +285,11 @@ subagents assist within those tasks and do not replace the independent child.
 
 Independent child tasks run under the shared
 [Default independent execution](plugins/crw/skills/crw-canon/references/delivery.md#default-independent-execution)
-settings unless the request chooses otherwise. A child running `crw-loop` owns its own
+settings unless the request chooses otherwise. A child running `$crw:crw-continue` owns its own
 goal and phases; an explicit non-Loop or no-goal assignment keeps the agreed workflow
 without one. The coordinator's launch job is small: apply those settings through the
 creation tool, send the bounded packet in the initial work prompt, invoke the
-`crw-loop` skill when it is the effective workflow, and verify the
+`$crw:crw-continue` skill when it is the effective workflow, and verify the
 settings that actually came back. A worker starts the assigned work without a routine
 readiness handshake, and a mismatch found afterwards is reconciled on that same task
 instead of adding an approval round.
