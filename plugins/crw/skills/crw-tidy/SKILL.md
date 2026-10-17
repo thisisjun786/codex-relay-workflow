@@ -64,6 +64,16 @@ Every gap is either written or proposed, and none is dropped for being awkward. 
 
 Write in this order, one item at a time. Read the record again immediately before the write and judge against that read; where the intended end state already holds, record that it conforms and write nothing. Change only the field being supplemented, preserving the body, the other labels, the relations and the history. Read the record back and confirm from the returned record rather than by searching its text. After an ambiguous result, read existing state before repeating a create, and report an unknown result as unknown. Re-running the same request over unchanged records therefore writes nothing and creates no duplicate label, comment or document. Where the pre-write read differs from the pinned scan someone else has moved the record: re-judge it on what you just read, and leave the field they touched alone for this pass rather than overwriting their change.
 
+### Consolidate repeated facts
+
+The ordinary permission to fill clear gaps does not authorize consolidation. Start read-only; replacing repeated statements requires approval for that consolidation. When existing approval covers the same scope, canonical home and replacements, do not ask again. Check-only wording still writes nothing.
+
+1. Find the copies of the specific fact within the requested scope, recording each location as exact, paraphrased, partial, stale or contradictory. Cross-check with another search term or reference path; unread sources stay Unverified. No duplication means no edits.
+2. Choose the canonical home and its owner using [the document ownership table](../crw-canon/references/tracking-model.md#where-each-document-type-is-canonical), not recency or convenience. Keep unique details visible in the proposal. An unknown owner or unresolved contradictions remain proposals for the existing decision owner, through `crw-check` or `crw-plan`; tidy does not invent a rule or a competing canonical source.
+3. Propose the changes: list the canonical passage, each copy to replace, the unique details to preserve, and the stable links that will take their place. Only after approval may Supplement apply this plan, within the approved scope and the body ownership above.
+4. Replace the copies one at a time under Supplement's pre-write read and read-back rules. First retain the approved unique details in the canonical home, then replace only redundant statements with stable links to it; preserve history and unrelated content. A record owned by another actor stays a proposal for that owner. A consolidation approval authorizes no change of policy or issue lifecycle.
+5. Verify the result: the canonical passage is complete, references resolve, and no unique detail was lost. Recheck the mapped copies and report changed locations, unresolved contradictions and Unverified scope. If the approved end state already holds, make no edits.
+
 ## Report and route
 
 Report the inspected scope, the rule source behind each finding, the actual before and after of every write, the exceptions, the conflicts with the decision each one needs, the unverified items, and the scope you did not reach. Keep those last two visible. A pass that quietly drops them reads as a clean sweep of ground nobody looked at.
