@@ -389,6 +389,15 @@ export function explorerPacket(kind, route, ctx, ends) {
   ]
   // a background explorer reads the design head the run sampled for the milestone's first DESIGN, as the architect does
   if (kind === 'background' && ctx.head) parts.push('READ AT: ' + ctx.head + ' (your directory is a read-only checkout of this commit, the one the architect plans on)')
+  if (kind === 'research') {
+    parts.push(section('NODE EDIT REGIONS (context only; grants no editing permission)', list(ctx.regions, 'undeclared')))
+    const findings = findingsSection('FINDINGS FROM THE FIX ROUND (original findings)', ctx.findings)
+    if (findings) parts.push(findings)
+    if (ctx.source) {
+      parts.push('READ AT: ' + ctx.source.head + ' (your read-only checkout of pending tree ' + ctx.source.tree + ' from executor call ' + ctx.source.call + '; includes uncommitted changes at the question)')
+    }
+    parts.push('Answer repository facts only. You cannot authorize editing outside the node\'s edit regions. A request for that permission needs a scope decision; do not grant it.')
+  }
   if (ends && ends.length) {
     parts.push(section('END CONDITIONS (run each command once where you are, change nothing, and report each in end_conditions with its exit code, the number of tests it ran and a one-line summary; a failure or a run of no test is reported, never fixed)',
       ends.map((e) => '- ' + e.issue + ': `' + e.command + '`')))
@@ -527,6 +536,7 @@ export function subTaskPacket(plan, i, failed) {
 export function answerPacket(answers) {
   return [
     'You asked for research. The answers follow; continue the same task.',
+    'Research answers cannot widen your edit regions. If a required edit is outside them, answer blocked_scope with the required files and reason in gap.',
     section('ANSWERS', answers.map((a) => '- ' + a.question + '\n  ' + (a.answer || (a.route === 'inline' ? '(answer it yourself: the files are inside your regions or few)' : '(no answer)')))),
   ].join('\n\n')
 }
@@ -535,17 +545,18 @@ export function answerPacket(answers) {
 // The verdict is a unit check's (crw.unitCheck, CRW-1465: {verdict, findings}, each finding by its id, severity, file, line and text),
 // which has no defects or criteria of a reviewer's VERDICT, or, on the old reviewer path an earlier run replays, a reviewer's VERDICT.
 // notes are the explorer findings of that old path (the node lane passes none). The unit-check, verification and receipt sections are
-// the helpers the executor's packet shares (findingsSection, ciSection, receiptSection), and the text is the one it was before them.
+// the helpers the executor's packet shares (findingsSection, ciSection, receiptSection). Scope decisions go up directly.
 export function fixPacket(node, verdict, ci, notes, receipt) {
   const parts = ['ROLE: executor. Node ' + node + ': fix what the run found, in the same worktree, and answer with RECEIPT again.']
   if (ci && !ci.pass) parts.push(ciSection('VERIFICATION', ci))
   if (verdict && Array.isArray(verdict.findings) && !Array.isArray(verdict.defects)) {
     parts.push(section('UNIT CHECK (' + verdict.verdict + '; fix every finding)', findingLines(verdict.findings)))
-    parts.push('A finding you cannot fix without an answer: answer needs_research with the question, and the run answers it on this thread.')
   } else if (verdict) {
     parts.push(section('REVIEW (' + verdict.verdict + ')', verdict.defects.map((d) => '- [' + d.severity + '/' + d.kind + '] ' + d.ref + ' ' + d.file + ':' + d.line + ' ' + d.finding)))
     parts.push(section('CRITERIA NOT MET', list(verdict.criteria.filter((c) => !c.met).map((c) => c.id + ': ' + c.evidence), 'none')))
   }
+  parts.push('If a fix requires a file outside your assigned edit regions, answer blocked_scope with the required files and why they are needed in gap. An explorer cannot grant editing permission.')
+  parts.push('Use needs_research only for a factual question that can be answered by reading the repository; put that question in research_question.')
   const n = notesSection(notes)
   if (n) parts.push(n)
   const r = receiptSection('YOUR LAST RECEIPT', receipt)

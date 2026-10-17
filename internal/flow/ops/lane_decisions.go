@@ -217,6 +217,10 @@ type ExploreContext struct {
 	// head a re-plan pins for the open questions of its DESIGN (CRW-1458; the first DESIGN has none). The explorer reads its worktree
 	// at that commit, and an explorer's answer about one head is not an answer about another.
 	Head string `json:"head"`
+	// SourceCall binds research to the completed executor turn that asked it.
+	// Older callers without it keep repository-question routing.
+	SourceCall string          `json:"source_call,omitempty"`
+	Findings   json.RawMessage `json:"findings,omitempty"`
 }
 
 // Route is the decision for one question.
@@ -304,9 +308,70 @@ type exploreRouteOp struct{ l *Lane }
 type RoutePlan struct {
 	Kind   string  `json:"kind"`
 	Routes []Route `json:"routes"`
+	// Source is a retained snapshot of the research asker's uncommitted tree.
+	Source *ResearchSource `json:"source,omitempty"`
 	// Carried are the open questions the run asked of the orchestrator that no answer has reached and that these questions do not raise
 	// again (CRW-1381): the next ask carries them, so a question a later DESIGN no longer raises stays answerable. Optional.
 	Carried []Carried `json:"carried,omitempty"`
+}
+
+// ResearchSource is the immutable checkout supplied to a research explorer.
+type ResearchSource struct {
+	Call string `json:"call"`
+	Head string `json:"head"`
+	Tree string `json:"tree"`
+	Base string `json:"base"`
+}
+
+func (o *exploreRouteOp) researchSource(ctx context.Context, req engine.OpRequest, ec ExploreContext, r rows) (*ResearchSource, error) {
+	if ec.SourceCall == "" {
+		return nil, nil
+	}
+	fail := func(detail string) (*ResearchSource, error) {
+		return nil, fmt.Errorf("crw.exploreRoute: research_source_unavailable: %s", detail)
+	}
+	if ec.Node == "" || o.l.d.Repo == "" {
+		return fail("a source needs a node and repository")
+	}
+	terminal, ok := r.terminal(ec.SourceCall)
+	if !ok || terminal.Event != engine.EvCompleted || terminal.RunID != req.RunID {
+		return fail("the source call has no completed turn in this run")
+	}
+	atSource := r.where(func(ev engine.Event) bool { return ev.Seq <= terminal.Seq })
+	prepared, ok := atSource.prepared().last(func(ev engine.Event) bool { return ev.CallID == ec.SourceCall })
+	role := str(prepared.Data, "role")
+	if !ok || prepared.RunID != req.RunID || str(prepared.Data, "node") != ec.Node ||
+		(role != "executor" && role != "executor-t1") || flag(prepared.Data, "qa") {
+		return fail("the source call is not an executor of this node")
+	}
+	tree, base := strings.ToLower(str(terminal.Data, "pending_tree")), strings.ToLower(atSource.attemptHead(ec.Node))
+	for _, oid := range []string{tree, base} {
+		b, err := hex.DecodeString(oid)
+		if err != nil || (len(b) != 20 && len(b) != 32) {
+			return fail("the source has no recorded pending tree or base")
+		}
+	}
+	git, repo := o.l.d.Git, o.l.d.Repo
+	ref := "refs/crw/flow/" + req.RunID + "/research/" + hashParts(ec.Node, ec.SourceCall, tree, base)
+	if _, err := git(ctx, repo, nil, "check-ref-format", ref); err != nil {
+		return nil, fmt.Errorf("crw.exploreRoute: research snapshot ref: %w", err)
+	}
+	// Reuse the retained commit for this exact source; never move an existing
+	// snapshot ref onto different contents.
+	head, err := git(ctx, repo, nil, "rev-parse", "--verify", "--end-of-options", ref)
+	if err == nil {
+		gotTree, treeErr := git(ctx, repo, nil, "rev-parse", "--verify", "--end-of-options", head+"^{tree}")
+		gotBase, baseErr := git(ctx, repo, nil, "rev-parse", "--verify", "--end-of-options", head+"^")
+		if treeErr != nil || baseErr != nil || gotTree != tree || gotBase != base {
+			return fail("the retained snapshot does not match the source")
+		}
+	} else {
+		head, err = PreserveTree(ctx, git, repo, tree, base, ref, "CRW research snapshot")
+		if err != nil {
+			return nil, fmt.Errorf("crw.exploreRoute: preserve research source: %w", err)
+		}
+	}
+	return &ResearchSource{Call: ec.SourceCall, Head: head, Tree: tree, Base: base}, nil
 }
 
 // Carried is a question the run asked and an ask carries on: its digest, its text and the scope notation it was asked with.
@@ -378,6 +443,14 @@ func (o *exploreRouteOp) Run(ctx context.Context, req engine.OpRequest) (engine.
 	}
 	r := rows(req.Journal.Events())
 	answered := answeredDigests(r)
+	var source *ResearchSource
+	if kind == ExploreResearch {
+		var err error
+		source, err = o.researchSource(ctx, req, ec, r)
+		if err != nil {
+			return engine.OpResult{}, err
+		}
+	}
 	asked := askedDigests(r)
 	// researchedTier counts the research continuations of the node on the tier: the spawned and the reused routes alike
 	// (CRW-1470); the others count the spawned explorers
@@ -404,7 +477,7 @@ func (o *exploreRouteOp) Run(ctx context.Context, req engine.OpRequest) (engine.
 			}
 		}
 	}
-	plan := RoutePlan{Kind: kind, Routes: []Route{}}
+	plan := RoutePlan{Kind: kind, Routes: []Route{}, Source: source}
 	first := map[string]int{} // the first question of this call by digest: a repeat of it is the same question
 	for i, q := range qs {
 		// text is the digest of the question's text, the one an ask of the orchestrator names; rt.Digest is the one an explorer's
@@ -416,6 +489,17 @@ func (o *exploreRouteOp) Run(ctx context.Context, req engine.OpRequest) (engine.
 		}
 		if (kind == ExploreEvidence || kind == ExploreOpen) && ec.Head != "" {
 			rt.Digest = headDigest(q.Question, ec.Head)
+		}
+		if source != nil {
+			contextKey, err := json.Marshal(struct {
+				Node     string          `json:"node"`
+				Regions  []string        `json:"regions"`
+				Findings json.RawMessage `json:"findings"`
+			}{ec.Node, ec.Regions, ec.Findings})
+			if err != nil {
+				return engine.OpResult{}, err
+			}
+			rt.Digest = hashParts("research-source/1", normalizeQuestion(q.Question), source.Tree, source.Base, string(contextKey))
 		}
 		// key finds a repeat in the round: the questions of a call share one head, so the same key is the same question
 		key := rt.Digest
@@ -515,6 +599,9 @@ func (o *exploreRouteOp) Run(ctx context.Context, req engine.OpRequest) (engine.
 		routes = append(routes, entry)
 	}
 	data := map[string]any{"kind": kind, "node": ec.Node, "milestone": ec.Milestone, "tier": ec.Tier, "routes": routes}
+	if source != nil {
+		data["source_call"], data["source_head"], data["source_tree"], data["source_base"] = source.Call, source.Head, source.Tree, source.Base
+	}
 	if kind == ExploreOpen {
 		if plan.Carried = carriedQuestions(r, ec.Milestone, raised, asked, answered); len(plan.Carried) > 0 {
 			digests := make([]string, 0, len(plan.Carried))
@@ -528,6 +615,13 @@ func (o *exploreRouteOp) Run(ctx context.Context, req engine.OpRequest) (engine.
 }
 
 func (o *exploreRouteOp) Proven(ctx context.Context, ev []engine.Event, row engine.Event) (bool, string, error) {
+	if head := dataStr(row, "source_head"); head != "" {
+		tree, err := o.l.d.Git(ctx, o.l.d.Repo, nil, "rev-parse", "--verify", "--end-of-options", head+"^{tree}")
+		base, baseErr := o.l.d.Git(ctx, o.l.d.Repo, nil, "rev-parse", "--verify", "--end-of-options", head+"^")
+		if err != nil || baseErr != nil || tree != dataStr(row, "source_tree") || base != dataStr(row, "source_base") {
+			return false, "research_source_missing", nil
+		}
+	}
 	return provenAlways(ctx, ev, row)
 }
 

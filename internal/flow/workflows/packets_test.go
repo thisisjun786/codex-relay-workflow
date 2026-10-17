@@ -520,26 +520,58 @@ func TestPacketRendersTheLastState(t *testing.T) {
 }
 
 // TestFixPacketTextIsKept (CRW-1469): the fix packet builds its unit-check, verification and receipt sections from the helpers the
-// executor's packet shares, and its text is the one it was, so a resumed fix call has the input digest it was recorded with.
+// executor's packet shares, with explicit scope and factual-research instructions (CRW-1637).
 func TestFixPacketTextIsKept(t *testing.T) {
 	uc := packetText(t, "fix-packet-uc", "fixPacket", "fixPacket('A', { verdict: 'needs_changes', findings: [{ id: 'f_1', severity: 'P2', file: 'a/x.go', line: 7, text: 'the loop never ends' }] }, null, null, { summary: 'wrote the loop' })")
 	if want := "ROLE: executor. Node A: fix what the run found, in the same worktree, and answer with RECEIPT again.\n\n" +
 		"UNIT CHECK (needs_changes; fix every finding):\n- [P2] f_1 a/x.go:7 the loop never ends\n\n" +
-		"A finding you cannot fix without an answer: answer needs_research with the question, and the run answers it on this thread.\n\n" +
+		"If a fix requires a file outside your assigned edit regions, answer blocked_scope with the required files and why they are needed in gap. An explorer cannot grant editing permission.\n\n" +
+		"Use needs_research only for a factual question that can be answered by reading the repository; put that question in research_question.\n\n" +
 		"YOUR LAST RECEIPT: wrote the loop"; uc != want {
 		t.Errorf("the unit-check fix packet\n%q\nwant\n%q", uc, want)
 	}
 	ci := packetText(t, "fix-packet-ci", "fixPacket", "fixPacket('A', null, { pass: false, command: 'crw-dev ci local', failures: [], summary: 'validate/tests: failed' }, null, { summary: null })")
 	if want := "ROLE: executor. Node A: fix what the run found, in the same worktree, and answer with RECEIPT again.\n\n" +
-		"VERIFICATION FAILED (crw-dev ci local):\n- validate/tests: failed"; ci != want {
+		"VERIFICATION FAILED (crw-dev ci local):\n- validate/tests: failed\n\n" +
+		"If a fix requires a file outside your assigned edit regions, answer blocked_scope with the required files and why they are needed in gap. An explorer cannot grant editing permission.\n\n" +
+		"Use needs_research only for a factual question that can be answered by reading the repository; put that question in research_question."; ci != want {
 		t.Errorf("the verification fix packet\n%q\nwant\n%q", ci, want)
+	}
+}
+
+func TestResearchPacketCarriesFixContext(t *testing.T) {
+	packet := packetText(t, "research-context", "explorerPacket", `explorerPacket('research',
+{question: 'Which context starts this new git query?', files_needed: null},
+{node: 'A', regions: ['internal/allowed/'], findings: [{id: 'f_scope', severity: 'P2', file: 'internal/other.go', line: 17, text: 'the new git query starts from context.Background()'}],
+source: {call: 'executor-question', head: 'snapshot-head', tree: 'pending-tree'}})`)
+	for _, want := range []string{"f_scope", "internal/other.go:17", "the new git query starts from context.Background()", "internal/allowed/", "READ AT: snapshot-head", "pending-tree", "executor-question", "read-only", "uncommitted changes", "cannot authorize editing"} {
+		if !strings.Contains(packet, want) {
+			t.Errorf("research packet lacks %q: %s", want, packet)
+		}
+	}
+	background := packetText(t, "background-context", "explorerPacket", `explorerPacket('background', {question:'background'}, {milestone:'M', head:'base', regions:['internal/allowed/']})`)
+	if !strings.Contains(background, "READ AT: base") || strings.Contains(background, "NODE EDIT REGIONS") || strings.Contains(background, "FINDINGS FROM THE FIX ROUND") {
+		t.Errorf("background packet changed: %s", background)
+	}
+	answer := packetText(t, "research-answer", "answerPacket", "answerPacket([])")
+	if !strings.Contains(answer, "Research answers cannot widen your edit regions") || !strings.Contains(answer, "blocked_scope") {
+		t.Errorf("answer grants no scope reminder: %s", answer)
+	}
+	overlay, err := roles.Prompt("executor", roles.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"blocked_scope", "required files", "factual question", "`gap`"} {
+		if !strings.Contains(overlay, want) {
+			t.Errorf("executor overlay lacks %q", want)
+		}
 	}
 }
 
 // TestFixPacketNamesTheFailedTestsOfTheVerification (CRW-1469, CRW-1488 item 16): a failed verification whose result names the failed
 // tests of its record (failed_tests: by failed step, the tests, the packages and the last lines of its output) renders them in the fix
 // packet after the failures, and in the LAST VERIFICATION of a fresh thread's packet; a step that names no test shows its output only.
-// A failed verification with no failed_tests, as every one recorded before them, renders the text it did.
+// A failed verification with no failed_tests retains its verification section, followed by the scope guidance.
 func TestFixPacketNamesTheFailedTestsOfTheVerification(t *testing.T) {
 	const ci = "{ pass: false, command: 'crw-dev ci local', failures: ['go-product/tests: failed', 'validate/lint: failed'], summary: 'go-product/tests: failed; validate/lint: failed', " +
 		"failed_tests: [{ job: 'go-product', step: 'tests', tests: ['TestGuard', 'TestStore/empty'], packages: ['example.com/m/store'], tail: '--- FAIL: TestGuard (0.01s)\\nFAIL\\texample.com/m/store\\t0.1s' }, " +
@@ -551,7 +583,9 @@ func TestFixPacketNamesTheFailedTestsOfTheVerification(t *testing.T) {
 		"    a.go:3: undefined: x"
 	fix := packetText(t, "fix-packet-failed-tests", "fixPacket", "fixPacket('A', null, "+ci+", null, null)")
 	if want := "ROLE: executor. Node A: fix what the run found, in the same worktree, and answer with RECEIPT again.\n\n" +
-		"VERIFICATION FAILED (crw-dev ci local):\n- go-product/tests: failed\n- validate/lint: failed\n\n" + steps; fix != want {
+		"VERIFICATION FAILED (crw-dev ci local):\n- go-product/tests: failed\n- validate/lint: failed\n\n" + steps + "\n\n" +
+		"If a fix requires a file outside your assigned edit regions, answer blocked_scope with the required files and why they are needed in gap. An explorer cannot grant editing permission.\n\n" +
+		"Use needs_research only for a factual question that can be answered by reading the repository; put that question in research_question."; fix != want {
 		t.Errorf("the fix packet\n%q\nwant\n%q", fix, want)
 	}
 	fresh := packetText(t, "executor-packet-failed-tests", "packet", "packet('n1', "+packetPlan+", null, { findings: [], ci: "+ci+", receipt: null })")
@@ -561,7 +595,9 @@ func TestFixPacketNamesTheFailedTestsOfTheVerification(t *testing.T) {
 	for _, none := range []string{"", ", failed_tests: []"} {
 		old := packetText(t, "fix-packet-no-failed-tests", "fixPacket", "fixPacket('A', null, { pass: false, command: 'crw-dev ci local', failures: ['validate/tests: failed'], summary: 'validate/tests: failed'"+none+" }, null, null)")
 		if want := "ROLE: executor. Node A: fix what the run found, in the same worktree, and answer with RECEIPT again.\n\n" +
-			"VERIFICATION FAILED (crw-dev ci local):\n- validate/tests: failed"; old != want {
+			"VERIFICATION FAILED (crw-dev ci local):\n- validate/tests: failed\n\n" +
+			"If a fix requires a file outside your assigned edit regions, answer blocked_scope with the required files and why they are needed in gap. An explorer cannot grant editing permission.\n\n" +
+			"Use needs_research only for a factual question that can be answered by reading the repository; put that question in research_question."; old != want {
 			t.Errorf("a verification without failed tests (%q): the fix packet\n%q\nwant\n%q", none, old, want)
 		}
 	}

@@ -167,7 +167,7 @@ export async function closeMilestone(ms, opts) {
         await crw.spawnDecision('EXEC_1', 'spawn', { node, role: 'executor', tier: 'executor', inputs: { milestone: ms.id, head: g.head, label: 'close-fix:' + ms.id } })
         let ex = await agent.call(closeFixPacket(ms, g, prior), { agentType: 'executor', node, head: g.head, schema: RECEIPT, label: 'close-fix:' + ms.id })
         for (let round = 1; crw.classify(ex) === 'research'; round++) {
-          const asked = await crw.explore('research', [{ id: ex.callId, question: ex.output.research_question, scope: '', files_needed: null }], { node, milestone: ms.id, tier: 'executor', regions, head: g.head })
+          const asked = await crw.explore('research', [{ id: ex.callId, question: ex.output.research_question, scope: '', files_needed: null }], { node, milestone: ms.id, tier: 'executor', regions, head: g.head, source_call: ex.callId, findings: prior.findings || [] })
           if (asked.failed) return stop('explorer', 'held', asked.failed.reason || asked.failed.status, asked.failed.callId)
           if (asked.escalate.length) return stop('executor', 'failed', 'blocked_scope', ex.callId, { detail: asked.escalate[0].reason })
           ex = await agent.call(answerPacket(asked.answers), { resume: ex, schema: RECEIPT, label: 'research:' + node + ':executor:r' + round })
