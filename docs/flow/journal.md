@@ -3,7 +3,7 @@
 A flow run writes its journal to the relay store's flow tables, and a resumed run, `crw flow recover` and the acceptance of an
 agent node read it from there. This page says what is stored, when, and how an effect recorded in the journal is proven to
 still be in the worktree. The events themselves (`prepared`, `thread_requested`, ... `superseded`) are described in
-[script.md](script.md#journal).
+[script.md](script/journal.md#journal).
 
 ## Persistence
 
@@ -77,7 +77,7 @@ saw. A row is never updated.
   rebind a resumed run); `payload_json` is the Data plus the reserved members `_kind`, `_path`, `_position`, `_op` and `_label`.
   A member of Data never starts with an underscore. A session run adds two kinds there, with no call: `session_wake`, each wake of
   its owner thread it staged (the supervisor message itself is in `supervisor_messages`, obligation kind `session_step_waiting`), and
-  the `escalation` of `reason` `session_unresponsive` ([script.md](script.md#the-owners-commands)); and one with its call:
+  the `escalation` of `reason` `session_unresponsive` ([script.md](script/session-calls.md#the-owners-commands)); and one with its call:
   `step_unwritten`, a step whose packet or file could not be written, so nothing was sent for it (`input_state` `not_delivered`).
 - A session run's exchange with its owner thread is not in the store: the steps, packets, dispatch reports and replies are files
   under `<state>/flow/<run>/` (`engine.FileStepBus`), and the owner's binding and the spawn hook's ledger (with each spawn's `role`
@@ -89,7 +89,7 @@ saw. A row is never updated.
   checkpoint packet of a continuation reads the call's conversation from them, each conversation turn once. A row of a journal written
   before the place was recorded carries neither: its turn takes the place its step recorded, the `repair` member every
   `step_published` row has (the task turn 1, the repair 2), a later turn at that place replacing the earlier one, so an older journal
-  is read from recorded members too and never from its held rows or k ([script.md](script.md#attempts-restarts-and-continuations)).
+  is read from recorded members too and never from its held rows or k ([script.md](script/session-calls.md#attempts-restarts-and-continuations)).
 - A session call's `evidence_placed` row (`detail_json`: `evidence_assignment`, `evidence_cwd`, `attempt`, `marker`) names a
   directory the engine is about to write the step's flow evidence record under when no other row of the call's newest generation
   names it (CRW-1496). It has no column of its own and no reader of a call's state counts it; the release and the restore read the
@@ -323,7 +323,7 @@ request id (`ops.RequestID`).
 
 The binary installs `engine.RecoverEnv`: it opens the relay store (`--state DIR`, else `CODEX_SESSION_RELAY_STATE`, else the
 relay's discovery for the control socket) and connects to the App Server control socket (`--socket PATH`, else the default one).
-It finds the run that holds the call (or takes `--run`), opens its journal, runs the recovery of [script.md](script.md#journal)
+It finds the run that holds the call (or takes `--run`), opens its journal, runs the recovery of [script.md](script/journal.md#journal)
 and commits the rows of the recovery together, in one transaction, when it ends. The command exits 0 when it recovered the call, 1 when the proof does not hold
 (nothing is appended but the sighting of a closed connection), and 2 for a command line, a store or a call it cannot use.
 
@@ -331,7 +331,7 @@ and commits the rows of the recovery together, in one transaction, when it ends.
 
 A run resumes with `Config.Resume`; `crw flow resume RUN SCRIPT` is the command. The journal is read in this order:
 
-1. The pass of [reconcile](script.md#reconcile-and-recovery) looks up on the host every call whose last row is a dispatch intent,
+1. The pass of [reconcile](script/recovery.md#reconcile-and-recovery) looks up on the host every call whose last row is a dispatch intent,
    and every call whose outcome was left unknown and not cleared. What it cannot prove holds the node.
 2. The script runs again from its top. Every position it opens - an `agent()` or `agent.call`, a `crw.*` call, a join, a
    `workflow()` - is looked up at its own `(path, position)` in the rows the earlier processes wrote, and replays or runs live.
@@ -377,7 +377,7 @@ the order the array lists them in, are not identity: items are keyed by their ex
 
 `crw.<name>` calls with an effect outside the engine - `commit`, `verify`, `review`, `accept`, `integrate`, `hold`, a report to the
 relay - are `engine.Op`s registered in `Config.Ops` (`ops.NewLane(...).Ops()` registers the operations of the project lane, listed
-with what each replays on in [script.md](script.md#the-project-lane)). An op takes a position like a call. Its completed row (`crw.<name>`, with the
+with what each replays on in [script.md](script/project-lane.md#the-project-lane)). An op takes a position like a call. Its completed row (`crw.<name>`, with the
 `input_digest` of its arguments, its `request_id`, its `result` and what its proofs read: the `node`, `commit` and `tree` of a
 commit, the `acceptance_id` of an acceptance) replays when the position's earlier positions replayed, the arguments are the same
 and `Op.Proven` says the effect is there. An op that ran and did not write its row runs again under the same call id and the
@@ -452,7 +452,7 @@ script hands the bind the recorded triggers only then, and marks any other bind 
 is the first position of a suffix of the path `signals:<milestone>`: the rows of that signal and of every later one - the calls they made and the revisions they recorded - are
 ended superseded, the revisions get a `revision_superseded` row, and the triggers that replayed re-enter the first signal that runs, in the order of the journal, with the number after
 the last signal that replayed. A lane released under such a revision waits for that signal to be decided and then keeps its replay (`release_rebind`), is released again, or is refused,
-by the slice of its node ([script.md](script.md#the-architects-continuity-and-the-re-plan)).
+by the slice of its node ([script.md](script/design-replan.md#the-architects-continuity-and-the-re-plan)).
 
 ### Held calls
 

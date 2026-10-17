@@ -81,6 +81,7 @@ func layerScanTexts(t *testing.T, root string) map[string]string {
 	if err != nil {
 		t.Fatal(err)
 	}
+	joinFlowSectionTexts(t, texts)
 	return texts
 }
 

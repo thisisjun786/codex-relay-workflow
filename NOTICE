@@ -158,3 +158,70 @@ docs/port-cxc/known-defects/ records the defects the port kept.
 
 Other separately licensed material and dependencies keep their own licenses and
 notices; this file does not relicense them.
+
+
+7. Paperthin, by LilMGenius
+--------------------------
+
+The stage map in docs/rebrand/paperthin-map.md summarizes principles from the
+Paperthin skills at the source revision below. It records planned adaptations,
+not a separate installation or an implemented instruction change.
+
+Source:    https://github.com/LilMGenius/paperthin, commit
+           7d5dc6235990230e45a24a25c527d81701da5458
+License:   MIT
+
+MIT License
+
+Copyright (c) 2026 LilMGenius
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+8. mattpocock/skills, by Matt Pocock (via Paperthin)
+-------------------------------------------------
+
+Paperthin's NOTICE credits mattpocock/skills as MIT-licensed third-party material.
+That upstream attribution is retained here; Paperthin credits the source as a
+whole, so this notice does not assign particular skills to that author.
+
+Source:    https://github.com/mattpocock/skills
+Via:       https://github.com/LilMGenius/paperthin/blob/
+           7d5dc6235990230e45a24a25c527d81701da5458/NOTICE
+License:   MIT
+
+Copyright (c) 2026 Matt Pocock
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
