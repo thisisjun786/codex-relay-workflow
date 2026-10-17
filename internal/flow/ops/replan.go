@@ -484,6 +484,13 @@ func startRowOf(r rows, node string) (engine.Event, string, bool) {
 	if rel, ok := releaseRowOf(r, node); ok && !r.superseded(rel) {
 		return rel, "released", true
 	}
+	// a node the run inherited as already integrated (CRW-1597) started: its proven reuse decision stands on the run's own
+	// ledger revision and keeps the node out of the unstarted and the re-planning set
+	if row, ok := r.current(OpReuseIntegrated).last(func(ev engine.Event) bool {
+		return dataStr(ev, "node") == node && dataBool(ev, "reused")
+	}); ok {
+		return row, "integrated", true
+	}
 	row, ok := designRowOf(r, node)
 	if !ok || r.superseded(row) || dataBool(row, "released") {
 		return engine.Event{}, "", false
@@ -1139,11 +1146,18 @@ func sliceChange(then, now map[string]string) SliceChange {
 	return sc
 }
 
-// landedHeads are the heads the nodes landed with, in the order they landed.
+// landedHeads are the heads the nodes landed with, in the order they landed: the run's own integrations and the landings it
+// inherited as proven reuse decisions (CRW-1597), interleaved in journal order.
 func landedHeads(r rows) []Landed {
 	out := []Landed{}
-	for _, ev := range r.current(OpIntegrate) {
-		out = append(out, Landed{Node: dataStr(ev, "node"), Head: dataStr(ev, "head"), Batch: dataStr(ev, "batch_commit")})
+	sup := r.supersededAfter()
+	for _, ev := range r {
+		if ev.Kind != engine.KindCall || ev.Event != engine.EvCompleted || sup[ev.CallID] >= ev.Seq {
+			continue
+		}
+		if ev.Op == OpIntegrate || (ev.Op == OpReuseIntegrated && dataBool(ev, "reused")) {
+			out = append(out, Landed{Node: dataStr(ev, "node"), Head: dataStr(ev, "head"), Batch: dataStr(ev, "batch_commit")})
+		}
 	}
 	return out
 }

@@ -1112,3 +1112,21 @@ func TestCRW1595IntegrateCarriesTheSplitDiagnostic(t *testing.T) {
 		t.Fatalf("the integrate answer: %+v", out)
 	}
 }
+
+// TestIntegrationReuseLeavesPendingPlanChangesToRelease (CRW-1597): a node with no integrated acceptance answers
+// not-integrated even when the slice the caller reads is an older pinned one - the plan supersession of a pending node is the
+// ordinary release path's to decide, never a refusal of the reuse read.
+func TestIntegrationReuseLeavesPendingPlanChangesToRelease(t *testing.T) {
+	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+	r := l.relayFor("run-reuse-pending", l.handoffBytes(nil), 1)
+	ms, err := r.Milestone(context.Background(), l.plan, "M1")
+	if err != nil || len(ms.Nodes) != 1 {
+		t.Fatalf("milestone: %+v %v", ms, err)
+	}
+	node := ms.Nodes[0]
+	node.SliceDigest = "an-older-pinned-slice"
+	got, err := r.Integrated(context.Background(), l.plan, node)
+	if err != nil || got.Integrated {
+		t.Fatalf("a pending node must reach its ordinary release check: %+v %v", got, err)
+	}
+}

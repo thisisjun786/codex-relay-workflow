@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"sync"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/dop251/goja"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/script"
 )
 
@@ -338,17 +340,20 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 		// the ceiling this process starts with; the first process's is the run's budget a script reads as budget.run (CRW-1327)
 		startedData["token_budget"] = cfg.TokenBudget
 	}
-	if cfg.Session != nil {
-		// the pairs a session run pins: its process binds the owner's line with them (Started), and `crw flow next` reads them as the
-		// pairs the process runs on, never the role store read again (CRW-1372)
-		pairs := map[string]any{}
-		for name, spec := range cfg.Policy.Roles {
-			pairs[name] = map[string]any{"model": spec.Pair.Model, "effort": spec.Pair.Effort}
-		}
-		startedData["role_pairs"] = pairs
-		if cfg.Session.Process != "" {
-			startedData["process"] = cfg.Session.Process
-		}
+	// the pairs the run pins, on every backend (CRW-1589): a session run's process binds the owner's line with them, and
+	// `crw flow next` reads them as the pairs the process runs on, never the role store read again (CRW-1372); the unit
+	// check's tool pair is recorded beside the agent roles, and the environment values applied to it under unit_check_overrides
+	pairs := map[string]any{}
+	for name, spec := range cfg.Policy.Roles {
+		pairs[name] = map[string]any{"model": spec.Pair.Model, "effort": spec.Pair.Effort}
+	}
+	pairs[execution.AgentUnitCheck] = map[string]any{"model": cfg.Policy.UnitCheck.Model, "effort": cfg.Policy.UnitCheck.Effort}
+	startedData["role_pairs"] = pairs
+	if len(cfg.Policy.UnitCheckOverrides) > 0 {
+		startedData["unit_check_overrides"] = maps.Clone(cfg.Policy.UnitCheckOverrides)
+	}
+	if cfg.Session != nil && cfg.Session.Process != "" {
+		startedData["process"] = cfg.Session.Process
 	}
 	started := e.j.Append(Event{RunID: e.runID, Kind: KindRun, Event: "started", Data: startedData})
 	e.epoch = startedRows(e.j.Events(), e.runID)

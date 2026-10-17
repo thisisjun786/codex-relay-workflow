@@ -158,9 +158,9 @@ func (o *milestoneCloseOp) Run(ctx context.Context, req engine.OpRequest) (engin
 			return engine.OpResult{}, err
 		}
 	}
-	base := ""
-	if led, ok := firstLedger(r, ms); ok {
-		base = dataStr(led, "base_tip")
+	base, err := o.l.milestoneReviewBase(ctx, r, ms, tip)
+	if err != nil {
+		return engine.OpResult{}, err
 	}
 	out := CloseResultOutcome{Milestone: ms, Base: base, Tip: tip, Gate: json.RawMessage(`null`), Final: json.RawMessage(`null`), Audit: json.RawMessage(`null`),
 		Crosscheck: json.RawMessage(`null`)}

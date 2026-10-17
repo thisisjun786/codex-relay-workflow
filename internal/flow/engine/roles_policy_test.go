@@ -376,7 +376,7 @@ func TestFlowRolesShowsPolicyAndDigest(t *testing.T) {
 	if report.Source == nil || *report.Source != store || *report.Digest != digest || report.Placeholder || report.Mode != "presence_only" {
 		t.Fatalf("%+v", report)
 	}
-	if len(report.Roles) != len(execution.AgentRoleNames) || report.Roles[len(report.Roles)-1].Role != "critic" || report.Roles[0].Role != "architect" || report.Roles[1].Sandbox != SandboxWorkspaceWrite || len(report.Aliases) != 5 {
+	if len(report.Roles) != len(execution.AgentRoleNames)+1 || report.Roles[len(report.Roles)-2].Role != "critic" || report.Roles[len(report.Roles)-1].Role != "unit-check" || report.Roles[0].Role != "architect" || report.Roles[1].Sandbox != SandboxWorkspaceWrite || len(report.Aliases) != 5 {
 		t.Fatalf("%+v", report)
 	}
 	code, out, _ = runFlow(t, "roles")

@@ -41,9 +41,22 @@ func (o *auditOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResul
 		reader = o.l.d.Threads
 	}
 	results := []audit.Result{}
+	local := map[string]bool{}
 	for _, s := range audit.Subjects(events) {
 		if s.Milestone == ms {
 			results = append(results, audit.Audit(ctx, reader, events, s))
+			local[s.AcceptanceID] = true
+		}
+	}
+	// the acceptances the milestone's reused integrations rest on are audited in their source run's journal (CRW-1597); one a
+	// local subject already covers is not audited twice
+	inherited, err := o.l.reusedAudits(ctx, rows(events), ms, reader)
+	if err != nil {
+		return engine.OpResult{}, err
+	}
+	for _, res := range inherited {
+		if !local[res.AcceptanceID] {
+			results = append(results, res)
 		}
 	}
 	sum := audit.Summarize(results)
