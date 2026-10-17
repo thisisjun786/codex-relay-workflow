@@ -480,13 +480,35 @@ func TestFenceIndentation(t *testing.T) {
 	for _, indent := range []string{"", "   "} {
 		for _, fence := range []string{"```", "~~~"} {
 			t.Run(indent+fence, func(t *testing.T) {
-				body := "## Criteria\n- keep\n" + indent + fence + "\n    " + fence +
+				body := "## Criteria\n- keep\n## Notes\n" + indent + fence + "\n    " + fence +
 					"\n## Criteria\n- hidden\n" + indent + fence +
 					"\n## Edit regions\n- `keep.go`\n"
 				is := only(t, build(t, milestone(open(1, body)), Options{}))
 				if !reflect.DeepEqual(is.Criteria, []string{"keep"}) ||
 					!reflect.DeepEqual(is.Regions, []compile.Region{{Path: "keep.go", Kind: "file"}}) {
 					t.Errorf("four-space marker closed a fence: %+v", is)
+				}
+			})
+		}
+	}
+}
+
+func TestListFenceContainerIndentation(t *testing.T) {
+	for _, fence := range []string{"```", "~~~"} {
+		for _, tc := range []struct{ name, body string }{
+			{"reported input", "## Criteria\n- keep\n    " + fence + "\n- hidden\n    " + fence + "\n## Edit regions\n- `keep.go`\n"},
+			{"indented code body", "## Criteria\n- keep\n    " + fence + "\n    - hidden\n    " + fence + "\n## Edit regions\n- `keep.go`\n"},
+			{"setext after list", "## Out of scope\n- example\n    " + fence + "\n    code\n    " + fence + "\nIn scope\n---\n### Criteria\n- keep\n### Edit regions\n- `keep.go`\n"},
+			{"numbered item column", "## Criteria\n10. keep\n       " + fence + "\n- hidden\n       " + fence + "\n## Edit regions\n- `keep.go`\n"},
+			{"closing indentation differs", "## Criteria\n- keep\n   " + fence + "\n- hidden\n    " + fence + "\n## Edit regions\n- `keep.go`\n"},
+		} {
+			t.Run(fence+"/"+tc.name, func(t *testing.T) {
+				res := build(t, milestone(open(1, tc.body)), Options{})
+				is := only(t, res)
+				if !reflect.DeepEqual(is.Criteria, []string{"keep"}) ||
+					!reflect.DeepEqual(is.Regions, []compile.Region{{Path: "keep.go", Kind: "file"}}) ||
+					len(res.Warnings) != 0 {
+					t.Errorf("list fence: issue=%+v warnings=%+v", is, res.Warnings)
 				}
 			})
 		}
