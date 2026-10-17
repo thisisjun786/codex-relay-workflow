@@ -42,6 +42,7 @@ func (g *ghVerify) scanBlobs(ctx context.Context, wt, base, head string) error {
 	if err != nil {
 		return err
 	}
+	var inBase map[string]bool
 	for _, line := range strings.Split(objects, "\n") {
 		if !strings.HasPrefix(line, "~") {
 			continue
@@ -49,6 +50,22 @@ func (g *ghVerify) scanBlobs(ctx context.Context, wt, base, head string) error {
 		oid := strings.TrimPrefix(line, "~")
 		if !ghHex.MatchString(oid) {
 			return fmt.Errorf("invalid omitted blob identity")
+		}
+		// The range walk can list a blob that base's history held and deleted.
+		// Match the pre-push rule: exclude everything reachable from base,
+		// loading that history only once and only when a large blob is found.
+		if inBase == nil {
+			held, err := g.git(ctx, wt, "rev-list", "--objects", "--no-object-names", base, "--")
+			if err != nil {
+				return err
+			}
+			inBase = map[string]bool{}
+			for _, id := range strings.Fields(held) {
+				inBase[id] = true
+			}
+		}
+		if inBase[oid] {
+			continue
 		}
 		sizeText, err := g.git(ctx, wt, "cat-file", "-s", oid)
 		if err != nil {
