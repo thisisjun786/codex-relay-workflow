@@ -36,10 +36,27 @@ func (p RequiredStatusPublisher) pushURLs(ctx context.Context, checkout, remote 
 		return p.Git(ctx, checkout, "remote", "get-url", "--push", "--all", remote)
 	}
 	const probe = "crw-required-status-url"
-	output, err := p.Git(ctx, checkout,
-		"-c", "remote."+probe+".url=",
-		"-c", "remote."+probe+".url="+remote,
-		"-c", "remote."+probe+".pushurl=", "remote", "-v")
+	configArgs := []string{"config", "--null", "--list", "--includes"}
+	original, err := p.Git(ctx, checkout, configArgs...)
+	if err != nil {
+		return "", err
+	}
+	probeArgs := []string{
+		"-c", "remote." + probe + ".url=",
+		"-c", "remote." + probe + ".url=" + remote,
+		"-c", "remote." + probe + ".pushurl=",
+	}
+	// A synthetic remote must not activate configuration that the literal push would not read.
+	// Compare the ordered key/value stream without the three command-scoped probe entries.
+	probed, err := p.Git(ctx, checkout, append(probeArgs, configArgs...)...)
+	if err != nil {
+		return "", err
+	}
+	suffix := "remote." + probe + ".url\n\x00" + "remote." + probe + ".url\n" + remote + "\x00" + "remote." + probe + ".pushurl\n\x00"
+	if probed != original+suffix {
+		return "", errors.New("the URL probe changes Git configuration")
+	}
+	output, err := p.Git(ctx, checkout, append(probeArgs, "remote", "-v")...)
 	if err != nil {
 		return "", err
 	}
