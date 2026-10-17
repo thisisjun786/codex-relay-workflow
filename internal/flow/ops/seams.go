@@ -202,6 +202,7 @@ var ErrCloseConflict = errors.New("the relay keeps the node's execution")
 type MilestoneRepairRequest struct {
 	Plan, Milestone, Base, Head string
 	VerificationDigest          string
+	Verification                json.RawMessage `json:"verification,omitempty"`
 }
 
 // MilestoneRepairResult is the answer of IntegrateMilestoneRepair: Tip the integration target's tip after the call, and Moved true

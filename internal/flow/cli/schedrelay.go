@@ -893,19 +893,30 @@ func (r *SchedRelay) IntegrateMilestoneRepair(ctx context.Context, req ops.Miles
 		return ops.MilestoneRepairResult{}, err
 	}
 	batch := registry.CoordinationID("dib", req.Plan, "close-repair", r.RunID, req.Milestone, req.Base, req.Head)
-	raw, err := json.Marshal(map[string]string{
+	keys := map[string]string{
 		"verified_head":       req.Head,
 		"verification_digest": req.VerificationDigest,
 		"integration_ref":     ref,
 		"base":                req.Base,
 		"milestone":           req.Milestone,
 		"run":                 r.RunID,
-	})
+	}
+	identity, err := json.Marshal(keys)
 	if err != nil {
 		return ops.MilestoneRepairResult{}, err
 	}
-	recordStage := func(txCtx context.Context, stage, detail string) error {
-		id := registry.CoordinationID("dis", batch, stage, "", detail)
+	if len(req.Verification) > 0 {
+		keys["verification_record"] = string(req.Verification)
+		if rec, err := dagsched.DecodeVerificationRecord(req.Verification); err == nil {
+			keys["verification_base"] = rec.BaseCommit
+		}
+	}
+	raw, err := json.Marshal(keys)
+	if err != nil {
+		return ops.MilestoneRepairResult{}, err
+	}
+	recordStage := func(txCtx context.Context, stage, identity, detail string) error {
+		id := registry.CoordinationID("dis", batch, stage, "", identity)
 		prior, err := store.IntegrationStagesOfPlan(txCtx, r.Sched.Store, req.Plan)
 		if err != nil {
 			return err
@@ -921,7 +932,7 @@ func (r *SchedRelay) IntegrateMilestoneRepair(ctx context.Context, req ops.Miles
 	}
 	// the proof stands before the git moves, so a reconciliation after a process's death can still recognize the move
 	if err := r.Sched.IntegrationWrite(ctx, req.Plan, r.Actor, func(txCtx context.Context) error {
-		return recordStage(txCtx, "intent", string(raw))
+		return recordStage(txCtx, "intent", string(identity), string(raw))
 	}); err != nil {
 		return ops.MilestoneRepairResult{}, epochLost(req.Plan, err)
 	}
@@ -933,7 +944,7 @@ func (r *SchedRelay) IntegrateMilestoneRepair(ctx context.Context, req ops.Miles
 		}
 		out.Tip = tip
 		if tip == req.Head {
-			return recordStage(txCtx, "ref_moved", req.Head)
+			return recordStage(txCtx, "ref_moved", req.Head, req.Head)
 		}
 		if tip != req.Base {
 			out.Moved = true
@@ -950,14 +961,14 @@ func (r *SchedRelay) IntegrateMilestoneRepair(ctx context.Context, req ops.Miles
 			if now, readErr := r.IntegrationTip(txCtx, req.Plan); readErr == nil && now != req.Base {
 				out.Tip, out.Moved = now, now != req.Head
 				if !out.Moved {
-					return recordStage(txCtx, "ref_moved", req.Head)
+					return recordStage(txCtx, "ref_moved", req.Head, req.Head)
 				}
 				return nil
 			}
 			return e
 		}
 		out.Tip = req.Head
-		return recordStage(txCtx, "ref_moved", req.Head)
+		return recordStage(txCtx, "ref_moved", req.Head, req.Head)
 	})
 	return out, epochLost(req.Plan, err)
 }

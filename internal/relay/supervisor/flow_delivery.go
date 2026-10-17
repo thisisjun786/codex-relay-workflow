@@ -197,3 +197,47 @@ func (c *Channel) flowDeliveryNode(tx context.Context, row store.SupervisorMessa
 	}
 	return node.String, err
 }
+
+func (a *attemptRun) fenceFlowReportAck(tx context.Context, current store.SupervisorMessagesRow) (bool, error) {
+	if !flowReportKinds[current.ObligationKind] {
+		return false, nil
+	}
+	run, reportID, ok := strings.Cut(current.Subject, "/")
+	if !ok || run == "" || reportID == "" {
+		return false, nil
+	}
+	var turn sql.NullString
+	err := a.c.Store.Q(tx).QueryRowContext(tx, `SELECT json_extract(ack.payload_json,'$.turn') FROM flow_events AS ack
+		WHERE ack.run_id=? AND ack.kind='report_read' AND json_extract(ack.payload_json,'$.report_id')=?
+		AND EXISTS (SELECT 1 FROM flow_events AS report WHERE report.run_id=ack.run_id AND report.kind='report' AND json_extract(report.payload_json,'$.report_id')=?)
+		ORDER BY ack.seq LIMIT 1`, run, reportID, reportID).Scan(&turn)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return true, err
+	}
+	at := delivery.ISOOf(a.now)
+	if a.c.clockISO != nil {
+		at = a.c.clockISO()
+	}
+	record := withheldRecord(a.claimed.requestID, a.id, a.claimed.attemptNo, map[string]any{"reason": "report_ack", "messageState": "read"})
+	if err := a.c.Store.SettleSupervisorAttempt(tx, a.claimed.requestID, "withheld_pre_send", "no", 1, sql.NullString{}, record, at); err != nil {
+		return true, err
+	}
+	moved, err := a.c.Store.SettleSupervisorMessage(tx, a.id, "read", sql.NullFloat64{}, sql.NullString{}, at, "sending", a.claimed.attemptNo, sql.NullString{String: a.owner, Valid: true})
+	if err != nil {
+		return true, err
+	}
+	if !moved {
+		return true, Refusal{"not_claimable", "the report acknowledgement no longer holds this message's claim"}
+	}
+	_, why, err := a.c.appendFlowDelivery(tx, current, run, reportID, flowDelivery{result: FlowDeliveryAccepted, requestID: a.claimed.requestID, state: "read", hold: "report_ack", at: at, turnID: optionalText(turn)})
+	if err != nil {
+		return true, err
+	}
+	if why != "" {
+		return true, errors.New(why)
+	}
+	return true, a.c.directJournal(tx, at, "supervisor_message_read", a.id, map[string]any{"by": "report_ack", "runId": run, "reportId": reportID, "readTurnId": optionalText(turn), "requestId": a.claimed.requestID, "sendAttempted": "no"})
+}
