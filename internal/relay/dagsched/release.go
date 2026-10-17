@@ -9,10 +9,12 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/executor"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/capacity"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
@@ -494,6 +496,11 @@ func (s *Scheduler) rejudge(ctx context.Context, q store.Querier, plan, node, ex
 	}
 	if len(findings) > 0 {
 		return refusalOfFinding(findings[0])
+	}
+	if n.Kind == dag.NodeImplementation {
+		if err := s.guardManagedRegions(ctx, q, plan, node); err != nil {
+			return err
+		}
 	}
 	// Nothing asks again here whether the issue already has an open relationship or a managed start in flight: Ready, called first on this same transaction, runs those two queries in resourceHold before it
 	// lets a node be ready, or wait only for a slot, and rejudge returns above for any other reading; the store has one connection and nothing is written between, so a node that got here passed both.
@@ -1211,5 +1218,367 @@ func (r AgentReleaseResult) Object() contract.OrderedObject {
 		{Key: "manifest_digest", Value: optionalText(r.ManifestDigest)}, {Key: "execution_id", Value: optionalText(r.ExecutionID)}, {Key: "kind", Value: optionalText(r.Kind)},
 		{Key: "attempt", Value: r.Attempt}, {Key: "role", Value: optionalText(r.Role)}, {Key: "tier", Value: optionalText(r.Tier)}, {Key: "slot_id", Value: optionalText(r.SlotID)},
 		{Key: "actor", Value: optionalText(r.Actor)}, {Key: "coordinator_epoch", Value: r.Epoch}, {Key: "decided_at", Value: optionalText(r.DecidedAt)}, {Key: "replayed", Value: r.Replayed},
+	}
+}
+
+// ExecutorPlacement contains execution inputs. Identity, repository, regions and
+// host incarnation are frozen from authoritative scheduler/registry observations.
+type ExecutorPlacement struct {
+	Task          executor.Task `json:"task"`
+	GrantDuration time.Duration `json:"grant_duration"`
+}
+
+// ReleaseExecutor extends the existing release, including all its cap/epoch and
+// readiness rules, in one BEGIN IMMEDIATE. Transport is deliberately absent.
+func (s *Scheduler) ReleaseExecutor(ctx context.Context, plan, node, actor string, req ReleaseRequest, opt AgentReleaseOptions, in ExecutorPlacement) (out capacity.Assignment, err error) {
+	if in.GrantDuration <= 0 || in.GrantDuration > 24*time.Hour {
+		return out, errors.New("grant duration must be positive and at most 24 hours")
+	}
+	pool := &capacity.HostPool{Store: s.Store}
+	err = s.Store.Compose(ctx, func(ctx context.Context, _ *sql.Conn) error {
+		q := s.Store.Querier(ctx)
+		if err := s.fence(ctx, q, plan, actor); err != nil {
+			return err
+		}
+		snap, n, err := liveNode(ctx, q, plan, node)
+		if err != nil {
+			return err
+		}
+		if err = requireProjectParent(ctx, q, snap.ProjectKey, actor); err != nil {
+			return err
+		}
+		if n.Kind != dag.NodeImplementation || req.Base == nil {
+			return errors.New("managed host placement requires an implementation repository")
+		}
+		if cur, live, err := currentAgentExecution(ctx, q, plan, node); err != nil {
+			return err
+		} else if live {
+			if cur.Actor != actor {
+				return notOrchestrator(actor, cur)
+			}
+			if err = expectReplayed(ctx, q, node, cur.ManifestDigest, req.ExpectedSliceDigest); err != nil {
+				return err
+			}
+			out, err = s.ExecutorAssignment(ctx, cur.ExecutionID)
+			if err == nil && (jsonDigest(out.Admission.Task.Input) != jsonDigest(in.Task.Input) || jsonDigest(out.Admission.Task.Checks) != jsonDigest(in.Task.Checks) || out.Admission.Task.Requested != in.Task.Requested) {
+				return errors.New("replayed placement changed immutable work")
+			}
+			return err
+		}
+		regions, declared, err := s.NodeRegions(ctx, plan, node)
+		if err != nil {
+			return err
+		}
+		if !declared || len(regions) == 0 {
+			return errors.New("host placement requires declared edit regions")
+		}
+		for _, r := range regions {
+			if r.Repository != req.Base.Repository {
+				return errors.New("regions must use the enrolled canonical repository identity")
+			}
+		}
+		if err = s.crossHostRegions(ctx, q, plan, node, regions); err != nil {
+			return err
+		}
+		// A managed host is judged by its own memory sample, never the controller's.
+		local := *s
+		local.Host = nil
+		rel, err := local.ReleaseAgent(ctx, plan, node, actor, req, opt)
+		if err != nil {
+			return err
+		}
+		task := in.Task
+		task.Schema = executor.TaskSchema
+		task.WorkKind = "implementation"
+		task.Identity = executor.Identity{TaskID: plan + "/" + node, ExecutionID: rel.ExecutionID, Attempt: rel.Attempt, AssignmentGeneration: rel.Attempt, Plan: plan, Node: node, Revision: strconv.FormatInt(snap.Revision, 10), CriteriaDigest: n.CriteriaSetDigest}
+		var base string
+		if err = q.QueryRowContext(ctx, "SELECT base_sha FROM dag_agent_executions WHERE execution_id=?", rel.ExecutionID).Scan(&base); err != nil {
+			return err
+		}
+		target := req.Base.Ref
+		if !strings.HasPrefix(target, "refs/") {
+			target = "refs/heads/" + target
+		}
+		task.Repository = executor.Repository{Forge: "github", ID: req.Base.Repository, BaseCommit: base, TargetRef: target, TaskBranch: "refs/heads/executor/" + rel.ExecutionID}
+		task.Regions = nil
+		for _, r := range regions {
+			task.Regions = append(task.Regions, executor.Region{Repository: r.Repository, Path: r.Path, Kind: r.Kind, Key: r.Key, Change: r.Change, Exclusive: r.Exclusive, Grade: r.Grade, Rule: r.Rule})
+		}
+		host, err := pool.Select(ctx, task)
+		if err != nil {
+			return err
+		}
+		task.Executor.HostID = host.Host.ID
+		task.Executor.Incarnation = host.Observation.Incarnation
+		// An omitted placement profile selects among checked operator-approved
+		// host profiles. Freeze the chosen host's exact digests before admission.
+		task.Executor.LaunchProfileDigest = host.Host.LaunchProfile
+		task.Executor.ToolchainProfileDigest = host.Host.ToolchainProfile
+		admission, err := executor.Freeze(task)
+		if err != nil {
+			return err
+		}
+		grant := executor.Grant{ExecutionID: rel.ExecutionID, AssignmentGeneration: rel.Attempt, Owner: actor, OwnerEpoch: max(1, s.ExpectedEpoch), ExpiresAt: time.Now().UTC().Add(in.GrantDuration)}
+		out, err = pool.Assign(ctx, admission, grant, func(context.Context) (string, error) { return rel.SlotID, nil })
+		return err
+	})
+	return out, err
+}
+func jsonDigest(v any) string { return dag.Digest(v) }
+
+// Existing global slots keep region ownership after provider termination. Check
+// every plan, including legacy local executions and undeclared regions.
+func (s *Scheduler) crossHostRegions(ctx context.Context, q store.Querier, plan, node string, regions []Region) error {
+	hosts, err := (&capacity.HostPool{Store: s.Store}).List(ctx)
+	if err != nil {
+		return err
+	}
+	canonical := func(repo string) (string, error) {
+		if !strings.HasPrefix(repo, "/") {
+			return strings.TrimSuffix(strings.ToLower(repo), ".git"), nil
+		}
+		mapped := ""
+		for _, host := range hosts {
+			if host.Host.Transport != "local" {
+				continue
+			}
+			for name, root := range host.Host.Repositories {
+				if repo == root {
+					if mapped != "" && mapped != name {
+						return "", fmt.Errorf("ambiguous controller-local repository mapping for %s", repo)
+					}
+					mapped = name
+				}
+			}
+		}
+		if mapped != "" {
+			return mapped, nil
+		}
+		return "", fmt.Errorf("local repository identity %s has no enrolled canonical mapping", repo)
+	}
+	regions = append([]Region(nil), regions...)
+	for i := range regions {
+		regions[i].Repository, err = canonical(regions[i].Repository)
+		if err != nil {
+			return err
+		}
+	}
+	rows, err := q.QueryContext(ctx, "SELECT subject_key FROM execution_slots WHERE subject_kind=? AND state='held'", SlotSubjectKind)
+	if err != nil {
+		return err
+	}
+	var subjects []string
+	for rows.Next() {
+		var key string
+		if err = rows.Scan(&key); err != nil {
+			break
+		}
+		subjects = append(subjects, key)
+	}
+	if err = errors.Join(err, rows.Err(), rows.Close()); err != nil {
+		return err
+	}
+	for _, subject := range subjects {
+		p, n, ok := strings.Cut(subject, "/")
+		if !ok || p == plan && n == node {
+			continue
+		}
+		_, heldNode, err := liveNode(ctx, q, p, n)
+		if err != nil {
+			return err
+		}
+		if heldNode.Kind != dag.NodeImplementation {
+			continue
+		}
+		held, declared, err := s.NodeRegions(ctx, p, n)
+		if err != nil {
+			return err
+		}
+		if !declared || len(held) == 0 {
+			return fmt.Errorf("edit regions unknown for held node %s", subject)
+		}
+		for i := range held {
+			held[i].Repository, err = canonical(held[i].Repository)
+			if err != nil {
+				return err
+			}
+		}
+		for _, a := range regions {
+			for _, b := range held {
+				if Overlaps(a, b) {
+					return fmt.Errorf("edit region %s:%s overlaps held node %s", a.Repository, a.Path, subject)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// Once any managed host holds a DAG slot, the ordinary local release must use
+// the same cross-plan namespace. With no managed assignments legacy behavior is
+// unchanged. Provider termination alone does not end the region hold.
+func (s *Scheduler) guardManagedRegions(ctx context.Context, q store.Querier, plan, node string) error {
+	present, err := tableExists(ctx, q, "executor_assignments")
+	if err != nil || !present {
+		return err
+	}
+	var count int
+	if err = q.QueryRowContext(ctx, "SELECT COUNT(*) FROM executor_assignments a JOIN execution_slots s ON a.slot_id=s.slot_id WHERE s.state='held'").Scan(&count); err != nil || count == 0 {
+		return err
+	}
+	regions, declared, err := s.NodeRegions(ctx, plan, node)
+	if err != nil {
+		return err
+	}
+	if !declared || len(regions) == 0 {
+		return errors.New("managed host overlap requires declared regions")
+	}
+	return s.crossHostRegions(ctx, q, plan, node, regions)
+}
+
+// ExecutorAction fences each control operation with the plan's current owner.
+// Unknown starts/cancellations retain every grant; only adapter terminal evidence
+// returns host resources. DAG/global slots continue through the normal lifecycle.
+func (s *Scheduler) ExecutorAction(ctx context.Context, id, actor, action string, port executor.Port) (capacity.Assignment, error) {
+	p := &capacity.HostPool{Store: s.Store}
+	if port.Now != nil {
+		p.Now = port.Now
+	}
+	a, err := s.ExecutorAssignment(ctx, id)
+	if err != nil {
+		return a, err
+	}
+	r := executor.ReferenceOf(a.Admission)
+	var send bool
+	err = s.Store.Compose(ctx, func(ctx context.Context, _ *sql.Conn) error {
+		q := s.Store.Querier(ctx)
+		if err := s.fence(ctx, q, r.Identity.Plan, actor); err != nil {
+			return err
+		}
+		cur, live, err := currentAgentExecution(ctx, q, r.Identity.Plan, r.Identity.Node)
+		if err != nil {
+			return err
+		}
+		stands, err := agentExecutionStands(ctx, q, cur, r.Identity.ExecutionID)
+		if err != nil {
+			return err
+		}
+		if !live || !stands || cur.Actor != actor {
+			return errors.New("executor is not owned by the current plan actor")
+		}
+		// Renew under the current execution/owner fence, before transport. The
+		// assignment and immutable work survive adoption and grant expiry.
+		current, err := p.Assignment(ctx, r.Identity.ExecutionID)
+		if err != nil {
+			return err
+		}
+		g := current.Grant
+		if g.Owner != actor {
+			g.OwnerEpoch = max(g.OwnerEpoch+1, s.ExpectedEpoch)
+			g.Owner = actor
+		}
+		g.OwnerEpoch = max(g.OwnerEpoch, max(int64(1), s.ExpectedEpoch))
+		now := time.Now().UTC()
+		if port.Now != nil {
+			now = port.Now()
+		}
+		until := now.Add(time.Hour)
+		if g.ExpiresAt.Before(until) {
+			g.ExpiresAt = until
+		}
+		if err = p.RenewGrant(ctx, r, g); err != nil {
+			return err
+		}
+		a.Grant = g
+		switch action {
+		case "start":
+			send, err = p.ClaimStart(ctx, r)
+			return err
+		case "cancel":
+			return p.CancelIntent(ctx, r)
+		case "inspect", "collect":
+			return nil
+		default:
+			return errors.New("unknown executor action")
+		}
+	})
+	if err != nil {
+		return a, err
+	}
+	if renewer, ok := port.Adapter.(interface {
+		RenewGrant(context.Context, executor.Reference, executor.Grant) error
+	}); ok && !(action == "start" && send) {
+		if err = renewer.RenewGrant(ctx, r, a.Grant); err != nil {
+			return a, err
+		}
+	}
+	switch action {
+	case "start":
+		if send {
+			_, err = port.Start(ctx, a.Admission, a.Grant)
+			if err == nil {
+				err = p.ObserveExecution(ctx, r, executor.Inspection{State: "running", NativeSession: executor.Observation{UnknownReason: "inspect for provider identity"}})
+			}
+		}
+	case "cancel":
+		var c executor.Cancellation
+		c, err = port.Cancel(ctx, a.Admission, a.Grant)
+		if err == nil && c.Terminated {
+			err = p.ObserveExecution(ctx, r, executor.Inspection{State: "terminated", Proof: c.Proof, NativeSession: executor.Observation{UnknownReason: "cancelled"}})
+		}
+	case "inspect":
+		var i executor.Inspection
+		i, err = port.Inspect(ctx, a.Admission)
+		if err == nil {
+			err = p.ObserveExecution(ctx, r, i)
+		}
+	case "collect":
+		// The caller collects once after this ownership check.
+	}
+	current, readErr := p.Assignment(ctx, r.Identity.ExecutionID)
+	return current, errors.Join(err, readErr)
+}
+
+func (s *Scheduler) ExecutorPermit(ctx context.Context, r executor.Reference, actor, command string, cpu int) (out capacity.HeavyPermit, err error) {
+	err = s.Store.Compose(ctx, func(ctx context.Context, _ *sql.Conn) error {
+		q := s.Store.Querier(ctx)
+		if err := s.fence(ctx, q, r.Identity.Plan, actor); err != nil {
+			return err
+		}
+		cur, live, err := currentAgentExecution(ctx, q, r.Identity.Plan, r.Identity.Node)
+		if err != nil {
+			return err
+		}
+		stands, err := agentExecutionStands(ctx, q, cur, r.Identity.ExecutionID)
+		if err != nil {
+			return err
+		}
+		if !live || !stands || cur.Actor != actor {
+			return errors.New("heavy command belongs to another current executor")
+		}
+		out, err = (&capacity.HostPool{Store: s.Store}).AcquireHeavy(ctx, r, command, cpu)
+		return err
+	})
+	return out, err
+}
+
+// ExecutorAssignment follows only parent-handover rows. A correction is new work
+// and cannot acquire control over an earlier attempt's host reservation.
+func (s *Scheduler) ExecutorAssignment(ctx context.Context, id string) (capacity.Assignment, error) {
+	p := &capacity.HostPool{Store: s.Store}
+	q := s.Store.Querier(ctx)
+	for {
+		a, err := p.Assignment(ctx, id)
+		if err == nil || !errors.Is(err, sql.ErrNoRows) {
+			return a, err
+		}
+		row, err := scanAgentExecution(q.QueryRowContext(ctx, "SELECT "+agentExecutionColumns+" FROM dag_agent_executions WHERE execution_id=?", id))
+		if err != nil {
+			return a, err
+		}
+		if row.Kind != AgentParentHandoff || row.Supersedes == "" {
+			return a, sql.ErrNoRows
+		}
+		id = row.Supersedes
 	}
 }
