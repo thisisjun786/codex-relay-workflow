@@ -236,5 +236,11 @@ func executorNativeEvidence(events []Event, terminal Event) (executor.Admission,
 			}
 		}
 	}
+	if len(attempts) == 0 {
+		// A continuation can fail before Started reports a turn. Its prepared
+		// handle still identifies the session, without evidence of any new turn.
+		bind(rowStr(prepared.Data, "thread_id"), rowInt(prepared.Data, "attempt"),
+			Pair{Model: rowStr(prepared.Data, "configured_model"), Effort: rowStr(prepared.Data, "configured_effort")})
+	}
 	return admission, attempts, nil
 }

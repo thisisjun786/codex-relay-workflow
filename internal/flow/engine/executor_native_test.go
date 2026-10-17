@@ -65,6 +65,129 @@ func enDecode1639(t *testing.T, v any, dst any) {
 	}
 }
 
+func TestExecutorNativeContinuationBeforeStarted1642(t *testing.T) {
+	h := newHarness(t)
+	h.cfg.Backend = codexKindFake{h.fake}
+	pair := Pair{Model: "claude-fake-haiku", Effort: "xhigh"}
+	h.cfg.ExecutorAdmission = enResolver(enTask("n1", "build it", pair), nil)
+	turns := 0
+	h.fake.Handler = func(FakeRequest) FakeReply {
+		turns++
+		if turns == 2 {
+			return FakeReply{Err: &TransportError{Err: errors.New("connection lost before Started")}}
+		}
+		return FakeReply{}
+	}
+	const body = `const b = await agent.call('build it', { agentType: 'executor', node: 'n1', label: 'build' })
+return await agent.call('build it', { resume: b, label: 'continue' })`
+	if got := value[map[string]any](t, h.run(body)); got["status"] != StatusUnknown {
+		t.Fatalf("continuation did not reach the transport-error path: %v", got)
+	}
+	rows := h.callRows("continue")
+	if got := eventsOf(rows); got != "prepared,turn_requested,outcome_unknown" {
+		t.Fatalf("continuation events: %s", got)
+	}
+	prepared, terminal := rows[0], rows[len(rows)-1]
+	thread := rowStr(prepared.Data, "thread_id")
+	if thread == "" {
+		t.Fatal("continuation has no prepared thread")
+	}
+	t.Logf("continuation events: %s; prepared thread: %s", eventsOf(rows), thread)
+	before, err := json.Marshal(rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for pass := 0; pass < 3; pass++ {
+		if pass > 0 {
+			replay := newHarness(t)
+			replay.cfg.Backend = codexKindFake{replay.fake}
+			replay.cfg.Journal = h.journal
+			replay.cfg.Resume = &ResumeOptions{}
+			replay.cfg.ExecutorAdmission = h.cfg.ExecutorAdmission
+			if got := value[map[string]any](t, replay.run(body)); got["status"] != StatusUnknown {
+				t.Fatalf("replay %d changed the held outcome: %v", pass, got)
+			}
+			if len(replay.fake.Requests()) != 0 {
+				t.Fatalf("replay %d sent a new native request", pass)
+			}
+		}
+		var natives []Event
+		for _, ev := range enRows(h.journal, "executor_native") {
+			if ev.CallID == prepared.CallID {
+				natives = append(natives, ev)
+			}
+		}
+		if len(natives) != 1 {
+			t.Fatalf("pass %d: got %d continuation provenance rows, want exactly one", pass, len(natives))
+		}
+		native := natives[0]
+		var p executor.Provenance
+		enDecode1639(t, native.Data["provenance"], &p)
+		if p.NativeSession.Value != thread || p.NativeTurns == nil || len(p.NativeTurns) != 0 {
+			t.Errorf("pass %d: expected the prepared session with an empty turns list: %+v", pass, p)
+		}
+		if p.Model.Value != pair.Model || p.Effort.Value != pair.Effort {
+			t.Errorf("pass %d: lost the configured pair: %+v", pass, p)
+		}
+		if rowInt(native.Data, "session_attempt") != 0 || rowInt(native.Data, "native_call_seq") != terminal.Seq ||
+			rowStr(native.Data, "terminal_event") != EvOutcomeUnknown {
+			t.Errorf("pass %d: provenance does not identify the original terminal: %+v", pass, native)
+		}
+		after, err := json.Marshal(h.callRows("continue"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(before) != string(after) {
+			t.Fatalf("pass %d changed the native journal evidence", pass)
+		}
+	}
+}
+
+func TestExecutorNativePreparedEvidence1642(t *testing.T) {
+	admission, err := executor.Freeze(enTask("n1", "build it", Pair{Model: "requested", Effort: "high"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name    string
+		thread  string
+		attempt int
+	}{
+		{name: "legacy attempt", thread: "existing-session"},
+		{name: "explicit attempt", thread: "existing-session", attempt: 3},
+		{name: "no known session"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data := map[string]any{"executor_admission": admission, "thread_id": tc.thread,
+				"configured_model": "configured", "configured_effort": "low"}
+			if tc.attempt > 0 {
+				data["attempt"] = tc.attempt
+			}
+			prepared := Event{Seq: 1, RunID: "run", CallID: "call", Kind: KindCall, Op: "agent", Event: EvPrepared, Data: data}
+			terminal := Event{Seq: 2, RunID: "run", CallID: "call", Kind: KindCall, Op: "agent", Event: EvOutcomeUnknown}
+			_, attempts, err := executorNativeEvidence([]Event{prepared, terminal}, terminal)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.thread == "" {
+				if len(attempts) != 0 {
+					t.Fatalf("invented a session: %+v", attempts)
+				}
+				return
+			}
+			if len(attempts) != 1 {
+				t.Fatalf("got %d attempts, want one", len(attempts))
+			}
+			attempt := attempts[0]
+			p := attempt.provenance
+			if attempt.key.session != tc.thread || attempt.key.attempt != tc.attempt || p.NativeSession.Value != tc.thread ||
+				p.NativeTurns == nil || len(p.NativeTurns) != 0 || p.Model.Value != "configured" || p.Effort.Value != "low" {
+				t.Fatalf("prepared evidence was not preserved: %+v", attempt)
+			}
+		})
+	}
+}
+
 // A committed native terminal row is sufficient to recover provenance, including
 // when a SQLite process loses the separate flow row before its batch flush.
 func TestExecutorNativeCrashReplay1639(t *testing.T) {
