@@ -143,6 +143,8 @@ const (
 // zoneKeyGuards is every key of every table that has a <table>_no_delete trigger (the 17 tables of the
 // append-only zone), in the order the guards are appended.
 var zoneKeyGuards = []keyGuard{
+	{table: "verification_flights", suffix: "pk", cols: []string{"verification_key"}},
+	{table: "executor_collections", suffix: "pk", cols: []string{"execution_id"}},
 	{table: "dag_plans", suffix: "pk", cols: []string{"plan_id"}},
 	{table: "dag_plan_revisions", suffix: "pk", cols: []string{"plan_id", "revision_no"}, earlier: revisionEarlier},
 	{table: "dag_plan_revisions", suffix: "request_key", cols: []string{"plan_id", "request_id"}, earlier: revisionEarlier},

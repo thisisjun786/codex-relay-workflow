@@ -153,6 +153,11 @@ func (s *Scheduler) acceptAgent(ctx context.Context, snap dag.Snapshot, n dag.Sn
 		if now.Actor != actor {
 			return notOrchestrator(actor, now)
 		}
+		if implementation {
+			if _, err := s.externalCommitProof(txCtx, now, *in.Commit); err != nil {
+				return err
+			}
+		}
 		if _, _, err := executionOf(txCtx, tx, plan, node); err != nil {
 			return err
 		}
@@ -273,6 +278,11 @@ func agentAcceptanceOfKey(ctx context.Context, q store.Querier, executionID, hea
 // head the call names that git does not read is refused), it descends from the base in the checkout, and the verification record is judged against its tree, base, ci.yml, dependencies and host.
 func (s *Scheduler) proveAgentCommit(ctx context.Context, e AgentExecution, in CommitRef) (agentProof, error) {
 	var out agentProof
+	var externalErr error
+	e, externalErr = s.externalCommitProof(ctx, e, in)
+	if externalErr != nil {
+		return out, externalErr
+	}
 	if in.Base == "" || in.Checkout == "" || in.Record == "" {
 		return out, refuse(contract.RefusalMalformedReceipt, "an agent acceptance names --base, --verification and --checkout; the relay reads the head from git")
 	}

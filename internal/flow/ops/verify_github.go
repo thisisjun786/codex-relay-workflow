@@ -17,6 +17,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
@@ -35,6 +36,10 @@ import (
 // `gh api --paginate repos/R/actions/runs/ID/attempts/N/jobs`. Dispatch and run list use the resolved numeric
 // workflow ID; `gh run rerun --failed` and `gh run view --job J --log-failed` keep their CLI forms.
 type GitHubActionsVerifier struct {
+	// Coordinator is the controller's authority store. External candidates must
+	// supply it; workers never open replicas or dispatch their own verification.
+	Coordinator *store.Store
+	CILimit     int
 	// Tools are the verifier's tools of the configuration: kind github-actions, repository, workflow, branch prefix.
 	Tools crwconfig.VerifierTools
 	// RecordDir is where the records are written; empty is ciRecordDir of the worktree.
@@ -91,6 +96,8 @@ type ghStep struct {
 
 type ghJob struct {
 	DatabaseID int64    `json:"id"`
+	RunID      int64    `json:"run_id"`
+	RunAttempt int      `json:"run_attempt"`
 	Name       string   `json:"name"`
 	Status     string   `json:"status"`
 	Conclusion string   `json:"conclusion"`
@@ -142,6 +149,7 @@ type ghVerify struct {
 	poll     time.Duration
 	repo     string
 	workflow string
+	flight   *store.VerificationFlight
 }
 
 func (g *ghVerify) git(ctx context.Context, dir string, args ...string) (string, error) {
@@ -300,6 +308,11 @@ func (g *ghVerify) verify(ctx context.Context, req VerifyRequest) (VerifyOutcome
 	if err := g.scanSecrets(ctx, wt, commonDir, base, head, pins["gitleaks"]); err != nil {
 		return VerifyOutcome{}, err
 	}
+	if g.v.Coordinator != nil {
+		if err := g.scanBlobs(ctx, wt, base, head); err != nil {
+			return VerifyOutcome{}, err
+		}
+	}
 
 	// steps 3/4: the repository-local cache of a passed tree, judged by the real receipt judge
 	key := g.cacheKey(workflow, workflowDigest, tree, ciDigest, deps, pins)
@@ -307,6 +320,11 @@ func (g *ghVerify) verify(ctx context.Context, req VerifyRequest) (VerifyOutcome
 	reused, err := g.cachedRecord(ctx, wt, commonDir, tree, key, head, want)
 	if err != nil {
 		return VerifyOutcome{}, err
+	}
+	// A controller flight shares terminal failure as well as success and owns
+	// remote-ref checks. A local cache must not bypass those facts.
+	if g.v.Coordinator != nil {
+		reused = nil
 	}
 	var raw []byte
 	var note string
@@ -493,6 +511,11 @@ func (g *ghVerify) cachedRecord(ctx context.Context, wt, commonDir, tree, key, h
 	if err != nil {
 		return nil, nil
 	}
+	return g.reusableRecord(ctx, wt, tree, key, head, want, raw)
+}
+
+// reusableRecord is shared by the local cache and controller flight reuse.
+func (g *ghVerify) reusableRecord(ctx context.Context, wt, tree, key, head string, want dagsched.VerificationKeys, raw []byte) (*dagsched.VerificationRecord, error) {
 	record, err := dagsched.DecodeVerificationRecord(raw)
 	if err != nil {
 		return nil, nil
@@ -553,6 +576,9 @@ type dispatchError struct {
 // failure after the first attempt completed, it still returns the nonpassing receipt it built.
 func (g *ghVerify) dispatch(ctx context.Context, wt string, req VerifyRequest, head, base, tree, ciDigest string,
 	deps, pins map[string]string, workflow crwconfig.GitHubWorkflowInfo, workflowDigest, key, commonDir string) ([]byte, string, *dispatchError) {
+	if g.v.Coordinator != nil {
+		return g.coordinatedDispatch(ctx, wt, req, head, base, tree, ciDigest, deps, pins, workflow, workflowDigest)
+	}
 	fail := func(err error) ([]byte, string, *dispatchError) { return nil, "", &dispatchError{err: err} }
 	branch, err := g.branchFor(ctx, wt, req, head)
 	if err != nil {
@@ -701,7 +727,22 @@ type ghAttempts struct {
 func (g *ghVerify) awaitRun(ctx context.Context, wt string, runID int64, head, branch string, workflow crwconfig.GitHubWorkflowInfo) (ghAttempts, bool, []FailedStep, error) {
 	out := ghAttempts{merged: map[string]ghJobRecord{}}
 	var failedTests []FailedStep
-	view, err := g.waitRun(ctx, wt, runID, head, branch, workflow, 1)
+	saved, err := g.retryFirst(ctx)
+	if err != nil {
+		return out, false, nil, err
+	}
+	var view ghRunView
+	if saved != nil {
+		view = *saved
+	} else {
+		view, err = g.waitRun(ctx, wt, runID, head, branch, workflow, 1)
+		if err != nil && g.flight != nil {
+			// A concurrent attachment may already have reserved the rerun.
+			if first, e := g.retryFirst(ctx); e == nil && first != nil {
+				view, err = *first, nil
+			}
+		}
+	}
 	if err != nil {
 		return out, false, nil, err
 	}
@@ -753,8 +794,21 @@ func (g *ghVerify) awaitRun(ctx context.Context, wt string, runID int64, head, b
 		out.merged[job.Name] = ghJobRecordOf(job, jobFailures1[job.Name])
 		out.jobOrder = append(out.jobOrder, job.Name)
 	}
-	if _, err := g.gh(ctx, wt, "run", "rerun", fmt.Sprint(runID), "--repo", g.repo, "--failed"); err != nil {
-		return out, false, failedTests, fmt.Errorf("the rerun of the failed jobs of run %d failed: %w", runID, err)
+	sendRetry := true
+	if g.flight != nil {
+		raw, _ := json.Marshal(struct {
+			ghRunView
+			SavedJobs []ghJob `json:"saved_jobs"`
+		}{first, first.Jobs})
+		sendRetry, err = g.v.Coordinator.ClaimVerificationRetry(ctx, g.flight.Key, runID, raw)
+		if err != nil {
+			return out, false, failedTests, err
+		}
+	}
+	if sendRetry {
+		if _, err := g.gh(ctx, wt, "run", "rerun", fmt.Sprint(runID), "--repo", g.repo, "--failed"); err != nil {
+			return out, false, failedTests, fmt.Errorf("the rerun of the failed jobs of run %d is uncertain: %w", runID, err)
+		}
 	}
 	view2, err := g.waitRun(ctx, wt, runID, head, branch, workflow, first.Attempt+1)
 	if err != nil {
@@ -860,6 +914,9 @@ func (g *ghVerify) waitRun(ctx context.Context, wt string, runID int64, head, br
 			// so the completed view carrying one is an infrastructure error, not a verdict
 			seen := map[string]bool{}
 			for _, job := range view.Jobs {
+				if g.flight != nil && (job.RunID != runID || job.RunAttempt != view.Attempt) {
+					return ghRunView{}, fmt.Errorf("job %d belongs to another run or attempt", job.DatabaseID)
+				}
 				if job.Name == "" || job.DatabaseID <= 0 || seen[job.Name] {
 					return ghRunView{}, fmt.Errorf("run %d attempt %d has an unnamed, duplicate or unidentified job", runID, view.Attempt)
 				}
@@ -925,6 +982,13 @@ func ghLogNormalize(raw string) string {
 // Protected names and the request's base are never picked, and whatever is picked must pass
 // `git check-ref-format` before it is pushed.
 func (g *ghVerify) branchFor(ctx context.Context, wt string, req VerifyRequest, head string) (string, error) {
+	if g.v.Coordinator != nil {
+		branch := g.v.Tools.GitHubBranchPrefix() + "verify-" + head
+		if _, err := g.git(ctx, wt, "check-ref-format", "refs/heads/"+branch); err != nil {
+			return "", err
+		}
+		return branch, nil
+	}
 	protected := map[string]bool{"dev": true, "main": true, "master": true}
 	if base := req.Base; base != "" {
 		base = strings.TrimPrefix(strings.TrimPrefix(base, "refs/heads/"), "origin/")

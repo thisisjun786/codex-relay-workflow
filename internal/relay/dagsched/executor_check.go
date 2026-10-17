@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"runtime"
 	"strconv"
+	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/executor"
 	"github.com/thisisjun786/codex-relay-workflow/internal/executor/worker"
@@ -129,8 +130,19 @@ func (s *Scheduler) CheckExecutorGates(ctx context.Context, id executor.Identity
 	if n.CriteriaSetDigest != id.CriteriaDigest {
 		return nil, errors.New("current criteria differ from the frozen task")
 	}
+	if id.Revision != "" && id.Revision != strconv.FormatInt(snap.Revision, 10) {
+		return nil, errors.New("current plan revision differs from the frozen task")
+	}
 	head, tree := "", ""
 	if c != nil {
+		actual, err := runGit(ctx, c.Checkout, nil, "rev-parse", "HEAD^{commit}")
+		if err != nil || strings.TrimSpace(actual) != c.Head {
+			return nil, errors.New("actual controller checkout head differs from candidate")
+		}
+		dirty, err := runGit(ctx, c.Checkout, nil, "status", "--porcelain=v1", "--untracked-files=all")
+		if err != nil || dirty != "" {
+			return nil, errors.New("controller checkout is dirty or unreadable")
+		}
 		head, tree = c.Head, c.Tree
 		keys, keyErr := CommitVerificationKeys(ctx, c.Checkout, c.Head)
 		if keyErr == nil {
