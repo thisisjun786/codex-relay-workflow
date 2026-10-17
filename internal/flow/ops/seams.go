@@ -342,7 +342,7 @@ type MergeRequest struct {
 	// Checks is the state of the head's checks (success: the only state that is requested).
 	Checks     string
 	Crosscheck MergeCrosscheck
-	// Unresolved is the count of unresolved review comments the script supplied; BotsNotConnected says the review bots are not connected,
+	// Unresolved is the count from the PR head's persisted review dispositions; BotsNotConnected says the review bots are not connected,
 	// so there was nothing to resolve.
 	Unresolved       int
 	BotsNotConnected bool
@@ -370,4 +370,33 @@ type StepRow struct {
 type Decisions interface {
 	AppendSpawn(ctx context.Context, row SpawnRow) error
 	AppendStep(ctx context.Context, row StepRow) error
+}
+
+// ---- the bundle pull request seams (CRW-1423) ----
+
+// BundlePRTarget is where the pull request of a PR-unit milestone goes: the tracking repository, the checkout the head
+// branch lives in, the remote and the persisted review record file. BaseRef "" says the plan is a direct landing: no pull
+// request is opened.
+type BundlePRTarget struct {
+	Repo, Checkout, HeadRef, BaseRef, Remote, ReviewRecord string
+}
+
+// BundlePROpenRequest is what crw.prOpen hands the parent's pull request opener: the target the plan's handoff pinned, the
+// milestone's own journal row and the close the journal proved (no caller-supplied acceptance).
+type BundlePROpenRequest struct {
+	Target    BundlePRTarget
+	Milestone Milestone
+	Close     CloseResultOutcome
+}
+
+// BundlePRResult is the parent's answer: not_required for a direct landing, opened when the pull request (fresh or already
+// there) may go to the merge request, refused with a reason otherwise.
+type BundlePRResult struct {
+	State string `json:"state"` // not_required, opened, refused
+	PR    string `json:"pr,omitempty"`
+	Head  string `json:"head,omitempty"`
+	Base  string `json:"base,omitempty"`
+	// ReviewRecord is the crw-pr-review/1 record of the pull request mergeRequest must read.
+	ReviewRecord string `json:"review_record,omitempty"`
+	Reason       string `json:"reason,omitempty"`
 }

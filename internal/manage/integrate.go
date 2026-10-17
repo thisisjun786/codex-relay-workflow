@@ -3,12 +3,14 @@ package manage
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/signal"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/pullrequest"
 	"github.com/thisisjun786/codex-relay-workflow/internal/integrator"
 	"github.com/thisisjun786/codex-relay-workflow/internal/publication"
 )
@@ -20,15 +22,19 @@ import (
 // verified, reviewed by the configured review command, and pushed only when the review did not ask
 // for changes (CRW-1355).
 
-const integrateUsage = "usage: crw manage integrate [--dry-run [--with-gate]] [--watch [--interval <duration>]] [--enqueue-pr OWNER/NAME#N]"
+const integrateUsage = "usage: crw manage integrate [--dry-run [--with-gate]] [--watch [--interval <duration>]] [--enqueue-pr OWNER/NAME#N --head SHA --release-impact TEXT [--record PATH] [--update-base]]"
 
 // integrateFlags is the parsed command line.
 type integrateFlags struct {
-	dryRun    bool
-	withGate  bool
-	watch     bool
-	interval  time.Duration
-	enqueuePR string
+	dryRun        bool
+	withGate      bool
+	watch         bool
+	interval      time.Duration
+	enqueuePR     string
+	head          string
+	releaseImpact string
+	record        string
+	updateBase    bool
 }
 
 func integrateParse(args []string) (integrateFlags, string) {
@@ -54,6 +60,38 @@ func integrateParse(args []string) (integrateFlags, string) {
 				return f, "argument --enqueue-pr: expected OWNER/NAME#N"
 			}
 			f.enqueuePR = v
+		case a == "--head" || strings.HasPrefix(a, "--head="):
+			v := strings.TrimPrefix(a, "--head=")
+			if a == "--head" {
+				if i+1 >= len(args) {
+					return f, "argument --head: expected one argument"
+				}
+				i++
+				v = args[i]
+			}
+			f.head = v
+		case a == "--release-impact" || strings.HasPrefix(a, "--release-impact="):
+			v := strings.TrimPrefix(a, "--release-impact=")
+			if a == "--release-impact" {
+				if i+1 >= len(args) {
+					return f, "argument --release-impact: expected one argument"
+				}
+				i++
+				v = args[i]
+			}
+			f.releaseImpact = v
+		case a == "--record" || strings.HasPrefix(a, "--record="):
+			v := strings.TrimPrefix(a, "--record=")
+			if a == "--record" {
+				if i+1 >= len(args) {
+					return f, "argument --record: expected one argument"
+				}
+				i++
+				v = args[i]
+			}
+			f.record = v
+		case a == "--update-base":
+			f.updateBase = true
 		case a == "--interval" || strings.HasPrefix(a, "--interval="):
 			v := strings.TrimPrefix(a, "--interval=")
 			if a == "--interval" {
@@ -75,6 +113,12 @@ func integrateParse(args []string) (integrateFlags, string) {
 	switch {
 	case f.enqueuePR != "" && (f.dryRun || f.watch):
 		return f, "--enqueue-pr puts one pull request into the queue and cannot be combined with --dry-run or --watch"
+	case f.enqueuePR == "" && (f.head != "" || f.releaseImpact != "" || f.record != "" || f.updateBase):
+		return f, "--head, --release-impact, --record and --update-base belong to --enqueue-pr"
+	case f.enqueuePR != "" && f.head == "":
+		return f, "--enqueue-pr needs --head SHA: the head the decision pins"
+	case f.enqueuePR != "" && strings.TrimSpace(f.releaseImpact) == "":
+		return f, "--enqueue-pr needs --release-impact TEXT"
 	case f.dryRun && f.watch:
 		return f, "--dry-run reads once and cannot be combined with --watch"
 	case f.withGate && !f.dryRun:
@@ -181,12 +225,29 @@ func integrateRun(ctx context.Context, e *Env, args []string) int {
 	}
 	switch {
 	case flags.enqueuePR != "":
-		entry, err := runner.EnqueuePR(ctx, flags.enqueuePR)
-		if err != nil {
-			fmt.Fprintf(e.Stderr, "crw manage integrate: error: --enqueue-pr %s: %v\n", flags.enqueuePR, err)
+		if cfg.PullRequestRepo == "" {
+			fmt.Fprintf(e.Stderr, "crw manage integrate: error: --enqueue-pr %s: the integrate section names no pull_request_repo: the queue lands no pull request\n", flags.enqueuePR)
 			return usageExit
 		}
-		return emit(map[string]any{"enqueued": entry})
+		// the enqueue goes through the parent's merge decision, never the queue entry directly (CRW-1444)
+		dec, err := pullrequest.Decide(ctx, runner, pullrequest.DecideInput{
+			PR: flags.enqueuePR, Head: flags.head, ReleaseImpact: flags.releaseImpact,
+			Record: flags.record, UpdateBase: flags.updateBase})
+		if err != nil {
+			fmt.Fprintf(e.Stderr, "crw manage integrate: error: --enqueue-pr %s: %v\n", flags.enqueuePR, err)
+			if errors.Is(err, pullrequest.ErrDecideInput) {
+				return usageExit
+			}
+			return 1
+		}
+		if code := emit(dec); code != 0 {
+			return code
+		}
+		switch dec.State {
+		case pullrequest.DecisionEnqueued, pullrequest.DecisionNeedsCI:
+			return 0
+		}
+		return usageExit
 	case flags.dryRun:
 		rep, err := runner.DryRun(ctx, flags.withGate)
 		if err != nil {

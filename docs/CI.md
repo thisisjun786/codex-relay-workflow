@@ -124,11 +124,30 @@ versions, and writes a `verification-record/1`. This is the execution path when
 `workflow_dispatch`, as described in [Choosing the verifier](#choosing-the-verifier).
 
 Independent jobs and matrix legs run concurrently. `-jobs N` bounds the number in flight;
-`-jobs 1` runs them serially. The default (`-jobs 0`) is the CPU count divided by
+`-jobs 1` runs them serially. The default (`-jobs 0`) is the selected CPU budget divided by
 `-parallel` (Go package parallelism, default 4), rounded down with a minimum of one:
-20 CPUs select five jobs. Steps within a job remain sequential. The aggregate `dev-gate`
+the default four-core budget selects one job, and eight cores select two. An explicit job
+count is capped to the budget. Steps within a job remain sequential. The aggregate `dev-gate`
 waits for every preceding job, including failed jobs. Output and record entries stay in
 workflow order, with each job's output kept together.
+
+### The CPU budget
+
+One verification runs inside one CPU budget: `--cpus N`, default 4 or `CRW_CI_CPUS` (an
+explicit `--cpus` wins over the environment; the value must be positive). On Linux the
+whole verifier re-executes inside a `systemd-run --user --scope` cgroup whose
+`CPUQuota=<N>00%` bounds every descendant — all jobs and steps share the single scope,
+never one quota per job, and descendant Go processes read it themselves. A launcher that
+cannot start the scope (no user manager, no systemd-run) falls back to the Go settings:
+each job gets a per-job `GOMAXPROCS` share of the budget and the resolved `-parallel`
+(clamped to that share), an approximation of the limit, not a kernel cap over arbitrary
+native programs. A child verifier that already entered and then fails reports its own
+status and is never retried. The budget seals the step environment: neither the caller's
+nor a step's own `GOMAXPROCS`/`GOFLAGS`/`GODEBUG` can widen it. The record's `cpu` names
+the limit, the method (`systemd-cgroup-v2` or `gomaxprocs`), the job count and the
+parallelism the budget resolved to; a record made under a different budget — or a legacy
+record with none — is not reused. This bounds one verification; it is not a host-wide
+verification queue.
 
 The run makes **clean worktrees** of the commit being verified under the work root (the XDG state directory, or --work-root)
 (`git worktree add --detach`), with `HOME` and the XDG directories pointed into a
@@ -202,7 +221,9 @@ empty when it was unset), `tmpDir` and `home` (the run's own temporary and home 
 Multiple jobs use separate children of these roots; a single-job plan uses the roots directly.
 These are paths,
 written as they are. A failed checkout's record carries it too. It is absent from every record written before it, which a
-reader takes as unknown, and it is not a reuse key: a reused record keeps the `runEnv` of the run that verified it. `digest` is the sha256 of the
+reader takes as unknown, and it is not a reuse key: a reused record keeps the `runEnv` of the run that verified it. `cpu` (CRW-1591, additive) names the budget
+the steps ran under — `limit`, `method`, `jobs`, `parallel`, and the per-job `gomaxprocs` under the fallback;
+absent means a legacy or unbudgeted run, which a budgeted run's record cannot answer and vice versa. `digest` is the sha256 of the
 canonical serialization: the record as JSON with its keys sorted, no indentation and no HTML
 escaping, and the `digest` member removed. A tool whose observed version differs from its
 pin is named in `pinMismatch`, and such a record is never reused.
@@ -284,7 +305,7 @@ The verifier finds sealed PASS records in
 `<git-common-dir>/crw-ci/<tree>/<rules-key>/<record-digest>.json`, shared across linked worktrees.
 `--reuse <record>` supplies a preferred candidate; `--fresh` disables reuse and still publishes a
 new pass. The tree, command/plan digest, ci.yml, tools and pins, dependency digests, platform,
-GOFLAGS, GOENV, heavy gate and verifier identity must match. Every candidate still faces the
+GOFLAGS, GOENV, heavy gate, CPU budget and verifier identity must match. Every candidate still faces the
 record digest, plan structure and recomputed pin checks above. Failed records are never cached
 or reused. An unavailable cache falls back to execution without choosing another storage location.
 

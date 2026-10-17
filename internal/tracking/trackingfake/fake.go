@@ -85,6 +85,7 @@ var (
 	pullsRoute    = regexp.MustCompile(`^/repos/([^/]+/[^/]+)/pulls$`)
 	pullRoute     = regexp.MustCompile(`^/repos/([^/]+/[^/]+)/pulls/([0-9]+)$`)
 	commentsRoute = regexp.MustCompile(`^/repos/([^/]+/[^/]+)/issues/([0-9]+)/comments$`)
+	prSurfRoute   = regexp.MustCompile(`^/repos/([^/]+/[^/]+)/pulls/([0-9]+)/(comments|reviews)$`)
 	checksRoute   = regexp.MustCompile(`^/repos/([^/]+/[^/]+)/commits/([0-9a-f]{40})/(check-runs|status)$`)
 )
 
@@ -123,6 +124,47 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		out := s.pullJSON(p)
 		s.mu.Unlock()
 		reply(w, http.StatusCreated, out)
+		return
+	}
+	if m := pullsRoute.FindStringSubmatch(path); r.Method == http.MethodGet && repoOK(m) {
+		head := r.URL.Query().Get("head")
+		base := r.URL.Query().Get("base")
+		s.mu.Lock()
+		out := []map[string]any{}
+		for _, p := range s.pulls {
+			if base != "" && p.Base != base {
+				continue
+			}
+			if head != "" {
+				// the API's head filter is <owner>:<branch>; the fake keeps the branch part
+				_, hb, _ := strings.Cut(head, ":")
+				if hb == "" {
+					hb = head
+				}
+				if p.Head != hb {
+					continue
+				}
+			}
+			if state := r.URL.Query().Get("state"); state != "" && state != "all" && p.State != state {
+				continue
+			}
+			out = append(out, s.pullJSON(p))
+		}
+		s.mu.Unlock()
+		reply(w, http.StatusOK, out)
+		return
+	}
+	if m := prSurfRoute.FindStringSubmatch(path); r.Method == http.MethodGet && repoOK(m) {
+		n, _ := strconv.Atoi(m[2])
+		s.mu.Lock()
+		_, ok := s.pulls[n]
+		s.mu.Unlock()
+		if !ok {
+			reply(w, http.StatusNotFound, map[string]any{"message": "Not Found"})
+			return
+		}
+		// the fake keeps no review bots: the comments and reviews surfaces answer empty
+		reply(w, http.StatusOK, []any{})
 		return
 	}
 	if m := pullRoute.FindStringSubmatch(path); r.Method == http.MethodGet && repoOK(m) {

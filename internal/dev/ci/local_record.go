@@ -76,7 +76,22 @@ type verificationRecord struct {
 	TestPackagesRun *int `json:"testPackagesRun,omitempty"`
 	// RunEnv names where the run ran (CRW-1489, recordRunEnv): additive, absent from every record written before it.
 	RunEnv *recordRunEnv `json:"runEnv,omitempty"`
-	Digest string        `json:"digest"`
+	// CPU is the execution budget the run used (CRW-1591, recordCPU): additive; a nil member is a
+	// legacy or unbudgeted record and answers only an unbudgeted run.
+	CPU    *recordCPU `json:"cpu,omitempty"`
+	Digest string     `json:"digest"`
+}
+
+// recordCPU is the CPU budget a run enforced (CRW-1591): the limit, the method that applied it
+// (a cgroup scope or the Go-settings approximation) and the job/parallel split the budget
+// resolved to. GOMAXPROCS is the configured per-job value under the fallback; it is absent under
+// the cgroup method, where descendant Go processes read the scope themselves.
+type recordCPU struct {
+	Limit      int    `json:"limit"`
+	Method     string `json:"method"`
+	Jobs       int    `json:"jobs"`
+	Parallel   int    `json:"parallel"`
+	GOMAXPROCS int    `json:"gomaxprocs,omitempty"`
 }
 
 // recordRunEnv is where a run ran (CRW-1489): the directory crw-dev ran in, the repository root it verified,
@@ -320,6 +335,12 @@ func localTreeReuse(reused, current verificationRecord) (bool, string) {
 		if key.was != key.isNow {
 			return false, fmt.Sprintf("%s changed (%q -> %q)", key.name, key.was, key.isNow)
 		}
+	}
+	// The CPU budget bounds how the steps executed (CRW-1591); a record made under a different
+	// budget — or a legacy record with none, answering a budgeted run — is a different verification.
+	if (reused.CPU == nil) != (current.CPU == nil) ||
+		(reused.CPU != nil && *reused.CPU != *current.CPU) {
+		return false, "the CPU budget changed"
 	}
 	return true, "every key matches"
 }

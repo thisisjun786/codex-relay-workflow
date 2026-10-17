@@ -525,7 +525,15 @@ if (!lanes.every((l) => l && l.state === 'landed')) return { state: 'incomplete'
 // A fenced write the steps after the lanes make (the close and the re-plan) once another session claimed the plan's epoch ends the run
 // stopped with the reason too (CRW-1382), as a lane that meets it does: closeAndReport() runs those steps and the catch below takes the error kind.
 try {
-  return await closeAndReport()
+  const closed = await closeAndReport()
+  if (closed.state !== 'closed') return closed
+  // the milestone closed: the parent's pull request of the bundle (a no-op for a direct landing), then its merge request (CRW-1423)
+  const opened = await crw.prOpen(ms.id)
+  if (opened.state === 'not_required') return closed
+  if (opened.state !== 'opened') return Object.assign({}, closed, { state: 'held', reason: opened.reason, pr: opened.pr })
+  const requested = await crw.mergeRequest(ms.id, { pr: opened.pr, review: { record: opened.review_record } })
+  if (requested.state !== 'requested') return Object.assign({}, closed, { state: 'held', reason: requested.reason, pr: opened.pr, merge_request: requested })
+  return Object.assign({}, closed, { pr: opened.pr, merge_request: requested })
 } catch (e) {
   if (epochLost(e)) return { state: 'stopped', reason: EPOCH_LOST, detail: e.message, milestone: ms.id, lanes }
   throw e

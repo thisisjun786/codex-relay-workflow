@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -37,8 +38,19 @@ func (w *world) seedCrosscheck() {
 	for i, f := range fixture {
 		w.journal.Append(engine.Event{RunID: testRun, Kind: engine.KindCall, CallID: "cc_" + string(rune('a'+i)), Op: f.Op, Event: f.Event, Data: f.Data})
 	}
+	msRow, _ := json.Marshal(ops.Milestone{ID: "M1", Plan: testPlan})
 	w.journal.Append(engine.Event{RunID: testRun, Kind: engine.KindCall, CallID: "ms_M1", Op: ops.OpMilestone, Event: engine.EvCompleted,
-		Data: map[string]any{"milestone": "M1", "plan": testPlan, "result": "{}"}})
+		Data: map[string]any{"milestone": "M1", "plan": testPlan, "result": string(msRow)}})
+	// the closing acceptance of M1 at mergeHeadA: passed finalGate, the milestoneClose it recorded and the report of it
+	gate, _ := json.Marshal(ops.GateOutcome{Milestone: "M1", Plan: testPlan, Head: mergeHeadA, State: ops.GatePass})
+	cc, _ := json.Marshal(map[string]any{"verdict": "verified", "head": mergeHeadA, "milestone": "M1"})
+	closed, _ := json.Marshal(ops.CloseResultOutcome{Milestone: "M1", Base: "dev", Tip: mergeHeadA, Gate: gate, Crosscheck: cc, GateHead: mergeHeadA})
+	w.journal.Append(engine.Event{RunID: testRun, Kind: engine.KindCall, CallID: "fg_M1", Op: "crw.finalGate", Event: engine.EvCompleted,
+		Data: map[string]any{"milestone": "M1", "plan": testPlan, "head": mergeHeadA, "state": ops.GatePass, "result": string(gate)}})
+	w.journal.Append(engine.Event{RunID: testRun, Kind: engine.KindCall, CallID: "mc_M1", Op: ops.OpMilestoneClose, Event: engine.EvCompleted,
+		Data: map[string]any{"milestone": "M1", "plan": testPlan, "tip": mergeHeadA, "gate_head": mergeHeadA, "moved": false, "result": string(closed)}})
+	w.journal.Append(engine.Event{RunID: testRun, Kind: engine.KindCall, CallID: "ru_M1", Op: ops.OpReportUp, Event: engine.EvCompleted,
+		Data: map[string]any{"milestone": "M1", "tip": mergeHeadA, "report_id": "rep_M1", "delivered": true, "result": "{}"}})
 	if err := w.journal.Flush(); err != nil {
 		w.t.Fatal(err)
 	}
@@ -47,7 +59,14 @@ func (w *world) seedCrosscheck() {
 // mergeRequest runs crw.mergeRequest as the engine would, and writes its completed row (the engine writes it, not Run).
 func (w *world) mergeRequest(lane *ops.Lane, call int, pr string) map[string]any {
 	w.t.Helper()
-	raw, err := json.Marshal([]any{"M1", map[string]any{"pr": pr, "review": map[string]any{"bots": "connected", "unresolved": 0}}})
+	// the review argument is the crw-pr-review/1 record of the pull request's head (CRW-1460)
+	rec := tracking.PRReviewRecord{Schema: tracking.PRReviewSchema, PR: pr, Head: mergeHeadA, Bots: "connected", Round: 1, State: "complete", Items: []tracking.PRReviewItem{}}
+	recData, _ := json.Marshal(rec)
+	recPath := filepath.Join(w.t.TempDir(), "review.json")
+	if err := os.WriteFile(recPath, append(recData, '\n'), 0o600); err != nil {
+		w.t.Fatal(err)
+	}
+	raw, err := json.Marshal([]any{"M1", map[string]any{"pr": pr, "review": map[string]any{"record": recPath}}})
 	if err != nil {
 		w.t.Fatal(err)
 	}
@@ -96,7 +115,7 @@ func TestMergeRequestReachesTheParentReport(t *testing.T) {
 	fake.SetChecks(mergeHeadA, []trackingfake.FakeCheckRun{{Name: "build", Status: "completed", Conclusion: "success"}}, nil)
 
 	lane := ops.NewLane(ops.Deps{RunID: testRun, Journal: w.journal, Actor: testOrch, Now: fixedNow,
-		Reporter: Reporter{W: w.relayWriter(), Run: testRun}, PullRequests: gh})
+		Reporter: Reporter{W: w.relayWriter(), Run: testRun}, PullRequests: gh, Relay: tipRelay{tip: mergeHeadA}})
 
 	out := w.mergeRequest(lane, 0, pr.Ref.String())
 	if out["state"] != "requested" || out["head"] != mergeHeadA {
@@ -172,3 +191,11 @@ func TestMergeRequestNotStagedIsAnErrorAndIsRetried(t *testing.T) {
 		t.Fatalf("%d sends, want the refused one and the retry", n)
 	}
 }
+
+// tipRelay answers the integration target's tip for the merge-request gate; the other relay methods are unused here.
+type tipRelay struct {
+	ops.Relay
+	tip string
+}
+
+func (r tipRelay) IntegrationTip(context.Context, string) (string, error) { return r.tip, nil }
