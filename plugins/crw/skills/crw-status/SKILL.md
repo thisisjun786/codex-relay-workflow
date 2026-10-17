@@ -140,15 +140,19 @@ as one state.
 
 ## Write the report
 
-Lead with the conclusion: what this work is trying to achieve, where it has actually reached
-against that, and the one thing most in the way. The goal is part of the conclusion rather than
-context the reader is assumed to carry, because a position with nothing to measure it against is
-not a status. Then one short status per project, including its schedule verdict. Then what is
-waiting, split between what an internal coordinator will settle and what genuinely needs a new
-decision from Jun. Then the evidence you checked and the items still unverified.
+Use this order, in short Korean prose:
 
-What is waiting separates a normal dependency wait from a decision somebody owes. Failed and
-unverified deliveries go with the other unverified items.
+1. **Decisions needed.** Put the unresolved choice first, with its owner, the evidence and
+   why it blocks the outcome; say none when no decision is needed. Separate a decision only Jun
+   can make from an internal coordination decision or a normal dependency wait.
+2. **What changed.** State the goal, current result and blocker, then one short status per
+   project with its schedule verdict and evidence pointer. Compare with the last established
+   baseline; without one, report current state rather than inventing a delta. Name the checked
+   revision and observation time, and keep failed or unverified delivery explicit.
+3. **Next action.** Give the existing owner's next step, why it follows from the evidence and
+   its observable completion condition. A new recommendation is made only when asked, under
+   [Choose one next action](#choose-one-next-action); if nothing is owed, name the next result
+   to observe or say the outcome is complete. Reporting a step does not start it.
 
 Write it in Korean, short, and in the order above. Keep each project's line to its state, its
 blocker and its evidence pointer. Never write that something was handled, fixed or completed unless
@@ -186,8 +190,8 @@ the whole outcome is complete, say so and recommend stopping instead of inventin
 
 Honor explicit priorities and deadlines, then choose the action that removes the most consequential
 constraint or closes the nearest useful delivery. Do not rank by issue number alone or invent a
-score. Account for active ownership: a recommendation must not create a duplicate writer. Lead with
-one concrete action in plain Korean, link the decisive issue or evidence, and give one
+score. Account for active ownership: a recommendation must not create a duplicate writer. In the
+final Next action block, give one concrete action in plain Korean, link the decisive issue or evidence, and give one
 recommendation, not a menu. When Jun has no action to take while authorized work proceeds, say that
 and name the next result to observe.
 

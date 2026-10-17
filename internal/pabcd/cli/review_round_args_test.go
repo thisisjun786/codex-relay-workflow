@@ -177,7 +177,7 @@ func TestReviewRoundArgsParserOracle(t *testing.T) {
 func TestReviewRoundArgsHelpAndHashOracle(t *testing.T) {
 	o := reviewRoundArgsLoad(t)
 	// The CLI name table renames the verb; nothing else in the help changes.
-	if got, want := RenderReviewRoundHelp(), strings.ReplaceAll(o.Help, "cxc review-round", "crw pabcd review-round"); got != want {
+	if got, want := RenderReviewRoundHelp(), strings.ReplaceAll(o.Help, "cxc review-round", "crw work assessment"); got != want {
 		t.Errorf("help text:\n%s\nwant:\n%s", got, want)
 	}
 	for _, c := range o.Hash {
@@ -323,7 +323,7 @@ func TestReviewRoundArgsHelpVerbs(t *testing.T) {
 		}
 	}
 	help := RenderReviewRoundHelp()
-	for _, want := range []string{"Usage:", "open --session", "abort --session", "crw pabcd review-round open"} {
+	for _, want := range []string{"Usage:", "open --session", "abort --session", "crw work assessment open"} {
 		if !strings.Contains(help, want) {
 			t.Errorf("help lacks %q", want)
 		}

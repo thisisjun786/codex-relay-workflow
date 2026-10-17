@@ -175,6 +175,7 @@ func FactsOf(events []engine.Event) (RunFacts, error) {
 				return f, fmt.Errorf("the result of the milestone row of %s cannot be read: %w", ms, err)
 			}
 			f.Nodes = m.Nodes
+			f.Body.Title, f.Body.Criteria = m.Title, m.Criteria
 		}
 	}
 	f.Closed = true

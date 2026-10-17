@@ -74,7 +74,7 @@ func readArgsOracle(t *testing.T) (parser, files []argsCase, hints []struct {
 }
 
 func crwNames(s string) string {
-	return strings.NewReplacer("cxc orchestrate", "crw pabcd orchestrate", "cxc session", "crw relay session", "cxc receipt", "crw pabcd receipt", ".codexclaw", ".crw").Replace(s)
+	return strings.NewReplacer("cxc orchestrate", "crw work state", "cxc session", "crw relay session", "cxc receipt", "crw work receipt", "agent-gated IPABCD phase control", "agent-gated task state control", ".codexclaw", ".crw").Replace(s)
 }
 
 func assertArgs(t *testing.T, argv []string, cwd string, want recordedArgs) {
@@ -123,7 +123,7 @@ func assertArgs(t *testing.T, argv []string, cwd string, want recordedArgs) {
 // option position, and a conflicting repeat of --session or --cwd is refused. The recording itself is unchanged.
 func orchestrateArgsChanged() map[string]recordedArgs {
 	unknown := func(token string) string {
-		return "unknown orchestrate verb '" + token + "' (expected I|P|A|B|C|D|status|reset); run crw pabcd orchestrate --help"
+		return "unknown orchestrate verb '" + token + "' (expected I|P|A|B|C|D|status|reset); run crw work state --help"
 	}
 	refused := func(why string) string { return "orchestrate A: " + why + "; nothing was done" }
 	x, y, help := "x", "y", "help"

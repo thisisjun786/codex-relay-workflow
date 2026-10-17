@@ -178,7 +178,7 @@ func reviewRoundRunHeldBy(cwd, slug, session string, r goalplan.ReviewRoundState
 // reviewRoundRunOwnerRefusal is the refusal of a verb that would change a round another live session holds.
 func reviewRoundRunOwnerRefusal(verb, roundID, owner string) ReviewRoundCliResult {
 	return reviewRoundRunRefuse(fmt.Sprintf("review-round %s: round %s belongs to session %s, which is still auditing this plan. Nothing was written. "+
-		"That session closes it (`crw pabcd review-round abort --session %s`), or it is released once that session leaves A.", verb, roundID, owner, owner))
+		"That session closes it (`crw work assessment abort --session %s`), or it is released once that session leaves A.", verb, roundID, owner, owner))
 }
 
 // reviewRoundRunLocked runs fn on the bound goalplan under its write lock. A lock that cannot be taken and a plan that cannot be read
@@ -210,7 +210,7 @@ func reviewRoundRunOpen(args ReviewRoundCliArgs, session string, st state.State,
 	case st.Slug == "":
 		return reviewRoundRunRefuse(prefix + "this session has no bound goalplan"), nil
 	case st.PlanUnit == nil || *st.PlanUnit == "" || st.PlanEpoch == nil || *st.PlanEpoch == "":
-		return reviewRoundRunRefuse(prefix + "no plan binding on this session — enter A through `crw pabcd orchestrate A` so P>A records the unit it validated"), nil
+		return reviewRoundRunRefuse(prefix + "no plan binding on this session — enter A through `crw work state A` so P>A records the unit it validated"), nil
 	}
 	unit, epoch := *st.PlanUnit, *st.PlanEpoch
 	files, refusal, err := reviewRoundArgsCollectPlanFiles(args.Cwd, unit, args.PlanPaths)

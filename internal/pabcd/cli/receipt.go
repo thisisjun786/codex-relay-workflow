@@ -69,7 +69,7 @@ func ParseReceiptCLIArgs(argv []string, cwd string) (ReceiptCLIArgs, error) {
 		return out, nil
 	case "test":
 	default:
-		return ReceiptCLIArgs{}, ReceiptCLIParseError{fmt.Sprintf("unknown receipt verb '%s' (expected test); run crw pabcd receipt --help", verb)}
+		return ReceiptCLIArgs{}, ReceiptCLIParseError{fmt.Sprintf("unknown receipt verb '%s' (expected test); run crw work receipt --help", verb)}
 	}
 	i := 1
 	for ; i < len(argv); i++ {
@@ -125,11 +125,11 @@ func ReceiptPathFor(cwd, sessionID string) string {
 	return filepath.Join(cwd, crwdir.DirName, evidence.Subdir, state.SanitizeKey(sessionID), "test-receipt.json")
 }
 
-const receiptHelp = `crw pabcd receipt — record a check receipt that binds a command's result to a source tree
+const receiptHelp = `crw work receipt — record a check receipt that binds a command's result to a source tree
 
 Usage:
-  crw pabcd receipt test --session <id> [--cwd <path>] [--generated <path>]... -- <command> [args...]
-  crw pabcd receipt --help
+  crw work receipt test --session <id> [--cwd <path>] [--generated <path>]... -- <command> [args...]
+  crw work receipt --help
 
 Notes:
   Everything after ` + "`--`" + ` is the command; nothing before it is.
@@ -140,7 +140,7 @@ Notes:
   rebuilds its own artifacts). Repeatable. Undeclared rewrites are still refused.
 
 Example:
-  crw pabcd receipt test --session <id> -- npm test`
+  crw work receipt test --session <id> -- npm test`
 
 // receiptInterrupted is the refusal a cancelled receipt test answers with, from the late-cancel
 // check or from the publication windows.
@@ -210,14 +210,14 @@ func RunReceiptCLI(args ReceiptCLIArgs, options ReceiptRunOptions) (ReceiptCLIRe
 		return refuse("receipt test: --session <id> is required")
 	}
 	if len(args.Command) == 0 {
-		return refuse("receipt test: a command is required after `--`, e.g. `crw pabcd receipt test --session <id> -- npm test`")
+		return refuse("receipt test: a command is required after `--`, e.g. `crw work receipt test --session <id> -- npm test`")
 	}
 	st := state.ReadState(args.Cwd, sid)
 	if st.Phase != state.PhaseC {
 		return refuse(fmt.Sprintf("receipt test: session is at %s, not C — a check receipt is produced during Check", st.Phase))
 	}
 	if st.CheckEpoch == nil || *st.CheckEpoch == "" {
-		return refuse("receipt test: no check binding on this session. Step back with `crw pabcd orchestrate B` and re-enter `crw pabcd orchestrate C` to mint one (this cycle predates CHECK-BINDING-01).")
+		return refuse("receipt test: no check binding on this session. Step back with `crw work state B` and re-enter `crw work state C` to mint one (this cycle predates CHECK-BINDING-01).")
 	}
 	path := ReceiptPathFor(args.Cwd, sid)
 	// A symbolic link at .crw, at the evidence directories or at the receipt itself is refused before anything is removed or
@@ -259,7 +259,7 @@ func RunReceiptCLI(args ReceiptCLIArgs, options ReceiptRunOptions) (ReceiptCLIRe
 	cmp := source.Compare(before, after)
 	switch cmp.Kind {
 	case source.ComparisonDifferent:
-		return refuse("receipt test: the command changed the source while running (" + cmp.Detail + "); no receipt written — a check cannot certify a tree it rewrote.\nIf the check REGENERATES artifacts by design, declare them:\n  crw pabcd receipt test --session <id> --generated <path> -- <command>\n(repeatable; a path covers that file or that directory. Undeclared rewrites are still refused.)")
+		return refuse("receipt test: the command changed the source while running (" + cmp.Detail + "); no receipt written — a check cannot certify a tree it rewrote.\nIf the check REGENERATES artifacts by design, declare them:\n  crw work receipt test --session <id> --generated <path> -- <command>\n(repeatable; a path covers that file or that directory. Undeclared rewrites are still refused.)")
 	case source.ComparisonUnavailable:
 		return refuse("receipt test: git could not resolve the source identity (" + cmp.Reason + "); no receipt written")
 	}

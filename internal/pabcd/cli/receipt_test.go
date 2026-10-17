@@ -199,6 +199,7 @@ func TestReceiptParserOracle(t *testing.T) {
 		t.Run(fmt.Sprint(i), func(t *testing.T) {
 			var expected struct{ Error string }
 			receiptMust(t, json.Unmarshal(c.Result, &expected))
+			expected.Error = workOracleNames(expected.Error)
 			got, err := ParseReceiptCLIArgs(c.Argv, c.Cwd)
 			if expected.Error != "" {
 				var parse ReceiptCLIParseError
@@ -248,6 +249,7 @@ func TestReceiptGeneratedOracle(t *testing.T) {
 			if got.Code == 0 {
 				got.Output = "<RECEIPT>"
 			}
+			c.Result.Output = workOracleNames(c.Result.Output)
 			if got != c.Result {
 				t.Fatalf("got %#v, want %#v", got, c.Result)
 			}
@@ -312,6 +314,7 @@ func TestReceiptGuardsOracle(t *testing.T) {
 			if got.Code == 0 {
 				got.Output = "<RECEIPT>"
 			}
+			c.Result.Output = workOracleNames(c.Result.Output)
 			if got != c.Result {
 				t.Fatalf("got %#v, want %#v", got, c.Result)
 			}
@@ -496,7 +499,7 @@ func TestReceiptAtomicPublicationFailure(t *testing.T) {
 func TestReceiptHelpAndPath(t *testing.T) {
 	root := t.TempDir()
 	got := receiptRun(t, ReceiptCLIArgs{Verb: "help", Cwd: root}, ReceiptRunOptions{})
-	if got.Code != 0 || !strings.Contains(got.Output, "crw pabcd receipt test") {
+	if got.Code != 0 || !strings.Contains(got.Output, "crw work receipt test") {
 		t.Fatal(got)
 	}
 	entries, err := os.ReadDir(root)

@@ -31,8 +31,8 @@ const (
 	// localCPUEnvName is the environment variable a caller may set the budget with.
 	localCPUEnvName = "CRW_CI_CPUS"
 	// localCPUEnteredEnv marks the verifier process the scope launcher started, with the budget it
-	// was asked for. It exists only in that process: never in the caller's environment, and a
-	// step's sealed environment does not inherit it.
+	// was asked for. Scoped steps also receive the verified value so a scope-aware heavy gate
+	// can acquire its slot and exec in place instead of launching an unbounded sibling scope.
 	localCPUEnteredEnv = "CRW_CI_CPU_SCOPED"
 	// localCPUCgroup is the method a record carries when a kernel scope enforced the budget.
 	localCPUCgroup = "systemd-cgroup-v2"
@@ -92,7 +92,7 @@ func localCPUEnv(env []string, opts localOptions) []string {
 	}
 	out := make([]string, 0, len(env)+3)
 	for _, kv := range env {
-		if name, _, _ := strings.Cut(kv, "="); name == "GOMAXPROCS" || name == "GODEBUG" || name == localCPUProcsEnv {
+		if name, _, _ := strings.Cut(kv, "="); name == "GOMAXPROCS" || name == "GODEBUG" || name == localCPUProcsEnv || name == localCPUEnteredEnv {
 			continue
 		}
 		out = append(out, kv)
@@ -104,6 +104,7 @@ func localCPUEnv(env []string, opts localOptions) []string {
 		out = append(out, "GOMAXPROCS="+strconv.Itoa(opts.cpu.GOMAXPROCS))
 	}
 	if opts.cpu != nil && opts.cpu.Method == localCPUCgroup {
+		out = append(out, localCPUEnteredEnv+"="+strconv.Itoa(opts.CPUs))
 		// The step's way back into this scope. An unknown group gives an empty target — the
 		// guard then fails closed, never aiming at the root cgroup.
 		target := ""

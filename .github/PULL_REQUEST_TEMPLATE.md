@@ -1,7 +1,9 @@
 ## Change
 
-<!-- Explain the problem, resulting behavior and a concrete acceptance example.
-     Link an issue when useful; explain enough here without private Linear access. -->
+<!-- Explain the problem, resulting behavior, why this approach was chosen and a
+     concrete before/after acceptance example. State the scope and exclusions.
+     Link an issue when useful; make the handoff understandable without chat history
+     or private Linear access. Fold supporting edits into the change they serve. -->
 
 ## Verification
 
@@ -12,6 +14,13 @@
 
 <!-- Material compatibility, instruction, installation or integration concerns.
      Remove this section when there are none. -->
+
+## Handoff
+
+<!-- Name any decision still needed and its owner, or say none. Give one next action,
+     its owner and observable completion condition. Pin the candidate revision and
+     distinguish verified source from remote landing, installation and release.
+     Preserve contributor credit and explain any maintainer changes. -->
 
 <!-- Ordinary PRs target dev. Mark Ready before requesting review.
      Do not open a dev -> main promotion PR. The owner releases an exact verified

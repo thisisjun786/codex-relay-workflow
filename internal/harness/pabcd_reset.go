@@ -8,7 +8,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/reset"
 )
 
-const resetUsage = "usage: crw pabcd reset [-h] [--state | --generated | --goalplans | --all]"
+const resetUsage = "usage: crw work reset [-h] [--state | --generated | --goalplans | --all]"
 
 func resetVerb(args []string, _ io.Reader, stdout, stderr io.Writer) int {
 	for _, arg := range args {

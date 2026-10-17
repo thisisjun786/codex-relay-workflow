@@ -11,7 +11,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/interview"
 )
 
-// crw pabcd freeze through the verb table with the real session read: help, a dry run on a ready session that writes nothing and ends
+// crw work freeze through the verb table with the real session read: help, a dry run on a ready session that writes nothing and ends
 // with the goal-activation directive, a run that publishes the manifest, and a failure.
 func TestPabcdFreezeThroughTheVerbTable(t *testing.T) {
 	ws := t.TempDir()
@@ -32,7 +32,7 @@ func TestPabcdFreezeThroughTheVerbTable(t *testing.T) {
 	}
 	manifest := filepath.Join(ws, ".crw", "interview", "freeze.json")
 
-	if code, out, errOut := run("--help"); code != 0 || errOut != "" || !strings.HasPrefix(out, "crw pabcd freeze \u2014 build or preview the interview freeze manifest\n") {
+	if code, out, errOut := run("--help"); code != 0 || errOut != "" || !strings.HasPrefix(out, "crw work freeze \u2014 build or preview the interview freeze manifest\n") {
 		t.Errorf("help: exit %d, stderr %q:\n%s", code, errOut, out)
 	}
 	code, out, errOut := run("--dry-run", "--session", "s1", "--cwd", ws)

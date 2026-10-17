@@ -294,7 +294,7 @@ func TestPlanDecades(t *testing.T) {
 func TestPlanHelpOracle(t *testing.T) {
 	o := planOracle(t)
 	want := o.Help
-	want.Output = strings.ReplaceAll(want.Output, "cxc plan", "crw pabcd plan")
+	want.Output = strings.ReplaceAll(want.Output, "cxc plan", "crw work outline")
 	if got := RunPlanCli(parsedPlan(t, t.TempDir(), "--help")); got != want {
 		t.Fatalf("help = %#v; want %#v", got, want)
 	}

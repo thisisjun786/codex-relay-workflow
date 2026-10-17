@@ -97,7 +97,7 @@ func TestLoopParseOracle(t *testing.T) {
 				}
 			}
 			var want any
-			if uerr := json.Unmarshal([]byte(sub.Expected(string(c.Result))), &want); uerr != nil {
+			if uerr := json.Unmarshal([]byte(workOracleNames(sub.Expected(string(c.Result)))), &want); uerr != nil {
 				t.Fatal(uerr)
 			}
 			if !reflect.DeepEqual(got, want) {
@@ -115,7 +115,7 @@ func TestLoopParseOracle(t *testing.T) {
 func TestLoopHelpOracle(t *testing.T) {
 	o := loadLoopOracle(t)
 	sub := loopSubstitution(t)
-	want := sub.Expected(o.Help.Output)
+	want := workOracleNames(sub.Expected(o.Help.Output))
 	if got := RenderLoopHelp(); got != want {
 		t.Fatalf("help:\n got %q\nwant %q", got, want)
 	}
@@ -166,7 +166,7 @@ func TestLoopResolveSlugShowOracle(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := strings.ReplaceAll(sub.Expected(c.Output), "<WS>", cwd)
+			want := strings.ReplaceAll(workOracleNames(sub.Expected(c.Output)), "<WS>", cwd)
 			switch {
 			case strings.HasPrefix(want, "[crw loop: "):
 				rest := want[len("[crw loop: "):]

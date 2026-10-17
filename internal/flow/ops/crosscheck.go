@@ -378,7 +378,7 @@ func (o *crosscheckOp) Run(ctx context.Context, req engine.OpRequest) (engine.Op
 	data["engine_family"], data["model"] = family, profile.Model
 
 	// the executor receipts of the milestone's nodes (C12)
-	receipts, body, hold, holdNode, detail := milestoneReceipts(r, m)
+	receipts, body, hold, holdNode, detail := o.l.milestoneReceipts(ctx, r, m)
 	if hold != "" {
 		data["node"] = holdNode
 		return finish(CrosscheckOutcome{State: CrosscheckStateHeld, Hold: hold, Detail: detail + "; no pass ran"})
@@ -746,13 +746,18 @@ func pickEngine(profiles []reviewadapter.Profile) (reviewadapter.Profile, string
 
 // milestoneReceipts reads the executor receipt of each node of the milestone: the receipt of the node's newest completed unit-check row
 // (R2 D-6). An accepted receipt's copy is read and must hash to its digest; not_assigned and no_executor are listed as they are, and a
-// node with no unit-check row is no_executor. Any other receipt, or one that cannot be read or does not hash to its digest, is a hold
+// node not reused with no unit-check row is no_executor. Reused nodes read the source run's matching check and name its provenance.
+// Any other receipt, or one that cannot be read or does not hash to its digest, is a hold
 // (crosscheck_receipt_missing, _unverified, _not_copied, _mismatch) naming the node. It answers the receipts, the receipts file's bytes
 // (a `## node <id> (sha256 <digest>)` block for each accepted receipt) and the hold.
-func milestoneReceipts(r rows, m Milestone) ([]CrosscheckReceipt, []byte, string, string, string) {
+func (l *Lane) milestoneReceipts(ctx context.Context, r rows, m Milestone) ([]CrosscheckReceipt, []byte, string, string, string) {
 	out := []CrosscheckReceipt{}
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Executor receipts of milestone %s\n", m.ID)
+	inherited, holdNode, holdDetail := l.reusedReceiptChecks(ctx, r, m)
+	if holdNode != "" {
+		return nil, nil, "crosscheck_receipt_missing", holdNode, holdDetail
+	}
 	checks := r.opRows(OpUnitCheck)
 	for _, n := range m.Nodes {
 		// the node's newest check of a receipt: a recorded unit check (role unit-check), or a check that was not run because the receipt
@@ -760,6 +765,10 @@ func milestoneReceipts(r rows, m Milestone) ([]CrosscheckReceipt, []byte, string
 		row, ok := checks.last(func(ev engine.Event) bool {
 			return dataStr(ev, "node") == n.ID && (dataStr(ev, "role") == execution.AgentUnitCheck || dataStr(ev, "state") == StateReceiptHeld)
 		})
+		source, reused := inherited[n.ID]
+		if reused {
+			row, ok = source.Row, true
+		}
 		if !ok {
 			out = append(out, CrosscheckReceipt{Node: n.ID, State: ReceiptNoExecutor})
 			continue
@@ -791,7 +800,7 @@ func milestoneReceipts(r rows, m Milestone) ([]CrosscheckReceipt, []byte, string
 			return nil, nil, "crosscheck_receipt_unverified", n.ID, fmt.Sprintf("node %s: the accepted receipt of its unit check %s names no sha256", n.ID, row.CallID)
 		}
 		file := str(rc, "copy")
-		if file == "" {
+		if file == "" && !reused {
 			file = str(rc, "path")
 		}
 		if file == "" || !filepath.IsAbs(file) {
@@ -799,12 +808,19 @@ func milestoneReceipts(r rows, m Milestone) ([]CrosscheckReceipt, []byte, string
 		}
 		body, err := readReceiptFile(file)
 		if err != nil {
-			return nil, nil, "crosscheck_receipt_not_copied", n.ID, fmt.Sprintf("node %s: the receipt %s of its unit check %s cannot be read: %v", n.ID, file, row.CallID, err)
+			hold := "crosscheck_receipt_not_copied"
+			if reused && errors.Is(err, os.ErrNotExist) {
+				hold = "crosscheck_receipt_missing"
+			}
+			return nil, nil, hold, n.ID, fmt.Sprintf("node %s: the receipt %s of its unit check %s cannot be read: %v", n.ID, file, row.CallID, err)
 		}
 		if sum := sha256.Sum256(body); hex.EncodeToString(sum[:]) != digest {
 			return nil, nil, "crosscheck_receipt_mismatch", n.ID, fmt.Sprintf("node %s: the receipt %s does not hash to the sha256 %s its unit check %s recorded", n.ID, file, digest, row.CallID)
 		}
 		fmt.Fprintf(&b, "\n## node %s (sha256 %s)\n\n", n.ID, digest)
+		if reused {
+			fmt.Fprintf(&b, "Source run: %s; unit-check call: %s; acceptance call: %s\n\n", source.SourceRun, row.CallID, source.SourceAcceptCall)
+		}
 		b.Write(body)
 		if len(body) == 0 || body[len(body)-1] != '\n' {
 			b.WriteByte('\n')

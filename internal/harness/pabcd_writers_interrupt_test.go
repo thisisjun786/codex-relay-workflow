@@ -195,7 +195,7 @@ func TestPabcdWritersEndOnTheFirstInterruptWhileTheLockIsHeld(t *testing.T) {
 			}
 			target, dir := tc.prepare(t, root)
 			before := c620HomeListings(t, home)
-			cmd := exec.Command(crw, append([]string{"pabcd"}, tc.args...)...)
+			cmd := exec.Command(crw, append([]string{"work", WorkVerbName(tc.args[0])}, tc.args[1:]...)...)
 			cmd.Dir = root
 			cmd.Env = []string{
 				"HOME=" + home,

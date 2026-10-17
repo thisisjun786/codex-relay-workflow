@@ -38,17 +38,17 @@ const divergenceCliUsageText = `divergence: expected one of:
 
 // divergenceCliHelpText ports renderDivergenceHelp (:72-92) with the CRW names ("crw pabcd
 // divergence", "crw-loop"), no trailing newline.
-const divergenceCliHelpText = `crw pabcd divergence — record the deliberate divergence mode and its candidates
+const divergenceCliHelpText = `crw work divergence — record the deliberate divergence mode and its candidates
 
 Usage:
-  crw pabcd divergence mode on --session <id> --collapse P|D --reason <why> [--json]
-  crw pabcd divergence mode off --session <id> --reason <why> [--json]
-  crw pabcd divergence candidate add --session <id> --kind strong-1|add-1|alternative
+  crw work divergence mode on --session <id> --collapse P|D --reason <why> [--json]
+  crw work divergence mode off --session <id> --reason <why> [--json]
+  crw work divergence candidate add --session <id> --kind strong-1|add-1|alternative
       --change-class parameter-tweak|branch-toggle|state-space-redesign|evaluator-change
       --title <text> --rationale <text> --source <url> [--source <url>]...
       [--killed-at-phase P|A|B|C|D] [--json]
-  crw pabcd divergence candidate list --session <id> [--json]
-  crw pabcd divergence --help
+  crw work divergence candidate list --session <id> [--json]
+  crw work divergence --help
 
 Notes:
   Collapse EARLY at P for satisfy-spec work; collapse LATE at D for
