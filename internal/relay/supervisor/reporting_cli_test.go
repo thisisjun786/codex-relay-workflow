@@ -10,6 +10,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // The fixture runner also executes these inputs; this test pins the whole public JSON the built
@@ -28,7 +29,8 @@ func reportingCLIParity(t *testing.T, argv func(string) []string) (int, map[stri
 		args[i] = strings.ReplaceAll(v, "$STATE", state)
 	}
 	command := exec.Command(relayBinary, args...)
-	command.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "xdg"), "XDG_DATA_HOME="+filepath.Join(home, "data"), "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR="+os.TempDir())
+	tmpRoot, _ := tmploc.Lookup(os.Getenv)
+	command.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "xdg"), "XDG_DATA_HOME="+filepath.Join(home, "data"), "XDG_CONFIG_HOME="+filepath.Join(home, "config"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR="+tmpRoot)
 	out, err := command.Output()
 	code := 0
 	stderr := ""

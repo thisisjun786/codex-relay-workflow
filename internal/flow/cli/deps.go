@@ -36,7 +36,8 @@ type Deps struct {
 	Settle SettleFunc
 	// World opens what the process of a run works on: its journal, its backend and its operations.
 	World WorldFunc
-	// Ready waits until the process of a run holds the run lock, or says why it does not; nil does not wait.
+	// Ready waits until the spawned process's start is durable - its committed started row - or says why it did not; nil does not
+	// wait. `since` is the caller's bookkeeping only, never evidence of a start.
 	Ready func(ctx context.Context, state, run string, pid int, since time.Time) error
 	// ApplyEnv puts the environment a run's spec records into the environment of this process for as long as the run works in it
 	// (CRW-1570: the run process and the foreground `crw flow resume RUN SCRIPT`), and restore puts back what was there; nil applies

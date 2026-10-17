@@ -490,11 +490,15 @@ func (r *SchedRelay) runState(ctx context.Context, run string) string {
 	if run == "" {
 		return ""
 	}
+	live, pid := false, 0
+	if r.State != "" {
+		live, pid, _ = runHolder(r.State, run)
+	}
 	events, found, err := journal.LoadLean(ctx, r.Sched.Store, run)
 	if err != nil || !found {
 		return ""
 	}
-	return Summarize(RunRecord{RunID: run}, events, r.State != "" && LockHeld(r.State, run), 0).State
+	return Summarize(RunRecord{RunID: run}, events, live, pid).State
 }
 
 // heldByAnotherRun is the run and the execution of the node's current agent execution when a run other than this one holds it ("" when

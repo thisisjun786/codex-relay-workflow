@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // The pre-merge evaluation is tested against real parts wherever a real part can be made without the
@@ -188,7 +189,7 @@ func premergeTestNewRepo(t *testing.T, spec premergeTestRepoSpec) premergeTestRe
 	template, ok := premergeTestTemplates[key]
 	if !ok {
 		if premergeTestTemplateRoot == "" {
-			root, err := os.MkdirTemp("", "crw-manage-premerge-repos-")
+			root, err := tmploc.MkdirTemp("crw-manage-premerge-repos-")
 			if err != nil {
 				premergeTestTemplateMu.Unlock()
 				t.Fatal(err)

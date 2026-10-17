@@ -18,6 +18,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 var binaryOnce sync.Once
@@ -30,7 +31,7 @@ func builtBinary(t *testing.T) string {
 	binaryOnce.Do(func() {
 		_, file, _, _ := runtime.Caller(0)
 		root := filepath.Clean(filepath.Join(filepath.Dir(file), "../../.."))
-		dir, err := os.MkdirTemp("/tmp", "routing-bin-")
+		dir, err := tmploc.MkdirTemp("routing-bin-")
 		if err != nil {
 			binaryError = err
 			return

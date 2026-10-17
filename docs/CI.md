@@ -115,6 +115,17 @@ under `scripts/ci` and `scripts/check_operations_contract.py` left in refactor R
 `verification-record/1` (CRW-964's command and format, documented in its own section).
 See the [workflow](../.github/workflows/ci.yml) for the exact job inputs.
 
+`make lint-changed` is the local complement of `make lint`, not a CI step: it runs the
+same checks only where the work changed. Its base is `origin/dev`; `make lint-changed
+BASE=<ref>` chooses another, and the base is resolved through its merge base with HEAD.
+The change set is the union of the `.go` files committed since the merge base, staged,
+unstaged and untracked. `go vet` and staticcheck run on the surviving packages those
+files belong to, under the same tag rules as `make lint` (the `dev` packages are checked
+with `-tags dev`, and `internal/runtime/integration` is vetted with `-tags integration`
+but not staticchecked); gofmt runs on the changed files that still exist. No changed Go
+files is a pass, and a base with no merge base is an error. The whole-repository `make
+lint` stays the CI check and is unchanged.
+
 ## The local run
 
 `crw-dev ci local` (and `make ci-local`) runs every job and step of
@@ -336,12 +347,22 @@ arguments are not resolved: a relative argument is read in each step's own direc
 `crw-dev ci local hook install` writes a `pre-push` hook into the repository the
 working directory belongs to (`git rev-parse --git-path hooks/pre-push`), and
 `... hook status` reports `installed`, `absent` or `foreign`. The hook
-refuses a push whose range (`<remote sha>..<local sha>`, or the whole local sha for a new
-ref) brings in a blob over 2 MiB or a secret Gitleaks finds — the same two checks the hosted
-`secrets` and `validate` jobs run, moved before the push because a public history
-cannot drop what has already been pushed. It fails closed: a missing Gitleaks or an unreadable
-range blocks the push. An existing `pre-push` this tool did not write is left untouched and
-the install refuses; the tool writes no git config. The hook's size rule carries no allow list,
+refuses a push whose range brings in a blob over 2 MiB or a secret Gitleaks finds — the same
+two checks the hosted `secrets` and `validate` jobs run, moved before the push because a
+public history cannot drop what has already been pushed. The range is
+`<remote sha>..<local sha>` for an existing ref; for a new ref it is `<local sha> --not
+--remotes=<push remote name>`, which excludes only the commits the push remote's locally
+known refs already name — and only when the hook's second argument, the actual
+destination URL git is pushing to, equals that remote's fetch URL (`git remote get-url
+<remote>`): the tracked refs came from that repository, so a push aimed elsewhere cannot
+borrow them. An unnamed or invalid destination, a missing destination argument, a remote
+with no locally known or unreadable refs, and a fetch URL that cannot be read or that
+differs — including a different spelling of the same destination, which the hook does not
+canonicalize — each fall back to the whole local sha; the hook never fetches. Both checks judge the same resolved range. It fails closed: a missing Gitleaks
+or an unreadable range blocks the push. An existing `pre-push` this tool did not write is
+left untouched and the install refuses; one it did write is rewritten by a rerun of the
+install, so an older owned hook upgrades to the current script; the tool writes no git
+config. The hook's size rule carries no allow list,
 unlike `crw-dev ci validate`: the list is empty today, and a future entry must be paired
 with the hook at that time. Tests install the hook only into temporary repositories; the real
 shared checkout is the operator's to install.

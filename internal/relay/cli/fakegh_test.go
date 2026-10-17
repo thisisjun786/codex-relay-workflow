@@ -16,6 +16,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // The forge the merge-evidence tests collect from is a scripted gh on PATH. testdata/gh was the
@@ -39,7 +40,7 @@ func goForgePath(t testing.TB) string {
 		if executable, ghErr = os.Executable(); ghErr != nil {
 			return
 		}
-		if ghDir, ghErr = os.MkdirTemp("", "crw-cli-gh-"); ghErr != nil {
+		if ghDir, ghErr = tmploc.MkdirTemp("crw-cli-gh-"); ghErr != nil {
 			return
 		}
 		ghErr = os.Symlink(executable, filepath.Join(ghDir, "gh"))

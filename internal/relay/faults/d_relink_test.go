@@ -8,10 +8,11 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 func TestDRelinkRepointsBoundedWrites(t *testing.T) {
-	home, e := os.MkdirTemp("/dev/shm", "fault-d-relink-")
+	home, e := tmploc.MkdirTemp("fault-d-relink-")
 	if e != nil {
 		t.Fatal(e)
 	}

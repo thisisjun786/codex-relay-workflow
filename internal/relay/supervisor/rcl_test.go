@@ -12,6 +12,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 type rclAnswer struct {
@@ -29,7 +30,8 @@ func runRCL(t *testing.T, binary, home string, argv func(string) []string) rclAn
 		args[i] = strings.ReplaceAll(args[i], "$STATE", state)
 	}
 	cmd := exec.Command(binary, args...)
-	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "xdg-state"), "XDG_DATA_HOME="+filepath.Join(home, "xdg-data"), "XDG_CONFIG_HOME="+filepath.Join(home, "xdg-config"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR="+os.TempDir(), "CODEX_SESSION_RELAY_STATE=")
+	tmpRoot, _ := tmploc.Lookup(os.Getenv)
+	cmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "xdg-state"), "XDG_DATA_HOME="+filepath.Join(home, "xdg-data"), "XDG_CONFIG_HOME="+filepath.Join(home, "xdg-config"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR="+tmpRoot, "CODEX_SESSION_RELAY_STATE=")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err := cmd.Run()

@@ -22,6 +22,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 	"golang.org/x/sys/unix"
 )
 
@@ -123,7 +124,7 @@ func newWorkerFixture(t *testing.T, policy json.RawMessage) *workerFixture {
 
 // workerStore is the bytes of a closed, Go-created fenced store, made once per test binary.
 var workerStore = sync.OnceValues(func() ([]byte, error) {
-	dir, err := os.MkdirTemp("", "worker-store-")
+	dir, err := tmploc.MkdirTemp("worker-store-")
 	if err != nil {
 		return nil, err
 	}

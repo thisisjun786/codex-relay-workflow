@@ -11,13 +11,14 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 func TestF1WholeOutput(t *testing.T) {
 	goldenParent(t)
 	for _, action := range []string{"claim", "operation", "reconcile", "complete_refusal", "complete", "reconcile_ended", "sweep", "sweep_readings", "operation_retarget", "claim_backoff"} {
 		t.Run(action, func(t *testing.T) {
-			home, e := os.MkdirTemp("/dev/shm", "f1-whole-")
+			home, e := tmploc.MkdirTemp("f1-whole-")
 			if e != nil {
 				t.Fatal(e)
 			}
