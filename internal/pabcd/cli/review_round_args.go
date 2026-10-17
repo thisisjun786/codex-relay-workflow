@@ -102,13 +102,13 @@ func ParseReviewRoundCliArgs(argv []string, cwd string) ReviewRoundCliParsed {
 // RenderReviewRoundHelp ports review-round-cli.ts:172-190, with the verb named as the CLI name table renames it.
 func RenderReviewRoundHelp() string {
 	return strings.Join([]string{
-		"crw pabcd review-round — the opt-in A-gate plan-audit round (LEAN-REVIEW-01)",
+		"crw work assessment — the opt-in A-gate plan-audit round (LEAN-REVIEW-01)",
 		"",
 		"Usage:",
-		"  crw pabcd review-round open --session <id> [--plan-path <path>]... [--cwd <path>] [--json]",
-		"  crw pabcd review-round show --session <id> [--cwd <path>] [--json]",
-		"  crw pabcd review-round abort --session <id> [--reason <text>] [--cwd <path>]",
-		"  crw pabcd review-round --help",
+		"  crw work assessment open --session <id> [--plan-path <path>]... [--cwd <path>] [--json]",
+		"  crw work assessment show --session <id> [--cwd <path>] [--json]",
+		"  crw work assessment abort --session <id> [--reason <text>] [--cwd <path>]",
+		"  crw work assessment --help",
 		"",
 		"Notes:",
 		"  A round is OPTIONAL. With no round open, A>B advances on the attest alone.",

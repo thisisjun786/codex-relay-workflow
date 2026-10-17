@@ -288,7 +288,7 @@ func loopInit(args LoopCliArgs) (LoopCliResult, error) {
 	}
 	if args.SurfaceGiven {
 		return LoopCliResult{Output: "loop init: --surface is not applied at init; bind the plan with --session and " +
-			"register each surfaced criterion with crw pabcd loop add-criterion --session <id> --criterion <text> " +
+			"register each surfaced criterion with crw work continue add-criterion --session <id> --criterion <text> " +
 			"--surface <logic|web|tui|desktop>\nNothing was written.", Code: 1}, nil
 	}
 	slug := interview.DeriveSlug(objective)
@@ -348,7 +348,7 @@ func loopInitBoundGate(cwd, sessionID string) (LoopCliResult, bool) {
 		return LoopCliResult{Output: "loop init: " + crwdir.DirName + " is a symbolic link; refusing to create the session lock through it.\nNothing was written.", Code: 1}, false
 	}
 	if verdict := session.CheckBound(cwd, sessionID); !verdict.OK {
-		return LoopCliResult{Output: "loop init: " + verdict.Reason + "\nNothing was written.", Code: 1}, false
+		return LoopCliResult{Output: "loop init: " + workDiagnostic(verdict.Reason) + "\nNothing was written.", Code: 1}, false
 	}
 	return LoopCliResult{}, true
 }

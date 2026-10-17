@@ -131,12 +131,12 @@ func memoryVerb(ctx context.Context, args []string, _ io.Reader, stdout, stderr 
 // configInterviewUsage is the oracle's usage text (pabcd-state/src/cli.ts:224-228) with the CRW
 // names substituted and the default on off (CRW-1340: projectcfg.DefaultPolicy); the bracket lists the policy owner's values in its own order, so the text
 // cannot drift from the policies the writer accepts.
-const configInterviewUsage = "Usage:\n  crw pabcd config interview [" +
+const configInterviewUsage = "Usage:\n  crw work config interview [" +
 	string(projectcfg.PolicyOff) + "|" + string(projectcfg.PolicyNewUnit) + "|" + string(projectcfg.PolicyAlways) + "]\n\n" +
 	"  off       only an explicit 'interview' / '인터뷰' request opens the Interview (default)\n" +
 	"  new-unit  also open it on the first plan request of a new unit\n" +
 	"  always    open it on every plan request\n\n" +
-	"The Interview is advisory: it never changes the PABCD phase, and goal mode always suppresses it.\n"
+	"The Interview is advisory: it never changes the task phase, and goal mode always suppresses it.\n"
 
 // configVerb is the config row. Only the interview subcommand belongs to this component; every
 // other subcommand gets the oracle's refusal (cli.ts:229-232). The policy write goes through the

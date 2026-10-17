@@ -162,9 +162,8 @@ type invocation struct {
 }
 
 // A mode is one top-level word of crw, and this table is the one place that lists them: dispatch, the
-// usage line and the invalid-choice message all read it. Every word is listed (CRW-1323: the usage line
-// names the commands that are registered); the option spellings -h, --help and --version are dispatched
-// without being listed.
+// usage line and the invalid-choice message all read it. Every canonical command is listed (CRW-1323);
+// deprecated aliases and the option spellings -h, --help and --version are dispatched without being listed.
 type mode struct {
 	name   string
 	listed bool
@@ -215,8 +214,18 @@ func modes() []mode {
 		{"publish", true, func(c invocation) int { return publication.Run(c.ctx, c.args, os.Stdin, c.stdout, c.stderr) }},
 		{"tools", true, func(c invocation) int { return tools.Run(c.ctx, c.args, c.stdout, c.stderr, nil) }},
 		{"recall", true, func(c invocation) int { return recall.Run(c.args, c.stdout, c.stderr, recallNow()) }},
-		{"pabcd", true, func(c invocation) int {
-			return harness.PabcdContext(c.ctx, c.args, os.Stdin, c.stdout, c.stderr, harness.Verbs())
+		{"work", true, func(c invocation) int {
+			return harness.WorkContext(c.ctx, c.args, os.Stdin, c.stdout, c.stderr)
+		}},
+		{"pabcd", false, func(c invocation) int {
+			args := slices.Clone(c.args)
+			replacement := "crw work"
+			if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+				args[0] = harness.WorkVerbName(args[0])
+				replacement += " " + args[0]
+			}
+			fmt.Fprintf(c.stderr, "warning: crw pabcd is deprecated; use %q (alias removed in the next major version)\n", replacement)
+			return harness.WorkContext(c.ctx, args, os.Stdin, c.stdout, c.stderr)
 		}},
 		{"role", true, func(c invocation) int {
 			// The role package stays offline; the binary installs the App Server opener the

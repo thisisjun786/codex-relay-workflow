@@ -276,7 +276,7 @@ func ParseOrchestrateCliArgs(argv []string, cwd string) OrchestrateCliParsed {
 	}
 	verb := cliVerb(argv[0])
 	if verb == "" {
-		return OrchestrateCliParsed{Error: &CliParseError{Error: fmt.Sprintf("unknown orchestrate verb '%s' (expected I|P|A|B|C|D|status|reset); run crw pabcd orchestrate --help", argv[0]), Session: flags.session, Cwd: flags.cwd}}
+		return OrchestrateCliParsed{Error: &CliParseError{Error: fmt.Sprintf("unknown orchestrate verb '%s' (expected I|P|A|B|C|D|status|reset); run crw work state --help", argv[0]), Session: flags.session, Cwd: flags.cwd}}
 	}
 	if flags.err != "" {
 		return OrchestrateCliParsed{Error: &CliParseError{Error: "orchestrate " + VerbText(verb) + ": " + flags.err + "; nothing was done", Session: flags.session, Cwd: flags.cwd}}
@@ -322,7 +322,7 @@ func RenderAttestShapeHint(verb fsm.OrchestrateVerb, from *state.Phase) string {
 		}
 		return fmt.Sprintf(" Note %s -> %s is not a legal edge, so no attest can advance it: legal from %s is %s.", *from, to, *from, strings.Join(routes, "|"))
 	}
-	fromText, statusHint := "<see status>", " Run `crw pabcd orchestrate status --session <id>` to read the current phase."
+	fromText, statusHint := "<see status>", " Run `crw work state status --session <id>` to read the current phase."
 	if from != nil {
 		fromText = string(*from)
 		if *from != "" {
@@ -362,11 +362,11 @@ func RenderOrchestrateHelp(platform string) string {
 }
 
 // Verbatim platform help with the authorized name substitutions.
-const orchestrateHelpPosix = "crw pabcd orchestrate — agent-gated IPABCD phase control\n" +
+const orchestrateHelpPosix = "crw work state — agent-gated task state control\n" +
 	"\n" +
 	"Usage:\n" +
-	"  crw pabcd orchestrate <I|P|A|B|C|D|status|reset> [--session <id>] [--attest <json> | --attest-file <path>] [--cwd <path>] [--json]\n" +
-	"  crw pabcd orchestrate --help\n" +
+	"  crw work state <I|P|A|B|C|D|status|reset> [--session <id>] [--attest <json> | --attest-file <path>] [--cwd <path>] [--json]\n" +
+	"  crw work state --help\n" +
 	"\n" +
 	"Phases:\n" +
 	"  IDLE -> P -> A -> B -> C -> D -> IDLE\n" +
@@ -380,24 +380,24 @@ const orchestrateHelpPosix = "crw pabcd orchestrate — agent-gated IPABCD phase
 	"  Missing/inherited binding? Run crw relay session current, then crw relay session bind in the native cwd.\n" +
 	"\n" +
 	"Attestation examples:\n" +
-	"  crw pabcd orchestrate A --session <id> --attest '{\"from\":\"P\",\"to\":\"A\",\"did\":\"wrote and audited the plan\",\"planUnit\":\"devlog/_plan/260714_slug\",\"workPhaseId\":\"wp1\"}'\n" +
-	"  crw pabcd orchestrate B --session <id> --attest '{\"from\":\"A\",\"to\":\"B\",\"did\":\"audit passed\",\"auditOutput\":\"VERDICT: PASS\",\"auditVerdict\":\"pass\",\"workPhaseId\":\"wp1\"}'\n" +
-	"  crw pabcd orchestrate C --session <id> --attest '{\"from\":\"B\",\"to\":\"C\",\"did\":\"implemented <files>\",\"workPhaseId\":\"wp1\"}'\n" +
-	"  crw pabcd orchestrate D --session <id> --attest '{\"from\":\"C\",\"to\":\"D\",\"did\":\"verified\",\"checkOutput\":\"tests passed\",\"exitCode\":0,\"testReceiptPath\":\".crw/evidence/<session>/test-receipt.json\",\"workPhaseId\":\"wp1\"}'\n" +
+	"  crw work state A --session <id> --attest '{\"from\":\"P\",\"to\":\"A\",\"did\":\"wrote and audited the plan\",\"planUnit\":\"devlog/_plan/260714_slug\",\"workPhaseId\":\"wp1\"}'\n" +
+	"  crw work state B --session <id> --attest '{\"from\":\"A\",\"to\":\"B\",\"did\":\"audit passed\",\"auditOutput\":\"VERDICT: PASS\",\"auditVerdict\":\"pass\",\"workPhaseId\":\"wp1\"}'\n" +
+	"  crw work state C --session <id> --attest '{\"from\":\"B\",\"to\":\"C\",\"did\":\"implemented <files>\",\"workPhaseId\":\"wp1\"}'\n" +
+	"  crw work state D --session <id> --attest '{\"from\":\"C\",\"to\":\"D\",\"did\":\"verified\",\"checkOutput\":\"tests passed\",\"exitCode\":0,\"testReceiptPath\":\".crw/evidence/<session>/test-receipt.json\",\"workPhaseId\":\"wp1\"}'\n" +
 	"  Every attest carries from/to naming the edge; they are coerced before any gate runs.\n" +
 	"  (workPhaseId is required on gated edges whenever a goalplan is bound to the session,\n" +
-	"   and testReceiptPath is required on C -> D for a bound session — see `crw pabcd receipt test`)\n" +
+	"   and testReceiptPath is required on C -> D for a bound session — see `crw work receipt test`)\n" +
 	"\n" +
 	"Status:\n" +
-	"  crw pabcd orchestrate status --session <id>\n" +
-	"  crw pabcd orchestrate status --session <id> --json"
+	"  crw work state status --session <id>\n" +
+	"  crw work state status --session <id> --json"
 
 // Verbatim platform help with the authorized name substitutions.
-const orchestrateHelpWindows = "crw pabcd orchestrate — agent-gated IPABCD phase control\n" +
+const orchestrateHelpWindows = "crw work state — agent-gated task state control\n" +
 	"\n" +
 	"Usage:\n" +
-	"  crw pabcd orchestrate <I|P|A|B|C|D|status|reset> [--session <id>] [--attest <json> | --attest-file <path>] [--cwd <path>] [--json]\n" +
-	"  crw pabcd orchestrate --help\n" +
+	"  crw work state <I|P|A|B|C|D|status|reset> [--session <id>] [--attest <json> | --attest-file <path>] [--cwd <path>] [--json]\n" +
+	"  crw work state --help\n" +
 	"\n" +
 	"Phases:\n" +
 	"  IDLE -> P -> A -> B -> C -> D -> IDLE\n" +
@@ -413,11 +413,11 @@ const orchestrateHelpWindows = "crw pabcd orchestrate — agent-gated IPABCD pha
 	"Attestation examples (PowerShell single quotes do NOT protect embedded double\n" +
 	"quotes and cmd.exe ignores them entirely, so write the JSON to a file):\n" +
 	"  '{\"from\":\"P\",\"to\":\"A\",\"did\":\"wrote and audited the plan\",\"planUnit\":\"devlog/_plan/260714_slug\",\"workPhaseId\":\"wp1\"}' | Set-Content -Encoding utf8 .crw/attest.json\n" +
-	"  crw pabcd orchestrate A --session <id> --attest-file .crw/attest.json\n" +
+	"  crw work state A --session <id> --attest-file .crw/attest.json\n" +
 	"  Every attest carries from/to naming the edge; they are coerced before any gate runs.\n" +
 	"  (workPhaseId is required on gated edges whenever a goalplan is bound to the session,\n" +
-	"   and testReceiptPath is required on C -> D for a bound session — see `crw pabcd receipt test`)\n" +
+	"   and testReceiptPath is required on C -> D for a bound session — see `crw work receipt test`)\n" +
 	"\n" +
 	"Status:\n" +
-	"  crw pabcd orchestrate status --session <id>\n" +
-	"  crw pabcd orchestrate status --session <id> --json"
+	"  crw work state status --session <id>\n" +
+	"  crw work state status --session <id> --json"

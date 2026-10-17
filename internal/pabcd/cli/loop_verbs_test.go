@@ -65,7 +65,7 @@ func TestLoopHelpTokensPrintUsageAndExitZero(t *testing.T) {
 			if result.Code != 0 {
 				t.Fatalf("code = %d, want 0", result.Code)
 			}
-			for _, want := range []string{"Usage:", "crw pabcd loop init --objective", "--session <id>", "--batch-json", "idempotencyKey"} {
+			for _, want := range []string{"Usage:", "crw work continue init --objective", "--session <id>", "--batch-json", "idempotencyKey"} {
 				if !strings.Contains(result.Output, want) {
 					t.Errorf("help output is missing %q", want)
 				}
@@ -153,7 +153,7 @@ func TestLoopShowReadFailures(t *testing.T) {
 	cwd := loopReadWorkspace(t)
 	absent := loopRun(t, cwd, "show", "--slug", "no-such-plan")
 	want := "loop show: no plan found at slug 'no-such-plan' (" + filepath.Join(cwd, ".crw", "goalplans", "no-such-plan", "goalplan.json") +
-		" does not exist) - run `crw pabcd loop init --objective \"...\"`"
+		" does not exist) - run `crw work continue init --objective \"...\"`"
 	if absent.Code != 1 || absent.Output != want {
 		t.Fatalf("absent:\n got %q\nwant %q", absent.Output, want)
 	}

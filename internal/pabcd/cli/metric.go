@@ -29,15 +29,15 @@ const metricCliUsage = `metric: expected one of:
 
 // metricCliHelp is renderMetricHelp() of metric-cli.ts:72-90 under the settled CRW command name
 // (contract/schema/cxc/name-substitution.json, the cli table's metric row and R11's loop-skill name).
-const metricCliHelp = `crw pabcd metric — session-scoped objective metrics for maximize-goal loops
+const metricCliHelp = `crw work metric — session-scoped objective metrics for maximize-goal loops
 
 Usage:
-  crw pabcd metric record --session <id> --name <metric> --value <number> [--source operator-entered|evaluate.sh] [--work-phase <id>] [--json]
-  crw pabcd metric ingest --session <id> --source evaluate.sh [--json]   (reads stdin)
-  crw pabcd metric show --session <id> [--json]
-  crw pabcd metric kind --session <id> [--set satisfy|maximize] [--json]
-  crw pabcd metric parse-line --session <id>                             (reads stdin)
-  crw pabcd metric --help
+  crw work metric record --session <id> --name <metric> --value <number> [--source operator-entered|evaluate.sh] [--work-phase <id>] [--json]
+  crw work metric ingest --session <id> --source evaluate.sh [--json]   (reads stdin)
+  crw work metric show --session <id> [--json]
+  crw work metric kind --session <id> [--set satisfy|maximize] [--json]
+  crw work metric parse-line --session <id>                             (reads stdin)
+  crw work metric --help
 
 Notes:
   Two non-improving rows on the same metric switch the Stop block to

@@ -134,7 +134,7 @@ func TestPabcdOrchestrateRow(t *testing.T) {
 		if code != 1 || out != "" {
 			t.Fatalf("got %d %q %q", code, out, errOut)
 		}
-		want := "orchestrate: current=P session=rec-s1; unknown orchestrate verb 'Z' (expected I|P|A|B|C|D|status|reset); run crw pabcd orchestrate --help\n"
+		want := "orchestrate: current=P session=rec-s1; unknown orchestrate verb 'Z' (expected I|P|A|B|C|D|status|reset); run crw work state --help\n"
 		if errOut != want {
 			t.Fatalf("stderr %q, want %q", errOut, want)
 		}
@@ -146,7 +146,7 @@ func TestPabcdOrchestrateRow(t *testing.T) {
 		if code != 1 || out != "" {
 			t.Fatalf("got %d %q %q", code, out, errOut)
 		}
-		want := "orchestrate: unknown orchestrate verb 'wat' (expected I|P|A|B|C|D|status|reset); run crw pabcd orchestrate --help\n"
+		want := "orchestrate: unknown orchestrate verb 'wat' (expected I|P|A|B|C|D|status|reset); run crw work state --help\n"
 		if errOut != want {
 			t.Fatalf("stderr %q, want %q", errOut, want)
 		}
@@ -370,7 +370,7 @@ func TestPabcdOrchestrateShapeHint(t *testing.T) {
 		if code != 1 {
 			t.Fatalf("got %d %q", code, out)
 		}
-		for _, want := range []string{"\"to\":\"B\"", "crw pabcd orchestrate status --session", "auditOutput", "\"from\":\"<see status>\""} {
+		for _, want := range []string{"\"to\":\"B\"", "crw work state status --session", "auditOutput", "\"from\":\"<see status>\""} {
 			if !strings.Contains(out, want) {
 				t.Fatalf("stdout lacks %q:\n%s", want, out)
 			}
