@@ -241,7 +241,8 @@ func DetectAgbrowseSearchRequest(prompt string) bool {
 		detectorRE(`(?:통해|통해서|사용|써서|가지고|질문|물어|조사|검색|리서치|알아봐|찾아|확인|검증|브라우즈)`).MatchString(p)
 }
 
-// DetectLoopArmRequest requires both a named mode and an action in an eligible clause.
+// DetectLoopArmRequest requires both a named mode and an action in an eligible clause. The action is read outside the
+// matched mode names, so the continue inside crw-continue is no verb (CRW-1652).
 func DetectLoopArmRequest(prompt string) bool {
 	marker := detectorRE(`\bcrw-?(?:loop|continue)\b|\bcxc(?:-|\s)+loop\b|\bcrw:crw-(?:loop|continue)\b|\[\$?crw-(?:loop|continue)\]\(skill://[^)]+\)|\bgoal\s*plan\b|\bgoalplan\b|골플랜|\bhotl\b`)
 	bare := detectorRE(`i?pabcd\b`)
@@ -251,7 +252,9 @@ func DetectLoopArmRequest(prompt string) bool {
 		bareMode := guardedMatch(bare, line, 0, func(start, end int) bool {
 			return !wordBefore(line, start) && (start == 0 || line[start-1] != '-' && line[start-1] != '/')
 		}) != nil
-		if (marker.MatchString(line) || bareMode) && action.MatchString(line) {
+		named := marker.MatchString(line)
+		masked := marker.ReplaceAllLiteralString(line, " ")
+		if (named || bareMode) && action.MatchString(masked) {
 			return true
 		}
 	}

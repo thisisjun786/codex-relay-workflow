@@ -285,6 +285,27 @@ func TestOriginalModeSpellingsKeepOnlyLoopAliases(t *testing.T) {
 	}
 }
 
+func TestLoopArmSkillNameIsNotAVerb(t *testing.T) {
+	// CRW-1652: the continue inside crw-continue is part of the skill name, not an action. A mention of the skill
+	// arms nothing; a request that names it with an action verb still arms.
+	for _, c := range []struct {
+		prompt string
+		loop   bool
+	}{
+		{"Tell me about crw-continue", false},
+		{"crw-continue 설명만 해주세요", false},
+		{"crw-continue is installed", false},
+		{"I saw crw-continue in the catalog", false},
+		{"use crw-continue", true},
+		{"crw-continue 실행해줘", true},
+		{"continue with crw-continue", true},
+	} {
+		if got := DetectLoopArmRequest(c.prompt); got != c.loop {
+			t.Errorf("DetectLoopArmRequest(%q) = %v; want %v", c.prompt, got, c.loop)
+		}
+	}
+}
+
 func TestRequestLines(t *testing.T) {
 	cases := []struct {
 		prompt string
