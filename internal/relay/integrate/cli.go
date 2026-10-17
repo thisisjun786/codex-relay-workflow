@@ -108,8 +108,12 @@ func runPush(ctx context.Context, services dispatch.Services, args dispatch.Args
 	}
 	defer func() { _ = s.Close() }()
 	sched := &dagsched.Scheduler{Store: s}
+	beforePush, err := integrationStatusPush(sched)
+	if err != nil {
+		return nil, err
+	}
 	// the remote head the push reads is compared with the heads the relay recorded for the integration ref (CRW-1301)
-	result, err := dagsched.PushIntegrationChecked(ctx, args.Text("checkout"), args.Text("remote"), args.Text("remote-ref"), args.Text("integration-ref"), sched.VerifiedMoveOnto, sched.StaleIntegratedNodes, sched.CheckIntegrationTarget)
+	result, err := dagsched.PushIntegrationWithStatus(ctx, args.Text("checkout"), args.Text("remote"), args.Text("remote-ref"), args.Text("integration-ref"), sched.VerifiedMoveOnto, sched.StaleIntegratedNodes, sched.CheckIntegrationTarget, beforePush)
 	// the target and the head the push read are recorded after the comparison (CRW-1304); a record that cannot be written changes nothing the push did
 	recordErr := recordPushRead(ctx, sched, args, result, err)
 	if err != nil {

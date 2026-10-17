@@ -224,3 +224,15 @@ operator step after the cutover install:
 
 Rollback: put a `stop` file in the queue (the watch ends), delete `solo-heads` if present, remove the file and start the shell runner. The
 directories, markers and lock are the same, so no state needs converting.
+
+## Required integration status
+
+The optional top-level `integration` object applies to the product integration push paths, separately from `manage.integrate`:
+
+    {"integration": {"required_status": "dev-gate"}}
+
+An absent or empty `required_status` keeps the existing behavior. A configured context requires a valid `verification-record/1` PASS for the exact integration head and tree before the target branch can be pushed. The ordinary queue and PR-unit landing publish the status after verification, review and destination checks; `crw.integrate` only moves a local ref, and `crw relay dag-integrate-push` publishes the status when that result is sent to the remote. Its retained move evidence includes the original verification record; older digest-only moves must be verified again before a configured status can be published.
+
+The product uses GitHub commit statuses, not check runs. It posts `success` on the exact integration SHA with the configured context. A GitHub Actions receipt links to the run that verified the tree, including the original run when a same-tree receipt is reused. Local verification has no GitHub run URL, so its status omits `target_url` rather than inventing a link.
+
+GitHub must already have the commit before it accepts a status. After validating the receipt and every push destination, the product first pushes the verified SHA to the retained `ci/required-status/<full-sha>` branch without force or a workflow dispatch. It then posts the status and only on success pushes the integration target. A staging or status error leaves the target untouched and records the reason; a staging branch may remain after a status error. A failed or missing verification posts no status and pushes neither branch. The token therefore needs repository contents and commit-status write permissions; missing permission is a refusal, never a reason to weaken protection. Configuration does not install a runtime, change repository protection or activate the operational queue.
