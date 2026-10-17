@@ -73,7 +73,7 @@ func loopBoundSlug(args LoopCliArgs, session string) string {
 // loopNotBound is the refusal for a session that binds no goalplan. steer and ask/decide and the rest use the
 // same sentence; the dash is the oracle's (steer alone spells it with an em dash).
 func loopNotBound(verb LoopVerb, session, dash string) LoopCliResult {
-	return LoopCliResult{Output: fmt.Sprintf("loop %s: session '%s' has no bound goalplan %s run `crw pabcd loop init --session %s` first",
+	return LoopCliResult{Output: fmt.Sprintf("loop %s: session '%s' has no bound goalplan %s run `crw work continue init --session %s` first",
 		verb, session, dash, session), Code: 1}
 }
 

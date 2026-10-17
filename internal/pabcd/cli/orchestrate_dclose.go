@@ -451,7 +451,7 @@ func orchestrateDcloseContext(ctx context.Context, cwd, sessionID, closePhaseID 
 		receiptCheck := gate.ValidateCheckReceipt(cur, sessionID, receiptPath, cwd)
 		if !receiptCheck.OK {
 			return CliResult{Code: 1, Output: "orchestrate D: " + RenderPhaseContext(cur, sessionID) + "; " +
-				receiptCheck.Reason + " Nothing was written."}, nil
+				workDiagnostic(receiptCheck.Reason) + " Nothing was written."}, nil
 		}
 	}
 
@@ -518,7 +518,7 @@ func orchestrateDcloseContext(ctx context.Context, cwd, sessionID, closePhaseID 
 			// commit landed, and neither reading of it is safe. Hand it to a human instead of guessing.
 			if cur.DcloseRecovery.Legacy {
 				return refuse("orchestrate D: the recovery marker for " + closePhaseID + " predates the successor field, so this retry cannot tell whether the plan commit landed. " +
-					"The marker was kept; inspect the goalplan, set the work-phase statuses and activeWorkPhaseId by hand, then run `crw pabcd orchestrate reset --session " +
+					"The marker was kept; inspect the goalplan, set the work-phase statuses and activeWorkPhaseId by hand, then run `crw work state reset --session " +
 					sessionID + "` to clear the marker. Nothing was written.")
 			}
 			// §39 Y1: the marker is written BEFORE the plan commit, so a matching marker does not
@@ -534,7 +534,7 @@ func orchestrateDcloseContext(ctx context.Context, cwd, sessionID, closePhaseID 
 				if orphan.Kind == goalplan.WorkPhaseResumeSuccessorLost {
 					return refuse("orchestrate D: recovery target " + closePhaseID + " is gone from the plan and the successor " +
 						orchestrateDcloseDeref(orphan.SuccessorID) + " it recorded " + goalplan.AbsentSuccessorDetail(orphan.Reason) +
-						", so this retry cannot tell what to finish. The marker was kept; inspect the goalplan, set the work-phase statuses and activeWorkPhaseId by hand, then run `crw pabcd orchestrate reset --session " +
+						", so this retry cannot tell what to finish. The marker was kept; inspect the goalplan, set the work-phase statuses and activeWorkPhaseId by hand, then run `crw work state reset --session " +
 						sessionID + "` to clear the marker. Nothing was written.")
 				}
 				if orphan.Kind == goalplan.WorkPhaseResumeActivate {
@@ -566,7 +566,7 @@ func orchestrateDcloseContext(ctx context.Context, cwd, sessionID, closePhaseID 
 					// §51: a corrupt marker names no repairable work-phase, so it gets its own route out.
 					if closed.Reason == "corrupt" {
 						return refuse("orchestrate D: the recovery marker for " + closePhaseID + " names that same work-phase as its successor, which no close can produce, so this retry cannot tell what to finish. " +
-							"The marker was kept; inspect the goalplan, set the work-phase statuses and activeWorkPhaseId by hand, then run `crw pabcd orchestrate reset --session " +
+							"The marker was kept; inspect the goalplan, set the work-phase statuses and activeWorkPhaseId by hand, then run `crw work state reset --session " +
 							sessionID + "` to clear the marker. Nothing was written.")
 					}
 					detail := "now waits for another work-phase"
@@ -740,7 +740,7 @@ func orchestrateDcloseContext(ctx context.Context, cwd, sessionID, closePhaseID 
 		if err := ctx.Err(); err != nil {
 			return CliResult{}, err
 		}
-		return CliResult{Code: 1, Output: "orchestrate D: " + locked.Reason + " D-close was not applied. Nothing was written."}, nil
+		return CliResult{Code: 1, Output: "orchestrate D: " + workDiagnostic(locked.Reason) + " D-close was not applied. Nothing was written."}, nil
 	case "unreadable":
 		if err := ctx.Err(); err != nil {
 			return CliResult{}, err

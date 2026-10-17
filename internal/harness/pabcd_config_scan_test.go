@@ -14,11 +14,11 @@ import (
 
 // configInterviewUsageForTest is the oracle's usage text (pabcd-state/src/cli.ts:224-228) in CRW
 // names with the default on off (CRW-1340), pinned independently of the adapter's own constant.
-const configInterviewUsageForTest = "Usage:\n  crw pabcd config interview [off|new-unit|always]\n\n" +
+const configInterviewUsageForTest = "Usage:\n  crw work config interview [off|new-unit|always]\n\n" +
 	"  off       only an explicit 'interview' / '인터뷰' request opens the Interview (default)\n" +
 	"  new-unit  also open it on the first plan request of a new unit\n" +
 	"  always    open it on every plan request\n\n" +
-	"The Interview is advisory: it never changes the PABCD phase, and goal mode always suppresses it.\n"
+	"The Interview is advisory: it never changes the task phase, and goal mode always suppresses it.\n"
 
 // TestPabcdCLIConfigScanVerbs drives the two verb rows this issue adds (config, scan) through the
 // dispatcher. The fixed table shares one fresh root (nothing in it writes); every other subtest
@@ -42,8 +42,8 @@ func TestPabcdCLIConfigScanVerbs(t *testing.T) {
 			{"scan_help_word", []string{"scan", "help"}, 0, help, ""},
 			{"scan_help_flag", []string{"scan", "--help"}, 0, help, ""},
 			{"scan_h", []string{"scan", "-h"}, 0, help, ""},
-			{"scan_bare", []string{"scan"}, 1, "", "scan: unknown scan action ''; run crw pabcd scan --help\n"},
-			{"scan_show", []string{"scan", "show"}, 1, "", "scan: unknown scan action 'show'; run crw pabcd scan --help\n"},
+			{"scan_bare", []string{"scan"}, 1, "", "scan: unknown scan action ''; run crw work scan --help\n"},
+			{"scan_show", []string{"scan", "show"}, 1, "", "scan: unknown scan action 'show'; run crw work scan --help\n"},
 			{"scan_record_missing_session", []string{"scan", "record"}, 1, "", "scan: scan record: --session <id> is required (mutating command, no latest-session fallback)\n"},
 			{"scan_record_help", []string{"scan", "record", "--help"}, 1, "", "scan: unknown argument '--help'\n"},
 		} {

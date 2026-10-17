@@ -418,11 +418,11 @@ const phaseTemplate = `# %s — Phase %d (%s)
 (fill in: exact commands + expected exit codes)
 `
 
-const planHelp = `crw pabcd plan — scaffold a devlog plan unit (DIFFLEVEL-ROADMAP-01)
+const planHelp = `crw work outline — scaffold a devlog plan unit (DIFFLEVEL-ROADMAP-01)
 
 Usage:
-  crw pabcd plan init --slug <slug> [--phases <n>] [--date <YYMMDD>] [--cwd <path>]
-  crw pabcd plan --help
+  crw work outline init --slug <slug> [--phases <n>] [--date <YYMMDD>] [--cwd <path>]
+  crw work outline --help
 
 Notes:
   Creates devlog/_plan/<YYMMDD>_<slug>/ with 000_plan.md plus one decade doc

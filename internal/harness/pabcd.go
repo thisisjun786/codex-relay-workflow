@@ -45,11 +45,41 @@ func Pabcd(args []string, in io.Reader, stdout, stderr io.Writer, verbs []Verb) 
 // after the verb to its row, passing ctx when the row sets RunContext, and answers an absent or
 // unknown verb as the other crw modes do, with the usage and exit status 2.
 func PabcdContext(ctx context.Context, args []string, in io.Reader, stdout, stderr io.Writer, verbs []Verb) int {
+	return dispatchWork(ctx, "crw pabcd", args, in, stdout, stderr, verbs)
+}
+
+// WorkVerbName is the public name of an existing task-work handler. Legacy spellings
+// remain accepted by the deprecated top-level alias until the next major version.
+func WorkVerbName(name string) string {
+	switch name {
+	case "orchestrate":
+		return "state"
+	case "loop":
+		return "continue"
+	case "plan":
+		return "outline"
+	case "review-round":
+		return "assessment"
+	default:
+		return name
+	}
+}
+
+// WorkContext exposes the same handlers and invocation context with canonical names.
+func WorkContext(ctx context.Context, args []string, in io.Reader, stdout, stderr io.Writer) int {
+	verbs := Verbs()
+	for i := range verbs {
+		verbs[i].Name = WorkVerbName(verbs[i].Name)
+	}
+	return dispatchWork(ctx, "crw work", args, in, stdout, stderr, verbs)
+}
+
+func dispatchWork(ctx context.Context, command string, args []string, in io.Reader, stdout, stderr io.Writer, verbs []Verb) int {
 	var names []string
 	for _, v := range verbs {
 		names = append(names, v.Name)
 	}
-	usage := "usage: crw pabcd [-h] {" + strings.Join(names, ",") + "} ...\n"
+	usage := "usage: " + command + " [-h] {" + strings.Join(names, ",") + "} ...\n"
 	if len(args) > 0 && (args[0] == "-h" || args[0] == "--help") {
 		io.WriteString(stdout, usage)
 		return 0
@@ -64,9 +94,9 @@ func PabcdContext(ctx context.Context, args []string, in io.Reader, stdout, stde
 	}
 	io.WriteString(stderr, usage)
 	if len(args) == 0 {
-		io.WriteString(stderr, "crw pabcd: error: the following arguments are required: verb\n")
+		fmt.Fprintln(stderr, command+": error: the following arguments are required: verb")
 	} else {
-		fmt.Fprintf(stderr, "crw pabcd: error: argument verb: invalid choice: %q (choose from '%s')\n", args[0], strings.Join(names, "', '"))
+		fmt.Fprintf(stderr, "%s: error: argument verb: invalid choice: %q (choose from '%s')\n", command, args[0], strings.Join(names, "', '"))
 	}
 	return 2
 }

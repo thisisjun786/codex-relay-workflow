@@ -389,14 +389,14 @@ func scanRecordPropertyKey(v any) (string, error) {
 	return "", errors.New("Cannot convert object to primitive value")
 }
 
-const scanRecordHelp = `crw pabcd scan — record an interview rescan round and fold answers into the tracker
+const scanRecordHelp = `crw work scan — record an interview rescan round and fold answers into the tracker
 
 Usage:
-  crw pabcd scan record --session <id> [--cwd <path>] [--contradictions N] [--high N]
+  crw work scan record --session <id> [--cwd <path>] [--contradictions N] [--high N]
                   [--derive] [--map <questionId>=<dimension>]...
                   [--dim <dimension>=<level>]... [--known <dimension>=<text>]...
                   [--unknown <dimension>=<text>]... [--confidence <dimension>=<0..1>]...
-  crw pabcd scan --help
+  crw work scan --help
 
 Notes:
   --session is required; there is no latest-session fallback for a mutating command.

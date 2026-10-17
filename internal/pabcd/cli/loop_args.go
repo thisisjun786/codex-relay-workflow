@@ -189,7 +189,7 @@ func ParseLoopCliArgs(argv []string, cwd string) (LoopCliArgs, error) {
 		if len(argv) > 0 {
 			raw = argv[0]
 		}
-		return LoopCliArgs{}, fmt.Errorf("unknown loop verb '%s' (expected %s); run crw pabcd loop --help", raw, loopVerbList)
+		return LoopCliArgs{}, fmt.Errorf("unknown loop verb '%s' (expected %s); run crw work continue --help", raw, loopVerbList)
 	}
 	selected := LoopVerb(verb)
 	rule := loopRuleFor(selected)
@@ -356,7 +356,7 @@ func DescribeLoopReadFailure(read goalplan.GoalplanReadResult, verb string, slug
 	var detail string
 	switch {
 	case d != nil && d.Kind == "absent":
-		detail = fmt.Sprintf("no plan found at slug '%s' (%s does not exist) - run `crw pabcd loop init --objective \"...\"`", slug, d.Path)
+		detail = fmt.Sprintf("no plan found at slug '%s' (%s does not exist) - run `crw work continue init --objective \"...\"`", slug, d.Path)
 	case d != nil && d.Kind == "invalid-json":
 		detail = fmt.Sprintf("the plan at %s is not valid JSON: %s", d.Path, d.Detail)
 	case d != nil && d.Kind == "invalid-shape":

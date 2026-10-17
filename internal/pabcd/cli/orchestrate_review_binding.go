@@ -22,7 +22,7 @@ import (
 // interpolated as the caller wrote it - a lowercase `b` prints as `b` - which is VerbText.
 func orchestrateReviewBindingRefuse(cur state.State, verb fsm.OrchestrateVerb, sessionID, why string) *CliResult {
 	return &CliResult{Code: 1, Output: "orchestrate " + VerbText(verb) + ": " + RenderPhaseContext(cur, sessionID) +
-		"; " + why + " (LEAN-REVIEW-01). Either let the reviewer's exit record a verdict for this round, or close the round with `crw pabcd review-round abort --session <id>` and advance on the attest alone. Nothing was written."}
+		"; " + why + " (LEAN-REVIEW-01). Either let the reviewer's exit record a verdict for this round, or close the round with `crw work assessment abort --session <id>` and advance on the attest alone. Nothing was written."}
 }
 
 // orchestrateReviewBindingCheck ports validateReviewBinding (:49-95), the A>B gate that reads the

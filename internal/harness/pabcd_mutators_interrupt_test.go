@@ -202,7 +202,7 @@ func TestPabcdMutatorRowsWithoutAnInterruptAnswerAsBefore(t *testing.T) {
 // pabcd1074Run starts the built crw on args in root with a private home and the given stdin.
 func pabcd1074Run(t *testing.T, crw, home, root string, args []string) (*exec.Cmd, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
-	cmd := exec.Command(crw, append([]string{"pabcd"}, args...)...)
+	cmd := exec.Command(crw, append([]string{"work", WorkVerbName(args[0])}, args[1:]...)...)
 	cmd.Dir = root
 	cmd.Env = []string{
 		"HOME=" + home,

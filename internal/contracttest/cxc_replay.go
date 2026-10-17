@@ -343,7 +343,8 @@ func (r *cxcReplayer) check(id string, fix cxccorpus.Fixture, claim cxcClaim, tm
 	if got, err = mapStrings(got, invocation.Replace); err != nil {
 		return err
 	}
-	if err := compare(flatten(want), flatten(got), claim, r.light); err != nil {
+	wantFlat := flatten(want)
+	if err := compare(wantFlat, flatten(got), workCLIClaim(scenario, wantFlat, claim), r.light); err != nil {
 		return fmt.Errorf("%s (%s by %s): %w", id, claim.State, claim.Issue, err)
 	}
 	return nil

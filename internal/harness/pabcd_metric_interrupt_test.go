@@ -191,7 +191,7 @@ func TestPabcdMetricIngestEndsOnTheFirstInterrupt(t *testing.T) {
 			}
 			defer stdinRead.Close()
 			defer stdinWrite.Close()
-			cmd := exec.Command(crw, "pabcd", "metric", "ingest", "--session", "s1")
+			cmd := exec.Command(crw, "work", "metric", "ingest", "--session", "s1")
 			cmd.Dir = root
 			cmd.Env = []string{
 				"HOME=" + home,
@@ -320,7 +320,7 @@ func TestPabcdMetricIngestEndsOnTheFirstInterruptWhileTheLedgerIsLocked(t *testi
 		t.Fatal(err)
 	}
 	before := c620HomeListings(t, home)
-	cmd := exec.Command(crw, "pabcd", "metric", "ingest", "--session", "s1")
+	cmd := exec.Command(crw, "work", "metric", "ingest", "--session", "s1")
 	cmd.Dir = root
 	cmd.Env = []string{
 		"HOME=" + home,

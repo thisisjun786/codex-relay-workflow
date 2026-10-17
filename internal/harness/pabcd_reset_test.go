@@ -18,7 +18,7 @@ func TestPabcdResetHelpAndStrictArguments(t *testing.T) {
 	}
 	for _, arg := range []string{"-h", "--help"} {
 		code, out, errOut := pabcdCLITestRun([]string{"reset", arg}, "")
-		if code != 0 || out != "usage: crw pabcd reset [-h] [--state | --generated | --goalplans | --all]\n" || errOut != "" {
+		if code != 0 || out != "usage: crw work reset [-h] [--state | --generated | --goalplans | --all]\n" || errOut != "" {
 			t.Fatalf("help: %d %q %q", code, out, errOut)
 		}
 	}
