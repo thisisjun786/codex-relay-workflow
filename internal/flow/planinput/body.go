@@ -32,12 +32,15 @@ var sizeFields = map[string][]string{
 }
 
 var (
-	headingLine  = regexp.MustCompile(`^ {0,3}(#{1,6})\s+(.*?)\s*#*\s*$`)
-	bulletLine   = regexp.MustCompile(`^(\s*)(?:[-*+]|\d+[.)])(?:\s+(.*))?$`)
-	checkbox     = regexp.MustCompile(`^\[[ xX]\]\s*`)
-	blockedLine  = regexp.MustCompile(`(?i)^(?:\*\*)?blocked by:`)
-	sizeFieldRe  = regexp.MustCompile("^(size_fit|size_reason|issue_size)\\s*:\\s*`?([A-Za-z0-9_]+)`?\\s*$")
-	backtickSpan = regexp.MustCompile("`([^`]+)`")
+	headingLine     = regexp.MustCompile(`^ {0,3}(#{1,6})\s+(.*?)\s*#*\s*$`)
+	setextLine      = regexp.MustCompile(`^ {0,3}(=+|-+)[ \t]*$`)
+	setextListLine  = regexp.MustCompile(`^(\d{1,9}[.)]|[-*+])(?:([ \t]+)(.*))?$`)
+	setextBreakLine = regexp.MustCompile(`^ {0,3}(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})$`)
+	bulletLine      = regexp.MustCompile(`^(\s*)(?:[-*+]|\d+[.)])(?:\s+(.*))?$`)
+	checkbox        = regexp.MustCompile(`^\[[ xX]\]\s*`)
+	blockedLine     = regexp.MustCompile(`(?i)^(?:\*\*)?blocked by:`)
+	sizeFieldRe     = regexp.MustCompile("^(size_fit|size_reason|issue_size)\\s*:\\s*`?([A-Za-z0-9_]+)`?\\s*$")
+	backtickSpan    = regexp.MustCompile("`([^`]+)`")
 )
 
 // section is the non-fence lines under one heading.
@@ -47,15 +50,21 @@ type section struct {
 	depth   int
 }
 
-// sections splits a body at its headings, omitting an out-of-scope heading and
+// sections splits a body at its ATX or Setext headings, omitting an out-of-scope heading and
 // its descendants through the next peer or shallower heading. Text before the
 // first heading belongs to no section.
 func sections(body string) []section {
 	var out []section
 	fence := ""
 	excludedDepth := 0
-	for _, line := range strings.Split(body, "\n") {
-		line = strings.TrimRight(line, "\r")
+	// Only a paragraph outside a list can become a section-level Setext heading.
+	listParagraph, itemText := false, 0
+	lines := strings.Split(body, "\n")
+	for i := 0; i < len(lines); i++ {
+		line := strings.TrimRight(lines[i], "\r")
+		rest := strings.TrimLeft(line, " \t")
+		col := indentOf(line[:len(line)-len(rest)])
+		inItem := itemText > 0 && col >= itemText
 		t := strings.TrimLeft(line, " ")
 		marker := ""
 		switch {
@@ -68,32 +77,83 @@ func sections(body string) []section {
 			switch fence {
 			case "":
 				fence = marker
+				if col < itemText {
+					itemText = 0
+				}
 			case marker:
 				fence = ""
+				listParagraph = false
 			}
 			continue
 		}
 		if fence != "" {
 			continue
 		}
+		title, depth := "", 0
 		if m := headingLine.FindStringSubmatch(line); m != nil {
-			s := section{heading: normalizeHeading(m[2]), depth: len(m[1])}
+			title, depth = m[2], len(m[1])
+		} else if !listParagraph && !inItem && col <= 3 && setextParagraph(rest) &&
+			i+1 < len(lines) && setextLine.MatchString(strings.TrimRight(lines[i+1], "\r")) {
+			title, depth = strings.TrimSpace(line), 1
+			if strings.HasPrefix(strings.TrimSpace(lines[i+1]), "-") {
+				depth = 2
+			}
+			i++ // the underline belongs to the heading, not to either section's data
+		}
+		if depth > 0 {
+			listParagraph, itemText = false, 0
+			s := section{heading: normalizeHeading(title), depth: depth}
 			if excludedDepth > 0 && s.depth > excludedDepth {
 				continue
 			}
 			excludedDepth = 0
-			if skill.ReadyOutOfScopeHeading(m[2]) {
+			if skill.ReadyOutOfScopeHeading(title) {
 				excludedDepth = s.depth
 				continue
 			}
 			out = append(out, s)
 			continue
 		}
+		switch m := setextListLine.FindStringSubmatch(rest); {
+		case rest == "":
+			listParagraph = false
+		case col <= 3 && setextBreakLine.MatchString(rest):
+			listParagraph = false
+			if !inItem {
+				itemText = 0
+			}
+		case col <= 3 && m != nil:
+			listParagraph = true
+			if !inItem {
+				gap := 0
+				for _, r := range m[2] {
+					if r == '\t' {
+						gap += 4 - gap%4
+					} else {
+						gap++
+					}
+				}
+				if gap == 0 || gap > 4 {
+					gap = 1
+				}
+				itemText = col + len(m[1]) + gap
+			}
+		case !listParagraph && !inItem:
+			itemText = 0
+		}
 		if excludedDepth == 0 && len(out) > 0 {
 			out[len(out)-1].lines = append(out[len(out)-1].lines, line)
 		}
 	}
 	return out
+}
+
+// setextParagraph rejects block markers that an underline cannot turn into a
+// section title. List-continuation and indentation checks belong to sections.
+func setextParagraph(text string) bool {
+	return text != "" && !strings.HasPrefix(text, "|") && !strings.HasPrefix(text, ">") &&
+		!strings.HasPrefix(text, "#") && !setextListLine.MatchString(text) &&
+		!setextLine.MatchString(text) && !setextBreakLine.MatchString(text)
 }
 
 func normalizeHeading(s string) string {
