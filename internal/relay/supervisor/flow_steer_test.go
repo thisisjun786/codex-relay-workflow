@@ -229,3 +229,203 @@ func TestFlowSteerRecoversAnUnsettledAttemptWithoutResending(t *testing.T) {
 		t.Fatalf("reconciliation lost receipt: %+v", rows)
 	}
 }
+
+func TestFlowSteerPreDispatchReadFailureRetriesSameTurn(t *testing.T) {
+	for _, name := range []string{"same channel", "fresh channel"} {
+		t.Run(name, func(t *testing.T) {
+			f := flowRecordFixture(t)
+			id := stageFlowWake(t, f)
+			h, a := flowSteerHost(t)
+			f.c.beforeTransport = func() {
+				h.Script("thread/read", fakehost.Reply{Close: &fakehost.CloseFrame{Code: 1001, Reason: "read connection lost"}})
+				f.c.beforeTransport = nil
+			}
+			result, err := f.c.Attempt(f.ctx, id, a, flowSteerNow)
+			if err != nil || result["deliveryState"] != delivery.DeferredBusy || result["retrySafe"] != true || result["sendAttempted"] != "no" || result["deliveryMethod"] != "turn/steer" || result["expectedTurnId"] != flowSteerTurn {
+				t.Fatalf("a pre-dispatch read failure did not defer busy: %v %v", result, err)
+			}
+			if h.Count("turn/steer") != 0 || h.Count("turn/start") != 0 || h.Count("thread/resume") != 0 {
+				t.Fatalf("a pre-dispatch failure sent requests: %v", h.Requests())
+			}
+			attempts, err := f.s.SupervisorAttempts(f.ctx, id)
+			if err != nil || len(attempts) != 1 {
+				t.Fatalf("attempt rows: %+v %v", attempts, err)
+			}
+			originalAttempt := attempts[0]
+			receipt, err := a.b.Ledger.Get(f.ctx, attempts[0].RequestID)
+			if err != nil || receipt["status"] != "not_attempted" || receipt["retrySafe"] != true {
+				t.Fatalf("the ledger did not record a real not_attempted: %v %v", receipt, err)
+			}
+			row, err := f.c.Get(f.ctx, id)
+			if err != nil || !row.NextEligibleAt.Valid || row.HoldReason.Valid {
+				t.Fatalf("delivery row: %+v %v", row, err)
+			}
+			due := flowSteerNow + delivery.DefaultPolicy().DelayFor(1, "busy")
+			if row.NextEligibleAt.Float64 != due {
+				t.Fatalf("next eligible %v, want %v", row.NextEligibleAt.Float64, due)
+			}
+			if name == "fresh channel" {
+				f.c = &Channel{Store: f.s, Linkage: f.c.Linkage, Program: f.c.Program, Socket: f.c.Socket, Settings: f.c.Settings, SettingsLoader: f.c.SettingsLoader}
+			}
+			if r, err := f.c.Attempt(f.ctx, id, a, due-1); err != nil {
+				t.Fatalf("the pre-due attempt errored: %v %v", r, err)
+			}
+			if attempts, err = f.s.SupervisorAttempts(f.ctx, id); err != nil || len(attempts) != 1 || h.Count("turn/steer") != 0 {
+				t.Fatalf("the pre-due attempt sent: %+v %v", attempts, err)
+			}
+			if row, err = f.c.Get(f.ctx, id); err != nil || row.NextEligibleAt.Float64 != due {
+				t.Fatalf("the pre-due attempt moved the deadline: %+v %v", row, err)
+			}
+			result, err = f.c.Attempt(f.ctx, id, a, due)
+			if err != nil || result["deliveryState"] != delivery.Dispatched || result["turnId"] != flowSteerTurn || result["deliveryMethod"] != "turn/steer" {
+				t.Fatalf("the due retry did not dispatch into the same turn: %v %v", result, err)
+			}
+			if h.Count("turn/steer") != 1 || h.Count("turn/start") != 0 || h.Count("thread/resume") != 0 {
+				t.Fatalf("the retry sent wrong requests: %v", h.Requests())
+			}
+			attempts, err = f.s.SupervisorAttempts(f.ctx, id)
+			if err != nil || len(attempts) != 2 || attempts[0].RequestID == attempts[1].RequestID {
+				t.Fatalf("attempt rows: %+v %v", attempts, err)
+			}
+			if attempts[0] != originalAttempt || attempts[0].State != delivery.DeferredBusy || attempts[0].RetrySafe == 0 || steerTarget(attempts[1].Record) != flowSteerTurn {
+				t.Fatalf("the retry lost the failed attempt or the turn: %+v", attempts)
+			}
+			if _, err := f.c.Attempt(f.ctx, id, a, due+301); err != nil || h.Count("turn/steer") != 1 {
+				t.Fatalf("a delivered steer sent again: %v", err)
+			}
+		})
+	}
+}
+
+func TestFlowSteerPreDispatchFailuresRespectBusyCap(t *testing.T) {
+	f := flowRecordFixture(t)
+	id := stageFlowWake(t, f)
+	h, a := flowSteerHost(t)
+	policy := delivery.DefaultPolicy()
+	f.c.beforeTransport = func() {
+		h.Script("thread/read", fakehost.Reply{Close: &fakehost.CloseFrame{Code: 1001, Reason: "read connection lost"}})
+	}
+	now := flowSteerNow
+	for n := int64(1); n <= policy.BusyMaxAttempts; n++ {
+		result, err := f.c.Attempt(f.ctx, id, a, now)
+		if err != nil || result["deliveryState"] != delivery.DeferredBusy || result["retrySafe"] != true {
+			t.Fatalf("attempt %d did not defer busy: %v %v", n, result, err)
+		}
+		attempts, err := f.s.SupervisorAttempts(f.ctx, id)
+		if err != nil || int64(len(attempts)) != n {
+			t.Fatalf("attempt %d rows: %+v %v", n, attempts, err)
+		}
+		row, err := f.c.Get(f.ctx, id)
+		if err != nil || row.AttemptCount != n {
+			t.Fatalf("attempt %d row: %+v %v", n, row, err)
+		}
+		if !row.NextEligibleAt.Valid || row.NextEligibleAt.Float64 != now+policy.DelayFor(n, "busy") {
+			t.Fatalf("attempt %d deadline: %+v", n, row)
+		}
+		if n < policy.BusyMaxAttempts && row.HoldReason.Valid {
+			t.Fatalf("attempt %d held early: %+v", n, row)
+		}
+		if n == policy.BusyMaxAttempts {
+			if !row.HoldReason.Valid || row.HoldReason.String != delivery.BusyCap {
+				t.Fatalf("attempt %d missed the busy cap: %+v", n, row)
+			}
+			if row.ClaimableAt(row.NextEligibleAt.Float64 + 100000) {
+				t.Fatal("the capped delivery stays claimable")
+			}
+		}
+		now = row.NextEligibleAt.Float64
+	}
+	if h.Count("turn/steer") != 0 || h.Count("turn/start") != 0 || h.Count("thread/resume") != 0 {
+		t.Fatalf("a capped delivery sent requests: %v", h.Requests())
+	}
+	f.c.beforeTransport = nil
+	if _, err := f.c.Attempt(f.ctx, id, a, now+1000000); err != nil {
+		t.Fatalf("the post-cap attempt errored: %v", err)
+	}
+	if attempts, err := f.s.SupervisorAttempts(f.ctx, id); err != nil || int64(len(attempts)) != policy.BusyMaxAttempts || h.Count("turn/steer") != 0 {
+		t.Fatalf("the recovered host sent past the cap: %+v %v", attempts, err)
+	}
+	if row, err := f.c.Get(f.ctx, id); err != nil || !row.HoldReason.Valid || row.HoldReason.String != delivery.BusyCap {
+		t.Fatalf("the cap hold did not persist: %+v %v", row, err)
+	}
+}
+
+func TestFlowSteerPreDispatchClassification(t *testing.T) {
+	cases := map[string]struct {
+		receipt delivery.Obj
+		status  string
+		state   string
+		sent    string
+		retry   bool
+		op      any
+		turn    any
+	}{
+		"pre-dispatch read failure": {
+			receipt: delivery.Obj{{Key: "status", Value: "not_attempted"}},
+			status:  delivery.FailedStatus, state: delivery.DeferredBusy, sent: "no", retry: true, op: "thread/read", turn: nil,
+		},
+		"rpc rejection": {
+			receipt: delivery.Obj{{Key: "status", Value: "failed"}, {Key: "rpcError", Value: delivery.Obj{{Key: "code", Value: -32600}}}},
+			status:  delivery.FailedStatus, state: delivery.DeferredBusy, sent: "no", retry: true, op: "turn/steer", turn: nil,
+		},
+		"steered turn mismatch": {
+			receipt: delivery.Obj{{Key: "status", Value: "failed"}, {Key: "rpcError", Value: delivery.Obj{{Key: "code", Value: "steered_turn_mismatch"}}}, {Key: "steeredTurnId", Value: "other"}},
+			status:  delivery.OutcomeUnknown, state: delivery.HeldUncertain, sent: "unknown", retry: false, op: "unclassified",
+		},
+		"steered turn mismatch absent id": {
+			receipt: delivery.Obj{{Key: "status", Value: "failed"}, {Key: "rpcError", Value: delivery.Obj{{Key: "code", Value: "steered_turn_mismatch"}}}},
+			status:  delivery.OutcomeUnknown, state: delivery.HeldUncertain, sent: "unknown", retry: false, op: "unclassified",
+		},
+		"outcome unknown": {
+			receipt: delivery.Obj{{Key: "status", Value: "outcome_unknown"}},
+			status:  delivery.OutcomeUnknown, state: delivery.HeldUncertain, sent: "unknown", retry: false, op: "transport",
+		},
+		"accepted": {
+			receipt: delivery.Obj{{Key: "status", Value: "accepted"}, {Key: "steeredTurnId", Value: flowSteerTurn}, {Key: "delivery", Value: "accepted_not_applied"}},
+			status:  delivery.Accepted, state: delivery.Dispatched, sent: "yes", retry: false, op: nil, turn: flowSteerTurn,
+		},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := classifyFlowSteer(c.receipt, flowSteerTurn)
+			if f.ReceiptStatus != c.status || f.DeliveryState != c.state || f.SendAttempted != c.sent || f.RetrySafe != c.retry || f.FailedOperation != c.op || f.TurnID != c.turn {
+				t.Errorf("classified as %+v", f)
+			}
+		})
+	}
+	t.Run("nil receipt", func(t *testing.T) {
+		f := classifyFlowSteer(nil, flowSteerTurn)
+		if f.DeliveryState != delivery.HeldUncertain || f.RetrySafe != false {
+			t.Errorf("a lost receipt classified as %+v", f)
+		}
+	})
+}
+
+func TestFlowSteerRejectedTurnRemainsSuppressedAfterRestart(t *testing.T) {
+	for name, reply := range map[string]fakehost.Reply{
+		"review": {ErrorObject: fakehost.ErrorWithInfo(-32600, "cannot steer review", map[string]any{"activeTurnNotSteerable": map[string]any{"turnKind": "review"}})},
+		"stale":  {ErrorObject: fakehost.ErrorWithInfo(-32600, "stale turn", map[string]any{"activeTurnMismatch": map[string]any{"expectedTurnId": flowSteerTurn, "actualTurnId": "new-turn"}})},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := flowRecordFixture(t)
+			id := stageFlowWake(t, f)
+			h, a := flowSteerHost(t)
+			h.Respond("turn/steer", reply)
+			result, err := f.c.Attempt(f.ctx, id, a, flowSteerNow)
+			if err != nil || result["deliveryState"] != delivery.DeferredBusy || result["retrySafe"] != true || h.Count("turn/steer") != 1 {
+				t.Fatalf("the rejection did not defer: %v %v", result, err)
+			}
+			row, err := f.c.Get(f.ctx, id)
+			if err != nil || !row.NextEligibleAt.Valid {
+				t.Fatalf("delivery row: %+v %v", row, err)
+			}
+			f.c = &Channel{Store: f.s, Linkage: f.c.Linkage, Program: f.c.Program, Socket: f.c.Socket, Settings: f.c.Settings, SettingsLoader: f.c.SettingsLoader}
+			if _, err := f.c.Attempt(f.ctx, id, a, row.NextEligibleAt.Float64); err != nil {
+				t.Fatalf("the due attempt errored: %v", err)
+			}
+			if h.Count("turn/steer") != 1 || h.Count("turn/start") != 0 || h.Count("thread/resume") != 0 {
+				t.Fatalf("a rejected turn was steered again: %v", h.Requests())
+			}
+		})
+	}
+}
