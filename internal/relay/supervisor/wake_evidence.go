@@ -3,6 +3,7 @@ package supervisor
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"math"
 	"os"
 
@@ -21,8 +22,9 @@ func (a *attemptRun) prepareWake(ctx context.Context) {
 		a.wake.DeliveryMethod = "turn/steer"
 	}
 	a.wake.RequiredSettings = json.RawMessage(pyjson.Dumps(a.settings.Data, pyjson.Options{}))
-	if want, err := delivery.ObserveWakeConfiguration(ctx, a.c.Store, a.c.Socket, a.r.Recipient, a.row.ObligationKind, os.Getpid(), a.settings); err == nil {
+	if want, id, err := a.observeWakeConnection(ctx); err == nil {
 		a.wake.Identity = want.Identity
+		a.wakeConnection = id
 	}
 	if life, err := a.adapter.ReadThread(ctx, a.r.Recipient); err == nil {
 		a.wake.RecipientStatusBefore, _ = life.RuntimeStatus.(string)
@@ -34,11 +36,33 @@ func (a *attemptRun) prepareWake(ctx context.Context) {
 	}
 }
 
+// observeWakeConnection reads the peer of the connection the adapter actually sends on (CRW-1664):
+// evidence about a send is measured on that transport, never on a fresh dial of the named socket.
+func (a *attemptRun) observeWakeConnection(ctx context.Context) (*delivery.WakeExpectation, uint64, error) {
+	source, ok := a.adapter.(delivery.WakeConnectionSource)
+	if !ok {
+		return nil, 0, fmt.Errorf("sending adapter does not expose its connection")
+	}
+	connection := source.WakeConnection()
+	want, err := delivery.ObserveWakeConnection(ctx, a.c.Store, a.c.Socket, a.r.Recipient, a.row.ObligationKind, os.Getpid(), a.settings, connection)
+	return want, connection.ID, err
+}
+
 func (a *attemptRun) finishWake(ctx context.Context, facts delivery.Facts, receipt delivery.Obj, at string) {
 	if a.wake == nil {
 		return
 	}
 	w := a.wake
+	before := w.Identity
+	w.Identity = delivery.WakeIdentity{}
+	defer func() {
+		want, id, err := a.observeWakeConnection(ctx)
+		if err == nil && id != 0 && id == a.wakeConnection && want.Identity == before {
+			w.Identity = want.Identity
+		} else {
+			w.NewTurn = false
+		}
+	}()
 	w.ObservedAt, w.DeliveryState, w.SendAttempted = at, facts.DeliveryState, facts.SendAttempted
 	w.TurnID, _ = facts.TurnID.(string)
 	// The bridge's lifecycle is closer to turn/start than our first read. A busy
@@ -65,11 +89,8 @@ func (a *attemptRun) finishWake(ctx context.Context, facts delivery.Facts, recei
 	if started == nil || *started < math.Floor(a.now) {
 		return
 	}
-	// Invalidate identity if the endpoint, worker executable or policy moved while
-	// this send ran. The receipt is still retained as unmeasured evidence.
-	want, err := delivery.ObserveWakeConfiguration(ctx, a.c.Store, a.c.Socket, a.r.Recipient, a.row.ObligationKind, os.Getpid(), a.settings)
-	if err != nil || want.Identity != w.Identity {
-		return
-	}
+	// The deferred check above restores the identity only when the same sending
+	// connection still holds it; a changed or unknown connection leaves the
+	// receipt recorded without measured identity (CRW-1664).
 	w.NewTurn = true
 }

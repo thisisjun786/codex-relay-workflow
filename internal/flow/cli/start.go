@@ -90,7 +90,7 @@ func (c *command) start(args []string) int {
 	deadline := fs.String("deadline", "", "an RFC 3339 time the run pauses at")
 	repo := fs.String("repo", "", "the git repository the run's worktrees are made from (default: the working directory's)")
 	handoff := fs.String("handoff", "", "the crw-plan handoff (crw-flow-compile-input/1) that produced the plan's current revision: the run reads its compiled milestone from a copy of it")
-	previewOnly := fs.Bool("preview", false, "show the preview and the preflight facts and start nothing")
+	previewOnly := fs.Bool("preview", false, "show the preview and preflight facts (may create a wake probe) without starting the workflow")
 	_ = fs.Bool("force", false, "accepted and without effect: advisory preflight facts never stop the start")
 	asJSON := fs.Bool("json", false, "print the answer as JSON")
 	positional, code, ok := parse(fs, args)
@@ -273,6 +273,11 @@ func (c *command) start(args []string) int {
 		plan.Nodes = []PreviewNode{}
 	}
 
+	// Repository resolution is a prerequisite, including for --preview. Keep
+	// it before handoff pinning, binding writes, spec creation and spawning.
+	resolvedRepo, repoProblem := repositoryFact(c.ctx, *repo)
+	spec.Repo = resolvedRepo
+
 	if rerr != nil {
 		for _, name := range Facts {
 			plan.Facts = append(plan.Facts, Fact{Name: name, Level: LevelFail, Reading: "the relay store cannot be read: " + rerr.Error(), Reason: "the store cannot be read"}.leveled())
@@ -283,6 +288,16 @@ func (c *command) start(args []string) int {
 			probe = StoreProber{}
 		}
 		wake, wakeErr := currentWake(c.ctx, r, cm.socket, spec.Thread)
+		if _, stored := probe.(StoreProber); stored && wakeErr == nil && repoProblem == nil {
+			wakeErr = c.probeMissingWake(r, cm.socket, spec.Thread, wake)
+			// A probe takes time. Its historical record cannot establish which
+			// worker, endpoint and settings are current when preflight runs.
+			var currentErr error
+			wake, currentErr = currentWake(c.ctx, r, cm.socket, spec.Thread)
+			if currentErr != nil {
+				wakeErr = currentErr
+			}
+		}
 		for _, f := range probe.Facts(c.ctx, PreflightRequest{Reader: r, Thread: spec.Thread, Waits: Dispositions(src), Now: c.now(), Wake: wake}) {
 			if f.Name == FactIdleWake && wakeErr != nil && f.Level == LevelWarn {
 				f.Reason, f.Reading = wakeErr.Error(), "unmeasured: "+wakeErr.Error()
@@ -314,10 +329,6 @@ func (c *command) start(args []string) int {
 			}
 		}
 	}
-	// Repository resolution is a prerequisite, including for --preview. Keep
-	// it before handoff pinning, binding writes, spec creation and spawning.
-	resolvedRepo, repoProblem := repositoryFact(c.ctx, *repo)
-	spec.Repo = resolvedRepo
 	if repoProblem != nil {
 		plan.Facts = append(plan.Facts, *repoProblem)
 		plan.Blocked = repoProblem.Reading
