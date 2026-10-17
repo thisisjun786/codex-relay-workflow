@@ -3,6 +3,9 @@ package reviewadapter
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -327,7 +330,7 @@ func TestEngineProfilesReadTheirUsage(t *testing.T) {
 	}
 
 	t.Run("grok reads the envelope's usage and its fallbacks", func(t *testing.T) {
-		if u, ok := grok.Usage([]byte(grokEnvelope(t, nil, true))); !ok || u != (Usage{CacheRead: 2729216}) {
+		if u, ok := grok.Usage([]byte(grokEnvelope(t, nil, true)), Request{}); !ok || u != (Usage{CacheRead: 2729216}) {
 			t.Fatalf("the real fixture: %+v %v", u, ok)
 		}
 		for name, c := range map[string]struct {
@@ -341,7 +344,7 @@ func TestEngineProfilesReadTheirUsage(t *testing.T) {
 			"every name zero":                 {map[string]any{"cache_read_input_tokens": 0, "input_tokens": 0}, 0},
 		} {
 			t.Run(name, func(t *testing.T) {
-				if u, ok := grok.Usage([]byte(grokUsageEnvelope(t, c.usage))); !ok || u != (Usage{CacheRead: c.want}) {
+				if u, ok := grok.Usage([]byte(grokUsageEnvelope(t, c.usage)), Request{}); !ok || u != (Usage{CacheRead: c.want}) {
 					t.Fatalf("usage = %+v %v, want %d", u, ok, c.want)
 				}
 			})
@@ -351,23 +354,28 @@ func TestEngineProfilesReadTheirUsage(t *testing.T) {
 			"a usage of no name": grokUsageEnvelope(t, map[string]any{"output_tokens": 10}),
 			"not an envelope":    "the review is done",
 		} {
-			if u, ok := grok.Usage([]byte(out)); ok {
+			if u, ok := grok.Usage([]byte(out), Request{}); ok {
 				t.Fatalf("%s: usage %+v read", name, u)
 			}
 		}
 	})
 	t.Run("astra counts its commands and reads the cached tokens", func(t *testing.T) {
-		if u, ok := astra.Usage([]byte(astraStream(astraAnswerText))); !ok || u != (Usage{CacheRead: 1039360, Commands: 1}) {
+		wt := t.TempDir()
+		if err := os.WriteFile(filepath.Join(wt, "a.go"), []byte("package a\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		req := Request{Worktree: wt}
+		if u, ok := astra.Usage([]byte(astraStream(astraAnswerText)), req); !ok || u != (Usage{CacheRead: 1039360, Commands: 0}) {
 			t.Fatalf("the real fixture: %+v %v", u, ok)
 		}
-		cmd := `{"type":"item.completed","item":{"id":"c","type":"command_execution","command":"ls","exit_code":0,"status":"completed"}}`
-		started := `{"type":"item.started","item":{"id":"c","type":"command_execution","command":"ls","status":"in_progress"}}`
+		cmd := astraCommandLine(t, "c", "cat "+filepath.Join(wt, "a.go"))
+		started := `{"type":"item.started","item":{"id":"c","type":"command_execution","command":"cat","status":"in_progress"}}`
 		stream := strings.Join([]string{started, cmd, started, cmd, cmd, "not an event",
 			`{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":4}}`}, "\n")
-		if u, ok := astra.Usage([]byte(stream)); !ok || u != (Usage{CacheRead: 4, Commands: 3}) {
+		if u, ok := astra.Usage([]byte(stream), req); !ok || u != (Usage{CacheRead: 4, Commands: 3}) {
 			t.Fatalf("three commands: %+v %v", u, ok)
 		}
-		if u, ok := astra.Usage([]byte(strings.Join([]string{cmd, cmd, cmd}, "\n"))); ok {
+		if u, ok := astra.Usage([]byte(strings.Join([]string{cmd, cmd, cmd}, "\n")), req); ok {
 			t.Fatalf("a stream without turn.completed: usage %+v read", u)
 		}
 	})
@@ -379,18 +387,26 @@ func TestEngineProfilesReadTheirUsage(t *testing.T) {
 		if res.CacheReadTokens != 2729216 || res.ElapsedMS != 59000 {
 			t.Fatalf("result = %+v", res)
 		}
-		cmd := `{"type":"item.completed","item":{"id":"c","type":"command_execution","command":"ls","exit_code":0,"status":"completed"}}`
-		res = checkFor(t, astra, fakeRun{stdout: astraStream(astraAnswerText)}, 50*time.Second)
+		wt := t.TempDir()
+		if err := os.WriteFile(filepath.Join(wt, "a.go"), []byte("package a\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		res = checkForWorktree(t, astra, wt, fakeRun{stdout: astraStream(astraAnswerText)}, 50*time.Second)
 		wantState(t, res, StateNotRead)
-		if res.Commands != 1 || res.CacheReadTokens != 1039360 {
+		if res.Commands != 0 || res.CacheReadTokens != 1039360 {
 			t.Fatalf("result = %+v", res)
 		}
-		res = checkFor(t, astra, fakeRun{stdout: cmd + "\n" + cmd + "\n" + astraStream(astraAnswerText)}, 50*time.Second)
+		var cmds []string
+		for i, command := range []string{"cat a.go", "sed -n 1,9p a.go", "head -1 a.go"} {
+			cmds = append(cmds, astraCommandLine(t, fmt.Sprintf("read_%d", i), command))
+		}
+		stream := strings.Join(cmds, "\n") + "\n" + astraStream(astraAnswerText)
+		res = checkForWorktree(t, astra, wt, fakeRun{stdout: stream}, 50*time.Second)
 		wantState(t, res, StateOK)
 		if res.Commands != 3 || res.Verdict != VerdictNeedsChanges {
 			t.Fatalf("result = %+v", res)
 		}
-		wantState(t, checkFor(t, astra, fakeRun{stdout: cmd + "\n" + cmd + "\n" + astraStream(astraAnswerText)}, 44*time.Second), StateNotRead)
+		wantState(t, checkForWorktree(t, astra, wt, fakeRun{stdout: stream}, 44*time.Second), StateNotRead)
 	})
 }
 
@@ -400,10 +416,15 @@ func TestEngineProfilesReadTheirUsage(t *testing.T) {
 // failed commands beside one that succeeded count one.
 func TestAstraCountsOnlyTheCommandsThatSucceeded(t *testing.T) {
 	astra := AstraProfile("/run/answer.strict.json")
+	wt := t.TempDir()
+	if err := os.WriteFile(filepath.Join(wt, "a.go"), []byte("package a\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	req := Request{Worktree: wt}
 	failed := `{"type":"item.completed","item":{"id":"item_15","type":"command_execution","command":"/usr/bin/zsh -lc \"rg -n 'type Escal' internal/flow/ops/*escal*\"","aggregated_output":"zsh:1: no matches found: internal/flow/ops/*escal*\n","exit_code":1,"status":"failed"}}`
 	failed2 := `{"type":"item.completed","item":{"id":"item_16","type":"command_execution","command":"/usr/bin/zsh -lc 'sed -n 1,9p nope.go'","aggregated_output":"sed: can't read nope.go\n","exit_code":2,"status":"failed"}}`
-	noExit := `{"type":"item.completed","item":{"id":"item_17","type":"command_execution","command":"/usr/bin/zsh -lc 'ls'","aggregated_output":"","status":"completed"}}`
-	ok := `{"type":"item.completed","item":{"id":"item_18","type":"command_execution","command":"/usr/bin/zsh -lc 'ls'","aggregated_output":"a.go\n","exit_code":0,"status":"completed"}}`
+	noExit := `{"type":"item.completed","item":{"id":"item_17","type":"command_execution","command":"/usr/bin/zsh -lc 'cat a.go'","aggregated_output":"","status":"completed"}}`
+	ok := `{"type":"item.completed","item":{"id":"item_18","type":"command_execution","command":"/usr/bin/zsh -lc 'cat a.go'","aggregated_output":"package a\n","exit_code":0,"status":"completed"}}`
 	turn := `{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":4}}`
 	for name, c := range map[string]struct {
 		lines []string
@@ -414,13 +435,13 @@ func TestAstraCountsOnlyTheCommandsThatSucceeded(t *testing.T) {
 		"a command with no exit code":    {[]string{noExit, ok, turn}, 1},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if u, read := astra.Usage([]byte(strings.Join(c.lines, "\n"))); !read || u != (Usage{CacheRead: 4, Commands: c.want}) {
+			if u, read := astra.Usage([]byte(strings.Join(c.lines, "\n")), req); !read || u != (Usage{CacheRead: 4, Commands: c.want}) {
 				t.Fatalf("usage %+v %v, want %d commands", u, read, c.want)
 			}
 		})
 	}
 	t.Run("three failed commands are a void pass through the adapter", func(t *testing.T) {
-		res := checkFor(t, astra, fakeRun{stdout: strings.Join([]string{failed, failed2, failed}, "\n") + "\n" + astraStream(astraAnswerText)}, 50*time.Second)
+		res := checkForWorktree(t, astra, wt, fakeRun{stdout: strings.Join([]string{failed, failed2, failed, ok}, "\n") + "\n" + astraStream(astraAnswerText)}, 50*time.Second)
 		wantState(t, res, StateNotRead)
 		if res.Commands != 1 || res.Verdict != "" || len(res.Findings) != 0 {
 			t.Fatalf("result = %+v, want the one command of the fixture that succeeded and no verdict", res)

@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -15,6 +17,28 @@ const (
 	deliveryRef  = "../../../plugins/crw/skills/crw-canon/references/delivery.md"
 	scriptDoc    = "../../../docs/flow/script.md"
 )
+
+// readFlowDoc reads a document; for the two sectioned indexes it returns the
+// section texts joined in index order, so a grader keeps reading the whole page.
+func readFlowDoc(path string) ([]byte, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil || (path != flowRef && path != scriptDoc) {
+		return raw, err
+	}
+	links := regexp.MustCompile(`\]\(((?:script|flow)/[^)#\s]+\.md)(?:#[^)\s]+)?\)`).FindAllSubmatch(raw, -1)
+	if len(links) == 0 {
+		return nil, fmt.Errorf("%s has no section links", path)
+	}
+	var out []byte
+	for _, link := range links {
+		part, err := os.ReadFile(filepath.Join(filepath.Dir(path), string(link[1])))
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, part...)
+	}
+	return out, nil
+}
 
 // tableRows are the rows of the markdown table that follows the line `marker`, with the header and the separator left out.
 func tableRows(t *testing.T, text, marker string) []string {
@@ -44,7 +68,7 @@ func tableRows(t *testing.T, text, marker string) []string {
 // row names `crw flow <sub>` commands, every one of them is in the command table of flow.md, and the resident-process sentences are
 // gone.
 func TestSchedulerDocRestartRowNamesRunCommands(t *testing.T) {
-	raw, err := os.ReadFile(schedulerDoc)
+	raw, err := readFlowDoc(schedulerDoc)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +86,7 @@ func TestSchedulerDocRestartRowNamesRunCommands(t *testing.T) {
 	if len(named) == 0 {
 		t.Fatalf("the row names no crw flow command: %s", row)
 	}
-	ref, err := os.ReadFile(flowRef)
+	ref, err := readFlowDoc(flowRef)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +165,7 @@ func docSection(t *testing.T, text, heading string) string {
 func TestFlowRefDescribesThePausedEnd(t *testing.T) {
 	read := func(path string) string {
 		t.Helper()
-		raw, err := os.ReadFile(path)
+		raw, err := readFlowDoc(path)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -175,7 +199,7 @@ func TestFlowRefDescribesThePausedEnd(t *testing.T) {
 func TestFlowDocsNameEvidencePlaced(t *testing.T) {
 	read := func(path string) string {
 		t.Helper()
-		raw, err := os.ReadFile(path)
+		raw, err := readFlowDoc(path)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -231,7 +255,7 @@ func TestOutcomeDocsStateThePrecedence(t *testing.T) {
 		"../../../docs/flow/script.md",
 		flowRef,
 	} {
-		raw, err := os.ReadFile(path)
+		raw, err := readFlowDoc(path)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -261,7 +285,7 @@ func TestOutcomeDocsStateThePrecedence(t *testing.T) {
 func TestDocsDescribeTheWriterHoldAndTheCancelDeadMember(t *testing.T) {
 	read := func(path string) string {
 		t.Helper()
-		raw, err := os.ReadFile(path)
+		raw, err := readFlowDoc(path)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -310,7 +334,7 @@ func TestDocsDescribeTheWriterHoldAndTheCancelDeadMember(t *testing.T) {
 func TestFlowRefDescribesTheAnswerDrain(t *testing.T) {
 	read := func(path string) string {
 		t.Helper()
-		raw, err := os.ReadFile(path)
+		raw, err := readFlowDoc(path)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -373,7 +397,7 @@ func retiredReviewWordsIn(text string) []string {
 // and close in their own words, with no word of the retired review paths.
 func TestFlowCanonDocsHaveNoRetiredReviewWords(t *testing.T) {
 	for _, path := range []string{flowRef, spawnRef, deliveryRef, scriptDoc} {
-		text, err := os.ReadFile(path)
+		text, err := readFlowDoc(path)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -404,7 +428,7 @@ func TestDocsNameTheBundlePullRequestSurface(t *testing.T) {
 		"../../../docs/flow/script.md",
 		flowRef,
 	} {
-		raw, err := os.ReadFile(path)
+		raw, err := readFlowDoc(path)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -421,7 +445,7 @@ func TestDocsNameTheBundlePullRequestSurface(t *testing.T) {
 			}
 		}
 	}
-	raw, err := os.ReadFile("../../../plugins/crw/skills/crw-run/SKILL.md")
+	raw, err := readFlowDoc("../../../plugins/crw/skills/crw-run/SKILL.md")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -435,7 +459,7 @@ func TestDocsNameTheBundlePullRequestSurface(t *testing.T) {
 // rule that it asks once per head, and that the built-in `project-lane` does not send one. The milestone reports section says it, and the
 // section of the supervisor channel lists the kind among the kinds of a report.
 func TestReportingDocNamesTheMergeRequestReport(t *testing.T) {
-	raw, err := os.ReadFile("../../../docs/flow/reporting.md")
+	raw, err := readFlowDoc("../../../docs/flow/reporting.md")
 	if err != nil {
 		t.Fatal(err)
 	}

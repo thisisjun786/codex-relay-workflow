@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // TestCases replays every registered target's pinned cases through the Go side only, with no Node
@@ -38,7 +40,18 @@ func TestCasesHoldWhereverTheCaseRootIs(t *testing.T) {
 	if info, err := os.Stat("/tmp"); err != nil || !info.IsDir() {
 		t.Skip("/tmp is not a directory on this host")
 	}
-	deep := filepath.Join(t.TempDir(), "a", "b", "c")
+	// Keep the generated name short: the pinned answers contain bounded path labels,
+	// so adding the whole test name would make those labels depend on the caller's TMPDIR.
+	deepRoot, err := tmploc.MkdirTemp("cx-deep-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(deepRoot); err != nil {
+			t.Errorf("remove deep case root: %v", err)
+		}
+	})
+	deep := filepath.Join(deepRoot, "a", "b", "c")
 	if err := os.MkdirAll(deep, 0o755); err != nil {
 		t.Fatal(err)
 	}

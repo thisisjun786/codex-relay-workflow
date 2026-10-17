@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"syscall"
 	"time"
 
@@ -92,28 +93,39 @@ func SpawnDetached(ctx context.Context, req SpawnRequest) (int, error) {
 		return 0, fmt.Errorf("the run is not started: %w", err)
 	}
 	cmd := DetachedCommand(self, req, log)
-	if err := cmd.Start(); err != nil {
+	readyR, readyW, err := os.Pipe()
+	if err != nil {
 		return 0, err
 	}
+	cmd.ExtraFiles = append(cmd.ExtraFiles, readyW)
+	cmd.Args = slices.Insert(cmd.Args, len(cmd.Args)-1, "--ready-fd", itoa(2+len(cmd.ExtraFiles)))
+	if err := cmd.Start(); err != nil {
+		_ = readyR.Close()
+		_ = readyW.Close()
+		return 0, err
+	}
+	_ = readyW.Close()
 	pid := cmd.Process.Pid
+	rememberSpawnReady(req.State, req.Spec.RunID, pid, readyR)
 	_ = cmd.Process.Release()
 	return pid, nil
 }
 
-// AwaitLock waits until the process of a run holds the run lock, or has ended after leaving a result (a run that finished before
-// the first look), and says so when the process ended without either. since is the time the process was started at. Only a run
-// process's hold counts (runHolder): a writer that holds the lock in the instant after the spawn is not the spawned process.
+// AwaitLock waits until the process of a run is known to have started, and says so when it did not. For a spawn of this binary the
+// acknowledgement over the spawn pipe answers (awaitSpawnReady): the child's _run writes once its own started row is durable. For a
+// spawn of another implementation (the in-process session harness) the lock it holds must name the same pid as a run process and
+// its newest started row's process lock must still be held (sessionStartHeld). since is the time the process was started at; it is
+// the caller's bookkeeping only, never evidence of a start.
 func AwaitLock(ctx context.Context, state, run string, pid int, since time.Time) error {
+	if handled, err := awaitSpawnReady(ctx, state, run, pid); handled {
+		return err
+	}
 	deadline := time.Now().Add(15 * time.Second)
 	for {
-		if live, _, _ := runHolder(state, run); live {
+		if live, heldPID, command := runHolder(state, run); live && heldPID == pid && runProcessCommand(command) && sessionStartHeld(ctx, state, run, pid) {
 			return nil
 		}
 		if processGone(pid) {
-			// the lock may have been taken and released between two looks: a result written since the start says so
-			if info, err := os.Stat(resultPath(state, run)); err == nil && !info.ModTime().Before(since.Add(-time.Second)) {
-				return nil
-			}
 			return fmt.Errorf("process %d ended before it held the run: %s", pid, logTail(state, run))
 		}
 		if time.Now().After(deadline) {
@@ -160,6 +172,7 @@ func logTail(state, run string) string {
 func (c *command) process(args []string) int {
 	fs, cm := c.flags()
 	resume := fs.Bool("resume", false, "go on with the journal an earlier process of the run left")
+	readyFD := fs.Int("ready-fd", -1, "")
 	positional, code, ok := parse(fs, args)
 	if !ok {
 		return code
@@ -178,11 +191,29 @@ func (c *command) process(args []string) int {
 	sigs := make(chan os.Signal, 4)
 	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP, syscall.SIGUSR1, syscall.SIGUSR2)
 	defer signal.Stop(sigs)
-	return c.execute(spec, sel.Path, *resume, sigs)
+	var notify func()
+	if *readyFD >= 0 {
+		if *readyFD <= 2 {
+			return c.usage("--ready-fd is a descriptor 3 or more")
+		}
+		ready := os.NewFile(uintptr(*readyFD), "flow-start-ready")
+		syscall.CloseOnExec(*readyFD)
+		defer ready.Close()
+		notify = func() {
+			_, _ = ready.Write([]byte{1})
+			_ = ready.Close()
+		}
+	}
+	return c.executeWithReady(spec, sel.Path, *resume, sigs, notify)
 }
 
 // execute runs a spec as this process: the lock, the world, the engine, the result. sigs delivers the signals the process answers.
 func (c *command) execute(spec Spec, state string, resume bool, sigs <-chan os.Signal) int {
+	return c.executeWithReady(spec, state, resume, sigs, nil)
+}
+
+// executeWithReady is execute whose engine reports this process's durable started row to started (nil: nobody waits on it).
+func (c *command) executeWithReady(spec Spec, state string, resume bool, sigs <-chan os.Signal, started func()) int {
 	// the run works below the TMPDIR its start recorded, whatever shell started this process (CRW-1570): a recorded directory that is
 	// gone refuses the run before any lock or row, and the recorded env is this process's until the run is done (the land-head ci local
 	// and the integration batch's own TMPDIR read it)
@@ -301,6 +332,8 @@ func (c *command) execute(spec Spec, state string, resume bool, sigs <-chan os.S
 		Upward: world.Upward, Session: world.Session,
 		// the run's recorded TMPDIR (CRW-1570) and the go the verifier runs (CRW-1488) reach every agent call the run starts
 		Tools: repositoryTools(c.getenv, spec.Env),
+		// the spawned process's committed started row is its readiness acknowledgement (CRW-1550)
+		Started: started,
 	}
 	if resume {
 		cfg.Resume = &engine.ResumeOptions{}

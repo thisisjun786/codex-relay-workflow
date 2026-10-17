@@ -1060,7 +1060,7 @@ func TestResumeAfterOpenQuestionRoutingChange(t *testing.T) {
 	l.Design = &d
 	// the binary before CRW-1347 had no background questions (CRW-1466 came after it): it strips the routes of the open questions'
 	// answers only, so the background record and the architect call before the design loop replay as they would for such a run
-	l.Lib = libWith(t, "lane.js", "route: r.route, reason: r.reason || '', scope: r.scope || '', authority: r.authority || '', answer,",
+	l.Lib = libWith(t, "lane-explore.js", "route: r.route, reason: r.reason || '', scope: r.scope || '', authority: r.authority || '', answer,",
 		"route: r.route, ...(kind === 'background' ? { reason: r.reason || '', scope: r.scope || '', authority: r.authority || '' } : {}), answer,")
 	if got := mustRun(t, l); got.State != "closed" {
 		t.Fatalf("state %q", got.State)

@@ -95,7 +95,7 @@ func flowOwnershipProblems(section string) []string {
 }
 
 func TestFlowControlOwnershipTableWording(t *testing.T) {
-	section := ownershipSection(readRepoText(t, flowRef))
+	section := ownershipSection(readFlowReference(t, flowRef))
 	if problems := flowOwnershipProblems(section); len(problems) > 0 {
 		t.Errorf("%s: %s\n%s", flowRef, strings.Join(problems, "\n  "), normalized(section))
 	}
@@ -117,7 +117,7 @@ func TestFlowControlOwnershipTableWording(t *testing.T) {
 	// The critic's design check is the critic's call (CRW-1434): no installed guidance gives it to a reviewer.
 	reviewerAudits := regexp.MustCompile(`(?i)design (audit|check),? by a reviewer|a reviewer of another model family (audits|checks) it|reviewer of another model family for the (design audit|critic's design check)`)
 	for _, path := range []string{flowRef, "plugins/crw/skills/crw-dev/SKILL.md", "plugins/crw/skills/crw-run/SKILL.md", "plugins/crw/skills/crw-canon/references/spawn-policy.md"} {
-		if m := reviewerAudits.FindString(normalized(readRepoText(t, path))); m != "" {
+		if m := reviewerAudits.FindString(normalized(readFlowReference(t, path))); m != "" {
 			t.Errorf("%s gives the design audit to a reviewer: %q", path, m)
 		}
 	}
@@ -244,7 +244,7 @@ func TestRunProjectNeverClaimsRunEpoch(t *testing.T) {
 		t.Errorf("%s:\n  %s\n%s", runSkillFile, strings.Join(problems, "\n  "), normalized(section))
 	}
 	// The engine really claims the epoch before its first fenced write, which is what the section protects.
-	script := normalized(readRepoText(t, "docs/flow/script.md"))
+	script := normalized(readFlowReference(t, "docs/flow/script.md"))
 	if !strings.Contains(script, "Before its first fenced write the run claims the plan's coordinator epoch") {
 		t.Error("docs/flow/script.md no longer says that the run claims the plan's coordinator epoch before its first fenced write; revisit the section of crw-run")
 	}
@@ -383,7 +383,7 @@ func TestRunSkillNamesTheBundleSplitRequest(t *testing.T) {
 			t.Errorf("%s no longer writes %s; revisit crw-run, reporting.md and the spawn policy", reportHookFile, want)
 		}
 	}
-	if lane := readRepoText(t, "internal/flow/workflows/project-lane.js"); !strings.Contains(lane, "ask: 'bundle_split_request'") {
+	if lane := readRepoText(t, "internal/flow/workflows/lib/project-build.js"); !strings.Contains(lane, "ask: 'bundle_split_request'") {
 		t.Error("project-lane.js no longer escalates a bundle_split node with ask bundle_split_request; revisit crw-run, reporting.md and the spawn policy")
 	}
 
@@ -518,13 +518,13 @@ func TestRunSkillSaysASplitRunsSubTasksOnOneExecutor(t *testing.T) {
 		t.Errorf("task-packet.md introduction:\n  %s", strings.Join(p, "\n  "))
 	}
 	for _, doc := range []string{"docs/flow/script.md", "docs/flow/journal.md"} {
-		if p := splitDocProblems(readRepoText(t, doc)); len(p) > 0 {
+		if p := splitDocProblems(readFlowReference(t, doc)); len(p) > 0 {
 			t.Errorf("%s:\n  %s", doc, strings.Join(p, "\n  "))
 		}
 	}
 	// The pages name what the lane really does: the sub-task turn's label, the checkpoint commit against the sub-task's regions, a branch
 	// of its own for a split node's receipts and the committed check of the whole change; no check names a sub-task.
-	lane := readRepoText(t, "internal/flow/workflows/project-lane.js")
+	lane := readRepoText(t, "internal/flow/workflows/lib/project-build.js")
 	for _, want := range []string{"label: 'subtask:' + node + ':' + tier + ':s'", "crw.commit(node, ex, sub.edit_regions)", "!(plan.sub_tasks && plan.sub_tasks.length)",
 		"} else if (subs.length) {", "commit: head, base: ci.base"} {
 		if !strings.Contains(lane, want) {
@@ -855,7 +855,7 @@ func TestPlanHandoffNamesTheCompilerKeys(t *testing.T) {
 // ".N" suffix a re-plan adds, and the key warnings of plan-input are said to reach a pipe through the project's warnings member.
 func TestPlanKeyDocsNameTheMilestoneKey(t *testing.T) {
 	plan := normalized(readRepoText(t, planSkillFile))
-	flow := normalized(readRepoText(t, "plugins/crw/skills/crw-canon/references/flow.md"))
+	flow := normalized(readFlowReference(t, "plugins/crw/skills/crw-canon/references/flow.md"))
 	for name, c := range map[string]struct{ text, want, notWant string }{
 		"crw-plan names the key form":     {plan, "`OWNER:NAME:N` for a milestone plan (`crw flow plan-input` prints it)", "the project's UUID"},
 		"flow.md start fact names it":     {flow, "(`OWNER:NAME:N` for a milestone plan), so the run's first claim", "(the project's UUID)"},
@@ -885,7 +885,7 @@ func taskPacketScopeProblems(intro string) []string {
 		`(?i)bundle split`,
 		`(?i)(sends|gets)( it)? no (task )?packet`,
 		`(?i)no PABCD state machine`,
-		`flow\.md#who-owns-control-in-a-flow-managed-run`,
+		`flow/control\.md#who-owns-control-in-a-flow-managed-run`,
 	}) {
 		problems = append(problems, "the introduction lacks "+p)
 	}
@@ -904,7 +904,7 @@ func TestTaskPacketIsForAPlanWithNoRun(t *testing.T) {
 	if problems := taskPacketScopeProblems(intro); len(problems) > 0 {
 		t.Errorf("task-packet.md introduction:\n  %s\n%s", strings.Join(problems, "\n  "), normalized(intro))
 	}
-	good := "The packets are for a `child` session of a plan with no run. A flow run starts no `child` session: a node sized for one goes up as a `size_split` escalation with detail `child_retired` and the repository session asks for a bundle split. A node a run releases gets no packet from the thread and starts no PABCD state machine ([control](../../crw-canon/references/flow.md#who-owns-control-in-a-flow-managed-run))."
+	good := "The packets are for a `child` session of a plan with no run. A flow run starts no `child` session: a node sized for one goes up as a `size_split` escalation with detail `child_retired` and the repository session asks for a bundle split. A node a run releases gets no packet from the thread and starts no PABCD state machine ([control](../../crw-canon/references/flow/control.md#who-owns-control-in-a-flow-managed-run))."
 	if p := taskPacketScopeProblems(good); len(p) > 0 {
 		t.Fatalf("the good text is reported: %v", p)
 	}

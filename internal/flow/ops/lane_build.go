@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -60,7 +61,10 @@ type UnitCheck struct {
 	Checker  UnitChecker
 	Profile  func(mode string) (reviewadapter.Profile, error)
 	Fallback func(mode string) (reviewadapter.Profile, error)
-	Limit    time.Duration
+	// SubtaskProfile selects a prompt-taking tool for a scoped uncommitted check.
+	// When nil, Profile supplies the tool; its result must still prove that it received the prompt.
+	SubtaskProfile func() (reviewadapter.Profile, error)
+	Limit          time.Duration
 }
 
 // The modes of a unit check: the uncommitted changes an executor call left in the node's worktree (the pending tree crw.commit will
@@ -71,7 +75,7 @@ const (
 )
 
 // UnitCheckGuideRev is the revision of the review guide unitCheckPrompt builds the prompt from.
-const UnitCheckGuideRev = "crw-unit-check/1"
+const UnitCheckGuideRev = "crw-unit-check/2"
 
 // StateTreeMoved is the state of a unit check that was not run because the node's worktree is no longer the pending tree of the call
 // it was to judge: crw.commit commits that pending tree, so a check of another tree would be on no head.
@@ -137,6 +141,9 @@ type UnitCheckOpts struct {
 	// Evidence are the explorer's answers to the evidence questions of the last check's findings (CRW-1490): the recheck's prompt
 	// carries them, and a check that carries evidence is no judgment when the tool was not given the prompt (PromptSent).
 	Evidence []Answer `json:"evidence,omitempty"`
+	// Sub scopes an uncommitted check to one sub-task's change (CRW-1564). It is a call option; the result and journal Data
+	// keep their existing shape. A committed check with a sub is an error.
+	Sub string `json:"sub,omitempty"`
 }
 
 // UnitCheckOutcome is the answer of crw.unitCheck: the adapter's record (the row's result, which crw.accept and the relay decode as a
@@ -176,9 +183,17 @@ func (o *unitCheckOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpR
 	} else if ex.CallID == "" {
 		return engine.OpResult{}, fmt.Errorf("crw.unitCheck: node %s: an uncommitted check needs the executor call it judges", node)
 	}
+	if mode == UnitCheckCommitted && opts.Sub != "" {
+		return engine.OpResult{}, fmt.Errorf("crw.unitCheck: node %s: a committed check judges the whole range, not sub-task %q", node, opts.Sub)
+	}
 	profile, err := uc.Profile(mode)
 	if err != nil {
 		return engine.OpResult{}, fmt.Errorf("crw.unitCheck: node %s: the %s profile: %w", node, mode, err)
+	}
+	if opts.Sub != "" && uc.SubtaskProfile != nil {
+		if profile, err = uc.SubtaskProfile(); err != nil {
+			return engine.OpResult{}, fmt.Errorf("crw.unitCheck: node %s: the sub-task profile: %w", node, err)
+		}
 	}
 	r := rows(req.Journal.Events())
 	wt := r.worktreeOf(node)
@@ -317,9 +332,18 @@ func (o *unitCheckOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpR
 		}
 	}
 	if rel, ok := releaseRowOf(r, node); ok {
-		data["execution_id"], data["criteria_digest"] = dataStr(rel, "execution_id"), dataStr(rel, "criteria_digest")
+		// A scoped check did not judge the node's full criteria. Keep the existing field empty so the relay's criteria-binding
+		// gate cannot accept it as a whole-node review.
+		data["execution_id"], data["criteria_digest"] = dataStr(rel, "execution_id"), ""
+		if opts.Sub == "" {
+			data["criteria_digest"] = dataStr(rel, "criteria_digest")
+		}
 	}
-	creq := reviewadapter.Request{Profile: profile, Worktree: wt, Prompt: unitCheckPrompt(r, node, mode, opts.Base, head, receipt, earlier), Schema: reviewadapter.AnswerSchema, Limit: uc.Limit,
+	prompt, err := unitCheckPrompt(r, node, mode, opts.Base, head, opts.Sub, receipt, earlier)
+	if err != nil {
+		return engine.OpResult{}, err
+	}
+	creq := reviewadapter.Request{Profile: profile, Worktree: wt, Prompt: prompt, Schema: reviewadapter.AnswerSchema, Limit: uc.Limit,
 		GuideRev: UnitCheckGuideRev}
 	if mode == UnitCheckCommitted {
 		// the range the reader of a committed profile takes an answer about (reviewadapter.Profile.Ranged), and the base a profile's Args
@@ -485,6 +509,12 @@ func (o *unitCheckOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpR
 			res.Findings = []reviewadapter.Finding{}
 		}
 	}
+	if opts.Sub != "" && res.State == reviewadapter.StateOK && !res.PromptSent {
+		res.State = reviewadapter.StateNoAnswer
+		res.Detail = "the unit-check tool was not given the sub-task scope; configure a profile that accepts the prompt"
+		res.Verdict = ""
+		res.Findings = []reviewadapter.Finding{}
+	}
 	if res.Findings == nil {
 		res.Findings = []reviewadapter.Finding{}
 	}
@@ -529,9 +559,12 @@ func (o *unitCheckOp) Proven(_ context.Context, _ []engine.Event, row engine.Eve
 // check names the receipts of the other executor calls of its range (EARLIER EXECUTOR RECEIPTS: each call with the digest and the file
 // of its receipt, not its bytes, which would overrun the one argument the tool takes the prompt as). A tool whose profile takes no prompt (the Codex review's Args leave it out) is not given these bytes; the call's
 // Result.PromptSent says so, and the row's receipt records it as handed false.
-func unitCheckPrompt(r rows, node, mode, base, head string, receipt checkReceipt, earlier []rangeReceipt) string {
+func unitCheckPrompt(r rows, node, mode, base, head, sub string, receipt checkReceipt, earlier []rangeReceipt) (string, error) {
 	var b strings.Builder
 	if mode == UnitCheckCommitted {
+		if sub != "" {
+			return "", fmt.Errorf("crw.unitCheck: node %s: a committed check judges the whole range, not sub-task %q", node, sub)
+		}
 		fmt.Fprintf(&b, "Review the changes between %s and %s (git diff %s..%s).\n", base, head, base, head)
 	} else {
 		b.WriteString("Review the uncommitted changes in this working tree.\n")
@@ -551,15 +584,44 @@ func unitCheckPrompt(r rows, node, mode, base, head string, receipt checkReceipt
 		}
 	}
 	var subs []SubTask
-	if ok && mode == UnitCheckCommitted {
-		if is, found, err := issueOf(r, rel, node); err == nil && found {
+	if ok && (sub != "" || mode == UnitCheckCommitted) {
+		is, found, err := issueOf(r, rel, node)
+		if err != nil && sub != "" {
+			return "", fmt.Errorf("crw.unitCheck: node %s: the DESIGN of its release: %w", node, err)
+		}
+		if err == nil && found {
 			subs = is.SubTasks
 		}
 	}
-	if len(subs) > 0 {
+	switch {
+	case sub != "":
+		at := slices.IndexFunc(subs, func(st SubTask) bool { return st.ID == sub })
+		if at < 0 {
+			return "", fmt.Errorf("crw.unitCheck: node %s: its DESIGN names no sub-task %q", node, sub)
+		}
+		st := subs[at]
+		b.WriteString("Inspect staged, unstaged and untracked changes without changing files. Earlier checkpoint commits are context, not the change under review.\n")
+		fmt.Fprintf(&b, "\nThis is the unit check of node %s (issue %s) of a crw run, of its sub-task %d of %d (%s) only. The node's sub-tasks are done in order on "+
+			"one executor thread, and this change is the work of this sub-task. Report every bug or regression you find in the change, and every way it does not meet "+
+			"the sub-task's done condition or edits outside the sub-task's edit regions.\n", node, issue, at+1, len(subs), st.ID)
+		fmt.Fprintf(&b, "\nSUB-TASK %d of %d (%s): %s\nDONE CONDITION: %s\nEDIT REGIONS: %s\n", at+1, len(subs), st.ID, st.Summary, st.DoneCondition, strings.Join(st.EditRegions, ", "))
+		if at > 0 {
+			b.WriteString("\nEARLIER SUB-TASKS (done and committed: HEAD holds them, and they are not part of this change)\n")
+			for i := 0; i < at; i++ {
+				fmt.Fprintf(&b, "- %d. %s: %s\n", i+1, subs[i].ID, subs[i].Summary)
+			}
+		}
+		if at+1 < len(subs) {
+			b.WriteString("\nNOT DUE YET (the later sub-tasks: their work is absent from this change by design and is no finding of this check; the node's whole change is checked after the last one)\n")
+			for i := at + 1; i < len(subs); i++ {
+				fmt.Fprintf(&b, "- %d. %s: %s\n", i+1, subs[i].ID, subs[i].Summary)
+			}
+		}
+		criteria = nil
+	case mode == UnitCheckCommitted && len(subs) > 0:
 		fmt.Fprintf(&b, "\nThis is the unit check of node %s (issue %s) of a crw run, of the whole change of the node: its %d sub-tasks are done, and the range "+
 			"holds them all. Report every bug, regression or unmet criterion you find in the change.\n", node, issue, len(subs))
-	} else {
+	default:
 		fmt.Fprintf(&b, "\nThis is the unit check of node %s (issue %s) of a crw run. Report every bug, regression or unmet criterion you find in the change.\n", node, issue)
 	}
 	if len(criteria) > 0 {
@@ -596,7 +658,7 @@ func unitCheckPrompt(r rows, node, mode, base, head string, receipt checkReceipt
 			fmt.Fprintf(&b, "- call %s: sha256 %s, %d bytes, the file %s\n", e.call, e.receipt.digest, len(e.receipt.body), e.receipt.file)
 		}
 	}
-	return b.String()
+	return b.String(), nil
 }
 
 // rangeReceipt is the receipt taken of an executor call a commit of a committed check's range was made from.

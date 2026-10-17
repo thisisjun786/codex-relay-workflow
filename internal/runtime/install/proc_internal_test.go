@@ -15,6 +15,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/golden"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // FakeProcess is one /proc/<pid> entry: Exe is a link target ("" leaves no exe, "denied" one the
@@ -154,7 +155,7 @@ func TestLiveProcessesRuleOutOnlyWhatTheyRead(t *testing.T) {
 	// The gate is the directory the runtime lies in: closed (0700) to every other user unless a
 	// case opens it. Everything above it is the temporary directory's, and must let anyone search
 	// it for the cases that open the gate.
-	gate, err := os.MkdirTemp("", "crw-proc-")
+	gate, err := tmploc.MkdirTemp("crw-proc-")
 	if err != nil {
 		t.Fatal(err)
 	}

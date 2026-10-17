@@ -16,6 +16,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // The twelve delivery commands through the built `crw relay` over a copy of the seeded store.
@@ -46,7 +47,7 @@ type cliSide struct {
 // newSide is the built `crw relay` with its own home and a copy of the CLI seed, over the artifact
 // tree at work (a parityTree, because a revision hash covers the declared path).
 func newSide(t *testing.T, work string) *cliSide {
-	home, err := os.MkdirTemp(os.TempDir(), "side-")
+	home, err := tmploc.MkdirTemp("side-")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -52,7 +52,7 @@ func crw1591Verify() int {
 	}
 	receipts := os.Args[6]
 	probe := func(job string) localStep {
-		return localStep{name: "probe " + job, kind: localRun, scope: "full",
+		return localStep{name: "probe " + job, kind: localRun, scope: "full", heavy: true,
 			command: `"$CRW_CPU_TEST_BIN"`,
 			env:     []string{"CRW_CPU_RECEIPT=" + filepath.Join(receipts, job+".json")}}
 	}
@@ -75,6 +75,7 @@ func crw1591Verify() int {
 		WorkRoot:    os.Args[3],
 		Jobs:        jobs,
 		CPUs:        cpus,
+		HeavyGate:   os.Getenv("CRW_CPU_TEST_HEAVY_GATE"),
 		gitCeilings: []string{localTestTempDir()},
 		Env:         []string{"CRW_TEST_CPU_HELPER=probe", "CRW_CPU_TEST_BIN=" + os.Args[0]},
 	}
@@ -133,9 +134,11 @@ func crw1591FakeTool(t *testing.T, name, body string) string {
 func crw1591Probe() int {
 	receipt := map[string]any{
 		"gomaxprocs": runtime.GOMAXPROCS(0),
+		"numCPU":     runtime.NumCPU(),
 		"GOFLAGS":    os.Getenv("GOFLAGS"),
 		"GOMAXPROCS": os.Getenv("GOMAXPROCS"),
 		"GODEBUG":    os.Getenv("GODEBUG"),
+		"cpuProcs":   os.Getenv("CRW_CI_CPU_PROCS"),
 	}
 	group := ""
 	if data, err := os.ReadFile("/proc/self/cgroup"); err == nil {
@@ -213,8 +216,8 @@ func TestCRW1591FallbackProcessAndRecord(t *testing.T) {
 		t.Fatalf("the run is %q: %+v", made.Result, made.Jobs)
 	}
 	probe := crw1591Receipt(t, receipt)
-	if got := probe["gomaxprocs"]; got != float64(4) {
-		t.Errorf("the step's GOMAXPROCS = %v, want 4 (receipt %v)", got, probe)
+	if got := probe["gomaxprocs"]; got != float64(1) {
+		t.Errorf("the step's GOMAXPROCS = %v, want 1 (receipt %v)", got, probe)
 	}
 	if got := probe["GOFLAGS"]; got != "-p=4" {
 		t.Errorf("the step's GOFLAGS = %v, want -p=4", got)
@@ -278,11 +281,13 @@ func TestCRW1591BudgetDistribution(t *testing.T) {
 		cpus, jobs, parallel           int
 		wantJobs, wantParallel, wantGM int
 	}{
-		"default four":       {4, 0, 0, 1, 4, 4},
-		"eight two jobs":     {8, 0, 4, 2, 4, 4},
-		"explicit jobs":      {4, 2, 4, 2, 2, 2},
+		"default four":       {4, 0, 0, 1, 4, 1},
+		"eight two jobs":     {8, 0, 4, 2, 4, 1},
+		"explicit jobs":      {4, 2, 4, 2, 2, 1},
 		"jobs clamp to cpus": {4, 9, 4, 4, 1, 1},
-		"wide parallel":      {4, 0, 8, 1, 4, 4},
+		"wide parallel":      {4, 0, 8, 1, 4, 1},
+		"eight p1":           {8, 2, 1, 2, 1, 4},
+		"five two jobs":      {5, 2, 2, 2, 2, 1},
 	} {
 		t.Run(name, func(t *testing.T) {
 			got, err := localCPUOptions(localOptions{CPUs: test.cpus, Jobs: test.jobs, Parallel: test.parallel})
@@ -294,8 +299,14 @@ func TestCRW1591BudgetDistribution(t *testing.T) {
 			}
 			want := recordCPU{Limit: test.cpus, Method: localCPUFallback, Jobs: test.wantJobs,
 				Parallel: test.wantParallel, GOMAXPROCS: test.wantGM}
-			if got.cpu == nil || *got.cpu != want {
+			if got.cpu == nil {
+				t.Fatal("resolved options carry no cpu record")
+			}
+			if *got.cpu != want {
 				t.Errorf("cpu = %+v, want %+v", got.cpu, want)
+			}
+			if product := got.Jobs * got.Parallel * got.cpu.GOMAXPROCS; product > test.cpus {
+				t.Errorf("jobs*parallel*GOMAXPROCS = %d exceeds budget %d", product, test.cpus)
 			}
 		})
 	}
@@ -351,8 +362,8 @@ func TestCRW1591HostScopeOrFallback(t *testing.T) {
 					t.Errorf("the two jobs ran in different groups %v / %v", a["cgroup"], b["cgroup"])
 				}
 				for _, probe := range []map[string]any{a, b} {
-					if probe["gomaxprocs"] != float64(4) {
-						t.Errorf("scoped probe GOMAXPROCS = %v, want 4 (%v)", probe["gomaxprocs"], probe)
+					if want := min(4, probe["numCPU"].(float64)); probe["gomaxprocs"] != want {
+						t.Errorf("scoped probe GOMAXPROCS = %v, want %v (%v)", probe["gomaxprocs"], want, probe)
 					}
 					if cores := crw1591QuotaCores(t, probe["cpuMax"]); cores > 4 {
 						t.Errorf("scoped cpu.max %v = %v cores, want <= 4", probe["cpuMax"], cores)
@@ -362,10 +373,9 @@ func TestCRW1591HostScopeOrFallback(t *testing.T) {
 				if scoped {
 					t.Errorf("method gomaxprocs but the probe ran inside scope %v", a["cgroup"])
 				}
-				wantEnv := strconv.Itoa(4 / jobs)
 				for _, probe := range []map[string]any{a, b} {
-					if probe["GOMAXPROCS"] != wantEnv || probe["gomaxprocs"] != float64(4/jobs) {
-						t.Errorf("fallback probe env/limit = %v/%v, want %s (%v)", probe["GOMAXPROCS"], probe["gomaxprocs"], wantEnv, probe)
+					if probe["GOMAXPROCS"] != "1" || probe["gomaxprocs"] != float64(1) {
+						t.Errorf("fallback probe env/limit = %v/%v, want 1 (%v)", probe["GOMAXPROCS"], probe["gomaxprocs"], probe)
 					}
 				}
 			default:
@@ -394,14 +404,14 @@ func TestCRW1591UnavailableScopeFallsBack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := recordCPU{Limit: 4, Method: localCPUFallback, Jobs: 2, Parallel: 2, GOMAXPROCS: 2}
+	want := recordCPU{Limit: 4, Method: localCPUFallback, Jobs: 2, Parallel: 2, GOMAXPROCS: 1}
 	if made.CPU == nil || *made.CPU != want {
 		t.Fatalf("record cpu = %+v, want %+v", made.CPU, want)
 	}
 	for _, job := range []string{"cpu-a", "cpu-b"} {
 		probe := crw1591Receipt(t, filepath.Join(receipts, job+".json"))
-		if probe["GOMAXPROCS"] != "2" || probe["gomaxprocs"] != float64(2) {
-			t.Errorf("%s probe env/limit = %v/%v, want 2 (%v)", job, probe["GOMAXPROCS"], probe["gomaxprocs"], probe)
+		if probe["GOMAXPROCS"] != "1" || probe["gomaxprocs"] != float64(1) {
+			t.Errorf("%s probe env/limit = %v/%v, want 1 (%v)", job, probe["GOMAXPROCS"], probe["gomaxprocs"], probe)
 		}
 	}
 }
@@ -444,7 +454,8 @@ func TestCRW1591CPUSettingsAreSealed(t *testing.T) {
 	plan := []localJob{{name: "validate", steps: []localStep{
 		{kind: localAction, action: localCheckout, scope: "full"},
 		{name: "probe", kind: localRun, scope: "full", command: `"$CRW_CPU_TEST_BIN"`,
-			env: []string{"GOMAXPROCS=99", "GOFLAGS=-p=99", "GODEBUG=containermaxprocs=0"}},
+			env: []string{"GOMAXPROCS=99", "GOFLAGS=-p=99", "GODEBUG=containermaxprocs=0",
+				"CRW_CI_CPU_PROCS=/dev/null"}},
 	}}}
 	opts := localRunOptions(repo, plan, filepath.Join(t.TempDir(), "record.json"))
 	opts.CPUs = 4
@@ -454,6 +465,7 @@ func TestCRW1591CPUSettingsAreSealed(t *testing.T) {
 		"CRW_CPU_RECEIPT=" + receipt,
 		"CRW_CPU_TEST_BIN=" + self,
 		"GOMAXPROCS=99", "GOFLAGS=-p=99", "GODEBUG=containermaxprocs=0",
+		"CRW_CI_CPU_PROCS=/dev/null",
 	}
 	made, _, err := localVerify(opts, "", io.Discard)
 	if err != nil {
@@ -463,8 +475,11 @@ func TestCRW1591CPUSettingsAreSealed(t *testing.T) {
 		t.Fatalf("the run is %q: %+v", made.Result, made.Jobs)
 	}
 	probe := crw1591Receipt(t, receipt)
-	if probe["gomaxprocs"] != float64(4) || probe["GOMAXPROCS"] != "4" {
-		t.Errorf("sealed GOMAXPROCS = %v/%v, want 4 (%v)", probe["gomaxprocs"], probe["GOMAXPROCS"], probe)
+	if probe["gomaxprocs"] != float64(1) || probe["GOMAXPROCS"] != "1" {
+		t.Errorf("sealed GOMAXPROCS = %v/%v, want 1 (%v)", probe["gomaxprocs"], probe["GOMAXPROCS"], probe)
+	}
+	if probe["cpuProcs"] != "" {
+		t.Errorf("fallback step leaked CRW_CI_CPU_PROCS = %v, want unset", probe["cpuProcs"])
 	}
 	if probe["GOFLAGS"] != "-p=4" {
 		t.Errorf("sealed GOFLAGS = %v, want -p=4", probe["GOFLAGS"])
@@ -566,7 +581,7 @@ func TestCRW1591CPUReuseKeys(t *testing.T) {
 	}
 	otherJobs := back
 	split := *back.CPU
-	split.Jobs, split.Parallel, split.GOMAXPROCS = 2, 2, 2
+	split.Jobs, split.Parallel, split.GOMAXPROCS = 2, 2, 1
 	otherJobs.CPU = &split
 	if ok, _ := localTreeReuse(otherJobs, current4); ok {
 		t.Error("a different job split answers this budget")
@@ -587,5 +602,198 @@ func TestCRW1591CPUReuseKeys(t *testing.T) {
 	}
 	if ok, _ := localTreeReuse(back, current0); ok {
 		t.Error("a budgeted record answers an unbudgeted run")
+	}
+}
+
+// CRW-1601: a heavy gate that makes its own systemd scope must not move a step out of the
+// verification's shared budget. The fake gate below really launches an unbounded sibling scope
+// when it finds the verification's crw-ci-cpu- group, and writes the group it moved to beside
+// each probe receipt; the step body's own cgroup after the gate is what is judged.
+func TestCRW1601HeavyGateRemainsInBudget(t *testing.T) {
+	repo := newLocalFixture(t)
+	receipts := t.TempDir()
+	record := filepath.Join(t.TempDir(), "record.json")
+	gate := crw1591FakeTool(t, "crw-1601-gate", `#!/bin/sh
+if [ "$1" = "--inside" ]; then
+  shift
+  if [ -n "${CRW_CPU_RECEIPT:-}" ]; then
+    sed -n 's/^0:://p' /proc/self/cgroup > "${CRW_CPU_RECEIPT}.gate"
+  fi
+  exec "$@"
+fi
+if grep -q crw-ci-cpu- /proc/self/cgroup; then
+  exec systemd-run --user --scope --quiet --expand-environment=no -- "$0" --inside "$@"
+fi
+exec "$0" --inside "$@"
+`)
+	res := crw1591RunVerify(t, repo, "4", "2", receipts, record, "",
+		[]string{"CRW_CPU_TEST_HEAVY_GATE=" + filepath.Join(gate, "crw-1601-gate")})
+	if res.code != 0 {
+		t.Fatalf("the verify helper exits %d: %s\n%s", res.code, res.stderr, res.stdout)
+	}
+	made, err := readRecord(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if made.CPU == nil {
+		t.Fatal("the record carries no CPU budget")
+	}
+	a := crw1591Receipt(t, filepath.Join(receipts, "cpu-a.json"))
+	b := crw1591Receipt(t, filepath.Join(receipts, "cpu-b.json"))
+	gateGroup := func(job string) string {
+		data, err := os.ReadFile(filepath.Join(receipts, job+".json.gate"))
+		if err != nil {
+			return ""
+		}
+		return strings.TrimSpace(string(data))
+	}
+	ga, gb := gateGroup("cpu-a"), gateGroup("cpu-b")
+	t.Logf("record cpu: %+v; gate groups %q %q", *made.CPU, ga, gb)
+	t.Logf("probe cpu-a: %v", a)
+	t.Logf("probe cpu-b: %v", b)
+	switch made.CPU.Method {
+	case localCPUCgroup:
+		for _, probe := range []map[string]any{a, b} {
+			group := fmt.Sprintf("%v", probe["cgroup"])
+			if !strings.Contains(group, "crw-ci-cpu-") {
+				t.Errorf("the gated step ran in %q, outside the verification scope", group)
+			}
+			if cores := crw1591QuotaCores(t, probe["cpuMax"]); cores > 4 {
+				t.Errorf("gated cpu.max %v = %v cores, want <= 4", probe["cpuMax"], cores)
+			}
+			if want := min(4, probe["numCPU"].(float64)); probe["gomaxprocs"] != want {
+				t.Errorf("gated probe GOMAXPROCS = %v, want %v (%v)", probe["gomaxprocs"], want, probe)
+			}
+		}
+		if a["cgroup"] != b["cgroup"] {
+			t.Errorf("the two gated jobs ran in different groups %v / %v", a["cgroup"], b["cgroup"])
+		}
+		for i, g := range []string{ga, gb} {
+			if g == "" || g == []map[string]any{a, b}[i]["cgroup"] {
+				t.Errorf("gate group %q does not prove the body returned to the shared scope", g)
+			}
+		}
+	case localCPUFallback:
+		want := made.CPU.GOMAXPROCS
+		if want <= 0 || made.CPU.Jobs*made.CPU.Parallel*want > made.CPU.Limit {
+			t.Errorf("fallback product %d*%d*%d exceeds limit %d", made.CPU.Jobs, made.CPU.Parallel, want, made.CPU.Limit)
+		}
+		for _, probe := range []map[string]any{a, b} {
+			if probe["GOMAXPROCS"] != strconv.Itoa(want) || probe["gomaxprocs"] != float64(want) {
+				t.Errorf("fallback probe %v does not match record gomaxprocs %d", probe, want)
+			}
+		}
+	default:
+		t.Errorf("method %q is neither %s nor %s", made.CPU.Method, localCPUCgroup, localCPUFallback)
+	}
+}
+
+// CRW-1601: the fallback divides GOMAXPROCS per concurrently running Go package, so
+// jobs × parallel × GOMAXPROCS stays inside the budget — observed with real step processes.
+func TestCRW1601FallbackPackageBudget(t *testing.T) {
+	for name, tc := range map[string]struct{ cpus, jobs, parallel, wantGM int }{
+		"four one job":   {4, 1, 4, 1},
+		"eight two jobs": {8, 2, 2, 2},
+	} {
+		t.Run(name, func(t *testing.T) {
+			repo := newLocalFixture(t)
+			receipt := filepath.Join(t.TempDir(), "probe.json")
+			self, err := os.Executable()
+			if err != nil {
+				t.Fatal(err)
+			}
+			opts := localRunOptions(repo, localFixturePlan(`"$CRW_CPU_TEST_BIN"`), filepath.Join(t.TempDir(), "record.json"))
+			opts.CPUs, opts.Jobs, opts.Parallel = tc.cpus, tc.jobs, tc.parallel
+			opts.Env = []string{"PATH=" + fakeNodeBin(t, "24.20.0"), "CRW_TEST_CPU_HELPER=probe",
+				"CRW_CPU_RECEIPT=" + receipt, "CRW_CPU_TEST_BIN=" + self}
+			made, _, err := localVerify(opts, "", io.Discard)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if made.Result != localPass {
+				t.Fatalf("the run is %q: %+v", made.Result, made.Jobs)
+			}
+			probe := crw1591Receipt(t, receipt)
+			if probe["gomaxprocs"] != float64(tc.wantGM) {
+				t.Errorf("GOMAXPROCS = %v, want %d", probe["gomaxprocs"], tc.wantGM)
+			}
+			if probe["GOFLAGS"] != fmt.Sprintf("-p=%d", tc.parallel) {
+				t.Errorf("GOFLAGS = %v, want -p=%d", probe["GOFLAGS"], tc.parallel)
+			}
+			if made.CPU == nil {
+				t.Fatal("the record carries no CPU budget")
+			}
+			if made.CPU.GOMAXPROCS != tc.wantGM {
+				t.Errorf("record cpu = %+v, want gomaxprocs %d", made.CPU, tc.wantGM)
+			}
+			observed := int(probe["gomaxprocs"].(float64))
+			if product := made.CPU.Jobs * made.CPU.Parallel * observed; product > made.CPU.Limit {
+				t.Errorf("jobs*parallel*GOMAXPROCS = %d exceeds limit %d", product, made.CPU.Limit)
+			}
+		})
+	}
+}
+
+// CRW-1601: a gate that cannot bring its step back into the verification's scope refuses the
+// step before its body — a WARNING, a failed record, method systemd-cgroup-v2-gate-unavailable,
+// and the body never ran. The seam is deterministic: the named group does not exist, so the
+// guard's own-PID write fails without needing real systemd.
+func TestCRW1601UnjoinableGateRefuses(t *testing.T) {
+	repo := newLocalFixture(t)
+	sentinel := filepath.Join(t.TempDir(), "body-ran")
+	gate := crw1591FakeTool(t, "crw-1601-pass", "#!/bin/sh\nexec \"$@\"\n")
+	recordPath := filepath.Join(t.TempDir(), "record.json")
+	plan := []localJob{{name: "validate", steps: []localStep{
+		{kind: localAction, action: localCheckout, scope: "full"},
+		{name: "sentinel", kind: localRun, scope: "full", heavy: true,
+			command: "echo ran > '" + sentinel + "'"},
+	}}}
+	opts := localRunOptions(repo, plan, recordPath)
+	opts.CPUs = 4
+	opts.cpuMethod = localCPUCgroup
+	opts.cpuGroup = "/crw-1601-missing"
+	opts.HeavyGate = filepath.Join(gate, "crw-1601-pass")
+	opts.Env = []string{"PATH=" + fakeNodeBin(t, "24.20.0")}
+	var stderr bytes.Buffer
+	code := localRunAndReport(opts, "", io.Discard, &stderr)
+	if code == 0 {
+		t.Fatalf("a step that cannot rejoin exits %d, want nonzero", code)
+	}
+	made, err := readRecord(recordPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if made.Result != localFail {
+		t.Errorf("record result = %q, want %q", made.Result, localFail)
+	}
+	if made.CPU == nil || made.CPU.Method != localCPUGateUnavailable {
+		t.Errorf("record cpu = %+v, want method %s", made.CPU, localCPUGateUnavailable)
+	}
+	if !strings.Contains(stderr.String(), "WARNING") || !strings.Contains(stderr.String(), localCPUGateFailure) {
+		t.Errorf("stderr lacks the gate warning: %q", stderr.String())
+	}
+	if _, err := os.Stat(sentinel); !os.IsNotExist(err) {
+		t.Errorf("the refused body ran: %v exists", sentinel)
+	}
+}
+
+// CRW-1601: the gate-unavailable method classifies only a cgroup run whose failed step printed
+// the marker — an ordinary fallback step that happens to print the same warning text keeps its
+// honest gomaxprocs method.
+func TestCRW1601FallbackFailureKeepsMethod(t *testing.T) {
+	repo := newLocalFixture(t)
+	recordPath := filepath.Join(t.TempDir(), "record.json")
+	opts := localRunOptions(repo, localFixturePlan("printf '%s\\n' '"+localCPUGateFailure+"'; exit 1"), recordPath)
+	opts.CPUs = 4
+	opts.Env = []string{"PATH=" + fakeNodeBin(t, "24.20.0")}
+	made, _, err := localVerify(opts, "", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if made.Result != localFail {
+		t.Fatalf("the run is %q, want %q", made.Result, localFail)
+	}
+	if made.CPU == nil || made.CPU.Method != localCPUFallback {
+		t.Errorf("record cpu = %+v, want method %s", made.CPU, localCPUFallback)
 	}
 }

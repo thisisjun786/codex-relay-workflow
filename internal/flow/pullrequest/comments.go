@@ -2,8 +2,9 @@ package pullrequest
 
 // `crw flow pr comments` (CRW-1460): collects the known review bots' comments of a pull request (issue comments, inline
 // review comments and reviews), deduplicates identical findings into items keyed by the sha256 of their normalized
-// (body, path, line), applies the caller's dispositions and persists the crw-pr-review/1 record. At most two rounds: a
+// (body, path, first observed line), applies the caller's dispositions and persists the crw-pr-review/1 record. At most two rounds: a
 // second round that still has unresolved items answers round_limit.
+// A new finding whose location key is already owned uses the tuple [normalized body, path, line, source id] instead.
 
 import (
 	"context"
@@ -41,11 +42,24 @@ type CommentsInput struct {
 // noteNoBots is the note a not_connected record carries.
 const noteNoBots = "리뷰 봇 미연결"
 
+func normalizedCommentBody(body string) string {
+	return strings.TrimSpace(strings.ReplaceAll(body, "\r\n", "\n"))
+}
+
 // commentKey is the deduplication key of a comment: the sha256 of the JSON tuple [normalized body, path, line], where the
 // body is CRLF-normalized and trimmed on the outside only.
 func commentKey(c tracking.PRReviewComment) (string, error) {
-	body := strings.TrimSpace(strings.ReplaceAll(c.Body, "\r\n", "\n"))
+	body := normalizedCommentBody(c.Body)
 	tuple, err := json.Marshal([3]any{body, c.Path, c.Line})
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(tuple)
+	return hex.EncodeToString(sum[:]), nil
+}
+
+func commentIdentityKey(c tracking.PRReviewComment) (string, error) {
+	tuple, err := json.Marshal([4]any{normalizedCommentBody(c.Body), c.Path, c.Line, c.ID})
 	if err != nil {
 		return "", err
 	}
@@ -155,28 +169,35 @@ func Comments(ctx context.Context, source interface {
 		}
 		return rec, nil
 	}
-	// merge the collection into the previous items: a comment of a known key joins the item, a new key is a new item, and a
-	// source id that changed its body or place moves out of its old item (which is dropped only when nothing else observes it)
+	// merge by source identity before indexing current findings: a current-location duplicate joins the item, and a
+	// source id that changed its body or path moves out of its old item (which is dropped only when nothing else observes it)
 	items := []tracking.PRReviewItem{}
-	byKey := map[string]int{}
+	usedKeys := map[string]bool{}
 	bySource := map[string]int{}
 	if prev != nil {
 		for _, it := range prev.Items {
 			idx := len(items)
 			items = append(items, it)
-			byKey[it.Key] = idx
+			usedKeys[it.Key] = true
 			for _, c := range it.Comments {
 				bySource[c.ID] = idx
 			}
 		}
 	}
-	dropped := map[int]bool{}
+	pending := []tracking.PRReviewComment{}
 	for _, c := range comments {
-		key, err := commentKey(c)
-		if err != nil {
-			return tracking.PRReviewRecord{}, err
-		}
-		if old, ok := bySource[c.ID]; ok && !dropped[old] && items[old].Key != key {
+		if old, ok := bySource[c.ID]; ok {
+			unchanged := false
+			for i, oc := range items[old].Comments {
+				if oc.ID == c.ID && oc.Path == c.Path && normalizedCommentBody(oc.Body) == normalizedCommentBody(c.Body) {
+					items[old].Comments[i] = c
+					unchanged = true
+					break
+				}
+			}
+			if unchanged {
+				continue
+			}
 			kept := items[old].Comments[:0]
 			for _, oc := range items[old].Comments {
 				if oc.ID != c.ID {
@@ -185,39 +206,65 @@ func Comments(ctx context.Context, source interface {
 			}
 			items[old].Comments = kept
 			delete(bySource, c.ID)
-			if len(items[old].Comments) == 0 {
-				dropped[old] = true
-				delete(byKey, items[old].Key)
-			}
 		}
-		if idx, ok := byKey[key]; ok && !dropped[idx] {
+		pending = append(pending, c)
+	}
+	byFinding := map[string]int{}
+	for i, it := range items {
+		if len(it.Comments) == 0 {
+			continue
+		}
+		for _, c := range it.Comments {
+			fingerprint, err := commentKey(c)
+			if err != nil {
+				return tracking.PRReviewRecord{}, err
+			}
+			byFinding[fingerprint] = i
+		}
+	}
+	for _, c := range pending {
+		fingerprint, err := commentKey(c)
+		if err != nil {
+			return tracking.PRReviewRecord{}, err
+		}
+		if idx, ok := byFinding[fingerprint]; ok {
 			known := false
-			for _, oc := range items[idx].Comments {
-				known = known || oc.ID == c.ID
+			for i, oc := range items[idx].Comments {
+				if oc.ID == c.ID {
+					items[idx].Comments[i] = c
+					known = true
+					break
+				}
 			}
 			if !known {
 				items[idx].Comments = append(items[idx].Comments, c)
 			}
-			bySource[c.ID] = idx
 			continue
+		}
+		key := fingerprint
+		if usedKeys[key] {
+			key, err = commentIdentityKey(c)
+			if err != nil {
+				return tracking.PRReviewRecord{}, err
+			}
+		}
+		if usedKeys[key] {
+			return tracking.PRReviewRecord{}, fmt.Errorf("review item key for comment %s collides with an existing item", c.ID)
 		}
 		idx := len(items)
 		items = append(items, tracking.PRReviewItem{Key: key, Comments: []tracking.PRReviewComment{c}})
-		byKey[key] = idx
-		bySource[c.ID] = idx
+		usedKeys[key] = true
+		byFinding[fingerprint] = idx
 	}
 	compacted := items[:0]
-	for i, it := range items {
-		if dropped[i] {
-			continue
-		}
-		if n := len(it.Comments); n > 0 {
+	for _, it := range items {
+		if len(it.Comments) > 0 {
 			compacted = append(compacted, it)
 		}
 	}
 	items = compacted
 	// every disposition names a known item (the keys re-index after compaction)
-	byKey = make(map[string]int, len(items))
+	byKey := make(map[string]int, len(items))
 	for i := range items {
 		byKey[items[i].Key] = i
 	}

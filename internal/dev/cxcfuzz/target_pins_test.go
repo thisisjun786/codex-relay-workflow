@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // A case tagged open or intentionally-changed pins a divergence: the two sides' answers must really
@@ -46,7 +48,7 @@ func caseIsADivergence(target Target, c Case) (problem string) {
 	if err != nil {
 		return "the input is not JSON: " + err.Error()
 	}
-	root, err := os.MkdirTemp("", "cxcfuzz-pin-")
+	root, err := tmploc.MkdirTemp("cxcfuzz-pin-")
 	if err != nil {
 		return err.Error()
 	}
@@ -115,7 +117,7 @@ func caseOracleMatches(target Target, pool *Pool, c Case) (problem string) {
 	if err != nil {
 		return "the input is not JSON: " + err.Error()
 	}
-	root, err := os.MkdirTemp("", "cxcfuzz-oracle-pin-")
+	root, err := tmploc.MkdirTemp("cxcfuzz-oracle-pin-")
 	if err != nil {
 		return err.Error()
 	}

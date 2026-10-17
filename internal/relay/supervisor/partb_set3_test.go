@@ -12,6 +12,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // checkStanding compares the public project answer on the fixture's store as it stands, as JSON
@@ -411,7 +412,8 @@ func Test24_SupervisorEmptyStringTruthinessMatchesTheGolden(t *testing.T) {
 				return code, stdout.Bytes(), stderr.Bytes()
 			}
 			goCmd := exec.Command(binary, append([]string{"relay", "--state", goState}, tc.args...)...)
-			goCmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "xdg-state"), "XDG_CONFIG_HOME="+filepath.Join(home, "xdg-config"), "XDG_DATA_HOME="+filepath.Join(home, "xdg-data"), "XDG_CACHE_HOME="+filepath.Join(home, "xdg-cache"), "CODEX_HOME="+filepath.Join(home, "codex"), "COLUMNS=80", "TMPDIR="+os.TempDir())
+			tmpRoot, _ := tmploc.Lookup(os.Getenv)
+			goCmd.Env = append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "xdg-state"), "XDG_CONFIG_HOME="+filepath.Join(home, "xdg-config"), "XDG_DATA_HOME="+filepath.Join(home, "xdg-data"), "XDG_CACHE_HOME="+filepath.Join(home, "xdg-cache"), "CODEX_HOME="+filepath.Join(home, "codex"), "COLUMNS=80", "TMPDIR="+tmpRoot)
 			goCode, goOut, goErr := run(goCmd)
 			golden.CheckJSON(t, "answer", map[string]any{"code": goCode, "stdout": string(goOut), "stderr": string(goErr)}, golden.Substitute(observation, "<observation>"), golden.Substitute(home, "<home>"), golden.Substitute(repoRoot(t), "<repo>"))
 		})

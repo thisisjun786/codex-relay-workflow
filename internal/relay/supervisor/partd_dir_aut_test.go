@@ -21,6 +21,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // partDFixture restores the tree a Python directive-places or autosend test left (the former
@@ -28,7 +29,7 @@ import (
 // tick times.
 func partDFixture(t *testing.T, module, id string) string {
 	t.Helper()
-	root, err := os.MkdirTemp("", "crw-partd-")
+	root, err := tmploc.MkdirTemp("crw-partd-")
 	if err != nil {
 		t.Fatal(err)
 	}

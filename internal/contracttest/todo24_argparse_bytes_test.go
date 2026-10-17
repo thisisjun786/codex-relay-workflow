@@ -9,6 +9,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 func todo24Root(t *testing.T) string {
@@ -41,7 +42,8 @@ func Test24IntentDeclareSamePathBytes(t *testing.T) {
 	if err := os.MkdirAll(workspace, 0700); err != nil {
 		t.Fatal(err)
 	}
-	env := append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "xdg-state"), "XDG_CONFIG_HOME="+filepath.Join(home, "xdg-config"), "XDG_DATA_HOME="+filepath.Join(home, "xdg-data"), "XDG_CACHE_HOME="+filepath.Join(home, "xdg-cache"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR="+os.TempDir())
+	tmpRoot, _ := tmploc.Lookup(os.Getenv)
+	env := append(os.Environ(), "HOME="+home, "XDG_STATE_HOME="+filepath.Join(home, "xdg-state"), "XDG_CONFIG_HOME="+filepath.Join(home, "xdg-config"), "XDG_DATA_HOME="+filepath.Join(home, "xdg-data"), "XDG_CACHE_HOME="+filepath.Join(home, "xdg-cache"), "CODEX_HOME="+filepath.Join(home, "codex"), "TMPDIR="+tmpRoot)
 	args := []string{"--state", state, "intent-declare", "--marker-root", marker, "--workspace", workspace, "--dispatch-request-id", "D", "--issue", "I", "--declared-at", "2026-01-01T00:00:00+00:00"}
 	// The assignment directory is named by the workspace's digest, which follows the temporary
 	// path; the golden names it by placeholder, and a check puts back this run's digest.

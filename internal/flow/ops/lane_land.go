@@ -64,6 +64,11 @@ func (o *acceptOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResu
 		return engine.OpResult{}, &Refusal{"node_not_released", "node " + node + " has no release in the journal"}
 	}
 	plan := dataStr(rel, "plan")
+	is, hasIssue, err := issueOf(r, rel, node)
+	if err != nil {
+		return engine.OpResult{}, fmt.Errorf("crw.accept: node %s: its released DESIGN: %w", node, err)
+	}
+	wholeRangeOnly := hasIssue && is.SizeFit == "split" && len(is.SubTasks) > 0
 	ver, ok := r.opRows(OpVerify).last(func(ev engine.Event) bool {
 		return dataStr(ev, "node") == node && dataStr(ev, "head") == head.Commit && dataBool(ev, "ok")
 	})
@@ -129,6 +134,11 @@ func (o *acceptOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResu
 				onHead = t != "" && strings.EqualFold(dataStr(ev, "tree"), t)
 			}
 			if onHead {
+				// An uncommitted check covers only this sub-task's pending change. A verified result cannot approve a
+				// split node; a matching negative judgment still refuses through the usual path below.
+				if wholeRangeOnly && dataStr(ev, "mode") != UnitCheckCommitted && res.Verdict == reviewadapter.VerdictVerified {
+					continue
+				}
 				judgedAt, uc = i, res
 			}
 		}

@@ -31,6 +31,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/reception"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 	_ "modernc.org/sqlite"
 )
 
@@ -127,7 +128,7 @@ func frozenStore() ([]byte, [][4]*string, error) {
 		if frozen.err != nil {
 			return
 		}
-		dir, err := os.MkdirTemp("", "sync-frozen-store-")
+		dir, err := tmploc.MkdirTemp("sync-frozen-store-")
 		if err != nil {
 			frozen.err = err
 			return

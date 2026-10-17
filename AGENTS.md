@@ -15,3 +15,15 @@
 - Editing source does not change an installed bridge or relay, a running service, an MCP registration, or an operational database. Report source, installation and live operation as separate facts.
 - For instruction changes, reuse valid evidence and run focused scenario review when behavior changes. Live tracking writes and worker launches require scope covering those actions.
 - Installed skills may be symlinks to this checkout. Source edits affect subsequent reads immediately; report installation and live execution as separate facts.
+
+## Development loop
+
+- Use one worktree and one task branch from `origin/dev` per issue; do not edit another agent's files, and change shared documents only in your own section.
+- Set `TMPDIR` to a host-appropriate temporary work directory with no Git repository (`.git`) at or above it.
+- Add and run a failing test first, then fix the cause; never skip tests or merely increase waits to obtain a pass.
+- Test changed packages and their dependent packages with `-count=1`, then run `make lint-changed`; run `crw-dev ci validate` when skill documentation changes.
+- Run one independent review, fix P0/P1 findings and do not re-review; then commit.
+- Before full verification, fetch and merge `origin/dev` into the task branch; its author resolves conflicts.
+- Use the configured verifier with `verifier.kind=github-actions` for full verification on GitHub Actions; on shared development machines, do not run full `crw-dev ci local` or full `make lint`.
+- Push task branches without asking again, retain remote branches, and never push `dev` directly: only the integration queue updates it. Protection on `dev` rejects deletion, force-push and missing or unsuccessful required `dev-gate` status; passing checks do not authorize a direct push.
+- `CLAUDE.md` is a relative symlink to `AGENTS.md`, so Claude Code reads these same instructions; do not maintain a second copy.

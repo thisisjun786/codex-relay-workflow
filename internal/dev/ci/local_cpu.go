@@ -20,7 +20,7 @@ import (
 
 // CRW-1591: one verification runs inside one CPU budget. On Linux the whole verifier is
 // re-executed in a systemd user scope whose CPUQuota bounds every descendant of the run; hosts
-// without a user manager get the approximation from the Go settings instead (a per-job GOMAXPROCS
+// without a user manager get the approximation from the Go settings instead (a per-package GOMAXPROCS
 // and the resolved package parallelism — an approximation, not a kernel cap over arbitrary native
 // programs). A scope that cannot start falls back; a verification that already started inside one
 // reports its own status and is never run twice.
@@ -38,6 +38,23 @@ const (
 	localCPUCgroup = "systemd-cgroup-v2"
 	// localCPUFallback is the method for the Go-settings approximation.
 	localCPUFallback = "gomaxprocs"
+	// localCPUProcsEnv names the variable a scoped step's environment carries: the cgroup.procs
+	// file of the verification's own scope, so a step that passed through a gate can return to it.
+	localCPUProcsEnv = "CRW_CI_CPU_PROCS"
+	// localCPUGateUnavailable is the method a failed record carries when a gate could not bring
+	// its step back into the verification's scope.
+	localCPUGateUnavailable = "systemd-cgroup-v2-gate-unavailable"
+	// localCPUGateFailure is the warning a step prints when it cannot rejoin the scope; the step
+	// fails before its body runs, never running outside the budget.
+	localCPUGateFailure = "cpu_budget_unavailable: heavy gate cannot enter the verification cgroup"
+	// localCPUGateGuard moves the step's own shell back into the verification's scope. It runs
+	// after the gate and the sealed env/chdir launcher, before any workflow body: a shell that
+	// cannot write its own PID to the target refuses with a warning rather than running uncapped.
+	localCPUGateGuard = `if ! { printf '%s\n' "$$" > "${CRW_CI_CPU_PROCS:-}"; } 2>/dev/null; then
+  printf '%s\n' 'WARNING: ` + localCPUGateFailure + `' >&2
+  exit 125
+fi
+`
 )
 
 // localCPUOption resolves the budget from the flag, CRW_CI_CPUS and the default. An explicit
@@ -60,7 +77,7 @@ func localCPUOption(flagValue int, explicit bool, env string) (int, error) {
 }
 
 // localCPUEnv is the budget a step's environment enforces: the resolved GOFLAGS and, under the
-// Go-settings fallback, the per-job GOMAXPROCS. A step or the caller's Env cannot widen them —
+// Go-settings fallback, the per-package GOMAXPROCS. A step or the caller's Env cannot widen them —
 // this runs after both are appended. Legacy zero-budget options leave the environment untouched.
 func localCPUEnv(env []string, opts localOptions) []string {
 	if opts.CPUs <= 0 {
@@ -73,20 +90,40 @@ func localCPUEnv(env []string, opts localOptions) []string {
 		}
 		opts = normalized
 	}
-	out := make([]string, 0, len(env)+2)
+	out := make([]string, 0, len(env)+3)
 	for _, kv := range env {
-		if name, _, _ := strings.Cut(kv, "="); name == "GOMAXPROCS" || name == "GODEBUG" {
+		if name, _, _ := strings.Cut(kv, "="); name == "GOMAXPROCS" || name == "GODEBUG" || name == localCPUProcsEnv {
 			continue
 		}
 		out = append(out, kv)
 	}
 	out = crwconfig.SetEnv(out, "GOFLAGS", localEngineFlags(opts.Parallel))
 	// Under a cgroup Go reads the scope itself, so no GOMAXPROCS is set; the fallback names the
-	// resolved per-job value instead.
+	// resolved per-package value instead.
 	if opts.cpu != nil && opts.cpu.Method == localCPUFallback && opts.cpu.GOMAXPROCS > 0 {
 		out = append(out, "GOMAXPROCS="+strconv.Itoa(opts.cpu.GOMAXPROCS))
 	}
+	if opts.cpu != nil && opts.cpu.Method == localCPUCgroup {
+		// The step's way back into this scope. An unknown group gives an empty target — the
+		// guard then fails closed, never aiming at the root cgroup.
+		target := ""
+		if opts.cpuGroup != "" {
+			target = filepath.Join("/sys/fs/cgroup", filepath.FromSlash(opts.cpuGroup), "cgroup.procs")
+		}
+		out = append(out, localCPUProcsEnv+"="+target)
+	}
 	return out
+}
+
+// localCPUStepCommand prefixes a heavy step's script with the scope guard when the run is inside
+// a kernel scope and the step goes through the heavy gate: whatever scope the gate moves it to,
+// the body returns to the verification's shared cgroup — or refuses before running.
+func localCPUStepCommand(opts localOptions, step localStep, command string) string {
+	if opts.CPUs > 0 && opts.cpuMethod == localCPUCgroup &&
+		step.heavy && strings.TrimSpace(opts.HeavyGate) != "" {
+		return localCPUGateGuard + command
+	}
+	return command
 }
 
 // localCPUQuota is this process's own cgroup v2 cpu.max, read only for observation. A finite
@@ -143,11 +180,13 @@ func localRunWithCPU(opts localOptions, argv []string, reusePath string, stdout,
 		// process, not the marker. A finite ceiling no larger than the request is the cgroup
 		// backend (compared without quota*N overflow); an unobservable quota still runs exactly
 		// once, under the fallback limits.
-		quota, period, _, err := localCPUQuota()
+		quota, period, group, err := localCPUQuota()
 		opts.cpuMethod = localCPUFallback
+		opts.cpuGroup = ""
 		if err == nil && quota/period <= int64(opts.CPUs) &&
 			(quota%period == 0 || quota/period < int64(opts.CPUs)) {
 			opts.cpuMethod = localCPUCgroup
+			opts.cpuGroup = group
 		}
 		return localRunAndReport(opts, reusePath, stdout, stderr)
 	}
@@ -157,6 +196,7 @@ func localRunWithCPU(opts localOptions, argv []string, reusePath string, stdout,
 	}
 	fmt.Fprintf(stdout, "local: CPU scope unavailable (%s); using per-job Go limits\n", reason)
 	opts.cpuMethod = localCPUFallback
+	opts.cpuGroup = ""
 	return localRunAndReport(opts, reusePath, stdout, stderr)
 }
 

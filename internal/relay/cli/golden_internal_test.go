@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // The in-package half of golden_support_test.go: the answers these tests expect are goldens
@@ -29,7 +30,8 @@ func expectGolden(t *testing.T, key string, value any, anchors ...string) {
 	t.Helper()
 	repo := filepath.Clean(filepath.Join(packageDirectory, "..", "..", ".."))
 	options := []golden.Option{golden.Substitute(repo, "<repo>")}
-	tmp := filepath.Clean(os.TempDir())
+	tmp, _ := tmploc.Lookup(os.Getenv)
+	tmp = filepath.Clean(tmp)
 	seen := map[string]bool{}
 	var prefixes []string
 	for _, anchor := range append(anchors, os.Getenv("HOME")) {

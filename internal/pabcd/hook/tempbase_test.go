@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc/tmploctest"
 )
 
 // rejectedPathToken is the first word of a path that the worktree guard's program reader refuses wherever the word stands in a
@@ -27,14 +30,15 @@ func rejectedPathToken(path string) string {
 	return ""
 }
 
-// cleanTempBase is whether base is an absolute, writable directory whose name and whose symlink-resolved name both hold no
-// rejected word.
+// cleanTempBase is whether base is an absolute, writable directory whose name and resolved name
+// hold no rejected word or gh spelling. A harmless program can contain a post verb such as print's
+// pr prefix, so a fixture path must not introduce the gh half of the inline-program post rule.
 func cleanTempBase(base string) bool {
-	if !filepath.IsAbs(base) || rejectedPathToken(base) != "" {
+	if !filepath.IsAbs(base) || rejectedPathToken(base) != "" || githubPostInlineNamesPost(base+" pr") {
 		return false
 	}
 	resolved, err := filepath.EvalSymlinks(base)
-	if err != nil || rejectedPathToken(resolved) != "" {
+	if err != nil || rejectedPathToken(resolved) != "" || githubPostInlineNamesPost(resolved+" pr") {
 		return false
 	}
 	probe, err := os.MkdirTemp(base, "tb")
@@ -51,18 +55,13 @@ func cleanTempBase(base string) bool {
 // gate run that must not pass a security row by skipping it). The production rule is not changed.
 func neutralTempBase(t *testing.T) {
 	t.Helper()
-	base := os.Getenv("TMPDIR")
-	if base == "" {
-		base = os.TempDir()
-	}
+	base, _ := tmploc.Lookup(os.Getenv)
 	if cleanTempBase(base) {
 		return
 	}
-	for _, cand := range []string{"/tmp", "/var/tmp"} {
-		if cleanTempBase(cand) {
-			t.Setenv("TMPDIR", cand)
-			return
-		}
+	if cand, ok := tmploctest.FallbackDir(cleanTempBase); ok {
+		t.Setenv("TMPDIR", cand)
+		return
 	}
 	msg := "no clean temporary base: TMPDIR=" + base + " holds the refused word " + strings.TrimSpace(rejectedPathToken(base)) +
 		" (or is not a writable directory), and /tmp and /var/tmp are not clean writable directories"
@@ -157,7 +156,7 @@ func TestNeutralTempBaseResolvesSymlinks(t *testing.T) {
 func badTempBase(t *testing.T) string {
 	t.Helper()
 	neutralTempBase(t)
-	bad, err := os.MkdirTemp(os.TempDir(), "code-worktrees-")
+	bad, err := tmploc.MkdirTemp("code-worktrees-")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,11 +211,26 @@ func tail(s string, n int) string {
 func cleanTempDir(t *testing.T) string {
 	t.Helper()
 	neutralTempBase(t)
-	dir, err := os.MkdirTemp(os.TempDir(), "fx")
+	dir, err := tmploc.MkdirTemp("fx")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	requireCleanFixture(t, dir)
 	return dir
+}
+
+// A fixture path is data, but the inline-program post guard reads its spelling too.
+// Keep a caller's gh-containing directory out of otherwise harmless program fixtures.
+func TestNeutralTempBaseAvoidsGitHubPostSpelling(t *testing.T) {
+	base := filepath.Join(t.TempDir(), "enough")
+	if err := os.MkdirAll(base, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", base)
+	cwd, root, _ := gateScene(t)
+	command := strings.ReplaceAll(`python3 -c 'import os; print(os.path.exists("{M}/n.md"))'`, "{M}", root)
+	if out := HandleGitHubPostGuard(gateBash(t, cwd, command)); out != "" {
+		t.Fatalf("fixture path changed a harmless program's verdict: %s", out)
+	}
 }

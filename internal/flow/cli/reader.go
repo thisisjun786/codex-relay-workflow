@@ -165,8 +165,9 @@ type Page struct {
 	Cursor int    `json:"cursor"`
 	More   bool   `json:"more"`
 	Rows   []Row  `json:"rows"`
-	// State is the run's state when the page was read, and Live whether a process held the run then, so a follower knows when to
-	// stop: a paused run no process holds gets no row until a resume (CRW-1487).
+	// State is the run's state when the page was read, from run-process liveness, and Live the follower's commit barrier - any
+	// holder, a writer included - so a follower knows when to stop: a paused run no process holds gets no row until a resume
+	// (CRW-1487).
 	State string `json:"state"`
 	Live  bool   `json:"live,omitempty"`
 }
@@ -205,12 +206,15 @@ func (r *Reader) Tail(ctx context.Context, run string, after, limit int, wait ti
 		// the lock is read before the snapshot: a holder commits its last row before it lets go, so a run seen without a holder has
 		// every row of it in the snapshot that follows. Any holder counts here, a writer too (anyHolder): a follower that stopped on a
 		// writer's hold would miss the row the writer is about to store
-		live, pid := r.anyHolder(run)
+		barrier, _ := r.anyHolder(run)
+		live, pid := r.live(run)
 		read, err := journal.ReadPage(ctx, r.St, run, after, limit, true)
 		if err != nil {
 			return Page{}, err
 		}
-		return page(rec, after, read, live, pid), nil
+		p := page(rec, after, read, live, pid)
+		p.Live = barrier || live
+		return p, nil
 	}
 }
 

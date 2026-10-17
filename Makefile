@@ -1,4 +1,5 @@
 GO ?= go
+BASE ?= origin/dev
 BINARY := dist/crw
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 # The git tree the binary is built from: the fault sweepers read it from the host record as the
@@ -20,7 +21,7 @@ TEST_TIMEOUT := -timeout 10m
 TEST_BINARY := $(CURDIR)/dist/test/crw
 TEST_ENV := CRW_TEST_BINARY=$(TEST_BINARY)
 
-.PHONY: build test test-binary test-part lint dist crw-dev gui gui-assets ci-local
+.PHONY: build test test-binary test-part lint lint-changed dist crw-dev gui gui-assets ci-local
 
 build:
 	@if ! $(GO) list ./... 2>/dev/null | grep -q .; then echo "no Go packages yet: build skipped"; else $(GO) build -o $(BINARY) -trimpath -ldflags="$(LDFLAGS)" ./cmd/crw; fi
@@ -78,6 +79,9 @@ endif
 # it too and it cannot rot outside `make test`.
 lint:
 	@if ! $(GO) list ./... 2>/dev/null | grep -q .; then echo "no Go packages yet: lint skipped"; else $(GO) vet ./... && $(GO) vet -tags dev ./cmd/crw-dev/... ./internal/dev/... && $(GO) vet -tags integration ./internal/runtime/integration/... && $(STATICCHECK) ./... && $(STATICCHECK) -tags dev ./cmd/crw-dev/... ./internal/dev/... && test -z "$$(find . -name '*.go' -not -path './.git/*' -exec gofmt -l {} +)"; fi
+
+lint-changed:
+	GO="$(GO)" bash scripts/ci/lint-changed.sh "$(BASE)"
 
 dist:
 ifneq ($(CGO_ENABLED),0)

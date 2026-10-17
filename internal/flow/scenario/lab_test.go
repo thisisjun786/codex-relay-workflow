@@ -1208,7 +1208,7 @@ func (u *LabChecker) Check(ctx context.Context, req reviewadapter.Request) (revi
 	}
 	sum := sha256.Sum256([]byte(req.Prompt))
 	return reviewadapter.Result{State: c.State, Verdict: verdict, Findings: findings, EngineFamily: "grok", Model: CheckModel, Effort: "medium", GuideRev: req.GuideRev,
-		PromptDigest: hex.EncodeToString(sum[:]), FingerprintBefore: fp, FingerprintAfter: fp, ElapsedMS: 1}, nil
+		PromptDigest: hex.EncodeToString(sum[:]), PromptSent: true, FingerprintBefore: fp, FingerprintAfter: fp, ElapsedMS: 1}, nil
 }
 
 // UnitChecks scripts the answers of the next unit checks of a node, in order; a check no script answers is verified with no finding.

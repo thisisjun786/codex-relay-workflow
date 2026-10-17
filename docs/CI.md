@@ -9,6 +9,27 @@ The repository verification is selected by `verifier.kind`: `local` (the default
 Both produce a `verification-record/1`; a passing record is the integration evidence.
 The node, integration and milestone-close paths use the same configured verifier.
 
+## Development loop
+
+Use the [agent development loop](../AGENTS.md#development-loop) and
+[local contribution checks](../CONTRIBUTING.md#check-locally): a failing test first,
+then the fix, changed and dependent package tests with `-count=1`, and
+`make lint-changed`. Skill documentation changes also need `crw-dev ci validate`.
+Run one independent review, fix P0/P1 findings without re-review, and commit.
+
+Fetch and merge `origin/dev` into the task branch before full verification; the
+branch's author resolves conflicts. On shared development machines, choose
+`verifier.kind=github-actions` and let the configured verifier run the full checks
+on GitHub Actions. Do not run full `crw-dev ci local` or full `make lint` there.
+The `local` verifier remains available; it is not this shared-machine development
+loop. Set `TMPDIR` to a host-appropriate temporary work directory with no Git
+repository (`.git`) at or above it. Do not skip tests or merely increase waits to
+obtain a pass.
+
+Push the task branch and retain remote branches. Only the integration queue updates
+`dev`; its required `dev-gate` status blocks an update when the check is missing or
+unsuccessful, and passing it does not authorize an agent to push `dev` directly.
+
 ## Choosing the verifier
 
 Existing configurations keep the local verifier and its `go_root` and `crw_dev` settings.
@@ -115,6 +136,17 @@ under `scripts/ci` and `scripts/check_operations_contract.py` left in refactor R
 `verification-record/1` (CRW-964's command and format, documented in its own section).
 See the [workflow](../.github/workflows/ci.yml) for the exact job inputs.
 
+`make lint-changed` is the local complement of `make lint`, not a CI step: it runs the
+same checks only where the work changed. Its base is `origin/dev`; `make lint-changed
+BASE=<ref>` chooses another, and the base is resolved through its merge base with HEAD.
+The change set is the union of the `.go` files committed since the merge base, staged,
+unstaged and untracked. `go vet` and staticcheck run on the surviving packages those
+files belong to, under the same tag rules as `make lint` (the `dev` packages are checked
+with `-tags dev`, and `internal/runtime/integration` is vetted with `-tags integration`
+but not staticchecked); gofmt runs on the changed files that still exist. No changed Go
+files is a pass, and a base with no merge base is an error. The whole-repository `make
+lint` stays the CI check and is unchanged.
+
 ## The local run
 
 `crw-dev ci local` (and `make ci-local`) runs every job and step of
@@ -139,14 +171,23 @@ whole verifier re-executes inside a `systemd-run --user --scope` cgroup whose
 `CPUQuota=<N>00%` bounds every descendant — all jobs and steps share the single scope,
 never one quota per job, and descendant Go processes read it themselves. A launcher that
 cannot start the scope (no user manager, no systemd-run) falls back to the Go settings:
-each job gets a per-job `GOMAXPROCS` share of the budget and the resolved `-parallel`
-(clamped to that share), an approximation of the limit, not a kernel cap over arbitrary
-native programs. A child verifier that already entered and then fails reports its own
-status and is never retried. The budget seals the step environment: neither the caller's
+each job gets a share of the budget, and the sealed `GOMAXPROCS` is that share divided by
+the resolved `-parallel`, so jobs × packages × `GOMAXPROCS` stays inside the limit — four
+cores with one job at `-p=4` gives `GOMAXPROCS=1` per test package, `--parallel 1` gives
+it 4. This is an approximation for Go scheduling, not a kernel cap over arbitrary native
+programs (or arbitrary Go process spawning). A heavy step that runs through `CRW_CI_HEAVY_GATE`
+returns to the shared scope before its body: the step's shell writes its own PID back to the
+verification's `cgroup.procs` after the gate and before any workflow command, and so does a
+gated version probe. A gate that cannot bring the step back refuses the step before its body
+with a `cpu_budget_unavailable` warning, and the failed record's `cpu.method` is
+`systemd-cgroup-v2-gate-unavailable` — it never runs outside the budget. A child verifier that already
+entered and then fails reports its own status and is never retried. The budget seals the step
+environment: neither the caller's
 nor a step's own `GOMAXPROCS`/`GOFLAGS`/`GODEBUG` can widen it. The record's `cpu` names
-the limit, the method (`systemd-cgroup-v2` or `gomaxprocs`), the job count and the
-parallelism the budget resolved to; a record made under a different budget — or a legacy
-record with none — is not reused. This bounds one verification; it is not a host-wide
+the limit, the method (`systemd-cgroup-v2` or `gomaxprocs`, and the gate-unavailable form
+above), the job count and the parallelism the budget resolved to; a record made under a
+different budget — or a legacy record with none — is not reused. The fallback's recorded
+`gomaxprocs` is the per-package process value. This bounds one verification; it is not a host-wide
 verification queue.
 
 The run makes **clean worktrees** of the commit being verified under the work root (the XDG state directory, or --work-root)
@@ -336,12 +377,22 @@ arguments are not resolved: a relative argument is read in each step's own direc
 `crw-dev ci local hook install` writes a `pre-push` hook into the repository the
 working directory belongs to (`git rev-parse --git-path hooks/pre-push`), and
 `... hook status` reports `installed`, `absent` or `foreign`. The hook
-refuses a push whose range (`<remote sha>..<local sha>`, or the whole local sha for a new
-ref) brings in a blob over 2 MiB or a secret Gitleaks finds — the same two checks the hosted
-`secrets` and `validate` jobs run, moved before the push because a public history
-cannot drop what has already been pushed. It fails closed: a missing Gitleaks or an unreadable
-range blocks the push. An existing `pre-push` this tool did not write is left untouched and
-the install refuses; the tool writes no git config. The hook's size rule carries no allow list,
+refuses a push whose range brings in a blob over 2 MiB or a secret Gitleaks finds — the same
+two checks the hosted `secrets` and `validate` jobs run, moved before the push because a
+public history cannot drop what has already been pushed. The range is
+`<remote sha>..<local sha>` for an existing ref; for a new ref it is `<local sha> --not
+--remotes=<push remote name>`, which excludes only the commits the push remote's locally
+known refs already name — and only when the hook's second argument, the actual
+destination URL git is pushing to, equals that remote's fetch URL (`git remote get-url
+<remote>`): the tracked refs came from that repository, so a push aimed elsewhere cannot
+borrow them. An unnamed or invalid destination, a missing destination argument, a remote
+with no locally known or unreadable refs, and a fetch URL that cannot be read or that
+differs — including a different spelling of the same destination, which the hook does not
+canonicalize — each fall back to the whole local sha; the hook never fetches. Both checks judge the same resolved range. It fails closed: a missing Gitleaks
+or an unreadable range blocks the push. An existing `pre-push` this tool did not write is
+left untouched and the install refuses; one it did write is rewritten by a rerun of the
+install, so an older owned hook upgrades to the current script; the tool writes no git
+config. The hook's size rule carries no allow list,
 unlike `crw-dev ci validate`: the list is empty today, and a future entry must be paired
 with the hook at that time. Tests install the hook only into temporary repositories; the real
 shared checkout is the operator's to install.
@@ -836,19 +887,24 @@ Use `dev` as default. `main` is a release mirror, advanced by the
 owner-authorized [Release workflow](releases.md) to the exact verified dev SHA. There is no
 promotion PR or release-specific CI gate.
 
-[The parent](../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels) (repository session) changes the branch protection when the push-only procedure is switched on:
-the `dev` ruleset stops requiring a pull request and stops requiring a status check, while
-deletion and force-push stay disallowed. Read back the effective rules before claiming the
-protection is active; never loosen a protection merely to land a change.
+[The parent](../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels) (repository session) owns branch protection: the `dev` ruleset requires a successful `dev-gate` status and rejects deletion and force-push; only the integration queue updates `dev`.
+Read back the effective rules before claiming protection is active, and never
+loosen a protection merely to land a change.
 
 | Setting | `dev` | `main` |
 | --- | --- | --- |
 | PR required | No | No; release workflow advances the ref |
-| Required status check | None | None |
+| Required status check | `dev-gate` | None |
 | Deletion | Disallowed | Disallowed |
 | Force push | Disallowed | Disallowed |
 | Required human approvals | 0 | Not a PR workflow |
-| Update method | Non-forced fast-forward by the integrator | Non-forced fast-forward |
+| Update method | Non-forced fast-forward by the integration queue | Non-forced fast-forward |
+
+A passing `verification-record/1` alone does not satisfy the required status check:
+the successful `dev-gate` status must belong to the exact commit being pushed to
+`dev`. Local verification and reuse of a passing tree receipt do not publish that
+status themselves. An integration queue without a step that supplies it must remain
+blocked; do not remove or bypass protection to make such a push succeed.
 
 Protect version tags (`v*`) against update, deletion and non-fast-forward with no bypass actors.
 The main rules protect ancestry, while owner-only workflow checks govern its release route;

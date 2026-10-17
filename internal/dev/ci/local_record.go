@@ -84,8 +84,9 @@ type verificationRecord struct {
 
 // recordCPU is the CPU budget a run enforced (CRW-1591): the limit, the method that applied it
 // (a cgroup scope or the Go-settings approximation) and the job/parallel split the budget
-// resolved to. GOMAXPROCS is the configured per-job value under the fallback; it is absent under
-// the cgroup method, where descendant Go processes read the scope themselves.
+// resolved to. GOMAXPROCS is the configured per-package/per-process value under the fallback
+// (CRW-1601: jobs*parallel*GOMAXPROCS stays inside the limit); it is absent under the cgroup
+// method, where descendant Go processes read the scope themselves.
 type recordCPU struct {
 	Limit      int    `json:"limit"`
 	Method     string `json:"method"`

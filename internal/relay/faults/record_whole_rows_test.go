@@ -11,6 +11,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // recordFault records one observation, or a list of steps, through Go's ledger in a disposable
@@ -21,7 +22,7 @@ func recordFault(t *testing.T, observation map[string]any) {
 }
 func recordFaults(t *testing.T, observations []map[string]any) {
 	t.Helper()
-	home, err := os.MkdirTemp("/dev/shm", "crw-fault-rows-")
+	home, err := tmploc.MkdirTemp("crw-fault-rows-")
 	if err != nil {
 		t.Fatal(err)
 	}
