@@ -79,8 +79,12 @@ func (c *Channel) recoverStranded(ctx context.Context, row store.SupervisorMessa
 			return err
 		}
 		// a flow run's message: what that send did is unknown, and its delivery row says so (CRW-1390)
+		var method any
+		if steerTarget(attempt.Record) != "" {
+			method = "turn/steer"
+		}
 		if err := c.recordFlowDelivery(tx, current, flowDelivery{result: FlowDeliveryUnknown, requestID: attempt.RequestID, state: delivery.HeldUncertain,
-			hold: "lease_expired_after_transport", at: at}); err != nil {
+			hold: "lease_expired_after_transport", at: at, method: method}); err != nil {
 			return err
 		}
 		_, err = c.Store.Q(tx).ExecContext(tx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_stranded',?,?)", at, row.MessageID, pyjson.Dumps(contract.OrderedObject{{Key: "attemptNo", Value: row.AttemptCount}, {Key: "leaseOwner", Value: optionalText(row.LeaseOwner)}, {Key: "leaseUntil", Value: row.LeaseUntil.Float64}, {Key: "reason", Value: "the lease expired after the transport started and with no receipt, so what that send did is unknown and is not repeated"}}, pyjson.Options{}))

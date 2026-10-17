@@ -32,26 +32,74 @@ var sizeFields = map[string][]string{
 }
 
 var (
-	headingLine  = regexp.MustCompile(`^ {0,3}#{1,6}\s+(.*?)\s*#*\s*$`)
-	bulletLine   = regexp.MustCompile(`^(\s*)(?:[-*+]|\d+[.)])(?:\s+(.*))?$`)
-	checkbox     = regexp.MustCompile(`^\[[ xX]\]\s*`)
-	blockedLine  = regexp.MustCompile(`(?i)^(?:\*\*)?blocked by:`)
-	sizeFieldRe  = regexp.MustCompile("^(size_fit|size_reason|issue_size)\\s*:\\s*`?([A-Za-z0-9_]+)`?\\s*$")
-	backtickSpan = regexp.MustCompile("`([^`]+)`")
+	headingLine     = regexp.MustCompile(`^ {0,3}(#{1,6})\s+(.*?)\s*#*\s*$`)
+	setextLine      = regexp.MustCompile(`^ {0,3}(=+|-+)[ \t]*$`)
+	setextListLine  = regexp.MustCompile(`^(\d{1,9}[.)]|[-*+])(?:([ \t]+)(.*))?$`)
+	setextBreakLine = regexp.MustCompile(`^ {0,3}(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})$`)
+	bulletLine      = regexp.MustCompile(`^(\s*)(?:[-*+]|\d+[.)])(?:\s+(.*))?$`)
+	checkbox        = regexp.MustCompile(`^\[[ xX]\]\s*`)
+	blockedLine     = regexp.MustCompile(`(?i)^(?:\*\*)?blocked by:`)
+	sizeFieldRe     = regexp.MustCompile("^(size_fit|size_reason|issue_size)\\s*:\\s*`?([A-Za-z0-9_]+)`?\\s*$")
+	backtickSpan    = regexp.MustCompile("`([^`]+)`")
 )
 
 // section is the non-fence lines under one heading.
 type section struct {
 	heading string
 	lines   []string
+	depth   int
 }
 
-// sections splits a body at its headings. Text before the first heading belongs to no section.
+// sections splits a body at its ATX or Setext headings, omitting an out-of-scope heading and
+// its descendants through the next peer or shallower heading. Text before the
+// first heading belongs to no section.
 func sections(body string) []section {
+	const (
+		noParagraph = iota
+		rootParagraph
+		listParagraph
+		quoteParagraph
+	)
 	var out []section
-	fence := ""
-	for _, line := range strings.Split(body, "\n") {
-		line = strings.TrimRight(line, "\r")
+	excludedDepth := 0
+	state := struct {
+		paragraph   []string
+		kind        int
+		itemText    int
+		fence       string
+		htmlComment bool
+	}{}
+	emit := func(lines ...string) {
+		if excludedDepth == 0 && len(out) > 0 {
+			out[len(out)-1].lines = append(out[len(out)-1].lines, lines...)
+		}
+	}
+	flush := func() {
+		emit(state.paragraph...)
+		state.paragraph, state.kind = nil, noParagraph
+	}
+	heading := func(title string, depth int) {
+		state.itemText = 0
+		if excludedDepth > 0 && depth > excludedDepth {
+			return
+		}
+		excludedDepth = 0
+		if skill.ReadyOutOfScopeHeading(title) {
+			excludedDepth = depth
+			return
+		}
+		out = append(out, section{heading: normalizeHeading(title), depth: depth})
+	}
+	for _, raw := range strings.Split(body, "\n") {
+		line := strings.TrimRight(raw, "\r")
+		rest := strings.TrimLeft(line, " \t")
+		col := indentOf(line[:len(line)-len(rest)])
+		inItem := state.itemText > 0 && col >= state.itemText
+		if state.htmlComment {
+			state.htmlComment = headingCommentOpen(line, true)
+			emit(line)
+			continue
+		}
 		t := strings.TrimLeft(line, " ")
 		marker := ""
 		switch {
@@ -61,26 +109,149 @@ func sections(body string) []section {
 			marker = "~~~"
 		}
 		if marker != "" {
-			switch fence {
+			flush()
+			switch state.fence {
 			case "":
-				fence = marker
+				state.fence = marker
+				if col < state.itemText {
+					state.itemText = 0
+				}
 			case marker:
-				fence = ""
+				state.fence = ""
 			}
 			continue
 		}
-		if fence != "" {
+		if state.fence != "" {
+			continue
+		}
+		if col <= 3 && strings.HasPrefix(rest, "<!--") {
+			flush()
+			if !inItem {
+				state.itemText = 0
+			}
+			state.htmlComment = headingCommentOpen(rest, false)
+			emit(line)
 			continue
 		}
 		if m := headingLine.FindStringSubmatch(line); m != nil {
-			out = append(out, section{heading: normalizeHeading(m[1])})
+			flush()
+			heading(m[2], len(m[1]))
 			continue
 		}
-		if len(out) > 0 {
-			out[len(out)-1].lines = append(out[len(out)-1].lines, line)
+		if state.kind == rootParagraph && setextLine.MatchString(line) {
+			parts := make([]string, len(state.paragraph))
+			for i, part := range state.paragraph {
+				parts[i] = strings.TrimSpace(part)
+			}
+			title := strings.Join(parts, " ")
+			depth := 1
+			if strings.HasPrefix(strings.TrimSpace(line), "-") {
+				depth = 2
+			}
+			// The complete paragraph and underline are the heading, not body data.
+			state.paragraph, state.kind = nil, noParagraph
+			heading(title, depth)
+			continue
+		}
+		switch m := setextListLine.FindStringSubmatch(rest); {
+		case rest == "":
+			flush()
+			emit(line)
+		case col <= 3 && setextBreakLine.MatchString(rest):
+			flush()
+			if !inItem {
+				state.itemText = 0
+			}
+			emit(line)
+		case col <= 3 && m != nil:
+			flush()
+			if !inItem {
+				gap := 0
+				for _, r := range m[2] {
+					if r == '\t' {
+						gap += 4 - gap%4
+					} else {
+						gap++
+					}
+				}
+				if gap == 0 || gap > 4 {
+					gap = 1
+				}
+				state.itemText = col + len(m[1]) + gap
+			}
+			if strings.TrimSpace(m[3]) == "" {
+				emit(line)
+			} else {
+				state.kind = listParagraph
+				state.paragraph = append(state.paragraph, line)
+			}
+		case col <= 3 && strings.HasPrefix(rest, ">"):
+			flush()
+			if !inItem {
+				state.itemText = 0
+			}
+			text := strings.TrimSpace(rest)
+			for strings.HasPrefix(text, ">") {
+				text = strings.TrimSpace(strings.TrimPrefix(text, ">"))
+			}
+			if setextParagraph(text) && !strings.HasPrefix(text, "```") &&
+				!strings.HasPrefix(text, "~~~") && !strings.HasPrefix(text, "<!--") {
+				state.kind = quoteParagraph
+				state.paragraph = append(state.paragraph, line)
+			} else {
+				emit(line)
+			}
+		case setextParagraph(rest):
+			if state.kind == noParagraph {
+				switch {
+				case inItem:
+					state.kind = listParagraph
+				case col <= 3:
+					state.kind = rootParagraph
+					state.itemText = 0
+				default:
+					emit(line)
+					continue
+				}
+			}
+			// Unmarked continuations keep the paragraph's origin, including a
+			// list paragraph that began after a blank line.
+			state.paragraph = append(state.paragraph, line)
+		default:
+			flush()
+			if !inItem {
+				state.itemText = 0
+			}
+			emit(line)
 		}
 	}
+	flush()
 	return out
+}
+
+// headingCommentOpen carries an HTML comment block across lines. A comment may
+// close and another open on the same line; its contents never become headings.
+func headingCommentOpen(line string, open bool) bool {
+	for {
+		marker := "<!--"
+		if open {
+			marker = "-->"
+		}
+		at := strings.Index(line, marker)
+		if at < 0 {
+			return open
+		}
+		line = line[at+len(marker):]
+		open = !open
+	}
+}
+
+// setextParagraph rejects block markers that an underline cannot turn into a
+// section title. List-continuation and indentation checks belong to sections.
+func setextParagraph(text string) bool {
+	return text != "" && !strings.HasPrefix(text, "|") && !strings.HasPrefix(text, ">") &&
+		!strings.HasPrefix(text, "#") && !setextListLine.MatchString(text) &&
+		!setextLine.MatchString(text) && !setextBreakLine.MatchString(text)
 }
 
 func normalizeHeading(s string) string {
@@ -197,8 +368,34 @@ func indentOf(ws string) int {
 
 // criteria are the bullets of the criteria sections.
 func criteria(secs []section) []string {
-	lines, _ := linesOf(secs, criteriaHeadings)
-	return bullets(lines, true)
+	// Existing inputs using only the old headings keep their bytes and source
+	// order. A new release-gate heading used by this reader selects kind order.
+	legacy := true
+	for _, s := range secs {
+		kind := skill.ReadyHeadingKind(s.heading)
+		if !contains(criteriaHeadings.kinds, kind) && !contains(regionHeadings.kinds, kind) {
+			continue
+		}
+		switch s.heading {
+		case "끝 조건", "done when", "acceptance", "acceptance criteria", "edit regions":
+		default:
+			legacy = false
+		}
+	}
+	if legacy {
+		lines, _ := linesOf(secs, criteriaHeadings)
+		return bullets(lines, true)
+	}
+	var out []string
+	for _, kind := range criteriaHeadings.kinds {
+		names := headingSet{kinds: []string{kind}}
+		if kind == "done_condition" {
+			names.legacy = criteriaHeadings.legacy
+		}
+		lines, _ := linesOf(secs, names)
+		out = append(out, bullets(lines, true)...)
+	}
+	return out
 }
 
 // regionOf reads the path of one region item: the first backticked span, else the first word. ok is false for a path the scheduler

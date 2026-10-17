@@ -24,6 +24,9 @@ import (
 // zoneInventory is the expected column list of every zone table, written from the contract
 // (4.5, 4.3, 2.2, 2.3, 6.2, 2.4) and not read back from the DDL under test.
 var zoneInventory = map[string][]string{
+	// CRW-1338: controller verification coordination and collected provenance.
+	"verification_flights": {"verification_key", "identity_json", "ci_ref", "state", "run_id", "first_attempt", "record"},
+	"executor_collections": {"execution_id", "task_digest", "result_digest", "collection_json"},
 	// CRW-1339: additive host registry, immutable assignments and independent heavy permits.
 	"executor_hosts":             {"host_id", "config_json", "enabled", "session_limit", "test_slots", "test_cpu_budget", "observation_json", "received_at", "checked"},
 	"executor_host_events":       {"seq", "host_id", "kind", "detail_json", "recorded_at"},

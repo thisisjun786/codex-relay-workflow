@@ -24,8 +24,8 @@ func TestPreflightPendingWakeDoesNotProveTurn(t *testing.T) {
 func wakeFixture() (delivery.WakeAttempt, *delivery.WakeExpectation) {
 	a := delivery.WakeAttempt{
 		RequestID: "wake-request", RecipientTaskID: "probe-recipient", RecipientStatusBefore: "notLoaded",
-		TurnID: "new-turn", NewTurn: true, DeliveryState: delivery.Dispatched, SendAttempted: "yes", Unattended: true,
-		ObservedAt: "2026-01-01T00:00:00Z", RequiredSettings: json.RawMessage(`{"approvalPolicy":"never","model":"model-a","effort":"high"}`),
+		TurnID: "new-turn", NewTurn: true, DeliveryMethod: "turn/start", DeliveryState: delivery.Dispatched, SendAttempted: "yes", Unattended: true,
+		ObservedAt: "2026-01-01T00:00:00Z", RequiredSettings: json.RawMessage(`{"approvalPolicy":"never","sandbox":{"type":"readOnly"},"cwd":"/work","runtimeWorkspaceRoots":["/work"],"model":"model-a","reasoningEffort":"high","environments":[]}`),
 		Identity: delivery.WakeIdentity{
 			OperatingScope: "host-user", AppServerInstance: "server-instance", Socket: "socket-a", ServiceInstance: "service-instance",
 			ApprovalPolicy: "never", RolePolicy: "policy-digest", Role: "parent", PairSource: "role",
@@ -41,8 +41,7 @@ func TestPreflightRecordedWakeSurvivesConsumptionAndReopen(t *testing.T) {
 			w := newWorld(t)
 			a, want := wakeFixture()
 			a.RecipientStatusBefore, want.RequiredStatus = status, status
-			// Directly exercise the delivery recording seam; the supervisor sender
-			// wiring is deliberately deferred until its concurrent change lands.
+			// Exercise the journal seam independently of the sender integration test.
 			if err := delivery.RecordWakeAttempt(ctx, w.st, a); err != nil {
 				t.Fatal(err)
 			}
@@ -71,6 +70,8 @@ func TestPreflightWakeNeedsMatchingEvidence(t *testing.T) {
 		{"idle does not prove eviction", func(a *delivery.WakeAttempt, _ *delivery.WakeExpectation) { a.RecipientStatusBefore = "idle" }},
 		{"busy steer", func(a *delivery.WakeAttempt, _ *delivery.WakeExpectation) { a.RecipientStatusBefore = "active" }},
 		{"no new turn", func(a *delivery.WakeAttempt, _ *delivery.WakeExpectation) { a.NewTurn = false }},
+		{"steer method", func(a *delivery.WakeAttempt, _ *delivery.WakeExpectation) { a.DeliveryMethod = "turn/steer" }},
+		{"unknown method", func(a *delivery.WakeAttempt, _ *delivery.WakeExpectation) { a.DeliveryMethod = "" }},
 		{"missing turn", func(a *delivery.WakeAttempt, _ *delivery.WakeExpectation) { a.TurnID = "" }},
 		{"uncertain", func(a *delivery.WakeAttempt, _ *delivery.WakeExpectation) { a.DeliveryState = delivery.HeldUncertain }},
 		{"not sent", func(a *delivery.WakeAttempt, _ *delivery.WakeExpectation) { a.SendAttempted = "no" }},
@@ -118,5 +119,19 @@ func TestPreflightUnreadableWakeEvidenceFails(t *testing.T) {
 	facts := StoreProber{}.Facts(ctx, PreflightRequest{Reader: &Reader{St: w.st}, Thread: "owner", Now: time.Now(), Wake: want})
 	if got := facts[4]; got.Level != LevelFail || got.Pass {
 		t.Fatalf("unreadable evidence must fail: %+v", got)
+	}
+}
+
+func TestPreflightWakeRejectsIncompleteSettings(t *testing.T) {
+	w := newWorld(t)
+	a, want := wakeFixture()
+	a.RequiredSettings = json.RawMessage(`{"approvalPolicy":"never"}`)
+	want.RequiredSettings = a.RequiredSettings
+	if err := delivery.RecordWakeAttempt(ctx, w.st, a); err != nil {
+		t.Fatal(err)
+	}
+	facts := StoreProber{}.Facts(ctx, PreflightRequest{Reader: &Reader{St: w.st}, Thread: "owner", Now: time.Now(), Wake: want})
+	if facts[4].Pass || facts[4].Level != LevelWarn {
+		t.Fatalf("incomplete settings proved wake: %+v", facts[4])
 	}
 }

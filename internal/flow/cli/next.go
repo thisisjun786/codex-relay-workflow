@@ -87,7 +87,17 @@ type NextAnswer struct {
 	// answerAppliedAfterPause is whether any decision_applied row follows the run's newest paused end by `answer`: an answer is
 	// already applied (the journal does not record which answer a drain was made for).
 	answerAppliedAfterPause bool
+	// observationPath is the owner's recorded start policy, supplied explicitly;
+	// the run spec's advisory preflight facts do not select a wait path.
+	observationPath string
+	// resumeFailure is the refusal of this next call's attempted restart.
+	resumeFailure string
 }
+
+const (
+	observationEventIdle = "event-driven-idle"
+	observationActive    = "active-observation"
+)
 
 // nextPoll is how often next and dispatched look again while they wait.
 var nextPoll = 500 * time.Millisecond
@@ -96,10 +106,11 @@ var nextPoll = 500 * time.Millisecond
 // the owner's line soon after it holds the run.
 var startingWait = 15 * time.Second
 
-// next is `crw flow next RUN [--wait S] [--json]`.
+// next is `crw flow next RUN [--observation-path MODE] [--wait S] [--json]`.
 func (c *command) next(args []string) int {
 	fs, cm := c.flags()
 	wait := fs.Int("wait", 0, "seconds to wait for a step or a change of the run's state (0: answer at once)")
+	observation := fs.String("observation-path", observationActive, "the recorded start policy: event-driven-idle or active-observation (does not establish wake readiness)")
 	asJSON := fs.Bool("json", false, "print the answer as JSON")
 	positional, code, ok := parse(fs, args)
 	if !ok {
@@ -110,6 +121,9 @@ func (c *command) next(args []string) int {
 	}
 	if *wait < 0 {
 		return c.usage("--wait is a number of seconds, 0 or more")
+	}
+	if *observation != observationEventIdle && *observation != observationActive {
+		return c.usage("--observation-path is event-driven-idle or active-observation")
 	}
 	run := positional[0]
 	sel, err := ResolveState(cm.state, cm.socket)
@@ -129,7 +143,7 @@ func (c *command) next(args []string) int {
 	}
 	bus := engine.NewFileStepBus(RunDir(sel.Path, run))
 	// a run no process holds spawns with the role store when it is resumed; the process that holds it, with the pairs it pinned (below)
-	ans := NextAnswer{Run: run, Steps: []NextStep{}, Spawns: roleSpawns(table)}
+	ans := NextAnswer{Run: run, Steps: []NextStep{}, Spawns: roleSpawns(table), observationPath: *observation}
 	deadline := time.Now().Add(time.Duration(*wait) * time.Second)
 	first, resumed := "", false
 	var steps []engine.Step
@@ -152,6 +166,7 @@ func (c *command) next(args []string) int {
 				return c.fail("%v", err)
 			} else if err != nil {
 				ans.Warnings = append(ans.Warnings, fmt.Sprintf("no process holds run %s and its resume did not start: %v", run, err))
+				ans.resumeFailure = err.Error()
 			} else {
 				ans.Resumed = pid
 				info, live = c.runInfo(cm, run), LockHeld(sel.Path, run)
@@ -185,7 +200,7 @@ func (c *command) next(args []string) int {
 		if first == "" {
 			first = state
 		}
-		if len(steps) > 0 || state != first || state == NextEnded || !time.Now().Before(deadline) {
+		if len(steps) > 0 || state != first || state == NextEnded || ans.resumeFailure != "" || !time.Now().Before(deadline) {
 			ans.State = state
 			break
 		}
@@ -237,6 +252,7 @@ func (c *command) next(args []string) int {
 		}
 	}
 	ans.answerAppliedAfterPause = answerAfterPaused(events, run)
+	info.Live = info.Live && live
 	ans.Hint = nextHint(ans, info, closes)
 	if *asJSON {
 		_, _ = c.stdout.Write(JSON(ans))
@@ -566,6 +582,9 @@ func nextHint(ans NextAnswer, info RunInfo, closes []string) string {
 	var parts []string
 	// each command of the hint starts with the crw that runs (CRW-1572)
 	crw := crwcmd.Word()
+	if ans.resumeFailure != "" && !info.Live {
+		return fmt.Sprintf("run %s could not resume: %s. Resolve the recorded refusal before continuing; %s flow show %s shows the run. Use %s flow recover for a call in recovery_hold; resume only after its cause is resolved: %s flow resume %s", ans.Run, ans.resumeFailure, crw, ans.Run, crw, crw, ans.Run)
+	}
 	if ans.Resumed > 0 {
 		parts = append(parts, fmt.Sprintf("no process held run %s: next ran %s flow resume %s --detach (process %d)", ans.Run, crw, ans.Run, ans.Resumed))
 	}
@@ -586,13 +605,28 @@ func nextHint(ans NextAnswer, info RunInfo, closes []string) string {
 	case NextWaitingDecision:
 		parts = append(parts, fmt.Sprintf("run %s waits for a decision: %s flow show %s lists its questions", ans.Run, crw, ans.Run))
 	case NextStarting:
+		if ans.observationPath == observationEventIdle {
+			parts = append(parts, fmt.Sprintf("run %s's process is starting: no spawn format is given yet; %s flow next %s --observation-path event-driven-idle --wait 0 --json reads it again after startup", ans.Run, crw, ans.Run))
+			break
+		}
 		parts = append(parts, fmt.Sprintf("run %s's process is starting: it holds the run and has not recorded its started row or bound the owner's line yet, so no spawn format is given: "+
 			"%s flow next %s --wait 600 --json reads it again", ans.Run, crw, ans.Run))
 	}
-	if len(ans.Steps) > 0 {
-		parts = append(parts, sessionLoop(ans.Run))
-	} else if ans.State != NextEnded && ans.State != NextStarting {
-		parts = append(parts, fmt.Sprintf("no step to take: wait_agent(targets=[<open agents>], timeout_ms=600000) on the subagents that work, then %s flow next %s --wait 600 --json", crw, ans.Run))
+	waiting := ans.State == NextRunning || ans.State == NextWaitingSession
+	switch {
+	case len(ans.Steps) > 0:
+		parts = append(parts, "take every step's tool call and its dispatched command: spawn_agent with the step's values, send_input(target=<agent_id>, message=<message>), or close_agent(target=<agent_id>); then use the remaining open agents")
+		parts = append(parts, nextAgentWait(ans))
+	case waiting && ans.Slots.Open > 0:
+		parts = append(parts, "no step to take: "+nextAgentWait(ans))
+	case waiting && ans.observationPath == observationEventIdle:
+		if info.Live {
+			parts = append(parts, "no open subagents and no step to take: end this turn; the run keeps working; when the run publishes the next step, the relay wakes this owner")
+		} else {
+			parts = append(parts, fmt.Sprintf("no live run process was confirmed: %s flow show %s shows the run; resolve its recovery or restart requirement before waiting (%s flow recover for a call in recovery_hold, or %s flow resume %s)", crw, ans.Run, crw, crw, ans.Run))
+		}
+	case waiting:
+		parts = append(parts, fmt.Sprintf("no open subagents and no step to take: wait on %s flow next %s --wait 600 --json alone; keep at most one next command in flight", crw, ans.Run))
 	}
 	spawns := 0
 	for _, st := range ans.Steps {
@@ -608,11 +642,28 @@ func nextHint(ans NextAnswer, info RunInfo, closes []string) string {
 		parts = append(parts, fmt.Sprintf("%d of the %d subagent slots (agents.max_threads) are held: spawn_agent fails with `agent thread limit reached` until agents are closed; a step that could not be spawned stays and is shown again", ans.Slots.Open, ans.Slots.Limit))
 	}
 	hint := strings.Join(parts, ". ")
-	if len(ans.Slots.Agents) > 0 {
+	// A batch can close these agents and spawn new ones; only an empty answer
+	// can name the wait targets before the owner has run the tools.
+	if len(ans.Steps) == 0 && len(ans.Slots.Agents) > 0 {
 		targets, _ := json.Marshal(ans.Slots.Agents)
 		hint = strings.ReplaceAll(hint, "[<open agents>]", string(targets))
 	}
 	return hint
+}
+
+// nextAgentWait is shared by an empty answer with open agents and a batch that
+// can change that set. A completion or a relay notification of a new step
+// triggers next; an empty timeout does not.
+func nextAgentWait(ans NextAnswer) string {
+	mode := ""
+	if ans.observationPath == observationEventIdle {
+		mode = " --observation-path event-driven-idle"
+	}
+	next := fmt.Sprintf("%s flow next %s%s --wait 120 --json", crwcmd.Word(), ans.Run, mode)
+	return fmt.Sprintf("if subagents remain open, wait_agent(targets=[<open agents>], timeout_ms=600000) on all of them, using the longest timeout the live tool permits; on an empty timeout repeat the same wait without calling next. "+
+		"When wait reports completion, run any still-needed dispatched command, then %s once so the engine can read the result; take its steps and wait on the remaining open agents again. "+
+		"If the relay reports a new step while wait_agent is pending, run %s once and take its steps immediately; do not wait for the other subagents to finish. Then wait on the remaining open agents again. "+
+		"If the batch leaves no open agents, use that same next command once and follow its state and hint", next, next)
 }
 
 func (c *command) printNext(ans NextAnswer) {

@@ -81,6 +81,7 @@ func flowDeliveryResult(state string, hold sql.NullString) string {
 type flowDelivery struct {
 	result, requestID, state, hold, at string
 	turnID                             any
+	method                             any
 }
 
 // recordFlowDelivery appends the delivery row of a flow message inside the settle's transaction.
@@ -131,6 +132,9 @@ func (c *Channel) appendFlowDelivery(tx context.Context, row store.SupervisorMes
 	kind, key, value := FlowMessageDeliveryKind, "message_id", row.MessageID
 	payload := map[string]any{"message_id": row.MessageID, "kind": row.ObligationKind, "subject": row.Subject, "result": d.result,
 		"request_id": d.requestID, "turn_id": d.turnID, "observation": d.state, "reason": d.hold}
+	if d.method != nil {
+		payload["delivery_method"] = d.method
+	}
 	if flowReportKinds[row.ObligationKind] {
 		var reports int
 		if err := q.QueryRowContext(tx, "SELECT COUNT(*) FROM flow_events WHERE run_id = ? AND kind = 'report' AND json_extract(payload_json, '$.report_id') = ?", run, what).Scan(&reports); err != nil {

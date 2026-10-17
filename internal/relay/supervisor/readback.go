@@ -32,6 +32,8 @@ func establishes(verified string, origin any) string {
 	switch origin {
 	case "relay_opened":
 		return "arrival only: the turn this send opened holds this attempt's delivery token, and no act of the recipient's was needed"
+	case "relay_steered":
+		return "arrival only: the guarded existing turn holds this attempt's delivery token; this does not establish reading or action"
 	case "recipient_opened":
 		return "a turn the recipient's thread opened after the send, and this attempt's delivery token in its transcript - not who wrote the answer or that anybody read or acted"
 	}
@@ -51,7 +53,11 @@ func readDetail(r store.SupervisorReadbacksRow) map[string]any {
 func readAnswer(r store.SupervisorReadbacksRow, recorded, raced bool) map[string]any {
 	detail := readDetail(r)
 	origin := detail["turnOrigin"]
-	return map[string]any{"schema": channelVersion, "messageId": r.MessageID, "recorded": recorded, "raced": raced, "verified": r.Verified, "readTurnId": r.ReadTurnID, "turnOrigin": detail["turnOrigin"], "detail": detail["detail"], "delivered": detail["delivered"], "readAt": r.ReadAt, "assertedBy": detail["assertedBy"], "reconciled": detail["reconciled"], "establishes": establishes(r.Verified, origin), "limits": readbackLimits}
+	limits := readbackLimits
+	if origin == "relay_steered" {
+		limits = "a verified readback establishes that this attempt's delivery token is in the guarded existing turn. That turn may predate the steer. It proves arrival, not reading, agreement or action. The turn and transcript are separate host observations, assuming append-only history"
+	}
+	return map[string]any{"schema": channelVersion, "messageId": r.MessageID, "recorded": recorded, "raced": raced, "verified": r.Verified, "readTurnId": r.ReadTurnID, "turnOrigin": detail["turnOrigin"], "detail": detail["detail"], "delivered": detail["delivered"], "readAt": r.ReadAt, "assertedBy": detail["assertedBy"], "reconciled": detail["reconciled"], "establishes": establishes(r.Verified, origin), "limits": limits}
 }
 func (c *Channel) ReadBack(ctx context.Context, id, turnID, proof, assertedBy string, adapter SendAdapter, now float64) (map[string]any, error) {
 	row, err := c.Get(ctx, id)
@@ -96,11 +102,18 @@ func (c *Channel) ReadBack(ctx context.Context, id, turnID, proof, assertedBy st
 		return nil, Refusal{"not_claimable", "message " + strconv.Quote(id) + " is held uncertain with no attempt " + fmt.Sprint(row.AttemptCount) + " to read it back against, so there is no token to look for"}
 	}
 	origin := "unknown"
+	steeredTurn := ""
+	if attempt != nil {
+		steeredTurn = steerTarget(attempt.Record)
+	}
 	if attempt != nil && attempt.TurnID.Valid {
 		origin = "recipient_opened"
 		if attempt.TurnID.String == turnID {
 			origin = "relay_opened"
 		}
+	}
+	if steeredTurn != "" && steeredTurn == turnID {
+		origin = "relay_steered"
 	}
 	verified, detail := "host_read", "the host lists this turn on the recipient's thread and it did not begin before the send"
 	var readTurn *delivery.TurnInfo
@@ -118,8 +131,10 @@ func (c *Channel) ReadBack(ctx context.Context, id, turnID, proof, assertedBy st
 			verified, detail = "unverified_turn", "this attempt has no recorded transport start, so there is no send to measure the turn against"
 		} else if stamp, parseErr := time.Parse("2006-01-02T15:04:05.000000+00:00", attempt.TransportStartedAt.String); parseErr != nil {
 			verified, detail = "unverified_turn", "this attempt has no recorded transport start, so there is no send to measure the turn against"
-		} else if *delivery.TurnStartedAt(readTurn)+1.0 <= float64(stamp.UnixMicro())/1e6 {
+		} else if origin != "relay_steered" && *delivery.TurnStartedAt(readTurn)+1.0 <= float64(stamp.UnixMicro())/1e6 {
 			verified, detail = "turn_predates_send", "this turn began before the send, so it cannot be the turn that read it"
+		} else if origin == "relay_steered" {
+			detail = "the host lists the existing turn this attempt guarded for steering"
 		}
 	}
 	delivered := map[string]any{"scanned": false, "reason": "no host adapter in this process, so the transcript was not read"}
@@ -151,9 +166,12 @@ func (c *Channel) ReadBack(ctx context.Context, id, turnID, proof, assertedBy st
 		verified = "transcript_unconfirmed"
 		detail = "the transcript holds this attempt's request id and the host did not say which turn it is in, so it is not tied to the named turn or to any turn that turn follows"
 	}
-	if verified == "host_read" && origin == "relay_opened" && delivered["turnId"] != turnID {
+	if verified == "host_read" && (origin == "relay_opened" || origin == "relay_steered") && delivered["turnId"] != turnID {
 		verified = "transcript_turn_mismatch"
 		detail = "this readback names the turn the send opened, " + turnID + ", and the delivered token is in " + fmt.Sprint(delivered["turnId"]) + "; where the message landed is where a reader of it reads"
+		if origin == "relay_steered" {
+			detail = "this readback names the guarded turn " + turnID + ", but the delivery token is in " + fmt.Sprint(delivered["turnId"])
+		}
 	}
 	if verified == "host_read" && delivered["turnId"] != nil && delivered["turnId"] != turnID && origin != "relay_opened" && readTurn != nil && readTurn.StartedAt != nil {
 		landed := fmt.Sprint(delivered["turnId"])
@@ -164,7 +182,7 @@ func (c *Channel) ReadBack(ctx context.Context, id, turnID, proof, assertedBy st
 			verified, detail = "turn_predates_send", turnID+" began before "+landed+", the turn this message landed in, so it cannot be the turn that read it"
 		}
 	}
-	if verified == "host_read" && delivered["turnId"] != nil && delivered["turnId"] != turnID && (attempt == nil || !attempt.TurnID.Valid || delivered["turnId"] != attempt.TurnID.String) {
+	if verified == "host_read" && delivered["turnId"] != nil && delivered["turnId"] != turnID && (attempt == nil || (steeredTurn != delivered["turnId"] && (!attempt.TurnID.Valid || delivered["turnId"] != attempt.TurnID.String))) {
 		landed := fmt.Sprint(delivered["turnId"])
 		turn, readErr := adapter.ReadTurn(ctx, row.RecipientTaskID, landed)
 		var started time.Time
@@ -192,7 +210,7 @@ func (c *Channel) ReadBack(ctx context.Context, id, turnID, proof, assertedBy st
 		started, parseErr := time.Parse("2006-01-02T15:04:05.000000+00:00", attempt.TransportStartedAt.String)
 		if holderErr != nil || holderTurn == nil || delivery.TurnStartedAt(holderTurn) == nil || parseErr != nil || math.IsNaN(*delivery.TurnStartedAt(holderTurn)) || math.IsInf(*delivery.TurnStartedAt(holderTurn), 0) {
 			verified, detail = "unverified_turn", "the turn this attempt's delivery token is in, "+holder+", has no start time the host would give, so whether it followed this send is not established, and an uncertain send is settled only when it is"
-		} else if *delivery.TurnStartedAt(holderTurn) < float64(started.UnixMicro())/1e6 {
+		} else if steeredTurn != holder && *delivery.TurnStartedAt(holderTurn) < float64(started.UnixMicro())/1e6 {
 			verified, detail = "turn_predates_send", "this attempt's delivery token is in "+holder+", which began before this attempt's transport started. A send nobody heard back from is settled only on a token in a turn that began at or after that instant, without the allowance a turn's start is otherwise given"
 		}
 	}
@@ -245,9 +263,13 @@ func (c *Channel) ReadBack(ctx context.Context, id, turnID, proof, assertedBy st
 			}
 		}
 		if reconciled != nil {
+			var method any
+			if steeredTurn != "" {
+				method = "turn/steer"
+			}
 			// a flow run's message whose send was uncertain (its delivery row says unknown): the readback settles it as accepted (CRW-1390)
 			if e = c.recordFlowDelivery(tx, current, flowDelivery{result: FlowDeliveryAccepted, requestID: attempt.RequestID, state: "read", hold: "readback",
-				at: at, turnID: delivered["turnId"]}); e != nil {
+				at: at, turnID: delivered["turnId"], method: method}); e != nil {
 				return e
 			}
 			journal := pyjson.Dumps(contract.OrderedObject{{Key: "from", Value: "held_uncertain"}, {Key: "by", Value: "readback"}, {Key: "requestId", Value: attempt.RequestID}, {Key: "attemptNo", Value: attempt.AttemptNo}, {Key: "deliveredTurnId", Value: delivered["turnId"]}, {Key: "readTurnId", Value: turnID}}, pyjson.Options{})

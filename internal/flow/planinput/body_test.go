@@ -1,7 +1,9 @@
 package planinput
 
 import (
+	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/compile"
@@ -82,5 +84,269 @@ func TestReleaseGateExcludesUnrelatedSections(t *testing.T) {
 	}
 	if want := []compile.Region{{Path: "internal/example/", Kind: "tree"}}; !reflect.DeepEqual(is.Regions, want) {
 		t.Errorf("regions = %+v; want %+v", is.Regions, want)
+	}
+}
+
+func TestOutOfScopeDescendantsAreExcluded(t *testing.T) {
+	for _, heading := range []string{"범위 밖", "Out of scope", "Out-of-scope", "**NON-GOALS**:", "편집 영역 (범위 밖)"} {
+		for _, resume := range []string{"## 기준", "# 기준"} {
+			t.Run(heading+"/"+resume, func(t *testing.T) {
+				body := "## 기준\n- before\n## 편집 영역\n- `keep.go`\n" +
+					"## " + heading + "\n- excluded prose\n" +
+					"### Notes\n#### 편집 영역\n- `hidden.go`\n" +
+					"### Red tests\n- hidden red test\n" +
+					"### 범위 밖\n#### 기준\n- hidden criterion\n" +
+					"```markdown\n# 기준\n- fake boundary\n```\n" +
+					"### Done when\n- hidden done condition\n" +
+					resume + "\n- after\n## 편집 영역\n- `after.go`\n"
+				res := build(t, milestone(open(1, body)), Options{})
+				is := only(t, res)
+				if want := []string{"before", "after"}; !reflect.DeepEqual(is.Criteria, want) {
+					t.Errorf("criteria = %q; want %q", is.Criteria, want)
+				}
+				wantRegions := []compile.Region{{Path: "keep.go", Kind: "file"}, {Path: "after.go", Kind: "file"}}
+				if !reflect.DeepEqual(is.Regions, wantRegions) {
+					t.Errorf("regions = %+v; want %+v", is.Regions, wantRegions)
+				}
+				if len(res.Warnings) != 0 {
+					t.Errorf("warnings = %+v; want none", res.Warnings)
+				}
+			})
+		}
+	}
+}
+
+func TestOutOfScopeAtEndAndMissingCriteria(t *testing.T) {
+	// Dropping an excluded heading must not attach its plain lines to the prior section.
+	body := "## 기준\n- keep\n## 범위 밖\n- discard\n"
+	if got := only(t, build(t, milestone(open(1, body)), Options{})).Criteria; !reflect.DeepEqual(got, []string{"keep"}) {
+		t.Errorf("criteria = %q; want only keep", got)
+	}
+	res := build(t, milestone(open(1, "## Out of scope\n### Criteria\n- hidden\n### Edit regions\n- `hidden.go`\n")), Options{})
+	is := only(t, res)
+	if !reflect.DeepEqual(is.Criteria, []string{"issue 1"}) || len(is.Regions) != 0 {
+		t.Errorf("excluded-only body = %+v; want title fallback and no regions", is)
+	}
+	if got := rules(res.Warnings); !reflect.DeepEqual(got, []string{"criteria_missing"}) {
+		t.Fatalf("warnings = %+v; want criteria_missing", res.Warnings)
+	}
+	for _, want := range []string{"기준", "끝 조건"} {
+		if !strings.Contains(res.Warnings[0].Detail, want) {
+			t.Errorf("missing-criteria warning lacks %q: %s", want, res.Warnings[0].Detail)
+		}
+	}
+}
+
+func TestInScopeDescendantsAndFencedExclusions(t *testing.T) {
+	body := "# Notes\n## 기준\n- before\n" +
+		"```markdown\n# Out of scope\n```\n" +
+		"### 편집 영역\n- `keep.go`\n### 기준\n- after\n"
+	is := only(t, build(t, milestone(open(1, body)), Options{}))
+	if !reflect.DeepEqual(is.Criteria, []string{"before", "after"}) ||
+		!reflect.DeepEqual(is.Regions, []compile.Region{{Path: "keep.go", Kind: "file"}}) {
+		t.Errorf("ordinary parent or fenced exclusion hid in-scope content: %+v", is)
+	}
+}
+
+func TestReleaseGateCriteriaKindOrder(t *testing.T) {
+	body := "## 끝 조건\n- done one\n## Red tests\n- red one\n" +
+		"## 정한 답\n- decided one\n## Acceptance\n- done two\n" +
+		"## 기준\n- criterion one\n## Criteria\n- criterion two\n" +
+		"## Decided answer\n- decided two\n## 먼저 실패하게 쓸 시험\n- red two\n" +
+		"## Done when\n- done three\n"
+	is := only(t, build(t, milestone(open(1, body)), Options{}))
+	want := []string{"criterion one", "criterion two", "decided one", "decided two", "red one", "red two", "done one", "done two", "done three"}
+	if !reflect.DeepEqual(is.Criteria, want) {
+		t.Errorf("criteria = %q; want kind order %q", is.Criteria, want)
+	}
+}
+
+func TestLegacyHeadingInputBytes(t *testing.T) {
+	// This fixture passes before CRW-1648 and pins the complete serialized input,
+	// including the historical order when a done section precedes acceptance criteria.
+	body := "# Notes\n\n### **Done when**:\n- done first\n  - detail\n" +
+		"\n## Acceptance\n- acceptance second\n\n## Acceptance criteria\n- criterion third\n" +
+		"\n## Edit regions\n- `old/path.go`\n\n## Size\nsize_fit: executor\nissue_size: ok\n"
+	res := build(t, milestone(open(1, body)), Options{})
+	if len(res.Warnings) != 0 {
+		t.Fatalf("legacy fixture warnings: %+v", res.Warnings)
+	}
+	got, err := json.Marshal(res.Input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `{"schema":"crw-flow-compile-input/1","projects":[{"key":"o:r:3","issues":[{"key":"o:r:1","title":"issue 1","criteria":["done first detail","acceptance second","criterion third"],"regions":[{"path":"old/path.go","kind":"file"}],"size_fit":"executor","issue_size":"ok"}]}]}`
+	if string(got) != want {
+		t.Errorf("legacy input bytes changed:\ngot  %s\nwant %s", got, want)
+	}
+	t.Logf("legacy input bytes: %s", got)
+}
+
+func TestSetextScopeBoundaries(t *testing.T) {
+	for _, tc := range []struct {
+		name, excluded, boundary string
+		resumes                  bool
+	}{
+		{"peer", "## Out of scope", "In scope\n--------", true},
+		{"shallower", "## Out of scope", "In scope\n========", true},
+		{"level one peer", "# Out of scope", "In scope\n========", true},
+		{"deeper does not resume", "# Out of scope", "In scope\n--------", false},
+		{"setext exclusion", "범위 밖\n--------", "In scope\n--------", true},
+		{"setext level one exclusion", "Out of scope\n========", "In scope\n--------", false},
+		{"decorated and indented", "## Out of scope", "### Notes\n   **In scope**:\n   --------  ", true},
+		{"blank after list", "## Out of scope", "- excluded item\n\nIn scope\n--------", true},
+		{"after rule", "## Out of scope", "- excluded item\n***\nIn scope\n--------", true},
+		{"after fence", "## Out of scope", "```\nexample\n```\nIn scope\n--------", true},
+		{"after tilde fence", "## Out of scope", "~~~\nexample\n~~~\nIn scope\n========", true},
+	} {
+		for _, newline := range []string{"\n", "\r\n"} {
+			t.Run(tc.name+"/"+strings.ReplaceAll(newline, "\n", "LF"), func(t *testing.T) {
+				body := "## Criteria\n- before\n## Edit regions\n- `before.go`\n\n" +
+					tc.excluded + "\n### Criteria\n- hidden\n### Edit regions\n- `hidden.go`\n\n" +
+					tc.boundary + "\n### Criteria\n- after\n### Edit regions\n- `after.go`\n"
+				body = strings.ReplaceAll(body, "\n", newline)
+				res := build(t, milestone(open(1, body)), Options{})
+				is := only(t, res)
+				wantCriteria := []string{"before"}
+				wantRegions := []compile.Region{{Path: "before.go", Kind: "file"}}
+				if tc.resumes {
+					wantCriteria = append(wantCriteria, "after")
+					wantRegions = append(wantRegions, compile.Region{Path: "after.go", Kind: "file"})
+				}
+				if !reflect.DeepEqual(is.Criteria, wantCriteria) || !reflect.DeepEqual(is.Regions, wantRegions) {
+					t.Errorf("scope boundary: criteria=%q regions=%+v; want %q %+v", is.Criteria, is.Regions, wantCriteria, wantRegions)
+				}
+				if len(res.Warnings) != 0 {
+					t.Errorf("warnings = %+v; want none", res.Warnings)
+				}
+			})
+		}
+	}
+}
+
+func TestSetextDoesNotInventScopeBoundaries(t *testing.T) {
+	for _, candidate := range []string{
+		"```\nIn scope\n--------\n```",
+		"~~~\nIn scope\n========\n~~~",
+		"- In scope\n--------",
+		"- item\nIn scope\n--------",
+		"- item\n\n  In scope\n  --------",
+		"1. item\n\n   In scope\n   --------",
+		"    In scope\n--------",
+		"In scope\n    --------",
+		"> In scope\n--------",
+		"| In scope |\n--------",
+		"--------\n--------",
+		"***\n--------",
+		"In scope\n\n--------",
+	} {
+		t.Run(candidate, func(t *testing.T) {
+			body := "## Criteria\n- keep\n## Out of scope\n" + candidate +
+				"\n### Criteria\n- hidden\n### Edit regions\n- `hidden.go`\n"
+			is := only(t, build(t, milestone(open(1, body)), Options{}))
+			if !reflect.DeepEqual(is.Criteria, []string{"keep"}) || len(is.Regions) != 0 {
+				t.Errorf("not a top-level Setext heading: %+v", is)
+			}
+		})
+	}
+}
+
+func TestSetextHeadingsSupplySections(t *testing.T) {
+	body := "Criteria\n========\n- required behavior\n\nEdit regions\n--------\n- `keep.go`\n" +
+		"\nRed tests\n--------\n- regression case\n\nDone when\n--------\n- tests pass\n"
+	res := build(t, milestone(open(1, body)), Options{})
+	is := only(t, res)
+	if !reflect.DeepEqual(is.Criteria, []string{"required behavior", "regression case", "tests pass"}) ||
+		!reflect.DeepEqual(is.Regions, []compile.Region{{Path: "keep.go", Kind: "file"}}) {
+		t.Errorf("Setext sections = %+v", is)
+	}
+	if len(res.Warnings) != 0 {
+		t.Errorf("warnings = %+v; want none", res.Warnings)
+	}
+}
+
+func TestSetextDetectionKeepsATXAndListData(t *testing.T) {
+	body := "## Done when\n- first\n---\n- second\n\n## Edit regions\n- `keep.go`\n"
+	is := only(t, build(t, milestone(open(1, body)), Options{}))
+	if !reflect.DeepEqual(is.Criteria, []string{"first", "second"}) ||
+		!reflect.DeepEqual(is.Regions, []compile.Region{{Path: "keep.go", Kind: "file"}}) {
+		t.Errorf("ATX/list data changed: %+v", is)
+	}
+}
+
+func TestSetextContextKeepsExcludedContents(t *testing.T) {
+	for _, tc := range []struct{ name, body string }{
+		{"whole title", "Out of scope\n(research)\n---"},
+		{"split scope words", "Out of\nscope\n(research)\n---"},
+		{"list new paragraph", "- item\n\n  continued paragraph\nIn scope\n---"},
+		{"numbered list new paragraph", "1. item\n\n   continued paragraph\nIn scope\n---"},
+		{"quote continuation", "> example\nIn scope\n---"},
+		{"quote multiple continuations", "> example\ncontinued paragraph\nIn scope\n---"},
+		{"comment", "<!--\nIn scope\n---\n-->"},
+		{"comment with blank and fence", "<!--\n\n```\nIn scope\n---\n-->"},
+		{"comment with ATX", "<!--\n## In scope\n-->"},
+		{"single line comment", "<!-- In scope -->\n---"},
+	} {
+		for _, resume := range []bool{false, true} {
+			name := tc.name + "/excluded"
+			if resume {
+				name = tc.name + "/resume"
+			}
+			t.Run(name, func(t *testing.T) {
+				body := "## Criteria\n- keep\n## Edit regions\n- `keep.go`\n## Out of scope\n" +
+					tc.body + "\n### Criteria\n- hidden\n### Edit regions\n- `hidden.go`\n"
+				wantCriteria := []string{"keep"}
+				wantRegions := []compile.Region{{Path: "keep.go", Kind: "file"}}
+				if resume {
+					body += "\nBack\nin scope\n---\n### Criteria\n- after\n### Edit regions\n- `after.go`\n"
+					wantCriteria = append(wantCriteria, "after")
+					wantRegions = append(wantRegions, compile.Region{Path: "after.go", Kind: "file"})
+				}
+				res := build(t, milestone(open(1, body)), Options{})
+				is := only(t, res)
+				if !reflect.DeepEqual(is.Criteria, wantCriteria) || !reflect.DeepEqual(is.Regions, wantRegions) {
+					t.Errorf("context: criteria=%q regions=%+v; want %q %+v", is.Criteria, is.Regions, wantCriteria, wantRegions)
+				}
+				if len(res.Warnings) != 0 {
+					t.Errorf("warnings = %+v; want none", res.Warnings)
+				}
+			})
+		}
+	}
+}
+
+func TestSetextContextEndsAtRealBlockBoundaries(t *testing.T) {
+	for _, preamble := range []string{
+		"Out of scope prose\n\n",
+		"- item\n\n  continued paragraph\n\n",
+		"- item\n\n  continued paragraph\n***\n",
+		"> quote\n\n",
+		"> quote\n>\n",
+		"> quote\n***\n",
+		"<!--\nIn scope\n---\n-->\n",
+	} {
+		t.Run(preamble, func(t *testing.T) {
+			body := "## Out of scope\n" + preamble +
+				"In scope\n---\n### Criteria\n- recovered\n### Edit regions\n- `recovered.go`\n"
+			is := only(t, build(t, milestone(open(1, body)), Options{}))
+			if !reflect.DeepEqual(is.Criteria, []string{"recovered"}) ||
+				!reflect.DeepEqual(is.Regions, []compile.Region{{Path: "recovered.go", Kind: "file"}}) {
+				t.Errorf("context did not end at block boundary: %+v", is)
+			}
+		})
+	}
+}
+
+func TestSetextContextReadsWholeTitleAndFlushesBody(t *testing.T) {
+	body := "Acceptance\ncriteria\n---\n- required behavior\n\nEdit\nregions\n---\n- `keep.go`"
+	is := only(t, build(t, milestone(open(1, body)), Options{}))
+	if !reflect.DeepEqual(is.Criteria, []string{"required behavior"}) ||
+		!reflect.DeepEqual(is.Regions, []compile.Region{{Path: "keep.go", Kind: "file"}}) {
+		t.Errorf("whole Setext titles or final body not read: %+v", is)
+	}
+	body = "## Done when\n- first\n  detail\n\nordinary\nparagraph\n\n- final\n  continuation"
+	is = only(t, build(t, milestone(open(1, body)), Options{}))
+	if !reflect.DeepEqual(is.Criteria, []string{"first detail", "final continuation"}) {
+		t.Errorf("non-heading body changed: %q", is.Criteria)
 	}
 }

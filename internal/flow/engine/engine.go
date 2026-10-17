@@ -113,6 +113,8 @@ type Config struct {
 	// Tools are the repository tools the configuration names (CRW-1488), given to every agent call the run starts; nil gives none.
 	Tools             *RepositoryTools
 	ExecutorAdmission func(context.Context, SnapshotRequest) (executor.Admission, error)
+	// ExecutorCandidate binds real reviewer calls to the current collected checkout.
+	ExecutorCandidate ExecutorCandidateResolver
 }
 
 // SnapshotRequest is a call as the input snapshot sees it.

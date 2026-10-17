@@ -346,14 +346,15 @@ func (s *scriptVM) planResume(p *callPlan, refuse func(reason, detail string)) {
 
 // callRun is one agent call from its opening to its result.
 type callRun struct {
-	s        *scriptVM
-	e        *Engine
-	plan     *callPlan
-	id       string
-	path     *pathState
-	position int
-	label    string
-	plain    bool
+	executorCandidate *executor.CollectedExecution
+	s                 *scriptVM
+	e                 *Engine
+	plan              *callPlan
+	id                string
+	path              *pathState
+	position          int
+	label             string
+	plain             bool
 
 	resolve  func(any) error
 	complete func(func())
@@ -406,6 +407,14 @@ type callRun struct {
 }
 
 func (c *callRun) event(ev string, data map[string]any) Event {
+	if b := c.executorCandidate; b != nil {
+		if data == nil {
+			data = map[string]any{}
+		}
+		data["node"], data["execution_id"], data["plan_id"] = b.Admission.Task.Identity.Node, b.ExecutionID, b.Admission.Task.Identity.Plan
+		data["head"], data["tree"], data["criteria_digest"] = b.Candidate.Head, b.Candidate.Tree, b.Admission.Task.Identity.CriteriaDigest
+		data["executor_result_digest"] = b.Receipt.ResultDigest
+	}
 	row := c.e.j.Append(Event{RunID: c.e.runID, Kind: KindCall, CallID: c.id, Path: c.path.id, Position: c.position, Op: "agent", Label: c.label, Event: ev, Data: data})
 	c.mu.Lock()
 	c.lastSeq, c.lastEvent = row.Seq, ev
@@ -435,6 +444,7 @@ func (c *callRun) journalDown() (CallResult, bool) {
 func (c *callRun) prepare() {
 	p := c.plan
 	c.prepareExecutorAdmission()
+	c.prepareExecutorCandidate()
 	var ctxb map[string]any
 	c.digest, ctxb = c.inputDigest()
 	c.snapshot = c.readSnapshot()
@@ -508,7 +518,7 @@ func (c *callRun) prepare() {
 			c.cwd = p.resume.Cwd
 		}
 	}
-	if placer, ok := c.e.cfg.Backend.(Placer); ok && p.refusal == nil && c.prepHold == nil && !c.e.nodeStopped(p.node) {
+	if placer, ok := c.e.cfg.Backend.(Placer); ok && c.executorCandidate == nil && p.refusal == nil && c.prepHold == nil && !c.e.nodeStopped(p.node) {
 		c.placeReq = PlaceRequest{RunID: c.e.runID, CallID: c.id, Role: p.role, Family: p.spec.Family, Node: p.node, Head: p.opts.Head, QA: p.qa, Continues: p.resume, Journal: c.e.j,
 			Fork: c.forksInSuffix()}
 		pl, err := placer.Place(c.placeReq)
@@ -538,6 +548,12 @@ func (e *Engine) threadIsPrior(threadID string) bool {
 func (c *callRun) terminal(ev, status, reason string, data map[string]any) CallResult {
 	if data == nil {
 		data = map[string]any{}
+	}
+	if ev == EvCompleted && c.executorCandidate != nil {
+		if err := c.executorCandidateStands(c.e.ctx); err != nil {
+			ev, status, reason = EvHeld, StatusHeld, ReasonWorktreeFailed
+			data["detail"] = err.Error()
+		}
 	}
 	data["reason"] = reason
 	// what the call used and whether it repaired are part of its result: every terminal row names them, so the result is
@@ -958,6 +974,9 @@ func (c *callRun) startThread(ctx context.Context) (CallResult, bool) {
 		return res, true
 	}
 	info, err := e.cfg.Backend.StartThread(ctx, ThreadSpec{CallID: c.id, Role: p.role, Pair: p.spec.Pair, Sandbox: p.spec.Sandbox, Cwd: cwd, Node: p.node, Head: p.opts.Head, Placement: placement, AutoCompactTokenLimit: p.spec.AutoCompactTokenLimit, Send: send, QA: p.qa, Tools: c.e.cfg.Tools})
+	if err == nil && c.executorCandidate != nil && (info.Cwd == "" || filepath.Clean(info.Cwd) != filepath.Clean(c.executorCandidate.Candidate.Checkout)) {
+		err = fmt.Errorf("review backend did not confirm the controller checkout")
+	}
 	if err != nil {
 		return c.fromError(ctx, err), true
 	}

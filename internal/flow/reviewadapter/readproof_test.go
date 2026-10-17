@@ -195,7 +195,6 @@ func TestCommandReadsCheckout(t *testing.T) {
 		"a final && both ran":               "git status --short && sed -n 1,20p source.go",
 		"a final && of a neutral then read": "printf 'header\n' && cat README.md",
 		"git show a revision":               "git show HEAD",
-		"git show a patch of a path":        "git show HEAD -- source.go",
 		"git diff a path":                   "git diff -- source.go",
 		"git diff a range":                  "git diff HEAD~1",
 		"git diff the worktree":             "git diff",
@@ -206,6 +205,68 @@ func TestCommandReadsCheckout(t *testing.T) {
 			}
 		})
 	}
+	t.Run("git show pathspecs", func(t *testing.T) {
+		// Object type is evidence from a real repository. Keep the separate
+		// non-repository cases below on their original plain checkout.
+		repo := revisionRepo1618(t)
+		oid := func(object string) string {
+			t.Helper()
+			out, err := exec.Command("git", "-C", repo, "rev-parse", "--verify", object).Output()
+			if err != nil {
+				t.Fatal(err)
+			}
+			return strings.TrimSpace(string(out))
+		}
+		tree, blob, commit := oid("HEAD^{tree}"), oid("HEAD:source.go"), oid("HEAD")
+		for _, c := range []struct {
+			name, command string
+			read          bool
+		}{
+			{"reads: git show a patch of a path", "git show HEAD -- source.go", true},
+			{"reads: no explicit object", "git show -- source.go", true},
+			{"reads: a commit hash", "git show " + commit + " -- source.go", true},
+			{"reads: several commits", "git show HEAD HEAD~1 -- source.go", true},
+			{"reads: independent revision blob evidence", "git show HEAD:source.go " + tree + " -- README.md", true},
+			{"not a read: a tree expression with a pathspec", "git show 'HEAD^{tree}' -- README.md", false},
+			{"not a read: a tree hash with a pathspec", "git show " + tree + " -- README.md", false},
+			{"not a read: a directory with a pathspec", "git show HEAD:sub -- README.md", false},
+			{"not a read: another file's blob hash with a pathspec", "git show " + blob + " -- README.md", false},
+			{"not a read: a commit followed by a tree", "git show HEAD " + tree + " -- README.md", false},
+			{"not a read: a tree followed by a commit", "git show " + tree + " HEAD -- README.md", false},
+			{"not a read: a directory followed by a commit", "git show HEAD:sub HEAD -- README.md", false},
+			{"not a read: an unknown object", "git show no-such-ref-1633 -- README.md", false},
+			{"not a read: a commit and an unknown object", "git show HEAD no-such-ref-1633 -- README.md", false},
+		} {
+			t.Run(c.name, func(t *testing.T) {
+				if got := commandReadsCheckout(t.Context(), c.command, repo); got != c.read {
+					t.Fatalf("%q reads the checkout: %v, want %v", c.command, got, c.read)
+				}
+			})
+		}
+		t.Run("noncommit pathspecs do not satisfy the read floor", func(t *testing.T) {
+			var events []string
+			for i, object := range []string{"HEAD^{tree}", tree, blob} {
+				out, err := exec.Command("git", "-C", repo, "show", object, "--", "README.md").Output()
+				if err != nil {
+					t.Fatalf("git show %s: %v", object, err)
+				}
+				if i < 2 && !strings.HasPrefix(string(out), "tree "+object+"\n") {
+					t.Fatalf("expected a tree listing, got %q", out)
+				}
+				if i == 2 && string(out) != "package x\n" {
+					t.Fatalf("expected source.go's blob, got %q", out)
+				}
+				events = append(events, astraCommandLine(t, fmt.Sprintf("object_%d", i),
+					"git show "+q(object)+" -- README.md"))
+			}
+			stdout := strings.Join(events, "\n") + "\n" + astraStream(`{"verdict":"verified","findings":[]}`)
+			res := checkForWorktree(t, AstraProfile("/run/answer.strict.json"), repo, fakeRun{stdout: stdout}, 50*time.Second)
+			wantState(t, res, StateNotRead)
+			if res.Commands != 0 || res.Verdict != "" || len(res.Findings) != 0 {
+				t.Fatalf("noncommit pathspecs counted as read evidence: %+v", res)
+			}
+		})
+	})
 	for name, command := range map[string]string{
 		"pwd":                                     "pwd",
 		"date":                                    "date",
@@ -282,6 +343,183 @@ func TestCommandReadsCheckout(t *testing.T) {
 		t.Run("not a read: "+name, func(t *testing.T) {
 			if commandReadsCheckout(t.Context(), command, root) {
 				t.Fatalf("%q proves no read of the checkout", command)
+			}
+		})
+	}
+}
+
+func TestReadProof1660GitShowSelections(t *testing.T) {
+	repo := revisionRepo1618(t)
+	git := func(args ...string) string {
+		t.Helper()
+		base := []string{"-C", repo, "-c", "user.name=ReadProof", "-c", "user.email=readproof@example.invalid", "-c", "tag.gpgSign=false"}
+		out, err := exec.Command("git", append(base, args...)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	git("tag", "-a", "review-v1", "-m", "commit tag", "HEAD")
+	git("tag", "-a", "review-v2", "-m", "nested commit tag", "review-v1")
+	git("tag", "-a", "tree-v1", "-m", "tree tag", "HEAD^{tree}")
+	git("tag", "-a", "blob-v1", "-m", "blob tag", "HEAD:source.go")
+	tree, blob := git("rev-parse", "HEAD^{tree}"), git("rev-parse", "HEAD:source.go")
+	commands := []string{
+		"git show review-v1 -- old.go",
+		"git show HEAD~1..HEAD -- old.go",
+		"git show 'HEAD^!' -- old.go",
+		"git show '^HEAD~1' HEAD -- old.go",
+		"git show review-v2 -- old.go",
+		"git show HEAD~1..review-v1 -- old.go",
+		"git show HEAD~1...HEAD -- old.go",
+		"git show 'review-v1^{commit}' -- old.go",
+	}
+	var events []string
+	for i, command := range commands {
+		t.Run(command, func(t *testing.T) {
+			cmd := exec.Command("/bin/sh", "-c", command)
+			cmd.Dir = repo
+			out, err := cmd.CombinedOutput()
+			if err != nil || !strings.Contains(string(out), "diff --git a/old.go b/old.go") || !strings.Contains(string(out), "-package old\n") {
+				t.Fatalf("%q did not print old.go's deletion patch: %v\n%s", command, err, out)
+			}
+			if !commandReadsCheckout(t.Context(), command, repo) {
+				t.Errorf("%q printed the checkout file's patch but was not counted", command)
+			}
+		})
+		events = append(events, astraCommandLine(t, fmt.Sprintf("selection_%d", i), command))
+	}
+	for _, command := range []string{
+		"git show tree-v1 -- README.md",
+		"git show blob-v1 -- README.md",
+		"git show HEAD " + tree + " -- README.md",
+		"git show HEAD " + blob + " -- README.md",
+		"git show " + tree + "..HEAD -- README.md",
+		"git show " + blob + "..HEAD -- README.md",
+		"git show no-such-ref-1660..HEAD -- README.md",
+		"git show HEAD..no-such-ref-1660 -- README.md",
+		"git show review-v1 no-such-ref-1660 -- README.md",
+	} {
+		t.Run("not a read: "+command, func(t *testing.T) {
+			if commandReadsCheckout(t.Context(), command, repo) {
+				t.Fatalf("%q is not a selection of commit objects", command)
+			}
+		})
+	}
+	t.Run("selected commit patches satisfy the read floor", func(t *testing.T) {
+		stdout := strings.Join(events, "\n") + "\n" + astraStream(`{"verdict":"verified","findings":[]}`)
+		res := checkForWorktree(t, AstraProfile("/run/answer.strict.json"), repo, fakeRun{stdout: stdout}, 50*time.Second)
+		wantState(t, res, StateOK)
+		if res.Commands != len(commands) || res.Verdict != VerdictVerified {
+			t.Fatalf("commit selection evidence was lost: %+v", res)
+		}
+	})
+}
+
+func TestReadProof1665EmptySelections(t *testing.T) {
+	repo := revisionRepo1618(t)
+	commands := []string{
+		"git show '^HEAD' -- old.go",
+		"git show HEAD..HEAD -- old.go",
+		"git show HEAD...HEAD -- old.go",
+		"git show HEAD '^HEAD' -- old.go",
+		"git show '^HEAD' HEAD -- old.go",
+		"git show HEAD..HEAD HEAD -- old.go",
+	}
+	for _, command := range commands {
+		t.Run(command, func(t *testing.T) {
+			cmd := exec.Command("/bin/sh", "-c", command)
+			cmd.Dir = repo
+			out, err := cmd.CombinedOutput()
+			if err != nil || len(out) != 0 {
+				t.Fatalf("%q should succeed without selecting a commit: %v\n%s", command, err, out)
+			}
+			if commandReadsCheckout(t.Context(), command, repo) {
+				t.Errorf("%q emitted nothing but counted as a read", command)
+			}
+		})
+	}
+	t.Run("empty selections cannot satisfy the read floor", func(t *testing.T) {
+		var events []string
+		for i, command := range commands[:3] {
+			events = append(events, astraCommandLine(t, fmt.Sprintf("empty_%d", i), command))
+		}
+		stdout := strings.Join(events, "\n") + "\n" + astraStream(`{"verdict":"verified","findings":[]}`)
+		res := checkForWorktree(t, AstraProfile("/run/answer.strict.json"), repo, fakeRun{stdout: stdout}, 50*time.Second)
+		wantState(t, res, StateNotRead)
+		if res.Commands != 0 {
+			t.Fatalf("empty selections counted as %d reads", res.Commands)
+		}
+	})
+}
+
+// Cancellation must cover resolution, type queries and the final selection walk.
+func TestReadProof1660SelectionCancellation(t *testing.T) {
+	for _, stage := range []string{"first lookup", "type lookup", "selection walk"} {
+		t.Run(stage, func(t *testing.T) {
+			root, _ := readProofCheckout(t)
+			tail := "exec sleep 60"
+			if stage == "type lookup" {
+				tail = `for arg in "$@"; do
+  if [ "$arg" = rev-parse ]; then
+    printf '%s\n' '1111111111111111111111111111111111111111'
+    exit 0
+  fi
+done
+exec sleep 60`
+			}
+			if stage == "selection walk" {
+				tail = `for arg in "$@"; do
+  case "$arg" in
+    rev-parse) printf '%s\n' '1111111111111111111111111111111111111111'; exit 0 ;;
+    cat-file) printf '%s\n' commit; exit 0 ;;
+    rev-list) exec sleep 60 ;;
+  esac
+done
+exit 1`
+			}
+			marker := fakeGit1618(t, tail)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			done := make(chan bool, 1)
+			go func() { done <- commandReadsCheckout(ctx, "git show HEAD~1..HEAD -- README.md", root) }()
+			deadline := time.Now().Add(10 * time.Second)
+			for {
+				b, err := os.ReadFile(marker)
+				ready := stage == "first lookup" ||
+					(stage == "type lookup" && strings.Contains(string(b), "cat-file -t")) ||
+					(stage == "selection walk" && strings.Contains(string(b), "rev-list "))
+				if err == nil && ready {
+					break
+				}
+				select {
+				case got := <-done:
+					t.Fatalf("call returned %v before the blocked lookup", got)
+				default:
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("no lookup started within 10 s")
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			cancel()
+			select {
+			case got := <-done:
+				if got {
+					t.Fatal("a cancelled lookup counted as a read")
+				}
+			case <-time.After(10 * time.Second):
+				t.Fatal("lookup did not stop with its caller")
+			}
+			// An already-ended caller must not start another probe.
+			if err := os.Remove(marker); err != nil {
+				t.Fatal(err)
+			}
+			if commandReadsCheckout(ctx, "git show HEAD~1..HEAD -- README.md", root) {
+				t.Fatal("an ended call counted a read")
+			}
+			if _, err := os.Stat(marker); !errors.Is(err, fs.ErrNotExist) {
+				t.Fatalf("an ended call started a probe: %v", err)
 			}
 		})
 	}

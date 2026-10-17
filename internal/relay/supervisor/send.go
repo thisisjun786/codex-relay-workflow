@@ -451,6 +451,11 @@ type attemptRun struct {
 	service  *delivery.Service
 	settings *delivery.TaskSettings
 	claimed  claimedMessage
+
+	steerTurn string // observed active turn; empty selects the existing new-turn path
+	wake      *delivery.WakeAttempt
+	wakeTurns []any
+	wakeRead  bool
 }
 
 // transportOutcome is what the transport-start transaction decided.
@@ -632,8 +637,9 @@ func (a *attemptRun) rateGate(ctx context.Context) (stop bool, err error) {
 	return false, nil
 }
 
-// lifecycleGate reads and records the recipient's lifecycle. A busy recipient defers the message; a
-// recipient that cannot take it withholds the message and journals why.
+// lifecycleGate reads and records the recipient's lifecycle. A busy flow recipient
+// selects guarded steering when supported, otherwise defers. An undeliverable
+// recipient withholds the message and journals why.
 func (a *attemptRun) lifecycleGate(ctx context.Context) (stop bool, err error) {
 	c, row := a.c, a.row
 	a.at = delivery.ISOOf(a.now)
@@ -651,6 +657,9 @@ func (a *attemptRun) lifecycleGate(ctx context.Context) (stop bool, err error) {
 		return true, err
 	}
 	if lifecycle.IsBusy() {
+		if steer, err := a.selectFlowSteer(ctx, lifecycle); err != nil || steer {
+			return err != nil, err
+		}
 		return true, c.deferBusy(ctx, row, a.now)
 	}
 	if !lifecycle.MaySend() {
@@ -767,6 +776,11 @@ func (a *attemptRun) fence(tx context.Context, out *transportOutcome) error {
 	}
 	if err := a.c.Store.StartSupervisorTransport(tx, a.claimed.requestID, transportAt); err != nil {
 		return err
+	}
+	if a.steerTurn != "" {
+		if _, err := a.c.Store.Q(tx).ExecContext(tx, "UPDATE supervisor_attempts SET record=json_set(record,'$.deliveryMethod','turn/steer','$.expectedTurnId',?) WHERE request_id=?", a.steerTurn, a.claimed.requestID); err != nil {
+			return err
+		}
 	}
 	out.started = true
 	return nil
@@ -910,8 +924,17 @@ func (a *attemptRun) fenceBudget(tx context.Context, current store.SupervisorMes
 // says the host's approval policy cannot be served counts as nothing sent, safe to retry.
 func (a *attemptRun) transmit(ctx context.Context) sentReceipt {
 	c, requestID := a.c, a.claimed.requestID
-	receipt, sendErr := a.adapter.SendMessage(ctx, requestID, a.r.Recipient, a.claimed.message, a.settings)
-	facts := delivery.Classify(receipt)
+	a.prepareWake(ctx)
+	var receipt delivery.Obj
+	var sendErr error
+	var facts delivery.Facts
+	if a.steerTurn != "" {
+		receipt, sendErr = a.adapter.(flowSteerer).SteerMessage(ctx, requestID, a.r.Recipient, a.steerTurn, a.claimed.message)
+		facts = classifyFlowSteer(receipt, a.steerTurn)
+	} else {
+		receipt, sendErr = a.adapter.SendMessage(ctx, requestID, a.r.Recipient, a.claimed.message, a.settings)
+		facts = delivery.Classify(receipt)
+	}
 	if sendErr != nil {
 		facts = delivery.Classify(delivery.Obj{{Key: "requestId", Value: requestID}, {Key: "status", Value: delivery.OutcomeUnknown}, {Key: "error", Value: fmt.Sprintf("%T: %v", sendErr, sendErr)}})
 	}
@@ -924,7 +947,11 @@ func (a *attemptRun) transmit(ctx context.Context) sentReceipt {
 	if c.clockISO != nil {
 		settledAt = c.clockISO()
 	}
+	a.finishWake(ctx, facts, receipt, settledAt)
 	result := map[string]any{"schema": channelVersion, "requestId": requestID, "messageId": a.id, "attemptNo": a.claimed.attemptNo, "recipientTaskId": a.r.Recipient, "deliveryState": facts.DeliveryState, "sendAttempted": facts.SendAttempted, "retrySafe": facts.RetrySafe, "transportReceiptStatus": facts.ReceiptStatus, "failedOperation": facts.FailedOperation, "turnId": facts.TurnID, "observedAt": settledAt}
+	if a.steerTurn != "" {
+		result["deliveryMethod"], result["expectedTurnId"] = "turn/steer", a.steerTurn
+	}
 	if transportDeliveryState != facts.DeliveryState {
 		result["transportDeliveryState"] = transportDeliveryState
 		result["reason"] = "the recipient's thread reported an approval policy this transport cannot serve; nothing was started or stored for it, and the message is attempted again after its backoff"
@@ -940,6 +967,11 @@ func (a *attemptRun) settle(ctx context.Context, sent sentReceipt) (map[string]a
 	c, id, requestID, attemptNo, owner, now := a.c, a.id, a.claimed.requestID, a.claimed.attemptNo, a.owner, a.now
 	facts, settledAt := sent.facts, sent.settledAt
 	err := c.Store.Transaction(ctx, func(tx context.Context, _ *sql.Conn) error {
+		if a.wake != nil {
+			if err := delivery.RecordWakeAttempt(tx, c.Store, *a.wake); err != nil {
+				return err
+			}
+		}
 		if err := c.Store.SettleSupervisorAttempt(tx, requestID, facts.DeliveryState, facts.SendAttempted, int64(boolInt(facts.RetrySafe)), nullable(facts.TurnID), sent.encoded, settledAt); err != nil {
 			return err
 		}
@@ -972,7 +1004,7 @@ func (a *attemptRun) settle(ctx context.Context, sent sentReceipt) (map[string]a
 		if moved {
 			// a flow run's message: its delivery row commits with this settle (CRW-1380)
 			if err := c.recordFlowDelivery(tx, a.row, flowDelivery{result: flowDeliveryResult(state, effective), requestID: requestID, state: state,
-				hold: effective.String, at: settledAt, turnID: facts.TurnID}); err != nil {
+				hold: effective.String, at: settledAt, turnID: facts.TurnID, method: sent.result["deliveryMethod"]}); err != nil {
 				return err
 			}
 		}

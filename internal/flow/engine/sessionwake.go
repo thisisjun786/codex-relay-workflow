@@ -146,8 +146,8 @@ func (e *Engine) wakeLoop(done chan struct{}) {
 	}
 }
 
-// wakeLook is one look: a new batch wakes an owner that is not busy, a batch that waited long enough is re-notified, and one that
-// waited UnresponsiveAfter is escalated once.
+// wakeLook is one look: a new batch goes to the relay whatever the owner's status (the relay owns delivery to a busy one), a
+// batch that waited long enough is re-notified, and one that waited UnresponsiveAfter is escalated once.
 func (e *Engine) wakeLook(ctx context.Context) {
 	s, w := e.cfg.Session, e.sessW
 	now := e.cfg.Now()
@@ -193,11 +193,9 @@ func (e *Engine) wakeLook(ctx context.Context) {
 		} else if errors.Is(err, ErrSessionAgentNotFound) {
 			status = "notFound"
 		}
-		// a busy owner is working through `crw flow next` and sees the new steps there; a re-notification goes to it anyway, and the
-		// relay delivers it after the turn
-		if renotify > 0 || status != "active" {
-			e.wake(ctx, SessionWake{Run: e.runID, Owner: s.Owner, Batch: batch, ID: wakeID(e.epoch, batch, renotify), Renotify: renotify, Ops: ops, Waiting: quiet, OwnerStatus: status})
-		}
+		// The relay owns delivery to a busy owner: it can steer a new step into the current turn, or deliver after that turn. A
+		// fresh batch must reach it immediately.
+		e.wake(ctx, SessionWake{Run: e.runID, Owner: s.Owner, Batch: batch, ID: wakeID(e.epoch, batch, renotify), Renotify: renotify, Ops: ops, Waiting: quiet, OwnerStatus: status})
 	}
 	if escalate {
 		e.j.Append(Event{RunID: e.runID, Kind: KindFlow, Event: EvEscalation, Data: map[string]any{"reason": ReasonSessionUnresponsive, "owner": s.Owner,

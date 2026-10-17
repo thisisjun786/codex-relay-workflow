@@ -470,10 +470,11 @@ func (p *HostPool) AcquireHeavy(ctx context.Context, r executor.Reference, comma
 		if !s.Fresh || !s.Checked || s.Observation.Incarnation != r.Executor.Incarnation {
 			return errors.New("worker observation stale or changed")
 		}
-		if cpu > s.Capacity.TestCPU {
-			return fmt.Errorf("CPU request %d cannot fit host budget %d", cpu, s.Capacity.TestCPU)
+		budget := min(s.Capacity.TestCPU, s.Observation.EffectiveCPU)
+		if cpu > budget {
+			return fmt.Errorf("CPU request %d cannot fit host budget %d", cpu, budget)
 		}
-		if s.HeldHeavy >= s.Capacity.TestSlots || s.HeldCPU+cpu > s.Capacity.TestCPU {
+		if s.HeldHeavy >= s.Capacity.TestSlots || s.HeldCPU+cpu > budget {
 			return errors.New("heavy capacity exhausted")
 		}
 		out = HeavyPermit{ID: id, ExecutionID: r.Identity.ExecutionID, CommandID: command, CPU: cpu, State: "held"}

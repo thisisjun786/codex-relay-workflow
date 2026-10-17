@@ -69,8 +69,8 @@ The body of an issue is read from a small fixed set of headings, matched without
 
 | Field | Heading | Reading | When the section is missing |
 |---|---|---|---|
-| `criteria` | `끝 조건`, `Done when`, `Acceptance`, `Acceptance criteria` | the bullets (also numbered and checkbox items) | the title is the one criterion, with the warning `criteria_missing` |
-| `regions` | `수정 범위`, `Edit regions`, `Regions` | each bullet names a path in backticks, else its first word; a trailing slash is a tree | no region; the compile default applies |
+| `criteria` | `기준` (`Acceptance criteria`, `Criteria`), `정한 답` (`Decided answer`), `먼저 실패하게 쓸 시험` (`Red tests`), `끝 조건` (`Done condition`, `Done when`), using the same aliases as [issue-ready](../release-gate.md); legacy `Acceptance` is a done condition | bullets (also numbered and checkbox items), collected in that kind order with source order within each kind; out-of-scope headings and their descendants are excluded until the next peer or shallower heading. Legacy headings remain supported; bodies using only legacy headings retain their previous order. | the title is the one criterion, with the warning `criteria_missing` |
+| `regions` | `편집 영역` (`Edit regions`), using the same issue-ready aliases; legacy `수정 범위`, `Regions` | each bullet names a path in backticks, else its first word; a trailing slash is a tree. The same out-of-scope exclusion applies. | no region; the compile default applies |
 | `size_fit`, `size_reason`, `issue_size` | `크기`, `Size`, `Size fit` | lines `size_fit: V`, `size_reason: V`, `issue_size: V` with a value of the closed set | nothing; the compile defaults apply |
 
 `--target-repository` (the absolute path of the checkout) and `--base-ref` (the branch) give the project its target, which compile needs for any order between issues. `--envelope` prints `{schema, milestone, input, refs, warnings}` instead of the bare input, so the warnings are recorded with it; `refs` maps each key of the input back to its `OWNER/NAME#N` ref.

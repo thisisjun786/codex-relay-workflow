@@ -26,7 +26,8 @@ func TestWakeAttemptAppendsHostEvidenceAndJoinsTransaction(t *testing.T) {
 	if !life.MaySend() || life.RuntimeStatus != "idle" {
 		t.Fatalf("fake host before send: %+v", life)
 	}
-	settings := &TaskSettings{Data: Obj{{Key: "approvalPolicy", Value: "never"}, {Key: "model", Value: "model-a"}}}
+	raw := `{"approvalPolicy":"never","sandbox":{"type":"readOnly"},"cwd":"/work","runtimeWorkspaceRoots":["/work"],"model":"model-a","reasoningEffort":"high","environments":[]}`
+	settings := &TaskSettings{Data: loadsObj(raw)}
 	receipt, err := host.SendMessage(ctx, "request", "owner", "wake", settings)
 	if err != nil {
 		t.Fatal(err)
@@ -38,12 +39,12 @@ func TestWakeAttemptAppendsHostEvidenceAndJoinsTransaction(t *testing.T) {
 	}
 	a := WakeAttempt{
 		RequestID: "request", RecipientTaskID: "owner", RecipientStatusBefore: life.RuntimeStatus.(string),
-		TurnID: turn, NewTurn: true, DeliveryState: facts.DeliveryState, SendAttempted: facts.SendAttempted,
+		TurnID: turn, NewTurn: true, DeliveryMethod: "turn/start", DeliveryState: facts.DeliveryState, SendAttempted: facts.SendAttempted,
 		Unattended: true, RequiredSettings: json.RawMessage(dumps(settings.Data)), ObservedAt: clock.ISO(),
 		Identity: WakeIdentity{OperatingScope: "scope", AppServerInstance: "server", Socket: "socket", ServiceInstance: "service",
 			ApprovalPolicy: "never", RolePolicy: "policy", Role: "parent", PairSource: "role", TransportRevision: "revision", Disposition: "session_step_waiting"},
 	}
-	want := &WakeExpectation{Identity: a.Identity, RequiredSettings: json.RawMessage(`{"model":"model-a","approvalPolicy":"never"}`), RequiredStatus: "idle"}
+	want := &WakeExpectation{Identity: a.Identity, RequiredSettings: json.RawMessage(raw), RequiredStatus: "idle"}
 	if err := RecordWakeAttempt(ctx, s, a); err != nil {
 		t.Fatal(err)
 	}
