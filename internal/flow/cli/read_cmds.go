@@ -340,8 +340,8 @@ func (c *command) watch(args []string) int {
 		if !*follow {
 			return 0
 		}
-		// a run no process holds gets no row until it is resumed: dead, held, and paused with no process (CRW-1487)
-		if len(page.Rows) == 0 && !page.More && (Over(page.State) || page.State == StateDead || page.State == StateHeld || (page.State == StatePaused && !page.Live)) {
+		// A stopped run can still have a writer committing its final rows.
+		if page.FollowDone() {
 			if !*asJSON {
 				if d, err := r.Detail(c.ctx, run); err == nil {
 					c.printDetail(d)
