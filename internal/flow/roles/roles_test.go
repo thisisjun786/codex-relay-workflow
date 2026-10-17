@@ -587,3 +587,60 @@ func TestArchitectOverlayNamesSplitSubTasks(t *testing.T) {
 		}
 	}
 }
+
+// CRW-1540 pins the self-check instruction in both emitted executor prompts;
+// it is a document contract, not evidence of a live agent executing the checks.
+func TestCRW1540ExecutorPreCommitSelfCheck(t *testing.T) {
+	const prefix = "- Pre-commit self-check:"
+	var first string
+	for _, role := range []string{"executor", "executor-t1"} {
+		t.Run(role, func(t *testing.T) {
+			prompt, err := Prompt(role, Options{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var bullet string
+			for _, line := range strings.Split(prompt, "\n") {
+				if strings.HasPrefix(line, prefix) {
+					if bullet != "" {
+						t.Fatal("repeated pre-commit self-check")
+					}
+					bullet = line
+				}
+			}
+			if bullet == "" {
+				t.Fatal("emitted executor prompt lacks the pre-commit self-check")
+			}
+			for _, want := range []string{
+				"before returning edits for the run's `crw.commit`",
+				"`lint-changed` where provided",
+				"changed-package and dependent-package tests",
+				"relevant documentation checks",
+				"fix in-scope failures or report failures/blockers in the receipt",
+				"never claim required checks passed if they failed or did not run",
+				"Reuse evidence still valid for this code, criteria and environment",
+				"not full CI",
+				"does not replace the run's Codex unit check",
+			} {
+				if !strings.Contains(bullet, want) {
+					t.Errorf("self-check instruction lacks %q", want)
+				}
+			}
+			if !strings.Contains(prompt, "do not run `git commit`, `git add -A`") {
+				t.Error("executor commit prohibition is missing")
+			}
+			if first == "" {
+				first = bullet
+			} else if bullet != first {
+				t.Error("executor tiers have different self-check instructions")
+			}
+		})
+	}
+	qa, err := Prompt("executor", Options{QA: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(qa, prefix) {
+		t.Error("the QA-only prompt inherited the implementation self-check")
+	}
+}
