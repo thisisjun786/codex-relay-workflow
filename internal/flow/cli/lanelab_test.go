@@ -415,6 +415,9 @@ func (l *laneLab) closed(res Result) laneValue {
 			if e.Kind == engine.KindFlow && e.Event == engine.EvEscalation {
 				l.t.Logf("escalation: %v", e.Data)
 			}
+			if e.Kind == engine.KindCall && (e.Event == engine.EvHeld || e.Event == engine.EvRefused) {
+				l.t.Logf("%s call %s (%s): %v", e.Event, e.CallID, e.Label, e.Data)
+			}
 		}
 		l.t.Fatalf("the run did not close its milestone: %s %s %s\n%s", res.Status, res.ErrorKind, res.Error, res.Value)
 	}

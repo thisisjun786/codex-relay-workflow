@@ -358,26 +358,40 @@ func TestExplorersRunBeforeTheArchitectAndTheirFindingsReachItsPacket(t *testing
 }
 
 // TestDesignPhaseReadsOneHead: the run samples one design head before the phase explore, and every background explorer and the
-// architect's first call read it. A candidate lands on the integration target while the first background explorer runs: the second
-// explorer and the architect still read the sampled head, the architect's checkout is made at it, the ledger's r0 records it as the
-// head the DESIGN ran at, and the architect's packet names it with the background findings.
+// architect's first call read it. A candidate lands after the first background placement is recorded and before the second is
+// planned: both explorers and the architect still read the sampled head, the architect's checkout is made at it, the ledger's r0
+// records it as the head the DESIGN ran at, and the architect's packet names it with the background findings.
 func TestDesignPhaseReadsOneHead(t *testing.T) {
 	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"}, labIssue{Key: "A-2", Milestone: "M1", After: []string{"A-1"}})
 	before := l.git(l.repo, "rev-parse", "integration")
 	landed := ""
+	preparedBoth := make(chan struct{})
+	prepared := 0
+	l.afterRow = func(e engine.Event) {
+		if e.Kind != engine.KindCall || e.Op != "agent" || e.Event != engine.EvPrepared || !strings.HasPrefix(e.Label, "explore-bg:") {
+			return
+		}
+		prepared++
+		if prepared == 1 {
+			// prepared is written synchronously, before this call's worktree is made and before the next call is planned.
+			// Moving the ref from a model turn let both placements precede the move and could overlap Git worktree setup.
+			tree := l.git(l.repo, "rev-parse", before+"^{tree}")
+			landed = l.git(l.repo, "commit-tree", tree, "-p", before, "-m", "landed meanwhile")
+			l.git(l.repo, "update-ref", "refs/heads/integration", landed, before)
+		}
+		if prepared == 2 {
+			defer close(preparedBoth)
+			if tip := l.git(l.repo, "rev-parse", "integration"); tip != landed || tip == before {
+				t.Errorf("the second background placement saw integration at %q, want the landed head %q (before %s)", tip, landed, before)
+			}
+		}
+	}
 	l.turn = func(c labCall, r fakehost.TurnRequest) (fakehost.TurnPlan, bool) {
 		if !strings.HasPrefix(c.Label, "explore-bg:") {
 			return fakehost.TurnPlan{}, false
 		}
-		l.mu.Lock()
-		first := landed == ""
-		if first {
-			// another candidate lands while the phase runs
-			tree := l.git(l.repo, "rev-parse", "integration^{tree}")
-			landed = l.git(l.repo, "commit-tree", tree, "-p", "integration", "-m", "landed meanwhile")
-			l.git(l.repo, "update-ref", "refs/heads/integration", landed)
-		}
-		l.mu.Unlock()
+		// Exercise the schedule where both calls are prepared before either model answers.
+		<-preparedBoth
 		return labSay(map[string]any{"answer": "README.md holds the base text", "evidence": []string{"README.md"}, "verified": []string{}, "inferred": []string{}, "unknown": []string{}}), true
 	}
 	spec := l.start("start", "project-lane", "--args", fmt.Sprintf(`{"plan":%q,"milestone":"M1"}`, l.plan), "--handoff", l.file)
