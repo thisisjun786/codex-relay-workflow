@@ -440,44 +440,50 @@ const (
 
 // declareRegions declares a node's admission regions in the target repository (dag-region-declare, dagsched.DeclareRegions) when the
 // node has no declaration in force (CRW-1391). A node with one keeps it: the parent's graded declaration made before the run (crw-run,
-// "Release by region grade") or one an earlier release of the node made, which a resume does not widen. A region that is one of the
-// plan's (the handoff's issue regions), in any spelling of it, is declared as the plan states it (kind, symbol, change, exclusive); an edit
-// region of the DESIGN is a path, a tree when it ends in "/" and a symbol when it names one after "#". It answers what it did and, for a declaration that
-// failed, why: the release goes on.
+// "Release by region grade") or one an earlier release of the node made, which a resume does not widen. A planned region (the handoff's
+// issue regions) is declared from its fields, as the plan states it (kind, symbol, change, exclusive). A request text names every planned
+// region that one of its readings (ops.RegionReadings) equals, in any spelling of it, so a path spelled unclean with "#" in it is the
+// planned file or tree it names, and a text that is both a planned file and a planned symbol declares both; a text that names no planned
+// region is an edit region of the DESIGN, read as ops.RegionOf reads it. It answers what it did and, for a declaration that failed, why:
+// the release goes on.
 func (r *SchedRelay) declareRegions(ctx context.Context, plan, node, repository string, is compile.Issue, regions []string) (string, string) {
 	if _, found, err := r.Sched.NodeRegions(ctx, plan, node); err != nil {
 		return regionsFailed, "the node's declaration in force cannot be read: " + err.Error()
 	} else if found {
 		return regionsKept, ""
 	}
-	// a region is looked up and declared once by its normal form (ops.RegionOf, CRW-1404): another spelling of a planned region (blanks
-	// around it, ./path) is that region, with the plan's change and exclusive flag, and not a second region of the same place that the
-	// relay refuses the whole declaration for. A planned region's normal form is taken from its fields (ops.RegionFormOf, CRW-1408), and
-	// the plan's own text of it (the manifest's, RegionForm.Text) is that region and is not read again, so a planned path that holds "#" stays
-	// the file or tree the plan states; only a DESIGN edit region is read from its text
+	// a planned region is matched by its normal form, taken from its fields (ops.RegionFormOf, CRW-1408), never by its text (CRW-1411):
+	// a request text names every planned region one of its readings is (ops.RegionReadings), so another spelling of it (blanks around it,
+	// ./path, a doubled slash, a "#" in its path) is that region with the plan's change and exclusive flag. A text that names none is read
+	// as ops.RegionOf reads it. Each form is declared once, since a second region of the same place makes the relay refuse the whole
+	// declaration (CRW-1404).
 	planned := map[ops.RegionForm]compile.Region{}
-	spelled := map[string]ops.RegionForm{}
 	for _, rg := range is.Regions {
-		form := ops.RegionFormOf(rg.Path, rg.Kind, rg.Key)
-		planned[form] = rg
-		spelled[form.Text()] = form
+		planned[ops.RegionFormOf(rg.Path, rg.Kind, rg.Key)] = rg
 	}
 	list := make([]dagsched.Region, 0, len(regions))
 	seen := map[ops.RegionForm]bool{}
 	for _, text := range regions {
-		form, ok := spelled[strings.TrimSpace(text)]
-		if !ok {
-			form = ops.RegionOf(text)
+		named := []ops.RegionForm{}
+		for _, form := range ops.RegionReadings(text) {
+			if _, ok := planned[form]; ok {
+				named = append(named, form)
+			}
 		}
-		if seen[form] {
-			continue
+		if len(named) == 0 {
+			named = append(named, ops.RegionOf(text))
 		}
-		seen[form] = true
-		region := dagsched.Region{Repository: repository, Path: form.Path, Kind: form.Kind, Key: form.Key}
-		if rg, ok := planned[form]; ok {
-			region.Change, region.Exclusive = rg.Change, rg.Exclusive
+		for _, form := range named {
+			if seen[form] {
+				continue
+			}
+			seen[form] = true
+			region := dagsched.Region{Repository: repository, Path: form.Path, Kind: form.Kind, Key: form.Key}
+			if rg, ok := planned[form]; ok {
+				region.Change, region.Exclusive = rg.Change, rg.Exclusive
+			}
+			list = append(list, region)
 		}
-		list = append(list, region)
 	}
 	if _, err := r.Sched.DeclareRegions(ctx, plan, node, r.Actor, list); err != nil {
 		return regionsFailed, err.Error()

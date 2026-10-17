@@ -454,6 +454,24 @@ func RegionOf(text string) RegionForm {
 	return form
 }
 
+// RegionReadings are the normal forms a planned or DESIGN region's text may name (CRW-1411), all read from its trimmed text: the whole
+// text as a path, a tree when it ends in "/" (one trailing "/" is removed first, so "gen#1//" is the tree "gen#1"), otherwise a file;
+// and a symbol at each "#" after the first character, its path the text before it (cleaned) and its key the text after it, as written.
+func RegionReadings(text string) []RegionForm {
+	t := strings.TrimSpace(text)
+	whole := RegionForm{Path: path.Clean(t), Kind: "file"}
+	if strings.HasSuffix(t, "/") {
+		whole = RegionForm{Path: path.Clean(strings.TrimSuffix(t, "/")), Kind: "tree"}
+	}
+	out := []RegionForm{whole}
+	for at, c := range t {
+		if c == '#' && at > 0 {
+			out = append(out, RegionForm{Path: path.Clean(t[:at]), Kind: "symbol", Key: t[at+1:]})
+		}
+	}
+	return out
+}
+
 // RegionFormOf is the normal form of a structured region (a plan's compile.Region) taken field by field (CRW-1408): its path cleaned as
 // compile.cleanRegion and the relay's DeclareRegions clean it, its kind (a file when none is named) and its symbol's key. Its text is
 // never parsed, so a path that holds "#" stays the file or tree it is.
