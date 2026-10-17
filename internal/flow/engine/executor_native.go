@@ -210,16 +210,19 @@ func executorNativeEvidence(events []Event, terminal Event) (executor.Admission,
 		return at
 	}
 	current := -1
+	creationRequested := false
 	replaced := replacedTurns(rows)
 	for _, ev := range rows {
 		switch ev.Event {
+		case EvThreadRequested, EvForkRequested:
+			creationRequested = true
 		case EvThreadStarted, EvForkStarted:
 			current = bind(rowStr(ev.Data, "thread_id"), rowInt(ev.Data, "attempt"),
 				Pair{Model: rowStr(ev.Data, "model"), Effort: rowStr(ev.Data, "effort")})
 		case EvTurnStarted:
 			// A continuation may start a turn on the handle recorded by its
 			// prepared row without creating a new native thread.
-			if current < 0 {
+			if current < 0 && !creationRequested {
 				current = bind(rowStr(prepared.Data, "thread_id"), rowInt(ev.Data, "attempt"),
 					Pair{Model: rowStr(prepared.Data, "configured_model"), Effort: rowStr(prepared.Data, "configured_effort")})
 			}
@@ -235,6 +238,13 @@ func executorNativeEvidence(events []Event, terminal Event) (executor.Admission,
 				p.NativeTurns = append(p.NativeTurns, turn)
 			}
 		}
+	}
+	if len(attempts) == 0 && creationRequested {
+		return admission, []executorNativeAttempt{{provenance: executor.Provenance{
+			Provider: executor.Codex, NativeSession: observed(""),
+			NativeTurns: []string{}, Model: observed(""), Effort: observed(""),
+			CPUMethod: observed(""), Tools: []executor.Tool{},
+		}}}, nil
 	}
 	if len(attempts) == 0 {
 		// A continuation can fail before Started reports a turn. Its prepared

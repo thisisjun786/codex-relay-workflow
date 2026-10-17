@@ -1,6 +1,17 @@
 
 ## The project lane
 
+Before a fresh design phase, `crw.designReuse` also reads each node's relay integration state using the same landing proof as
+`crw.reuseIntegrated`. When the milestone digest changed, proven integrated nodes still keep their source ledger's DESIGN issue
+and referenced decisions (`integrated_design` in the reuse row). The architect's `INTEGRATED NODES` section names each node, head
+and source run; only the remaining nodes get background exploration and fresh design. The workflow restores the fixed issues and
+decisions before every audit, including design-answers, design-fix and re-plan turns, even if the architect repeats, changes or omits
+them. The critic cites the source approval without re-auditing the fixed work, and the ledger refuses drift of those entries.
+An unreadable or unproven integration is named `INTEGRATION UNPROVEN`: design proceeds normally, without asking the parent to prove
+reuse. With no integration reader, earlier recorded landings are marked unproven. The build still makes its own live
+`crw.reuseIntegrated` check and keeps all its refusal rules. A run with no integrated nodes keeps its existing design packets and
+journal shape; no discovery call is added. Source journals and installed runtimes are unchanged.
+
 `internal/flow/workflows/project-lane.js` is the built-in workflow that runs the issues of a milestone (`args`: `plan`, `milestone`,
 and `cap`, the executors at once, default 3). Its steps, in order: `crw.milestone` reads the nodes of the milestone in the order the
 scheduler offers them; in the phase `explore`, the run samples one design head, the integration tip of the run's plan (`crw.designHead`, recorded once,

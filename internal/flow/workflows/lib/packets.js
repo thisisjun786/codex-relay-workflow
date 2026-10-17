@@ -62,14 +62,21 @@ function notesSection(notes) {
 // them names it, and with none missing the packet is the one it was before.
 // head is the design head the run sampled before the phase explore (crw.designHead): the background explorers read it and the
 // architect's directory is a checkout of it, and BACKGROUND FINDINGS names it; without one the packet is as it was.
-export function architectPacket(ms, background, head) {
-  const nodes = ms.nodes.map((n) => n.id + ' (' + n.issue + '): ' + n.title + (n.after.length ? ' after ' + n.after.join(', ') : '') + (n.group ? ' [group ' + n.group + ']' : '') +
+export function architectPacket(ms, background, head, integrated) {
+  const fixed = (integrated || []).filter((i) => i.reused)
+  const unproven = (integrated || []).filter((i) => !i.reused)
+  const nodes = ms.nodes.filter((n) => !fixed.some((i) => i.node === n.id)).map((n) => n.id + ' (' + n.issue + '): ' + n.title + (n.after.length ? ' after ' + n.after.join(', ') : '') + (n.group ? ' [group ' + n.group + ']' : '') +
     '\n  regions: ' + (n.regions.length ? n.regions.join(', ') : 'undeclared') + '\n  criteria: ' + (n.criteria.length ? n.criteria.join(' | ') : 'none'))
   const parts = [
     'ROLE: architect. Plan milestone ' + ms.id + ' of plan ' + ms.plan + ' (' + ms.title + ').',
     'Answer with DESIGN: the decisions, one plan for each issue node below (its size_fit, the sub_tasks of a split node, edit regions, approach, tests first and done condition), the open questions you cannot answer from what you read, and the risks.',
     section('NODES', nodes),
   ]
+  if (fixed.length) parts.push(section('INTEGRATED NODES (Do not redesign. Do not ask questions about their integration or reuse; the run preserves these issues and referenced decisions from the source ledger even if your answer repeats or omits them. Design only the remaining NODES)',
+    fixed.map((i) => '- ' + i.node + ', head ' + i.head + ', source run ' + i.source_run + ', revision ' + i.source_revision +
+      '\n  issue: ' + canon(i.issue) + '\n  decisions: ' + canon(i.decisions))))
+  if (unproven.length) parts.push(section('INTEGRATION UNPROVEN (Design these nodes normally. Do not ask the parent to prove integration or reuse and do not inspect old run state; the build checks that proof and keeps its refusal rules)',
+    unproven.map((i) => '- ' + i.node + ': ' + i.reason)))
   const answered = (background || []).filter((a) => !a.missing)
   const missing = (background || []).filter((a) => a.missing)
   if (answered.length) {
@@ -209,14 +216,17 @@ function priorLines(prior) {
 // in it is a P1 finding. An open question of the DESIGN with no entry in the answers is a P1 finding too (CRW-1466): the DESIGN the
 // critic reads is the architect's answer to the round's answers, and a question raised there has not been routed. released is the
 // plans the started nodes were released with (crw.releasedPlans): the critic compares the DESIGN with them (RELEASED PLANS).
-export function designAuditPacket(ms, cand, round, prior, context) {
+export function designAuditPacket(ms, cand, round, prior, context, integrated) {
   const at = context ? headBlock(context) : null
   const replanned = context && Array.isArray(context.unstarted)
+  const fixed = (integrated || []).filter((i) => i.reused)
   return [
     'ROLE: critic. Audit the DESIGN of milestone ' + ms.id + ' (round ' + round + ') in a separate review execution before any executor starts. Model family is provenance only. If the host actually reports this review reuses the architect thread, record a warning and continue; do not invent a thread id.',
     'Answer with DESIGN_AUDIT: approved only when every issue node has a plan an executor can carry out inside its edit regions, every done condition can be met under the executor contract below, the decisions are consistent with the plan, no decision of the DESIGN is outside the architect\'s authority below, and no P0 or P1 finding stands; otherwise needs_changes with the findings the architect must act on. Check every done condition against the executor contract and every decision against the authority boundary: a done condition the contract cannot meet and a decision outside the authority are each a P1 finding that names its node or decision.',
     section('EXECUTOR CONTRACT (every done condition must be met under it)', EXECUTOR_CONTRACT),
     section('OUT-OF-AUTHORITY DECISIONS (the architect raises these as open questions and does not decide them)', AUTHORITY),
+    fixed.length ? section('INTEGRATED NODES (Do not re-audit these fixed issues or their referenced decisions. Cite the source run approval; the run copied them unchanged. Apply the audit above to the remaining nodes and their compatibility with these fixed decisions; do not request integration or reuse questions)',
+      fixed.map((i) => '- ' + i.node + ', head ' + i.head + ', source run ' + i.source_run + ', revision ' + i.source_revision + ', acceptance call ' + i.source_accept_call)) : '',
     round > 1 && prior ? section('PRIOR FINDINGS (the findings of the earlier rounds by id, each with the architect\'s disposition: folded, rebutted, or not reported)', priorLines(prior)) +
       '\nJudge each prior finding: a folded one is resolved only if this DESIGN does fold it; a rebuttal you do not accept is raised again in your findings under the same ref, with the reason you reject it; a finding not reported, or of a round whose dispositions are null, is still open.' : '',
     at ? 'Your directory is a read-only checkout of the pinned head: the DESIGN re-plans the milestone at it.\n' + at.head : '',

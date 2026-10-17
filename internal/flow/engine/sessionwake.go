@@ -91,6 +91,9 @@ type sessionWaker struct {
 	// published; fresh says a step was published since the last look.
 	waiting map[string]time.Time
 	fresh   bool
+	// deferred keeps an initial wake owed when the first look found a busy
+	// owner. The owner may end its turn after reading an empty step list.
+	deferred bool
 	// quietSince is the last dispatch, or when steps began to wait after none did.
 	quietSince time.Time
 	batch      string
@@ -153,7 +156,7 @@ func (e *Engine) wakeLook(ctx context.Context) {
 	now := e.cfg.Now()
 	w.mu.Lock()
 	if len(w.waiting) == 0 {
-		w.batch, w.fresh = "", false
+		w.batch, w.fresh, w.deferred = "", false, false
 		w.mu.Unlock()
 		return
 	}
@@ -173,6 +176,8 @@ func (e *Engine) wakeLook(ctx context.Context) {
 		sort.Strings(sorted)
 		w.fresh, w.batch = false, batchOf(sorted)
 	}
+	pending := fresh || w.deferred
+	w.deferred = false
 	quiet := now.Sub(w.quietSince)
 	batch, renotify := w.batch, 0
 	if !fresh && quiet >= s.renotifyDue(w.renotified+1) {
@@ -186,17 +191,24 @@ func (e *Engine) wakeLook(ctx context.Context) {
 	since := w.quietSince.UTC().Format(time.RFC3339)
 	w.mu.Unlock()
 
-	if fresh || renotify > 0 {
+	if pending || renotify > 0 {
 		status := ""
 		if ag, err := s.Host.ReadAgent(ctx, s.Owner); err == nil {
 			status = ag.Status
 		} else if errors.Is(err, ErrSessionAgentNotFound) {
 			status = "notFound"
 		}
-		// a busy owner is working through `crw flow next` and sees the new steps there; a re-notification goes to it anyway, and the
-		// relay delivers it after the turn
+		// A busy owner may already have read an empty next answer. Keep the
+		// initial wake owed until it yields; re-notifications retain their
+		// schedule and the relay delivers them after a busy turn.
 		if renotify > 0 || status != "active" {
 			e.wake(ctx, SessionWake{Run: e.runID, Owner: s.Owner, Batch: batch, ID: wakeID(e.epoch, batch, renotify), Renotify: renotify, Ops: ops, Waiting: quiet, OwnerStatus: status})
+		} else {
+			w.mu.Lock()
+			if len(w.waiting) > 0 && w.batch == batch {
+				w.deferred = true
+			}
+			w.mu.Unlock()
 		}
 	}
 	if escalate {

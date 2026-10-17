@@ -1260,10 +1260,17 @@ func (s *Scheduler) ReleaseExecutor(ctx context.Context, plan, node, actor strin
 				return err
 			}
 			out, err = s.ExecutorAssignment(ctx, cur.ExecutionID)
-			if err == nil && (jsonDigest(out.Admission.Task.Input) != jsonDigest(in.Task.Input) || jsonDigest(out.Admission.Task.Checks) != jsonDigest(in.Task.Checks) || out.Admission.Task.Requested != in.Task.Requested) {
+			if err != nil {
+				return err
+			}
+			same, err := executorReplayMatches(out.Admission.Task, in.Task)
+			if err != nil {
+				return err
+			}
+			if !same {
 				return errors.New("replayed placement changed immutable work")
 			}
-			return err
+			return nil
 		}
 		regions, declared, err := s.NodeRegions(ctx, plan, node)
 		if err != nil {
@@ -1324,7 +1331,20 @@ func (s *Scheduler) ReleaseExecutor(ctx context.Context, plan, node, actor strin
 	})
 	return out, err
 }
-func jsonDigest(v any) string { return dag.Digest(v) }
+func executorReplayMatches(stored, requested executor.Task) (bool, error) {
+	candidate := stored
+	candidate.Input, candidate.Checks, candidate.Requested = requested.Input, requested.Checks, requested.Requested
+	normalized, err := executor.Freeze(candidate)
+	if err != nil {
+		return false, err
+	}
+	before, err := json.Marshal(stored)
+	if err != nil {
+		return false, err
+	}
+	after, err := json.Marshal(normalized.Task)
+	return bytes.Equal(before, after), err
+}
 
 // Existing global slots keep region ownership after provider termination. Check
 // every plan, including legacy local executions and undeclared regions.

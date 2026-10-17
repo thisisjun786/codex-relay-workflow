@@ -13,6 +13,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/compile"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/script"
 	"github.com/thisisjun786/codex-relay-workflow/internal/gitprobe"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 )
 
 // The five facts a run's start is judged on. A run waits for its owner (a decision, a hold to recover), and the wait ends only when
@@ -91,6 +92,9 @@ type PreflightRequest struct {
 	// Waits are the waiting dispositions the workflow has (crw.decide, crw.escalate); empty when it never waits.
 	Waits []string
 	Now   time.Time
+	// Wake is the current configuration observed independently of historical wake
+	// records. Until the sending path supplies it, fact 5 stays unmeasured.
+	Wake *delivery.WakeExpectation
 }
 
 // Prober judges the five facts. It returns exactly five, in the order of Facts.
@@ -121,9 +125,9 @@ const tickFreshness = 15 * time.Minute
 //   - waits_deliverable: every waiting disposition of the workflow ends in a delivery to the thread; a workflow that never waits
 //     passes, one that waits passes when the three facts above pass, fails when thread_reachable fails and is a warning otherwise
 //     (a fact above that did not pass is reported as itself);
-//   - idle_wake_observed: the relay holds a wake of an idle thread (a delivery_wakes row) in this store, which is the scope of the
-//     run. The relay deletes a wake once the attempt it released is answered (delivery.Service.spendWake), and records no other
-//     trace of it, so no row is no evidence either way: the fact passes on a row and is a warning without one, never a fail.
+//   - idle_wake_observed: an append-only relay journal record proves an unattended new turn under the current wake identity,
+//     required settings and load state. An ordinary wait requires notLoaded evidence. Missing identity or matching evidence
+//     is a warning; a pending delivery_wakes row is scheduling state and cannot prove a turn was opened.
 //
 // A fact that cannot be read fails with the reason: an unread fact is never a pass.
 type StoreProber struct{}
@@ -208,13 +212,13 @@ func (StoreProber) Facts(ctx context.Context, req PreflightRequest) []Fact {
 		add(FactWaits, level, reason, "%s wait for the owner; they deliver when the three facts above pass", strings.Join(req.Waits, ", "))
 	}
 
-	var wakes, spent int
-	if err := db.QueryRowContext(ctx, `SELECT COUNT(*), COUNT(spent_at) FROM delivery_wakes`).Scan(&wakes, &spent); err != nil {
-		add(FactIdleWake, LevelFail, "the store cannot be read", "the wakes cannot be read: %v", err)
-	} else if wakes > 0 {
-		add(FactIdleWake, LevelPass, "", "%d wake(s) of an idle thread held in this store (%d spent by an attempt)", wakes, spent)
+	wake, reason, err := delivery.FindWakeEvidence(ctx, req.Reader.St, req.Wake, req.Now)
+	if err != nil {
+		add(FactIdleWake, LevelFail, "the wake journal cannot be read", "wake evidence: %v", err)
+	} else if wake != nil {
+		add(FactIdleWake, LevelPass, "", "relay journal row %d: request %s woke %s from %s into new turn %s at %s", wake.Sequence, wake.RequestID, wake.RecipientTaskID, wake.RecipientStatusBefore, wake.TurnID, wake.ObservedAt)
 	} else {
-		add(FactIdleWake, LevelWarn, "cannot be judged from the store: the relay deletes a wake once its attempt is answered and keeps no other record of it, so no wake row is no evidence either way", "no wake of an idle thread held in this store")
+		add(FactIdleWake, LevelWarn, reason, "unmeasured: %s", reason)
 	}
 	return out
 }

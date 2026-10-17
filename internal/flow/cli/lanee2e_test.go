@@ -27,6 +27,73 @@ func twoMilestones() []labIssue {
 	return []labIssue{{Key: "A-1", Milestone: "M1"}, {Key: "A-2", Milestone: "M1", After: []string{"A-1"}}, {Key: "B-1", Milestone: "M2", After: []string{"A-2"}}}
 }
 
+// A changed milestone requires a fresh DESIGN, but the integrated issue and its
+// referenced decision must survive even when the architect rewrites both.
+func TestProjectLaneChangedMilestoneKeepsIntegratedDesign(t *testing.T) {
+	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"}, labIssue{Key: "A-2", Milestone: "M1", After: []string{"A-1"}})
+	node := l.nodeOf["A-1"]
+	src := l.start("start", "project-lane", "--args", fmt.Sprintf(`{"plan":%q,"milestone":"M1"}`, l.plan), "--handoff", l.file)
+	l.afterRow = func(e engine.Event) {
+		if e.Kind == engine.KindCall && e.Event == engine.EvCompleted && e.Op == ops.OpIntegrate && str(e.Data, "node") == node {
+			l.mu.Lock()
+			cur := l.cur
+			l.mu.Unlock()
+			if f, ok := cur.Journal.(interface{ Flush() error }); ok {
+				if err := f.Flush(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			l.kill()
+		}
+	}
+	if _, killed := l.process(src.RunID, false); !killed {
+		t.Fatal("source did not stop after first integration")
+	}
+	l.afterRow = nil
+	before := journalBytes(t, l, src.RunID)
+	raw := l.handoffBytes(func(in *compile.Input) { in.Projects[0].Milestones[0].Title += " revised" })
+	file := filepath.Join(t.TempDir(), "revised.json")
+	if err := os.WriteFile(file, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	l.designEdit = func(d *ops.Design) {
+		for i := range d.Issues {
+			if d.Issues[i].Node == node {
+				d.Issues[i].Approach += "!"
+			}
+		}
+		d.Decisions[0].Change += "!"
+	}
+	next := l.start("start", "project-lane", "--args", fmt.Sprintf(`{"plan":%q,"milestone":"M1"}`, l.plan), "--handoff", file)
+	l.closed(l.runToEnd(next.RunID))
+	reuses := reuseIntegratedRows(t, l)
+	if len(reuses) != 2 {
+		t.Fatalf("reuse decisions: %+v", reuses)
+	}
+	for _, r := range reuses {
+		if r["node"] == node && (r["reason"] != "integrated_reused" || r["source_run"] != src.RunID) {
+			t.Fatalf("integrated node not reused: %+v", r)
+		}
+	}
+	for _, c := range labCalls(l) {
+		if strings.HasPrefix(c.Label, "build:"+node+":") {
+			t.Errorf("integrated node executor started: %s", c.Label)
+		}
+	}
+	for _, e := range l.events() {
+		if e.Op == ops.OpEscalate && str(e.Data, "reason") == "design_question" {
+			t.Errorf("unexpected integration question: %+v", e)
+		}
+	}
+	decisions := designReuseRows(t, l)
+	if len(decisions) != 1 || !strings.Contains(fmt.Sprint(decisions[0]["attempts"]), "milestone_digest_changed") {
+		t.Fatalf("fresh design reason: %+v", decisions)
+	}
+	if !slices.Equal(before, journalBytes(t, l, src.RunID)) {
+		t.Fatal("source journal changed")
+	}
+}
+
 // runMilestones starts a project lane run for each milestone in turn and runs it to its end (resuming it after every kill); it answers the
 // runs.
 func runMilestones(l *laneLab, milestones ...string) []string {
@@ -2496,10 +2563,10 @@ func TestProjectLaneCloseRerunKeepsMilestoneReviewBase(t *testing.T) {
 	}
 }
 
-// TestProjectLaneRefusesReuseOfChangedDecision (CRW-1597): a rerun whose own DESIGN kept a decision's id but changed its content
-// does not reuse the earlier landing: the referenced decision the source integrated under is not the one the rerun stands on, so
-// the node is refused integration_reuse_unproven - never rebuilt.
-func TestProjectLaneRefusesReuseOfChangedDecision(t *testing.T) {
+// A fresh architect answer cannot change a decision an integrated issue names.
+// The workflow restores it before audit; the build's refusal of an actually changed
+// ledger is covered by TestReuseIntegratedStillRefusesChangedDesign in ops.
+func TestProjectLaneRestoresChangedIntegratedDecision(t *testing.T) {
 	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
 	l.verifyFail = func(req ops.VerifyRequest) bool { return req.Node == "" }
 	spec := l.start("start", "project-lane", "--args", fmt.Sprintf(`{"plan":%q,"milestone":"M1"}`, l.plan), "--handoff", l.file)
@@ -2515,25 +2582,32 @@ func TestProjectLaneRefusesReuseOfChangedDecision(t *testing.T) {
 	l.designEdit = func(d *ops.Design) { d.Decisions[0].Change = "Use a different storage format" }
 	spec2 := l.start("start", "project-lane", "--args", fmt.Sprintf(`{"plan":%q,"milestone":"M1"}`, l.plan), "--handoff", handoff2)
 	res := l.runToEnd(spec2.RunID)
-	if res.Status == engine.RunCompleted || !strings.Contains(res.Error, "integration_reuse_unproven") {
-		t.Fatalf("the rerun's result %s %s %q, want the integration_reuse_unproven refusal", res.Status, res.ErrorKind, res.Error)
+	l.closed(res)
+	leds, _ := labRows(l, ops.OpDesignLedger)
+	if len(leds) != 1 {
+		t.Fatalf("expected one restored ledger, got %d", len(leds))
+	}
+	rawDesign, _ := json.Marshal(leds[0].Data["design"])
+	var design ops.Design
+	if err := json.Unmarshal(rawDesign, &design); err != nil || len(design.Decisions) != 1 || design.Decisions[0].Change != "each node writes its own file" {
+		t.Fatalf("original decision not restored: %s (%v)", rawDesign, err)
 	}
 	for _, ru := range reuseIntegratedRows(t, l) {
-		if ru["reused"] == true {
-			t.Errorf("the changed-decision rerun reused a landing: %+v", ru)
+		if ru["reused"] != true || ru["source_run"] != spec.RunID {
+			t.Errorf("the restored-decision rerun did not reuse its landing: %+v", ru)
 		}
 	}
 	for _, e := range l.events() {
 		if e.Kind == engine.KindCall && e.Event == engine.EvCompleted {
 			switch e.Op {
-			case ops.OpRelease, ops.OpAccept, ops.OpIntegrate, ops.OpMilestoneClose:
-				t.Errorf("the refused rerun wrote a %s row: %v", e.Op, e.Data)
+			case ops.OpRelease, ops.OpAccept, ops.OpIntegrate:
+				t.Errorf("the rerun wrote a new %s row for an inherited landing: %v", e.Op, e.Data)
 			}
 		}
 	}
 	for _, c := range labCalls(l) {
 		if c.Role == "executor" || c.Role == "executor-t1" || strings.HasPrefix(c.Label, "build:") {
-			t.Errorf("the refused rerun started the executor call %s (%s)", c.Label, c.Role)
+			t.Errorf("the rerun started an executor for an inherited landing: %s (%s)", c.Label, c.Role)
 		}
 	}
 	if tip := l.git(l.repo, "rev-parse", l.target); tip != savedTip {

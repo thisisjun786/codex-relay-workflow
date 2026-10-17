@@ -103,6 +103,12 @@ func ReadyHeadingKind(title string) string {
 	return readyHeadingKind(title)
 }
 
+// ReadyOutOfScopeHeading reports whether issue-ready excludes this heading
+// and its descendants until the next heading at the same or a shallower level.
+func ReadyOutOfScopeHeading(title string) bool {
+	return readyOutOfScopeHeading(title)
+}
+
 func readyHeadingKind(title string) string {
 	if readyOutOfScopeHeading(title) {
 		return ""
