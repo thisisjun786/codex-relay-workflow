@@ -133,25 +133,28 @@ func WorkerRun(ctx context.Context, args []string, in io.Reader, out, errout io.
 	if cfg.Incarnation == "" {
 		return hostAnswer(out, errout, nil, errors.New("worker incarnation required"))
 	}
-	active, err := worker.ActiveToolchain(cfg.Host.Root, cfg.Toolchain)
-	if err != nil {
+	peer := executor.Peer{HostID: cfg.Host.ID, Incarnation: cfg.Incarnation}
+	var request transport.Request
+	if err := transport.Decode(in, &request); err != nil {
 		return hostAnswer(out, errout, nil, err)
 	}
-	cfg.Toolchain = active
-	peer := executor.Peer{HostID: cfg.Host.ID, Incarnation: cfg.Incarnation}
-	backend, err := workerBackend(cfg, peer)
-	if err != nil {
-		return hostAnswer(out, errout, nil, err)
+	var backend pinnedWorkerBackend
+	if request.Method != "toolchain-apply" {
+		active, err := worker.ActiveToolchain(cfg.Host.Root, cfg.Toolchain)
+		if err != nil {
+			return hostAnswer(out, errout, nil, err)
+		}
+		cfg.Toolchain = active
+		backend, err = workerBackend(cfg, peer)
+		if err != nil {
+			return hostAnswer(out, errout, nil, err)
+		}
 	}
 	w, err := worker.Open(filepath.Join(cfg.Host.Root, "journal"), peer, transport.Adapter{Caller: backend, ExecutorKind: cfg.Host.Kind, Revision: cfg.Host.CapabilityRevision})
 	if err != nil {
 		return hostAnswer(out, errout, nil, err)
 	}
 	defer w.Close()
-	var request transport.Request
-	if err = transport.Decode(in, &request); err != nil {
-		return hostAnswer(out, errout, nil, err)
-	}
 	response := transport.Response{Schema: transport.Schema, Peer: peer}
 	if request.Schema != transport.Schema || request.Workspace != "" {
 		err = errors.New("unsupported worker schema")
@@ -227,6 +230,11 @@ func WorkerRun(ctx context.Context, args []string, in io.Reader, out, errout io.
 				}
 			}
 		case "toolchain-apply":
+			next := cfg
+			next.Toolchain = request.Toolchain
+			if _, err = workerBackend(next, peer); err != nil {
+				break
+			}
 			if err = w.Drained(ctx); err == nil {
 				response.Toolchain, err = worker.InstallToolchain(cfg.Host.Root, request.Toolchain)
 				if err == nil {
@@ -268,16 +276,19 @@ func workerObservation(ctx context.Context, w *worker.Worker, cfg WorkerConfig, 
 	return o, nil
 }
 func effectiveWorkerCPU() int {
-	cpus := runtime.NumCPU()
-	raw, err := os.ReadFile("/proc/self/cgroup")
+	return effectiveWorkerCPUFrom(runtime.NumCPU(), os.ReadFile)
+}
+
+func effectiveWorkerCPUFrom(cpus int, readFile func(string) ([]byte, error)) int {
+	raw, err := readFile("/proc/self/cgroup")
 	if err != nil {
 		return 0
 	}
 	for _, line := range strings.Split(string(raw), "\n") {
 		if strings.HasPrefix(line, "0::") {
 			group := filepath.Clean(filepath.Join("/sys/fs/cgroup", strings.TrimPrefix(line, "0::")))
-			for strings.HasPrefix(group, "/sys/fs/cgroup/") {
-				if b, e := os.ReadFile(filepath.Join(group, "cpu.max")); e == nil {
+			for group == "/sys/fs/cgroup" || strings.HasPrefix(group, "/sys/fs/cgroup/") {
+				if b, e := readFile(filepath.Join(group, "cpu.max")); e == nil {
 					f := strings.Fields(string(b))
 					if len(f) == 2 && f[0] != "max" {
 						q, e1 := strconv.ParseInt(f[0], 10, 64)
@@ -287,8 +298,11 @@ func effectiveWorkerCPU() int {
 						}
 						cpus = min(cpus, int(q/p))
 					}
-				} else {
+				} else if group != "/sys/fs/cgroup" || !errors.Is(e, os.ErrNotExist) {
 					return 0
+				}
+				if group == "/sys/fs/cgroup" {
+					break
 				}
 				group = filepath.Dir(group)
 			}
