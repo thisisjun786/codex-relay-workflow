@@ -31,6 +31,31 @@ func requiredStatusSHA(s string) bool {
 	return true
 }
 
+func (p RequiredStatusPublisher) pushURLs(ctx context.Context, checkout, remote string) (string, error) {
+	if publication.Repository(remote) == "" {
+		return p.Git(ctx, checkout, "remote", "get-url", "--push", "--all", remote)
+	}
+	const probe = "crw-required-status-url"
+	output, err := p.Git(ctx, checkout,
+		"-c", "remote."+probe+".url=",
+		"-c", "remote."+probe+".url="+remote,
+		"-c", "remote."+probe+".pushurl=", "remote", "-v")
+	if err != nil {
+		return "", err
+	}
+	var urls []string
+	for _, line := range strings.Split(output, "\n") {
+		value, ok := strings.CutPrefix(line, probe+"\t")
+		if !ok {
+			continue
+		}
+		if url, ok := strings.CutSuffix(value, " (push)"); ok {
+			urls = append(urls, url)
+		}
+	}
+	return strings.Join(urls, "\n"), nil
+}
+
 func (p RequiredStatusPublisher) Publish(ctx context.Context, checkout, remote, branch, head, base string, raw []byte) error {
 	if p.Context == "" {
 		return nil
@@ -60,13 +85,9 @@ func (p RequiredStatusPublisher) Publish(ctx context.Context, checkout, remote, 
 	if _, err := p.Git(ctx, checkout, "merge-base", "--is-ancestor", base, head); err != nil {
 		return errors.New("required status: the base is not an ancestor of the head")
 	}
-	urls := remote
-	if publication.Repository(remote) == "" {
-		var err error
-		urls, err = p.Git(ctx, checkout, "remote", "get-url", "--push", "--all", remote)
-		if err != nil {
-			return errors.New("required status: the destination remote cannot be read")
-		}
+	urls, err := p.pushURLs(ctx, checkout, remote)
+	if err != nil {
+		return errors.New("required status: the destination remote cannot be read")
 	}
 	repo := ""
 	for _, line := range strings.Split(urls, "\n") {
