@@ -17,23 +17,22 @@ Defining a milestone starts no run and moves no project's ownership; the levels 
 
 ## Find what is unclear
 
-Read the request, accepted decisions, and the existing milestone, issues and
-linked documents. Reuse stable refs and distinguish the user's words, accepted choices,
-suggestions, and unresolved assumptions. Inspect relevant product or repository evidence
-only where it can change the definition. Do not replace the user's goal with a guessed
-“real problem.” Use `crw-recall` for missing history, not as live proof.
+Read the request and handed-over material: accepted decisions, existing milestone, issues
+and linked documents. Cross-check it against those decisions and relevant repository or
+product evidence before asking. Record the understood scope and evidence in the registration
+draft or existing record, within write authority; reuse stable refs. Label inferred intent
+as a proposal, not an accepted choice or a replacement for the user's stated goal.
+Use `crw-recall` for missing history, not as live proof.
 
-Whether anything needs an exchange with a person is decided here, before registration;
-a run does not ask later. Settle a gap from evidence, or record it as an open decision.
-Ask only when an answer could materially change the goal, scope or design and no evidence
-settles it, and then ask one question at a time. When a question is needed, the top
-session holds that conversation with Jun; the parent sends its question to the top session
-instead of asking a person itself. Prefer the consequential hidden premise or missing
-perspective over a fixed questionnaire. A clear intent gets no ritual interview: do not
-force clever questions, preset binary choices, recommendations, or exhaustive branches.
-Accept an unexpected answer, “I don't know,” a correction, or a stop request; update the
-working understanding instead of steering back to a preferred answer. Continue
-independent work while a question is pending.
+Decide before registration whether a person must settle anything; a run does not ask later.
+Ask one question at a time only about a remaining consequential fork that evidence cannot
+settle and whose answer would change the goal, scope or design. A clear intent gets no ritual
+interview: do not routinely reconfirm settled intent or require confirmation on every intake.
+When needed, the top session holds that conversation with Jun; the parent sends its question
+to the top session, not to a person. Prefer a missing premise over a fixed questionnaire,
+forced binary choices or exhaustive branches. Accept unexpected answers, “I don't know,”
+corrections and stop requests; update the understanding rather than steer it.
+Continue independent work while a question is pending.
 
 Ambiguity that appears after registration, during a run, is not this step's: the run
 lifts it as a decision request to the parent (repository session)
