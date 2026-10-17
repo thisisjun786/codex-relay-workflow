@@ -348,6 +348,133 @@ func TestCommandReadsCheckout(t *testing.T) {
 	}
 }
 
+func TestReadProof1660GitShowSelections(t *testing.T) {
+	repo := revisionRepo1618(t)
+	git := func(args ...string) string {
+		t.Helper()
+		base := []string{"-C", repo, "-c", "user.name=ReadProof", "-c", "user.email=readproof@example.invalid", "-c", "tag.gpgSign=false"}
+		out, err := exec.Command("git", append(base, args...)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	git("tag", "-a", "review-v1", "-m", "commit tag", "HEAD")
+	git("tag", "-a", "review-v2", "-m", "nested commit tag", "review-v1")
+	git("tag", "-a", "tree-v1", "-m", "tree tag", "HEAD^{tree}")
+	git("tag", "-a", "blob-v1", "-m", "blob tag", "HEAD:source.go")
+	tree, blob := git("rev-parse", "HEAD^{tree}"), git("rev-parse", "HEAD:source.go")
+	commands := []string{
+		"git show review-v1 -- old.go",
+		"git show HEAD~1..HEAD -- old.go",
+		"git show 'HEAD^!' -- old.go",
+		"git show '^HEAD~1' HEAD -- old.go",
+		"git show review-v2 -- old.go",
+		"git show HEAD~1..review-v1 -- old.go",
+		"git show HEAD~1...HEAD -- old.go",
+		"git show 'review-v1^{commit}' -- old.go",
+	}
+	var events []string
+	for i, command := range commands {
+		t.Run(command, func(t *testing.T) {
+			cmd := exec.Command("/bin/sh", "-c", command)
+			cmd.Dir = repo
+			out, err := cmd.CombinedOutput()
+			if err != nil || !strings.Contains(string(out), "diff --git a/old.go b/old.go") || !strings.Contains(string(out), "-package old\n") {
+				t.Fatalf("%q did not print old.go's deletion patch: %v\n%s", command, err, out)
+			}
+			if !commandReadsCheckout(t.Context(), command, repo) {
+				t.Errorf("%q printed the checkout file's patch but was not counted", command)
+			}
+		})
+		events = append(events, astraCommandLine(t, fmt.Sprintf("selection_%d", i), command))
+	}
+	for _, command := range []string{
+		"git show tree-v1 -- README.md",
+		"git show blob-v1 -- README.md",
+		"git show HEAD " + tree + " -- README.md",
+		"git show HEAD " + blob + " -- README.md",
+		"git show " + tree + "..HEAD -- README.md",
+		"git show " + blob + "..HEAD -- README.md",
+		"git show no-such-ref-1660..HEAD -- README.md",
+		"git show HEAD..no-such-ref-1660 -- README.md",
+		"git show review-v1 no-such-ref-1660 -- README.md",
+	} {
+		t.Run("not a read: "+command, func(t *testing.T) {
+			if commandReadsCheckout(t.Context(), command, repo) {
+				t.Fatalf("%q is not a selection of commit objects", command)
+			}
+		})
+	}
+	t.Run("selected commit patches satisfy the read floor", func(t *testing.T) {
+		stdout := strings.Join(events, "\n") + "\n" + astraStream(`{"verdict":"verified","findings":[]}`)
+		res := checkForWorktree(t, AstraProfile("/run/answer.strict.json"), repo, fakeRun{stdout: stdout}, 50*time.Second)
+		wantState(t, res, StateOK)
+		if res.Commands != len(commands) || res.Verdict != VerdictVerified {
+			t.Fatalf("commit selection evidence was lost: %+v", res)
+		}
+	})
+}
+
+// Cancellation must cover both resolution and the subsequent type queries.
+func TestReadProof1660SelectionCancellation(t *testing.T) {
+	for _, stage := range []string{"first lookup", "type lookup"} {
+		t.Run(stage, func(t *testing.T) {
+			root, _ := readProofCheckout(t)
+			tail := "exec sleep 60"
+			if stage == "type lookup" {
+				tail = `for arg in "$@"; do
+  if [ "$arg" = rev-parse ]; then
+    printf '%s\n' '1111111111111111111111111111111111111111'
+    exit 0
+  fi
+done
+exec sleep 60`
+			}
+			marker := fakeGit1618(t, tail)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			done := make(chan bool, 1)
+			go func() { done <- commandReadsCheckout(ctx, "git show HEAD~1..HEAD -- README.md", root) }()
+			deadline := time.Now().Add(10 * time.Second)
+			for {
+				b, err := os.ReadFile(marker)
+				if err == nil && (stage == "first lookup" || strings.Contains(string(b), "cat-file -t")) {
+					break
+				}
+				select {
+				case got := <-done:
+					t.Fatalf("call returned %v before the blocked lookup", got)
+				default:
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("no lookup started within 10 s")
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			cancel()
+			select {
+			case got := <-done:
+				if got {
+					t.Fatal("a cancelled lookup counted as a read")
+				}
+			case <-time.After(10 * time.Second):
+				t.Fatal("lookup did not stop with its caller")
+			}
+			// An already-ended caller must not start another probe.
+			if err := os.Remove(marker); err != nil {
+				t.Fatal(err)
+			}
+			if commandReadsCheckout(ctx, "git show HEAD~1..HEAD -- README.md", root) {
+				t.Fatal("an ended call counted a read")
+			}
+			if _, err := os.Stat(marker); !errors.Is(err, fs.ErrNotExist) {
+				t.Fatalf("an ended call started a probe: %v", err)
+			}
+		})
+	}
+}
+
 // revisionRepo1618 is a repository of three commits for TestReadProof1618RevisionObjectType: c0 holds the regular file p and
 // old.go; c1 turns p into a directory with p/inner.go; c2 removes old.go and turns p into a symlink to README.md. The worktree
 // is HEAD, so p is the symlink and old.go is gone.

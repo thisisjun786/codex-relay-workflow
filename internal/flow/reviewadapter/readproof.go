@@ -628,11 +628,12 @@ func (st *proofState) gitShowReads(args []string, repo string) bool {
 				return false
 			}
 			// A proven <rev>:<path> blob is independent read evidence.
-			// Otherwise require commit objects for pathspec evidence:
-			// tree listings and raw blobs do not read the named paths.
+			// Otherwise require commit selections for pathspec evidence:
+			// Git expands ranges and peels commit tags, while tree listings
+			// and raw blobs do not read the named paths.
 			if !revPathRead {
 				for _, object := range objects {
-					if gitObjectType(st.ctx, repo, object, filepath.Dir(st.root)) != "commit" {
+					if gitObjectType(st.ctx, repo, object, filepath.Dir(st.root), true) != "commit" {
 						return false
 					}
 				}
@@ -654,7 +655,7 @@ func (st *proofState) gitShowReads(args []string, repo string) bool {
 			}
 			sawObject, sawRevPath = true, true
 			objects = append(objects, a)
-			if st.repoPathInside(path, repo) && gitObjectType(st.ctx, repo, a, filepath.Dir(st.root)) == "blob" {
+			if st.repoPathInside(path, repo) && gitObjectType(st.ctx, repo, a, filepath.Dir(st.root), false) == "blob" {
 				proved, revPathRead = true, true
 			}
 		default:
@@ -740,20 +741,52 @@ func (st *proofState) repoPathInside(p, repo string) bool {
 	return insideRoot(clean, st.root)
 }
 
-// gitObjectType asks git for the type of object exactly as the command recorded it, in repo. The
-// lookup runs under ctx, the caller's, and within gitprobe.Timeout, and it is refused at once when ctx has ended. A failed call, a
-// timeout or a missing git binary returns no type, so neither a blob nor a commit read can be proved.
-func gitObjectType(ctx context.Context, repo, object, ceiling string) string {
+// gitObjectType asks Git for an object's type. In commitSelection mode it expands
+// one revision argument and requires every resulting object to peel to a commit.
+// Each argument is resolved separately: --revs-only can silently omit unknown
+// names, which must not be hidden by a valid argument beside them.
+// Resolution and type queries share the caller's context and one gitprobe.Timeout.
+// Failures, empty selections and timeouts produce no type.
+func gitObjectType(ctx context.Context, repo, object, ceiling string, commitSelection bool) string {
 	if ctx.Err() != nil {
 		return ""
 	}
 	probe, cancel := context.WithTimeout(ctx, gitprobe.Timeout)
 	defer cancel()
-	out, err := gitprobe.Command(probe, repo, []string{"GIT_CEILING_DIRECTORIES=" + ceiling}, "cat-file", "-t", object).Output()
+	env := []string{"GIT_CEILING_DIRECTORIES=" + ceiling}
+	lookup := func(args ...string) (string, error) {
+		out, err := gitprobe.Command(probe, repo, env, args...).Output()
+		return strings.TrimSpace(string(out)), err
+	}
+	if commitSelection {
+		out, err := lookup("rev-parse", "--revs-only", "--no-flags", "--end-of-options", object)
+		if err != nil {
+			return ""
+		}
+		revisions := strings.Fields(out)
+		if len(revisions) == 0 {
+			return ""
+		}
+		for _, revision := range revisions {
+			// Exclusions returned by rev-parse have the same object type
+			// requirement as inclusions. Inspect the resolved OID, not a
+			// mutable ref name, and let Git peel annotated/nested tags.
+			oid := strings.TrimPrefix(revision, "^")
+			if !looksLikeHex(oid) {
+				return ""
+			}
+			kind, err := lookup("cat-file", "-t", oid+"^{commit}")
+			if err != nil || kind != "commit" {
+				return ""
+			}
+		}
+		return "commit"
+	}
+	kind, err := lookup("cat-file", "-t", object)
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(out))
+	return kind
 }
 
 func looksLikeHex(s string) bool {

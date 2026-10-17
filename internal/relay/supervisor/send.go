@@ -453,6 +453,9 @@ type attemptRun struct {
 	claimed  claimedMessage
 
 	steerTurn string // observed active turn; empty selects the existing new-turn path
+	wake      *delivery.WakeAttempt
+	wakeTurns []any
+	wakeRead  bool
 }
 
 // transportOutcome is what the transport-start transaction decided.
@@ -921,6 +924,7 @@ func (a *attemptRun) fenceBudget(tx context.Context, current store.SupervisorMes
 // says the host's approval policy cannot be served counts as nothing sent, safe to retry.
 func (a *attemptRun) transmit(ctx context.Context) sentReceipt {
 	c, requestID := a.c, a.claimed.requestID
+	a.prepareWake(ctx)
 	var receipt delivery.Obj
 	var sendErr error
 	var facts delivery.Facts
@@ -943,6 +947,7 @@ func (a *attemptRun) transmit(ctx context.Context) sentReceipt {
 	if c.clockISO != nil {
 		settledAt = c.clockISO()
 	}
+	a.finishWake(ctx, facts, receipt, settledAt)
 	result := map[string]any{"schema": channelVersion, "requestId": requestID, "messageId": a.id, "attemptNo": a.claimed.attemptNo, "recipientTaskId": a.r.Recipient, "deliveryState": facts.DeliveryState, "sendAttempted": facts.SendAttempted, "retrySafe": facts.RetrySafe, "transportReceiptStatus": facts.ReceiptStatus, "failedOperation": facts.FailedOperation, "turnId": facts.TurnID, "observedAt": settledAt}
 	if a.steerTurn != "" {
 		result["deliveryMethod"], result["expectedTurnId"] = "turn/steer", a.steerTurn
@@ -962,6 +967,11 @@ func (a *attemptRun) settle(ctx context.Context, sent sentReceipt) (map[string]a
 	c, id, requestID, attemptNo, owner, now := a.c, a.id, a.claimed.requestID, a.claimed.attemptNo, a.owner, a.now
 	facts, settledAt := sent.facts, sent.settledAt
 	err := c.Store.Transaction(ctx, func(tx context.Context, _ *sql.Conn) error {
+		if a.wake != nil {
+			if err := delivery.RecordWakeAttempt(tx, c.Store, *a.wake); err != nil {
+				return err
+			}
+		}
 		if err := c.Store.SettleSupervisorAttempt(tx, requestID, facts.DeliveryState, facts.SendAttempted, int64(boolInt(facts.RetrySafe)), nullable(facts.TurnID), sent.encoded, settledAt); err != nil {
 			return err
 		}
