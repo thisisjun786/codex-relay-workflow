@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -151,5 +152,109 @@ func TestRequiredStatus1624UnreadableLiteralDestinationIsClosed(t *testing.T) {
 				t.Fatalf("git output leaked: %v", err)
 			}
 		})
+	}
+}
+
+func literalPushTarget1631(t *testing.T, w *requiredStatusWorld, remote string) string {
+	t.Helper()
+	dir := t.TempDir()
+	observed := filepath.Join(dir, "destination")
+	helper := "#!/bin/sh\nprintf '%s\n' \"$2\" > \"$CRW1631_URL_OUT\"\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(dir, "git-remote-https"), []byte(helper), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("git", "-C", w.repo, "push", "--dry-run", "--no-follow-tags", remote, w.head+":refs/heads/probe")
+	cmd.Env = append(os.Environ(), "GIT_EXEC_PATH="+dir, "CRW1631_URL_OUT="+observed)
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatal("the recording transport unexpectedly completed a push")
+	}
+	target, err := os.ReadFile(observed)
+	if err != nil {
+		t.Fatalf("recording transport did not run: %v; %s", err, output)
+	}
+	return strings.TrimSpace(string(target))
+}
+
+func TestRequiredStatus1631ConditionalIncludeMatchesActualPush(t *testing.T) {
+	const original = "https://github.com/from/project.git"
+	const destination = "https://github.com/o/r.git"
+	for _, tc := range []struct {
+		name, pattern, wantURL, wantRepo string
+		registered, refuse               bool
+	}{
+		{"only probe activates include", "https://github.com/from/**", original, "from/project", false, true},
+		{"include already active", "https://github.com/from/**", destination, "o/r", true, false},
+		{"condition does not match", "https://github.com/elsewhere/**", original, "from/project", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newRequiredStatusWorld(t)
+			raw := w.record(t, w.head, w.base)
+			include := filepath.Join(t.TempDir(), "conditional.gitconfig")
+			content := "[url \"" + destination + "\"]\n\tpushInsteadOf = " + original + "\n"
+			if err := os.WriteFile(include, []byte(content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			pairs := [][2]string{{"includeIf.hasconfig:remote.*.url:" + tc.pattern + ".path", include}}
+			if tc.registered {
+				pairs = append(pairs, [2]string{"remote.registered.url", original})
+			}
+			rewriteConfig1624(t, pairs...)
+			config := filepath.Join(w.repo, ".git", "config")
+			before, err := os.ReadFile(config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			actual := literalPushTarget1631(t, w, original)
+			if actual != tc.wantURL {
+				t.Fatalf("actual Git push uses %q, want %q", actual, tc.wantURL)
+			}
+			pushes := 0
+			var clients []string
+			p, source := rewritePublisher1624(t, w, original, &pushes, &clients)
+			err = p.Publish(context.Background(), w.repo, original, "dev", w.head, w.base, raw)
+			if tc.refuse {
+				if err == nil || !strings.Contains(err.Error(), "destination remote cannot be read") || pushes != 0 || len(clients) != 0 || len(source.Statuses(w.head)) != 0 || len(w.fake.Statuses(w.head)) != 0 {
+					t.Errorf("actual push uses %s; changed probe configuration must refuse before publication: err=%v clients=%v pushes=%d", actual, err, clients, pushes)
+				}
+			} else {
+				if err != nil || pushes != 1 || strings.Join(clients, ",") != tc.wantRepo {
+					t.Errorf("actual push uses %s; err=%v clients=%v pushes=%d", actual, err, clients, pushes)
+				}
+				expected, other := w.fake, source
+				if tc.wantRepo == "from/project" {
+					expected, other = source, w.fake
+				}
+				statuses := expected.Statuses(w.head)
+				if len(statuses) != 1 || statuses[0].State != "success" || statuses[0].Context != "dev-gate" || len(other.Statuses(w.head)) != 0 {
+					t.Errorf("statuses do not match actual destination: expected=%v other=%v", statuses, other.Statuses(w.head))
+				}
+			}
+			after, err := os.ReadFile(config)
+			if err != nil || !bytes.Equal(before, after) {
+				t.Errorf("persistent git config changed: %v", err)
+			}
+		})
+	}
+}
+
+func TestRequiredStatus1631OriginalConfigUnreadableIsClosed(t *testing.T) {
+	const original = "https://github.com/o/r.git"
+	w := newRequiredStatusWorld(t)
+	raw := w.record(t, w.head, w.base)
+	rewriteConfig1624(t)
+	pushes := 0
+	var clients []string
+	p, source := rewritePublisher1624(t, w, original, &pushes, &clients)
+	git := p.Git
+	p.Git = func(ctx context.Context, dir string, args ...string) (string, error) {
+		if len(args) > 0 && args[0] == "config" {
+			return "", errors.New("private configuration detail")
+		}
+		return git(ctx, dir, args...)
+	}
+	err := p.Publish(context.Background(), w.repo, original, "dev", w.head, w.base, raw)
+	if err == nil || !strings.Contains(err.Error(), "destination remote cannot be read") || strings.Contains(err.Error(), "private configuration detail") || pushes != 0 || len(clients) != 0 || len(source.Statuses(w.head)) != 0 || len(w.fake.Statuses(w.head)) != 0 {
+		t.Fatalf("unreadable configuration published or leaked: err=%v pushes=%d clients=%v", err, pushes, clients)
 	}
 }

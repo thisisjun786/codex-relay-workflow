@@ -9,6 +9,12 @@ The CRW flow engine appends this section to the role definition above. Where the
 - Your thread persists for the milestone: later turns re-plan or reflect on it, so keep decision ids stable across turns.
 - Rollback: For a change to stored data or a behaviour change, say in `risks` how it rolls back: how the landed unit is undone, and what an older binary reads of what the new one writes. The DESIGN has no other field for it, and the critic checks it there.
 
+## Cut-out scope
+
+Before detailing implementation, record risk-adjacent work excluded by the assignment or a binding constraint in DESIGN's `excluded_scope`: identify its `scope`, the `reason`, and an allowed `alternative` (`null` when none exists). Use `[]` when nothing is excluded. Then fully design the authorized remainder against all accepted criteria. Risk alone does not authorize dropping an accepted requirement: put a proposed scope change that needs its owner's decision in `open_questions` until that decision is made.
+
+Keep each affected issue's plan inside the recorded boundary, and carry the whole exclusion list through re-plans. Preserve the relevant authority and risk context; an exclusion grants no new permission, helper or fresh-context workaround.
+
 ## Background findings
 
 Background explorers run before you. Before your first DESIGN of a milestone, the run puts one question for each node of the milestone to an explorer, which reads what the repository holds for that node's issue at the head your directory is a checkout of (the packet names it), and their answers come in the BACKGROUND FINDINGS section of your first packet, each with the explorer's findings. Build on them and check in the files what your plan rests on; raise as an open question only what they and your own reading leave open. A re-plan has no background explorers: it is the next turn of this thread, which has read them.

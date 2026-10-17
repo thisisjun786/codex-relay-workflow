@@ -73,8 +73,10 @@ var schemaTexts = map[string]string{
 		`"after":{"type":["array","null"],"items":{"type":"string"}}},"required":["id","summary","edit_regions","done_condition","after"],"additionalProperties":false}}},` +
 		`"required":["issue","node","size_fit","size_reason","issue_size_decision","edit_regions","approach","tests_first","done_condition","decision_refs","order_after","group","sub_tasks"],"additionalProperties":false}},` +
 		`"open_questions":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"question":{"type":"string"},"scope":{"type":"string"},"files_needed":` + textsJSON + `},"required":["id","question","scope","files_needed"],"additionalProperties":false}},` +
-		`"risks":` + textsJSON + `,"dispositions":{"type":["array","null"],"items":{"type":"object","properties":{"finding":{"type":"string"},"disposition":{"type":"string","enum":["folded","rebutted"]},"reason":{"type":"string"}},` +
-		`"required":["finding","disposition","reason"],"additionalProperties":false}}},"required":["decisions","issues","open_questions","risks","dispositions"],"additionalProperties":false}`,
+		`"risks":` + textsJSON + `,` +
+		`"excluded_scope":{"type":["array","null"],"items":{"type":"object","properties":{"scope":{"type":"string"},"reason":{"type":"string"},"alternative":{"type":["string","null"]}},"required":["scope","reason","alternative"],"additionalProperties":false}},` +
+		`"dispositions":{"type":["array","null"],"items":{"type":"object","properties":{"finding":{"type":"string"},"disposition":{"type":"string","enum":["folded","rebutted"]},"reason":{"type":"string"}},` +
+		`"required":["finding","disposition","reason"],"additionalProperties":false}}},"required":["decisions","issues","open_questions","risks","excluded_scope","dispositions"],"additionalProperties":false}`,
 	SchemaDesignAudit: `{"type":"object","properties":{"verdict":{"type":"string","enum":["approved","needs_changes"]},"findings":{"type":"array","items":{"type":"object","properties":{"ref":{"type":"string"},"severity":{"type":"string","enum":` + severities + `},"finding":{"type":"string"},"evidence":` + textsJSON + `},"required":["ref","severity","finding","evidence"],"additionalProperties":false}},"summary":{"type":"string"}},"required":["verdict","findings","summary"],"additionalProperties":false}`,
 	SchemaReflection:  `{"type":"object","properties":{"verdict":{"type":"string","enum":["ALIGNED","MISALIGNED"]},"misaligned":{"type":"array","items":{"type":"object","properties":{"decision_id":{"type":"string"},"observed":{"type":"string"},"affected_nodes":` + textsJSON + `,"evidence":` + textsJSON + `},"required":["decision_id","observed","affected_nodes","evidence"],"additionalProperties":false}}},"required":["verdict","misaligned"],"additionalProperties":false}`,
 	SchemaQACapture: `{"type":"object","properties":{"captures":{"type":"array","items":{"type":"object","properties":{"path":{"type":"string"},"kind":{"type":"string","enum":["screenshot","terminal_capture","response","transcript"]},"shows":{"type":"string"}},"required":["path","kind","shows"],"additionalProperties":false}},` +
@@ -396,13 +398,22 @@ type Disposition struct {
 	Reason      string `json:"reason"`
 }
 
+// ScopeExclusion records work outside the design's authorized scope and an allowed alternative, when one exists.
+type ScopeExclusion struct {
+	Scope       string  `json:"scope"`
+	Reason      string  `json:"reason"`
+	Alternative *string `json:"alternative"`
+}
+
 // Design is the answer of the architect (DESIGN). Dispositions is nil (null) in the first DESIGN and in a re-plan answer.
 type Design struct {
 	Decisions     []Decision     `json:"decisions"`
 	Issues        []DesignIssue  `json:"issues"`
 	OpenQuestions []OpenQuestion `json:"open_questions"`
 	Risks         []string       `json:"risks"`
-	Dispositions  []Disposition  `json:"dispositions"`
+	// ExcludedScope is nil when no assessment was recorded; an empty list records no exclusions.
+	ExcludedScope []ScopeExclusion `json:"excluded_scope"`
+	Dispositions  []Disposition    `json:"dispositions"`
 }
 
 // DecodeDesign reads a DESIGN. Two issues of one DESIGN do not share a node, and an issue that is not an executor's names why
@@ -410,9 +421,9 @@ type Design struct {
 //
 // It reads the DESIGNs the run recorded: the candidate of crw.designAudit, the DESIGN crw.designLedger records, and the ledger's DESIGN
 // the release of a node (its plan and the admission regions of the other nodes), crw.issuePlan and the final gate's decisions read.
-// A DESIGN an earlier binary recorded has no dispositions member (CRW-1452 added it): it is read with dispositions null, and the
-// bytes the run recorded, and so every digest made of them, stay as they are. A fresh answer of the architect is held to the
-// schema, which requires the member, by the engine before any operation reads it.
+// A DESIGN an earlier binary recorded may lack dispositions (CRW-1452) or excluded_scope (CRW-1538): missing members are read as
+// null, and the original stored bytes and their digests stay unchanged. A missing exclusion assessment is not an empty assessment.
+// A fresh architect answer is held to the schema, which requires both members, by the engine before any operation reads it.
 //
 // The shape of the DESIGN, not the reader, says which rules hold (S-1, CRW-1435). A DESIGN in which an issue carries the sub_tasks
 // member is of the S-1 shape: the schema refuses a node sized for a child (the `child` session path is retired), a split node names
@@ -422,7 +433,7 @@ type Design struct {
 // The schema holds what of the sub-task rules a strict output schema can express (at most 4, the id form, a region for each); the
 // rest are design rules, answered as a *DesignRuleError.
 func DecodeDesign(raw []byte) (Design, error) {
-	raw = withNullDispositions(raw)
+	raw = withLegacyDesignFields(raw)
 	var d Design
 	legacyRaw, legacy := withNullSubTasks(raw)
 	if legacy {
@@ -592,17 +603,23 @@ func legacyDesignSchema() (*jsonschema.Resolved, error) {
 	return legacyDesign, legacyDesignErr
 }
 
-// withNullDispositions is a DESIGN recorded without the dispositions member with that member null; any other value is returned as it
-// is, so the schema judges it.
-func withNullDispositions(raw []byte) []byte {
+// withLegacyDesignFields reads absent members added after the original DESIGN as null.
+// Present values, including malformed ones, are left for the schema to judge.
+func withLegacyDesignFields(raw []byte) []byte {
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &m); err != nil || m == nil {
 		return raw
 	}
-	if _, ok := m["dispositions"]; ok {
+	changed := false
+	for _, key := range []string{"dispositions", "excluded_scope"} {
+		if _, ok := m[key]; !ok {
+			m[key] = json.RawMessage("null")
+			changed = true
+		}
+	}
+	if !changed {
 		return raw
 	}
-	m["dispositions"] = json.RawMessage("null")
 	out, err := json.Marshal(m)
 	if err != nil {
 		return raw
