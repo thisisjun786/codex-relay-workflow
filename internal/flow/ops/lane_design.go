@@ -262,6 +262,9 @@ func (o *designLedgerOp) Run(ctx context.Context, req engine.OpRequest) (engine.
 	if err != nil {
 		return engine.OpResult{}, fmt.Errorf("crw.designLedger: %w", err)
 	}
+	if err := keepsIntegratedDesign(r, ms, design); err != nil {
+		return engine.OpResult{}, fmt.Errorf("crw.designLedger: %w", err)
+	}
 	cand := Candidate{Design: e.Design, Answers: e.Answers}
 	digest := cand.digest()
 	// the audit of a revision after the first is an audit of its own, made after the revision before it: the audit of an earlier

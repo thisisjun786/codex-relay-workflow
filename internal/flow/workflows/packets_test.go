@@ -41,6 +41,34 @@ func packetText(t *testing.T, name, imports, expr string) string {
 	return packet
 }
 
+func TestIntegratedDesignPackets(t *testing.T) {
+	const saved = `[{node:'n1', head:'accepted-head', source_run:'old-run', source_revision:'r0', source_accept_call:'accepted-call', issue:{node:'n1', approach:'original'}, decisions:[], reused:true}]`
+	packet := packetText(t, "integrated-architect", "architectPacket", "architectPacket(ms, [], 'tip', "+saved+")")
+	for _, want := range []string{"INTEGRATED NODES", "n1", "accepted-head", "old-run", "Do not redesign", "Do not ask"} {
+		if !strings.Contains(packet, want) {
+			t.Errorf("architect packet lacks %q: %s", want, packet)
+		}
+	}
+	critic := packetText(t, "integrated-critic", "designAuditPacket", "designAuditPacket(ms, {design:{issues:[],decisions:[]},answers:[]}, 1, [], undefined, "+saved+")")
+	for _, want := range []string{"INTEGRATED NODES", "old-run", "accepted-call", "Do not re-audit"} {
+		if !strings.Contains(critic, want) {
+			t.Errorf("critic packet lacks %q: %s", want, critic)
+		}
+	}
+}
+
+func TestUnprovenIntegrationPacketKeepsNodeInDesign(t *testing.T) {
+	packet := packetText(t, "unproven-architect", "architectPacket", `architectPacket(ms, [], 'tip', [{node:'n1',reused:false,reason:'integration_reuse_unproven'}])`)
+	for _, want := range []string{"INTEGRATION UNPROVEN", "n1 (CRW-1): first", "Design these nodes normally", "Do not ask the parent"} {
+		if !strings.Contains(packet, want) {
+			t.Errorf("unproven packet lacks %q: %s", want, packet)
+		}
+	}
+	if strings.Contains(packet, "INTEGRATED NODES") {
+		t.Error("unproven node described as integrated")
+	}
+}
+
 // unstartedOf is the list of the UNSTARTED NODES section of a packet: the lines after its heading up to the blank line that ends it.
 func unstartedOf(packet string) string {
 	_, rest, ok := strings.Cut(packet, "UNSTARTED NODES")

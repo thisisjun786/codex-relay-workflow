@@ -166,7 +166,7 @@ func (l *Lane) Ops() map[string]engine.Op {
 		NameMilestone:        &milestoneOp{l},
 		NameDesignAudit:      &designAuditOp{l},
 		NameDesignLedger:     &designLedgerOp{l},
-		NameDesignReuse:      &designReuseOp{l},
+		NameDesignReuse:      &designReuseWithIntegratedOp{l},
 		NameRelease:          &releaseOp{l},
 		NameIssuePlan:        &issuePlanOp{l},
 		NameSpawnDecision:    &spawnDecisionOp{l},
