@@ -181,6 +181,9 @@ func (s *scriptVM) agent(call goja.FunctionCall, plain bool) goja.Value {
 		}
 		c.deliverNow(c.terminal(EvRefused, StatusRefused, p.refusal.Reason, data))
 	} else if c.replay != nil {
+		// The process may have stopped after committing the native terminal
+		// row but before committing its executor provenance projection.
+		c.recordExecutorProvenance(lastTerminal(c.e.prior.rowsOf(c.id, "agent")))
 		c.deliverNow(*c.replay)
 	} else {
 		s.e.inflight.Add(1)

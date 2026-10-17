@@ -54,6 +54,180 @@ func enRows(j *MemoryJournal, event string) []Event {
 	return out
 }
 
+func enDecode1639(t *testing.T, v any, dst any) {
+	t.Helper()
+	raw, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, dst); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A committed native terminal row is sufficient to recover provenance, including
+// when a SQLite process loses the separate flow row before its batch flush.
+func TestExecutorNativeCrashReplay1639(t *testing.T) {
+	const body = `return await agent.call('build it', { agentType: 'executor', node: 'n1', label: 'build' })`
+	for _, dj := range deathJournals(t) {
+		for _, stopAt := range []string{EvCompleted, "executor_native"} {
+			t.Run(dj.name+"/"+stopAt, func(t *testing.T) {
+				first, reopen := dj.open(t)
+				sw := &deadSwitch{}
+				h := newHarness(t)
+				h.cfg.Backend = codexKindFake{h.fake}
+				task := enTask("n1", "build it", Pair{Model: "claude-fake-haiku", Effort: "xhigh"})
+				h.cfg.ExecutorAdmission = enResolver(task, nil)
+				// Recovery must read the native sequence, not a public result
+				// whose sequence fields may have deliberately been omitted.
+				h.cfg.OmitSeq = true
+				h.cfg.Journal = &dyingJournal{Journal: first, sw: sw, stop: func(ev Event) bool {
+					return ev.Event == stopAt && ev.CallID != ""
+				}}
+				h.run(body)
+				if !sw.isDead() {
+					t.Fatal("the crash point was not reached")
+				}
+				j := reopen()
+				var terminal Event
+				for _, ev := range j.Events() {
+					if ev.Kind == KindCall && ev.Event == EvCompleted {
+						terminal = ev
+					}
+				}
+				if terminal.Seq == 0 {
+					t.Fatal("the native terminal row was not committed")
+				}
+				before := CallEvents(j, terminal.CallID)
+				beforeJSON, err := json.Marshal(before)
+				if err != nil {
+					t.Fatal(err)
+				}
+				wantStored := 0
+				if dj.name == "memory" && stopAt == "executor_native" {
+					wantStored = 1 // MemoryJournal has no unflushed batch.
+				}
+				if n := len(flowRows(j, "executor_native")); n != wantStored {
+					t.Fatalf("crash stored %d provenance rows, want %d", n, wantStored)
+				}
+				h2 := newHarness(t)
+				h2.cfg.Backend = codexKindFake{h2.fake}
+				h2.cfg.Journal = j
+				h2.cfg.Resume = &ResumeOptions{}
+				h2.cfg.OmitSeq = true
+				h2.cfg.ExecutorAdmission = enResolver(task, nil)
+				for pass := 0; pass < 2; pass++ {
+					if got := value[map[string]any](t, h2.run(body)); got["status"] != StatusCompleted {
+						t.Fatalf("replay %d: %v", pass, got)
+					}
+					if len(h2.fake.Requests()) != 0 {
+						t.Fatal("terminal replay sent a new native request")
+					}
+					natives := flowRows(j, "executor_native")
+					if len(natives) != 1 {
+						t.Fatalf("replay %d recovered %d provenance rows, want exactly one", pass, len(natives))
+					}
+					native := natives[0]
+					if rowInt(native.Data, "native_call_seq") != terminal.Seq || rowStr(native.Data, "terminal_event") != EvCompleted {
+						t.Fatalf("provenance does not point at the original terminal row: %+v", native)
+					}
+					var actual, original executor.Admission
+					enDecode1639(t, native.Data["admission"], &actual)
+					enDecode1639(t, before[0].Data["executor_admission"], &original)
+					if actual.TaskDigest != original.TaskDigest {
+						t.Fatal("replay replaced the original admission")
+					}
+					var p executor.Provenance
+					enDecode1639(t, native.Data["provenance"], &p)
+					started, turns := rowsNamed(before, EvThreadStarted), rowsNamed(before, EvTurnStarted)
+					if len(started) != 1 || len(turns) != 1 {
+						t.Fatalf("unexpected native evidence: %s", eventsOf(before))
+					}
+					if p.NativeSession.Value != rowStr(started[0].Data, "thread_id") ||
+						len(p.NativeTurns) != 1 || p.NativeTurns[0] != rowStr(turns[0].Data, "turn_id") {
+						t.Fatalf("replay invented native identifiers: %+v", p)
+					}
+					afterJSON, err := json.Marshal(CallEvents(j, terminal.CallID))
+					if err != nil {
+						t.Fatal(err)
+					}
+					if string(beforeJSON) != string(afterJSON) {
+						t.Fatal("replay replaced or modified original native journal evidence")
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestExecutorNativeRespawn1639(t *testing.T) {
+	k := newSessionKit(t)
+	task := enTask("n1", "build node n1", Pair{Model: "claude-fake-haiku", Effort: "xhigh"})
+	k.h.cfg.ExecutorAdmission = enResolver(task, nil)
+	k.orch.answer = func(st Step, _ string, _ int) orchAnswer {
+		if st.Attempt == 1 {
+			return orchAnswer{lose: true, edit: "half"}
+		}
+		return orchAnswer{edit: "P:" + st.Op}
+	}
+	const body = `return await agent.call('build node n1', { agentType: 'executor', node: 'n1', label: 'build', schema: RECEIPT })`
+	if got := value[map[string]any](t, k.h.run(body)); got["status"] != StatusCompleted {
+		t.Fatalf("%v", got)
+	}
+	rows := k.rowsOf("build")
+	started, turns := rowsNamed(rows, EvThreadStarted), rowsNamed(rows, EvTurnStarted)
+	if len(started) != 2 || len(turns) != 2 || len(rowsNamed(rows, EvSessionAttemptLost)) != 1 {
+		t.Fatalf("respawn was not exercised: %s", eventsOf(rows))
+	}
+	terminal := lastTerminal(rows)
+	for pass := 0; pass < 2; pass++ {
+		natives := flowRows(k.h.journal, "executor_native")
+		seen := map[int]bool{}
+		for _, ev := range natives {
+			var p executor.Provenance
+			enDecode1639(t, ev.Data["provenance"], &p)
+			owner := -1
+			for i, start := range started {
+				if rowStr(start.Data, "thread_id") == p.NativeSession.Value {
+					owner = i
+				}
+			}
+			if owner < 0 {
+				t.Fatalf("provenance names an unrecorded session: %+v", p)
+			}
+			if len(p.NativeTurns) != 1 || p.NativeTurns[0] != rowStr(turns[owner].Data, "turn_id") {
+				t.Errorf("turns from another attempt were attributed to %s: %v", p.NativeSession.Value, p.NativeTurns)
+			}
+			attempt := rowInt(started[owner].Data, "attempt")
+			if rowInt(ev.Data, "session_attempt") != attempt {
+				t.Errorf("session %s lost its native attempt %d", p.NativeSession.Value, attempt)
+			}
+			if seen[attempt] {
+				t.Errorf("attempt %d has duplicate provenance", attempt)
+			}
+			seen[attempt] = true
+			if rowInt(ev.Data, "native_call_seq") != terminal.Seq {
+				t.Error("attempt provenance is not tied to the native terminal")
+			}
+			if p.Model.Value != rowStr(started[owner].Data, "model") || p.Effort.Value != rowStr(started[owner].Data, "effort") {
+				t.Errorf("attempt %d has another session's observed pair", attempt)
+			}
+		}
+		if len(natives) != 2 || !seen[1] || !seen[2] {
+			t.Errorf("expected separate evidence for attempts 1 and 2, got %v (%d rows)", seen, len(natives))
+		}
+		if pass == 0 {
+			k.h.cfg.Resume = &ResumeOptions{}
+			if got := value[map[string]any](t, k.h.run(body)); got["status"] != StatusCompleted {
+				t.Fatalf("replay: %v", got)
+			}
+			if n := len(k.orch.spawned()); n != 2 {
+				t.Fatalf("replay spawned a new session: %d spawns", n)
+			}
+		}
+	}
+}
+
 func TestExecutorNativeProvenance(t *testing.T) {
 	body := `const b = await agent.call('build it', { agentType: 'executor', node: 'n1', label: 'build' })
 return b`
