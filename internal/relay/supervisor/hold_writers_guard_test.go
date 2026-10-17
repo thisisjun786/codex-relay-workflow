@@ -149,9 +149,10 @@ var holdSupersededWriters = map[string][]string{
 // holdSettleCallers are the callers of SettleSupervisorMessage: each asks the store's settle, which
 // keeps any hold present (the settle row).
 var holdSettleCallers = map[string]bool{
-	"supervisor/send.go#Channel.settleWithheld":     true,
-	"supervisor/send.go#attemptRun.settle":          true,
-	"supervisor/proposal.go#Channel.holdSuperseded": true,
+	"supervisor/send.go#Channel.settleWithheld":                 true,
+	"supervisor/send.go#attemptRun.settle":                      true,
+	"supervisor/proposal.go#Channel.holdSuperseded":             true,
+	"supervisor/flow_delivery.go#attemptRun.fenceFlowReportAck": true,
 }
 
 // holdWriteStatement is one collected statement or call.
