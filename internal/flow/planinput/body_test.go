@@ -400,3 +400,42 @@ func TestHeadingBlockTransitions(t *testing.T) {
 		}
 	}
 }
+
+func TestReferenceAndContainerBoundaries(t *testing.T) {
+	const kept = "## Criteria\n- keep\n## Edit regions\n- `keep.go`\n"
+	const hidden = "### Criteria\n- hidden\n### Edit regions\n- `hidden.go`\n"
+	for _, tc := range []struct{ name, body string }{
+		{"reference title ATX", "[spec]: /spec \"start\n## Criteria\n- keep\nend\"\n## Edit regions\n- `keep.go`\n"},
+		{"reference label ATX", "[spec\n## Criteria\n- keep\nend]: /spec\n## Edit regions\n- `keep.go`\n"},
+		{"reference destination ATX", kept + "\n[spec]:\n## \"Out of scope\"\n" + hidden},
+		{"reference cannot hide exclusion", kept + "\n[spec]: /spec \"start\n## Out of scope\nend\"\n" + hidden},
+		{"valid multiline reference", "[long\nlabel]: /spec \"first\nsecond\"\n" + kept},
+		{"fragment destination is not ATX", "[spec]:\n#fragment\nCriteria\n---\n- keep\n## Edit regions\n- `keep.go`\n"},
+		{"list HTML exits at ATX", "- item\n  <div>\n  example\n" + kept},
+		{"list HTML exits at Setext", "- item\n  <div>\n  example\nCriteria\n---\n- keep\n## Edit regions\n- `keep.go`\n"},
+		{"numbered list HTML", "1. item\n   <div>\n   example\n" + kept},
+		{"list raw HTML", "- item\n  <script>\n  example\n" + kept},
+		{"list HTML stays inside", "- item\n  <div>\n  ### Criteria\n  - hidden\n  ### Edit regions\n  - `hidden.go`\n" + kept},
+		{"root HTML has no list owner", "  <div>\n" + hidden + "\n" + kept},
+		{"leaving list does not end exclusion", kept + "## Out of scope\n- item\n  <div>\n  example\n" + hidden},
+		{"indented HTML continues quote", kept + "## Out of scope\n> quote\n>     <div>\nIn scope\n---\n" + hidden},
+		{"indented fence continues quote", kept + "## Out of scope\n> quote\n>     ```\nIn scope\n---\n" + hidden},
+		{"indented ATX continues quote", kept + "## Out of scope\n> quote\n>     ## Notes\nIn scope\n---\n" + hidden},
+		{"new nested quote code is not continuation", "## Out of scope\n> quote\n> >     <div>\nIn scope\n---\n" + kept},
+		{"shallower quote code is not continuation", "## Out of scope\n> > quote\n>     <div>\nIn scope\n---\n" + kept},
+	} {
+		for _, ending := range []struct{ name, value string }{{"LF", "\n"}, {"CRLF", "\r\n"}} {
+			t.Run(tc.name+"/"+ending.name, func(t *testing.T) {
+				res := build(t, milestone(open(1, strings.ReplaceAll(tc.body, "\n", ending.value))), Options{})
+				is := only(t, res)
+				if !reflect.DeepEqual(is.Criteria, []string{"keep"}) ||
+					!reflect.DeepEqual(is.Regions, []compile.Region{{Path: "keep.go", Kind: "file"}}) {
+					t.Errorf("boundary: criteria=%q regions=%+v; want keep and keep.go", is.Criteria, is.Regions)
+				}
+				if len(res.Warnings) != 0 {
+					t.Errorf("warnings = %+v; want none", res.Warnings)
+				}
+			})
+		}
+	}
+}
