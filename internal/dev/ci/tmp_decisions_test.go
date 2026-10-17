@@ -109,21 +109,6 @@ var tmpGlobs = []tmpGlob{
 	{"E6", "port history prose and port records that quote code or Python literals", func(file string) bool {
 		return slices.Contains(tmpPortProse, file)
 	}},
-	{"CRW-1580 후속: CRW-1591/1423 착지 뒤: internal/dev/ci/local_home_test.go", "CRW-1591(A) is changing the same local code; excluded from the first CRW-1580 commit", func(file string) bool {
-		return file == "internal/dev/ci/local_home_test.go"
-	}},
-	{"CRW-1580 후속: CRW-1591/1423 착지 뒤: internal/dev/ci/local_seal_test.go", "CRW-1591(A) is changing the same local code; excluded from the first CRW-1580 commit", func(file string) bool {
-		return file == "internal/dev/ci/local_seal_test.go"
-	}},
-	{"CRW-1580 후속: CRW-1591/1423 착지 뒤: internal/dev/ci/local_test.go", "CRW-1591(A) is changing the same local code; excluded from the first CRW-1580 commit", func(file string) bool {
-		return file == "internal/dev/ci/local_test.go"
-	}},
-	{"CRW-1580 후속: CRW-1591/1423 착지 뒤: internal/flow/pullrequest/cli_test.go", "CRW-1423(H) holds internal/flow/pullrequest/**; excluded from the first CRW-1580 commit", func(file string) bool {
-		return file == "internal/flow/pullrequest/cli_test.go"
-	}},
-	{"CRW-1580 후속: CRW-1591/1423 착지 뒤: internal/flow/pullrequest/remote_test.go", "CRW-1423(H) holds internal/flow/pullrequest/**; excluded from the first CRW-1580 commit", func(file string) bool {
-		return file == "internal/flow/pullrequest/remote_test.go"
-	}},
 }
 
 // tmpTestLines are the named test-source lines the location guard allows (CRW-1580):
@@ -152,6 +137,15 @@ var tmpTestLines = []tmpEntry{
 	{"internal/crwconfig/verifier_probe_test.go", "if !strings.HasPrefix(home, \"/tmp/\") {", "E7 explicit former temporary-root exclusions under test: usable toolchains below both roots must be discovered"},
 	{"internal/dev/ci/local_parallel_test.go", "\"tmpdir\":   os.Getenv(\"TMPDIR\"),", "E7 the helper observes the private TMPDIR assigned by the verifier and asserts its initial emptiness"},
 	{"internal/dev/ci/local_parallel_test.go", "entries, err := os.ReadDir(os.Getenv(\"TMPDIR\"))", "E7 the helper observes the private TMPDIR assigned by the verifier and asserts its initial emptiness"},
+	{"internal/dev/ci/local_seal_test.go", "for _, root := range []string{filepath.Join(tmp, \"work\"), filepath.Join(other, \"work\"), \"/tmp/crw-ci-work\", \"/var/tmp/crw-ci-work\"} {", "E7 location inputs to localWorkRoot: accepting these absolute roots unchanged is the assertion, not an allocation"},
+	{"internal/dev/ci/local_test.go", "{\"GOENV\", func(r *verificationRecord) { r.GoEnv = \"/tmp/goenv\" }},", "E7 a changed GOENV observation in a verification record must invalidate reuse; no file is opened at this path"},
+	{"internal/dev/ci/local_test.go", "gate := localGateArgv(\"gate.sh --flag\", true, \"/tmp/step-001.sh\", \"/tmp\", nil)", "E7 literal script and working-directory inputs and expected argv of localGateArgv; no command is executed here"},
+	{"internal/dev/ci/local_test.go", "expectEqual(t, \"a heavy step's argv\", gate, []string{\"gate.sh\", \"--flag\", \"env\", \"-i\", \"bash\", \"-c\", localChdirScript, \"bash\", \"/tmp\", \"bash\", \"--noprofile\", \"--norc\", \"-eo\", \"pipefail\", \"/tmp/step-001.sh\"})", "E7 literal script and working-directory inputs and expected argv of localGateArgv; no command is executed here"},
+	{"internal/dev/ci/local_test.go", "light := localGateArgv(\"gate.sh\", false, \"/tmp/step-001.sh\", \"/tmp\", nil)", "E7 literal script and working-directory inputs and expected argv of localGateArgv; no command is executed here"},
+	{"internal/dev/ci/local_test.go", "expectEqual(t, \"a light step's argv\", light, []string{\"bash\", \"--noprofile\", \"--norc\", \"-eo\", \"pipefail\", \"/tmp/step-001.sh\"})", "E7 literal script and working-directory inputs and expected argv of localGateArgv; no command is executed here"},
+	{"internal/dev/ci/local_test.go", "none := localGateArgv(\"\", true, \"/tmp/step-001.sh\", \"/tmp\", nil)", "E7 literal script and working-directory inputs and expected argv of localGateArgv; no command is executed here"},
+	{"internal/dev/ci/local_test.go", "expectEqual(t, \"no gate\", none, []string{\"bash\", \"--noprofile\", \"--norc\", \"-eo\", \"pipefail\", \"/tmp/step-001.sh\"})", "E7 literal script and working-directory inputs and expected argv of localGateArgv; no command is executed here"},
+	{"internal/dev/ci/local_test.go", "if strings.Contains(strings.Join(localGateArgv(\"gate.sh\", true, path, \"/tmp\", nil), \" \"), \"target in linux/amd64\") {", "E7 synthetic working-directory input to an argv-only assertion; the real script is created below t.TempDir"},
 	{"internal/dev/ci/tmp_decisions_test.go", "// the one place. The check greps every tracked file for the direct deciders: os.TempDir(), a literal", "E7 guard documentation and literal source text of the named E1/E4/E5 exceptions, not an executed location choice"},
 	{"internal/dev/ci/tmp_decisions_test.go", "{\"internal/tmploc/dir.go\", `const DefaultDir = \"/tmp\"`, tmpE1},", "E7 guard documentation and literal source text of the named E1/E4/E5 exceptions, not an executed location choice"},
 	{"internal/dev/ci/tmp_decisions_test.go", "{\"internal/tmploc/dir.go\", `if v := getenv(\"TMPDIR\"); v != \"\" {`, tmpE1},", "E7 guard documentation and literal source text of the named E1/E4/E5 exceptions, not an executed location choice"},
@@ -182,9 +176,18 @@ var tmpTestLines = []tmpEntry{
 	{"internal/flow/cli/tempguard_test.go", "var tempDecision = regexp.MustCompile(`os\\.TempDir\\(\\)|\"/tmp|\"/var/tmp|\"/dev/shm|MkdirTemp\\(\"\"|CreateTemp\\(\"\"|\\(\"TMPDIR\"\\)|\"TMPDIR\", \"TMP\"`)", "E7 the architecture guard's regular expression is scanner input, not a filesystem location"},
 	{"internal/flow/ops/finalgate_test.go", "return engine.FakeReply{Text: jsonOf(map[string]any{\"captures\": []any{map[string]any{\"path\": \"/tmp/qa/shot.png\", \"kind\": \"screenshot\", \"shows\": \"the home screen\"}},", "E7 synthetic screenshot evidence path and its expected packet spelling"},
 	{"internal/flow/ops/finalgate_test.go", "if len(packets) != 2 || !strings.Contains(packets[0], \"/tmp/qa/shot.png\") || !strings.Contains(packets[1], \"/tmp/qa/shot.png\") {", "E7 synthetic screenshot evidence path and its expected packet spelling"},
+	{"internal/flow/ops/lane_pr_test.go", "return BundlePRResult{State: \"opened\", PR: \"o/r#9\", Head: req.Close.Tip, Base: req.Target.BaseRef, ReviewRecord: \"/tmp/review.json\"}, nil", "E7 synthetic review-record reference returned by the fake bundle PR opener; recorded as metadata without opening a file"},
 	{"internal/flow/ops/schemas_test.go", "for _, region := range []string{\"../outside.go\", \"/tmp/outside.go\", \"..\", \"pkg/../../outside.go\"} {", "E7 absolute and escaping region paths are refusal inputs to the schema validator"},
 	{"internal/flow/ops/tmploc_site_test.go", "// relative TMPDIR. os.MkdirTemp(\"\") would have made the directory below the working directory.", "E7 comment describing the relative-TMPDIR regression; no directory is chosen here"},
 	{"internal/flow/ops/verify_github_test.go", "if f.scanDirs[0] == repo || !strings.HasPrefix(f.scanDirs[0], os.TempDir()) {", "E7 asserts the scanner runs in a private OS-temporary directory rather than the checkout; the location itself is the subject of the test"},
+	{"internal/flow/pullrequest/cli_test.go", "\"remote is a path\":          {\"open\", \"--repo\", \"o/r\", \"--head\", \"crw/m1\", \"--title\", \"t\", \"--issue\", \"o/r#1\", \"--push\", g.checkout, \"--remote\", \"/tmp/x\"},", "E7 an invalid remote pathname input, refused before a Git push or pull request open"},
+	{"internal/flow/pullrequest/comments_test.go", "\"no bots\":       {\"comments\", \"--pr\", \"o/r#7\", \"--head\", cmHead, \"--record\", \"/tmp/x\"},", "E7 placeholder record path in malformed CLI inputs, rejected before record access"},
+	{"internal/flow/pullrequest/comments_test.go", "\"bad bots\":      {\"comments\", \"--pr\", \"o/r#7\", \"--head\", cmHead, \"--record\", \"/tmp/x\", \"--bots\", \"maybe\", \"--round\", \"1\"},", "E7 placeholder record path in malformed CLI inputs, rejected before record access"},
+	{"internal/flow/pullrequest/comments_test.go", "\"bad round\":     {\"comments\", \"--pr\", \"o/r#7\", \"--head\", cmHead, \"--record\", \"/tmp/x\", \"--bots\", \"connected\", \"--round\", \"9\"},", "E7 placeholder record path in malformed CLI inputs, rejected before record access"},
+	{"internal/flow/pullrequest/comments_test.go", "\"bad head\":      {\"comments\", \"--pr\", \"o/r#7\", \"--head\", \"abc\", \"--record\", \"/tmp/x\", \"--bots\", \"connected\", \"--round\", \"1\"},", "E7 placeholder record path in malformed CLI inputs, rejected before record access"},
+	{"internal/flow/pullrequest/comments_test.go", "\"bad pr\":        {\"comments\", \"--pr\", \"o/r\", \"--head\", cmHead, \"--record\", \"/tmp/x\", \"--bots\", \"connected\", \"--round\", \"1\"},", "E7 placeholder record path in malformed CLI inputs, rejected before record access"},
+	{"internal/flow/pullrequest/comments_test.go", "\"unknown flag\":  {\"comments\", \"--pr\", \"o/r#7\", \"--head\", cmHead, \"--record\", \"/tmp/x\", \"--bots\", \"connected\", \"--round\", \"1\", \"--what\"},", "E7 placeholder record path in malformed CLI inputs, rejected before record access"},
+	{"internal/flow/pullrequest/remote_test.go", "\"path\":              \"/tmp/x\",", "E7 an invalid remote pathname input, refused before a Git push or pull request open"},
 	{"internal/flow/scenario/lab_test.go", "return map[string]any{\"captures\": []any{map[string]any{\"path\": \"/tmp/qa/shot-1.png\", \"kind\": \"screenshot\", \"shows\": \"the home screen at 1280px\"}},", "E7 synthetic screenshot evidence returned by the scenario agent"},
 	{"internal/gui/policy_api_test.go", "\"    \\\"legacy\\\": {\\\"role\\\": \\\"parent\\\", \\\"model\\\": \\\"devin/swe-2\\\", \\\"reasoningEffort\\\": \\\"max\\\", \\\"cwd\\\": [\\\"/tmp/project\\\"]}\\n\" +", "E7 policy document and mutation payload fixtures; cwd is the stored policy input"},
 	{"internal/gui/policy_api_test.go", "\"{\\\"kind\\\":\\\"setException\\\",\\\"id\\\":\\\"extra\\\",\\\"role\\\":\\\"child\\\",\\\"model\\\":\\\"anthropic/opus\\\",\\\"reasoningEffort\\\":\\\"xhigh\\\",\\\"cwd\\\":[\\\"/tmp/project\\\"]}\",", "E7 policy document and mutation payload fixtures; cwd is the stored policy input"},
