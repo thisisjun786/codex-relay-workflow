@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"maps"
@@ -50,6 +51,11 @@ func roleStoreChangedRows(t *testing.T, w *world, run string) int {
 // t.Setenv puts HOME back) ends the delay, waits for done and reports what the goroutine found, so the goroutine never writes to a
 // state directory or a HOME that is gone and never logs through a finished test. A test that wants the bind waits for done itself.
 func standInProcess(t *testing.T, w *world, run string, table *engine.Policy, delay time.Duration, unbound bool, extra ...engine.Event) <-chan struct{} {
+	t.Helper()
+	return standInProcessAfterStarted(t, w, run, table, delay, unbound, nil, extra...)
+}
+
+func standInProcessAfterStarted(t *testing.T, w *world, run string, table *engine.Policy, delay time.Duration, unbound bool, afterStarted func(<-chan struct{}), extra ...engine.Event) <-chan struct{} {
 	t.Helper()
 	process, err := takeProcessLock(w.state, run)
 	if err != nil {
@@ -105,6 +111,14 @@ func standInProcess(t *testing.T, w *world, run string, table *engine.Policy, de
 		}
 		j.Append(engine.Event{RunID: run, Kind: engine.KindRun, Event: "started", Data: map[string]any{"workflow": "hello", "backend": engine.BackendSession,
 			"policy_digest": table.Digest, "role_pairs": rows, "process": process.Token()}})
+		if afterStarted != nil {
+			afterStarted(stop)
+			select {
+			case <-stop:
+				return
+			default:
+			}
+		}
 		for _, ev := range extra {
 			j.Append(ev)
 		}
@@ -424,5 +438,144 @@ func TestStandInWaitFailsWhenNextReturnsWithoutSpawn(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("stand-in wait blocked after next returned without Spawn")
+	}
+}
+
+// A journal snapshot may precede the process's bind even when the file read
+// afterwards sees that bind. Such a snapshot must not settle a resume without
+// its policy_repinned warning; the next read must see both records.
+func TestHeldProcessKeepsRepinWithSettledBinding(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	w := newWorld(t)
+	td := w.deps()
+	run := "run-0123456789ba"
+	deadPinnedRun(t, w, run)
+	storeTable, _, err := engine.LoadPolicy()
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := Spec{RunID: run, Thread: sessOwner, Backend: BackendSession}
+	w.close()
+	started, proceed := make(chan struct{}), make(chan struct{})
+	repin := engine.Event{RunID: run, Kind: engine.KindRun, Event: engine.EvPolicyRepinned,
+		Data: map[string]any{"old": "sha256:pinned", "new": storeTable.Digest}}
+	done := standInProcessAfterStarted(t, w, run, storeTable, 0, false, func(stop <-chan struct{}) {
+		close(started)
+		select {
+		case <-proceed:
+		case <-stop:
+		}
+	}, repin)
+	select {
+	case <-started:
+	case <-done:
+		t.Fatal("the stand-in finished before the pause")
+	case <-time.After(5 * time.Second):
+		t.Fatal("the stand-in never reached the started row")
+	}
+	read := td.Reader
+	first := true
+	var readErr error
+	td.Reader = func(ctx context.Context, state, socket string) (*Reader, error) {
+		r, err := read(ctx, state, socket)
+		if err != nil || !first {
+			return r, err
+		}
+		first = false
+		// Capture the journal between started and policy_repinned, then let the
+		// process publish the latter and bind before returning the older snapshot.
+		// A separate database keeps this snapshot readable through LoadLean's
+		// own transaction; later reads use the live journal.
+		snapshot := filepath.Join(t.TempDir(), "snapshot.sqlite3")
+		_ = r.Close()
+		source, err := sql.Open("sqlite", filepath.Join(state, "relay.sqlite3"))
+		if err == nil {
+			_, err = source.ExecContext(ctx, "VACUUM INTO ?", snapshot)
+			_ = source.Close()
+		}
+		if err == nil {
+			var st *store.Store
+			st, err = store.OpenReadOnlyStore(ctx, snapshot)
+			r = &Reader{St: st, State: state}
+		}
+		if err != nil {
+			readErr = err
+			return nil, err
+		}
+		t.Cleanup(func() { _ = r.Close() })
+		rows, _, err := journal.LoadLean(ctx, r.St, run)
+		if err != nil {
+			readErr = err
+			_ = r.Close()
+			return nil, err
+		}
+		current := false
+		for _, ev := range rows {
+			if ev.Event == "started" && str(ev.Data, "process") != "" {
+				current = true
+			}
+			if ev.Event == engine.EvPolicyRepinned {
+				t.Fatal("the snapshot already holds policy_repinned")
+			}
+		}
+		if !current {
+			t.Fatal("the snapshot does not hold the resumed process's started row")
+		}
+		close(proceed)
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			readErr = errors.New("the stand-in never published")
+			_ = r.Close()
+			return nil, readErr
+		}
+		return r, nil
+	}
+	c := &command{Deps: td.Deps, ctx: ctx}
+	held := c.heldProcess(&common{state: w.state}, w.state, spec, storeTable)
+	if readErr != nil {
+		t.Fatalf("the pinned reader: %v", readErr)
+	}
+	w.open()
+	if got := bound.Lookup(sessOwner); got.State != bound.Orchestrator || got.Line.RunID != run {
+		t.Fatalf("the owner's line is %+v, want this run", got)
+	}
+	events, _, err := journal.LoadLean(ctx, w.st, run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sawRepin := false
+	for _, ev := range events {
+		if ev.Event == engine.EvPolicyRepinned && str(ev.Data, "old") == "sha256:pinned" && str(ev.Data, "new") == storeTable.Digest {
+			sawRepin = true
+		}
+	}
+	if !sawRepin {
+		t.Fatal("the writer never appended the policy_repinned row")
+	}
+	if !held.starting && !held.binding && held.repinned == nil {
+		t.Error("the held process settled without the resume warning: its journal snapshot preceded policy_repinned and the owner's bind")
+	}
+	held = c.heldProcess(&common{state: w.state}, w.state, spec, storeTable)
+	if held.starting || held.binding {
+		t.Fatalf("the process must read as settled-held, got %+v", held)
+	}
+	if held.table.Digest != storeTable.Digest {
+		t.Fatalf("held table %s, want the resumed store %s", held.table.Digest, storeTable.Digest)
+	}
+	if held.repinned == nil {
+		t.Fatal("the held process read no repinned row although the journal holds it")
+	}
+	warn := strings.Join(held.warnings(run, storeTable, true), "\n")
+	for _, want := range []string{"resume", "sha256:pinned", "policy_repinned"} {
+		if !strings.Contains(warn, want) {
+			t.Errorf("the warnings lack %q: %q", want, warn)
+		}
+	}
+	if ownerLines(t, sessOwner) != 1 {
+		t.Errorf("the owner's line was written %d times", ownerLines(t, sessOwner))
+	}
+	if n := roleStoreChangedRows(t, w, run); n != 0 {
+		t.Errorf("%d role_store_changed rows", n)
 	}
 }
