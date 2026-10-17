@@ -23,6 +23,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // Tree fixtures. Many of this package's tests start from files the Python reference
@@ -459,7 +460,7 @@ var (
 func storeTemplate() (template, error) {
 	templateOnce.Do(func() {
 		templateErr = func() error {
-			dir, err := os.MkdirTemp("", "crw-store-template-")
+			dir, err := tmploc.MkdirTemp("crw-store-template-")
 			if err != nil {
 				return err
 			}
@@ -521,7 +522,7 @@ func buildStore(t testing.TB, path string, dump *storeDump) error {
 	if dump.Schema != tmpl.digest {
 		return fmt.Errorf("the fixture's store schema %s is not the schema Go creates, apart from the history indexes (%s)", dump.Schema, tmpl.digest)
 	}
-	scratch, err := os.MkdirTemp("", "crw-store-build-")
+	scratch, err := tmploc.MkdirTemp("crw-store-build-")
 	if err != nil {
 		return err
 	}

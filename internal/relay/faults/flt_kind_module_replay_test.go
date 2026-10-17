@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // FLT-33: each static-registry replacement path compares the complete CLI
@@ -15,7 +17,7 @@ func Test22_FLT_33_KindModuleWholeOutput(t *testing.T) {
 	goldenParent(t)
 	for _, module := range []string{"json", "os.path", "codex_session_relay.projects", "no_such_module_crw205"} {
 		t.Run(module, func(t *testing.T) {
-			home, err := os.MkdirTemp("/dev/shm", "flt33-")
+			home, err := tmploc.MkdirTemp("flt33-")
 			if err != nil {
 				t.Fatal(err)
 			}

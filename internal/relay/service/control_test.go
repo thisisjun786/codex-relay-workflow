@@ -21,6 +21,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc/tmploctest"
 	"golang.org/x/sys/unix"
 )
@@ -404,7 +405,7 @@ func Test30ControlPeerFailuresAreAnsweredWithTheHostRecord(t *testing.T) {
 }
 func seedTakeover(t *testing.T) string {
 	t.Helper()
-	home, err := os.MkdirTemp("", "t30-")
+	home, err := tmploc.MkdirTemp("t30-")
 	if err != nil {
 		t.Fatal(err)
 	}

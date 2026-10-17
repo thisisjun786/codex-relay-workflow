@@ -28,6 +28,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store/ownership"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // The fixtures these tests start from (testdata/fixtures) and the directories they write them
@@ -45,7 +46,8 @@ func placeholderPairs(anchors ...string) [][2]string {
 	explicit := append([]string{}, anchors...)
 	root := repositoryRootPath()
 	pairs := [][2]string{{root, "<repo>"}}
-	tmp := filepath.Clean(os.TempDir())
+	tmp, _ := tmploc.Lookup(os.Getenv)
+	tmp = filepath.Clean(tmp)
 	for _, key := range []string{"HOME", "XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "CODEX_HOME",
 		"CODEX_SESSION_RELAY_STATE", "CODEX_SESSION_RELAY_SCOPE_DIR", "CODEX_SESSION_RELAY_MARKER_ROOT", "CRW_MARKER_ROOT"} {
 		anchors = append(anchors, os.Getenv(key))
@@ -723,7 +725,8 @@ func stampStore(t testing.TB, db, owner, phase string, epoch int64, takeover str
 // (in any spelling a test builds from one) as <path>, and every byte that is not printable UTF-8
 // escaped.
 func keyLabel(words ...string) string {
-	tmp := filepath.Clean(os.TempDir())
+	tmp, _ := tmploc.Lookup(os.Getenv)
+	tmp = filepath.Clean(tmp)
 	root := repositoryRootPath()
 	spelled := make([]string, len(words))
 	for i, word := range words {

@@ -20,6 +20,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/supervisor"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // rrOperation is one operation a Python restoration-visibility or correction-form test made: its
@@ -112,7 +113,7 @@ func rrTables(t *testing.T, s *store.Store) []byte {
 // list of operations.
 func rrCapture(t *testing.T, module, method string) (string, []rrOperation) {
 	t.Helper()
-	root, err := os.MkdirTemp("", "crw-rr-")
+	root, err := tmploc.MkdirTemp("crw-rr-")
 	if err != nil {
 		t.Fatal(err)
 	}

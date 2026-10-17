@@ -9,11 +9,12 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // FLT-34: policy and budget listing pages and mutations, and the journal entries they write.
 func TestDPolicyAndLimitWholeReplies(t *testing.T) {
-	home, e := os.MkdirTemp("/dev/shm", "fault-d-settings-")
+	home, e := tmploc.MkdirTemp("fault-d-settings-")
 	if e != nil {
 		t.Fatal(e)
 	}

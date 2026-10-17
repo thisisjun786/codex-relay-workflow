@@ -494,7 +494,21 @@ func replayCXC(t *testing.T, root, crw string) {
 	}
 	for _, id := range ids {
 		t.Run(id, func(t *testing.T) {
-			if err := r.check(id, fixtures[id], claims[id], t.TempDir); err != nil {
+			// Fixture names can be long; keep scratch names independent of them so the
+			// recorded bounded path labels retain their placeholders under a deep TMPDIR.
+			tmp := func() string {
+				scratch, err := tmploc.MkdirTemp("cxc-")
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() {
+					if err := os.RemoveAll(scratch); err != nil {
+						t.Errorf("remove cxc scratch: %v", err)
+					}
+				})
+				return scratch
+			}
+			if err := r.check(id, fixtures[id], claims[id], tmp); err != nil {
 				t.Fatal(err)
 			}
 		})
