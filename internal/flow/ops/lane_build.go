@@ -631,7 +631,7 @@ func unitCheckPrompt(r rows, node, mode, base, head, sub string, receipt checkRe
 		}
 	}
 	if receipt.body != nil {
-		fmt.Fprintf(&b, "\nEXECUTOR RECEIPT (the evidence receipt the executor wrote, sha256 %s: what it says it ran, such as its red-first and mutation-red lines; "+
+		fmt.Fprintf(&b, "\nEXECUTOR RECEIPT (the evidence receipt the executor wrote, sha256 %s: what it says it ran, such as its red-first lines; "+
 			"it is the executor's report, not a judgment of the change)\n", receipt.digest)
 		body := receipt.body
 		if len(body) > UnitCheckReceiptPromptLimit {
