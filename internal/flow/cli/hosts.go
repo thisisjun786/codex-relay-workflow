@@ -177,13 +177,21 @@ type ExecutorSubmission struct {
 	Placement dagsched.ExecutorPlacement `json:"placement"`
 }
 
-const ExecutorUsage = `crw executor submit --file SUBMISSION.json [--worker-config FILE]
+const ExecutorUsage = `crw executor result check --execution ID --actor TASK --epoch N --spool LOCAL_DIR [--verification FILE] [--premerge FILE]
+crw executor submit --file SUBMISSION.json [--worker-config FILE]
 crw executor status|start|cancel|collect --execution ID --actor TASK --epoch N
 crw executor exec --execution ID --actor TASK --epoch N --check CHECK_ID
 Every command accepts --state DIR --socket PATH. status reconciles the worker;
 collect reports a delivery path, not candidate acceptance.`
 
 func ExecutorRun(ctx context.Context, args []string, out, errout io.Writer) int {
+	if len(args) > 0 && args[0] == "result" {
+		if len(args) < 2 || args[1] != "check" {
+			fmt.Fprintln(errout, ExecutorResultCheckUsage)
+			return 2
+		}
+		return executorResultCheck(ctx, args[2:], out, errout)
+	}
 	if len(args) == 0 || args[0] == "--help" {
 		fmt.Fprintln(out, ExecutorUsage)
 		return 0
