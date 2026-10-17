@@ -96,7 +96,6 @@ var (
 	ErrRecommendation      = errors.New("decisions: the recommendation names no option")
 	ErrUnknownReply        = errors.New("decisions: unknown option reply")
 	ErrOptionReplyRequired = errors.New("decisions: every option of a relationship-blocking decision names its reply")
-	ErrAmbiguousField      = errors.New("decisions: a field holds one of the fingerprint's delimiters")
 	ErrControlCharacter    = errors.New("decisions: a field holds a control character")
 	ErrTransition          = errors.New("decisions: that transition is not allowed")
 	ErrMergeConflict       = errors.New("decisions: the two records differ beyond their seen entries")
@@ -305,9 +304,8 @@ func Normalize(text string) string {
 
 // Fingerprint is the question's identity: the first 16 hex characters of the SHA-256 of the JSON
 // encoding of [Normalize(context), [[kind, ref], ...] sorted, [option id, ...] sorted]. The
-// encoding keeps the three parts and every list element apart, so no character inside a field can
-// make two different questions share a material; Validate's delimiter refusals stay as a second
-// guard. Two statements of one question that normalize alike are one record.
+// encoding keeps the three parts and every list element apart, so punctuation inside a field
+// cannot join it to another field. Two statements of one question that normalize alike are one record.
 func Fingerprint(context string, blocking []Blocking, options []Option) string {
 	subjects := make([][2]string, 0, len(blocking))
 	for _, entry := range blocking {
@@ -337,7 +335,7 @@ func Fingerprint(context string, blocking []Blocking, options []Option) string {
 // Validate refuses a record that is not a well-formed crw-user-decision/1: a wrong schema id, an
 // unknown kind or state, a control character in a free-text field, an empty context, an option set
 // that is not 2 or 3 options with unique non-empty ids, a vocabulary miss, a needed_by that is not
-// RFC3339, a recommendation naming no option, or a field carrying a fingerprint delimiter.
+// RFC3339, or a recommendation naming no option.
 func Validate(record Record) error {
 	if record.Schema != Schema {
 		return fmt.Errorf("%w: %q", ErrSchema, record.Schema)
@@ -354,9 +352,6 @@ func Validate(record Record) error {
 	if strings.TrimSpace(record.Context) == "" {
 		return ErrEmptyContext
 	}
-	if strings.Contains(record.Context, "|") {
-		return fmt.Errorf("%w: context contains %q", ErrAmbiguousField, "|")
-	}
 	if len(record.Options) < MinOptions || len(record.Options) > MaxOptions {
 		return fmt.Errorf("%w: got %d", ErrOptionCount, len(record.Options))
 	}
@@ -365,9 +360,6 @@ func Validate(record Record) error {
 		id := strings.TrimSpace(option.ID)
 		if id == "" {
 			return ErrEmptyOptionID
-		}
-		if strings.Contains(id, ",") {
-			return fmt.Errorf("%w: option id %q contains %q", ErrAmbiguousField, id, ",")
 		}
 		if ids[id] {
 			return fmt.Errorf("%w: %q", ErrDuplicateOptionID, id)
@@ -380,9 +372,6 @@ func Validate(record Record) error {
 	for _, entry := range record.Blocking {
 		if !IsBlockingKind(entry.Kind) {
 			return fmt.Errorf("%w: %q", ErrUnknownBlockingKind, entry.Kind)
-		}
-		if strings.ContainsAny(entry.Ref, ":,") {
-			return fmt.Errorf("%w: blocking ref %q contains %q or %q", ErrAmbiguousField, entry.Ref, ":", ",")
 		}
 	}
 	if record.Authority.Kind != "" && !IsAuthorityKind(record.Authority.Kind) {
