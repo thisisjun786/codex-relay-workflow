@@ -242,7 +242,7 @@ func (a Adapter) Check(ctx context.Context, req Request) (Result, error) {
 	c.elapsed = now().Sub(start)
 	res.ElapsedMS = c.elapsed.Milliseconds()
 	if req.Profile.Usage != nil {
-		c.usage, c.usageOK = req.Profile.Usage(c.stdout)
+		c.usage, c.usageOK = req.Profile.Usage(c.stdout, req)
 	}
 	if c.usageOK {
 		res.CacheReadTokens, res.Commands = c.usage.CacheRead, c.usage.Commands

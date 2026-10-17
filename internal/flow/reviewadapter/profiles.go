@@ -38,7 +38,7 @@ type Profile struct {
 	Ranged bool
 	// Usage reads what the call read from the tool's stdout (Usage); ok is false when the output reports no usage. Nil: the tool
 	// reports none, and the record's usage is zero.
-	Usage func(stdout []byte) (u Usage, ok bool)
+	Usage func(stdout []byte, req Request) (u Usage, ok bool)
 	// MinCacheRead, MinCommands and MinElapsed are the floors of a pass that read the repository: an answer that would be ok is
 	// not_read when any floor is set and the call ran shorter than MinElapsed, its output reports no usage, or it read fewer cached
 	// tokens than MinCacheRead or ran fewer commands than MinCommands. A zero floor is no check, and a profile with none is never
