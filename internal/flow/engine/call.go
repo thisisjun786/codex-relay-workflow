@@ -1460,18 +1460,22 @@ func (c *callRun) turnLoop(ctx context.Context, resolved *jsonschema.Resolved, k
 			}
 			return c.fromIntent(ctx, "the turn ended completed after the engine interrupted it")
 		}
-		result, verr := c.validate(out.Text, resolved)
+		result, normalized, verr := c.validate(out.Text, resolved)
 		extracted := false
 		if verr != nil && c.sess != nil && resolved != nil {
 			// a subagent's answer may carry prose before its JSON: the object that ends it is the answer (§3.3)
 			if cand, ok := extractTrailingJSON(out.Text); ok {
-				if r, err := c.validate(cand, resolved); err == nil {
-					result, verr, extracted = r, nil, true
+				if r, norm, err := c.validate(cand, resolved); err == nil {
+					result, normalized, verr, extracted = r, norm, nil, true
 				}
 			}
 		}
 		if verr == nil {
 			data := map[string]any{"result": string(result), "result_digest": digestJSON(result), "tokens": c.tokens, "repair_used": c.repairUsed}
+			if normalized {
+				data["normalizations"] = []string{explorerVerifiedNormalization}
+				data["raw_text"] = out.Text
+			}
 			if extracted {
 				data["raw_text"], data["extracted"] = out.Text, true
 			}
@@ -1496,25 +1500,77 @@ func (c *callRun) turnLoop(ctx context.Context, resolved *jsonschema.Resolved, k
 	}
 }
 
+const explorerVerifiedNormalization = "explorer_verified_missing_to_empty"
+
+func defaultExplorerVerified(role string, schema map[string]any, value any) bool {
+	if role != "explorer" || schema["type"] != "object" {
+		return false
+	}
+	properties, ok := schema["properties"].(map[string]any)
+	if !ok {
+		return false
+	}
+	names := []string{"answer", "evidence", "verified", "inferred", "unknown"}
+	if _, ok := properties["end_conditions"]; ok {
+		names = append(names, "end_conditions")
+	}
+	required, ok := schema["required"].([]any)
+	if !ok || len(properties) != len(names) || len(required) != len(names) {
+		return false
+	}
+	for _, name := range names {
+		member, ok := properties[name].(map[string]any)
+		if !ok || !slices.Contains(required, any(name)) {
+			return false
+		}
+		switch name {
+		case "answer":
+			if member["type"] != "string" {
+				return false
+			}
+		case "end_conditions":
+		default:
+			items, ok := member["items"].(map[string]any)
+			if member["type"] != "array" || !ok || items["type"] != "string" {
+				return false
+			}
+		}
+	}
+	object, ok := value.(map[string]any)
+	if !ok {
+		return false
+	}
+	if _, present := object["verified"]; present {
+		return false
+	}
+	object["verified"] = []any{}
+	return true
+}
+
 // validate parses a turn's last message and, for a call with a schema, validates it in Go. The returned bytes are the
 // canonical JSON of the result (byte-identical on replay).
-func (c *callRun) validate(text string, resolved *jsonschema.Resolved) ([]byte, error) {
+func (c *callRun) validate(text string, resolved *jsonschema.Resolved) ([]byte, bool, error) {
 	if resolved == nil {
-		return mustJSON(text), nil
+		return mustJSON(text), false, nil
 	}
 	var plain any
 	dec := json.NewDecoder(strings.NewReader(strings.TrimSpace(text)))
 	if err := dec.Decode(&plain); err != nil {
-		return nil, fmt.Errorf("the message is not JSON: %v", err)
+		return nil, false, fmt.Errorf("the message is not JSON: %v", err)
 	}
 	// The message is one JSON document: whatever follows it (a closing bracket, a second value, text) is an error.
 	if _, err := dec.Token(); err != io.EOF {
-		return nil, errors.New("the message holds more than one JSON value")
+		return nil, false, errors.New("the message holds more than one JSON value")
 	}
+	normalized := false
 	if err := resolved.Validate(plain); err != nil {
-		return nil, err
+		normalized = defaultExplorerVerified(c.plan.role, c.plan.schemaRaw, plain)
+		if !normalized || resolved.Validate(plain) != nil {
+			return nil, false, err
+		}
 	}
-	return json.Marshal(plain)
+	raw, err := json.Marshal(plain)
+	return raw, normalized, err
 }
 
 // ownsDirectory is whether the call is a continuation that runs in a directory of its own: an architect turn that names the head
