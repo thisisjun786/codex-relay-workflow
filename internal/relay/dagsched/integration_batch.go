@@ -7,13 +7,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
+	"github.com/thisisjun786/codex-relay-workflow/internal/execgroup"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
@@ -116,10 +120,22 @@ func (s *Scheduler) IntegrateBatch(ctx context.Context, in IntegrationBatchInput
 	if err := s.IntegrationWrite(ctx, in.Plan, in.Actor, func(context.Context) error { return nil }); err != nil {
 		return out, err
 	}
+	commands, err := crwconfig.LoadRepositoryCommands(ctx, os.Getenv, in.Checkout)
+	if err != nil {
+		return out, err
+	}
+	if commands.IntegrateCommand != "" && in.IntegrationRef != "dev" {
+		return out, refuse(contract.RefusalDispositionConflict, "repository integrate_command is only used for dev, never main or a release target")
+	}
+	if commands.VerifyCommand != "" {
+		deps.Verify = repositoryIntegrationVerifier(commands.VerifyCommand)
+	}
 	// a branch a worktree has checked out is refused before the verification runs; it is checked again inside the
 	// fenced move transaction below (CRW-1595)
-	if err := checkIntegrationCheckout(ctx, in.Checkout, in.IntegrationRef); err != nil {
-		return out, err
+	if commands.IntegrateCommand == "" {
+		if err := checkIntegrationCheckout(ctx, in.Checkout, in.IntegrationRef); err != nil {
+			return out, err
+		}
 	}
 	baseTip, err := resolveIntegrationCommit(ctx, in.Checkout, in.BaseRef)
 	if err != nil {
@@ -214,7 +230,12 @@ func (s *Scheduler) IntegrateBatch(ctx context.Context, in IntegrationBatchInput
 	}
 	var settled settledIntegration
 	if len(fresh) > 0 {
-		if settled, err = s.settleCandidates(ctx, in, deps, start, baseTip, batch, fresh); err != nil {
+		if commands.IntegrateCommand != "" {
+			settled, err = s.integrateWithCommand(ctx, in, deps, start, baseTip, batch, fresh, commands.IntegrateCommand)
+		} else {
+			settled, err = s.settleCandidates(ctx, in, deps, start, baseTip, batch, fresh)
+		}
+		if err != nil {
 			return out, err
 		}
 	}
@@ -264,10 +285,15 @@ func (s *Scheduler) IntegrateBatch(ctx context.Context, in IntegrationBatchInput
 			}
 			// the branch is checked again right before it moves: a worktree that took it while the merged tree was being
 			// verified stops the move (CRW-1595)
-			if err := checkIntegrationCheckout(txCtx, in.Checkout, in.IntegrationRef); err != nil {
+			expected := old
+			if commands.IntegrateCommand != "" {
+				// The command already moved the target. The shared updater now
+				// confirms that exact observed tip, without overwriting a later move.
+				expected = settled.head
+			} else if err := checkIntegrationCheckout(txCtx, in.Checkout, in.IntegrationRef); err != nil {
 				return err
 			}
-			if err := deps.Update(txCtx, in.Checkout, in.IntegrationRef, settled.head, old); err != nil {
+			if err := deps.Update(txCtx, in.Checkout, in.IntegrationRef, settled.head, expected); err != nil {
 				// a refusal of the update (a branch checked out meanwhile) is its own answer, not a stale read
 				var refused *store.RefusedError
 				if errors.As(err, &refused) {
@@ -426,6 +452,15 @@ func (s *Scheduler) recordIntent(ctx context.Context, in IntegrationBatchInput, 
 		}
 	}
 	fields := map[string]string{"integration_ref": in.IntegrationRef, "base": baseTip, "old_head": old}
+	commands, err := crwconfig.LoadRepositoryCommands(ctx, os.Getenv, in.Checkout)
+	if err != nil {
+		return err
+	}
+	fields["verify_command"], fields["integrate_command"] = commands.VerifyCommand, commands.IntegrateCommand
+	if commands.VerifyCommand == "" || commands.IntegrateCommand == "" {
+		fields["warning"] = crwconfig.RepositoryCommandsFallback
+		fmt.Fprintln(os.Stderr, "[crw warning] integration:", fields["warning"])
+	}
 	if in.RetryNotProven {
 		fields["retry_not_proven"] = "1"
 	}
@@ -703,8 +738,14 @@ func (w *integrationWorktree) verify(ctx context.Context) (VerificationRecord, s
 		if errors.As(err, &host) {
 			return VerificationRecord{}, "", false, err
 		}
+		if err := w.retainCommandRecord(ctx, recordPath); err != nil {
+			return VerificationRecord{}, "", false, err
+		}
 		// a failing run journals its bounded diagnostic, so the failure survives the temporary worktree (CRW-1595)
 		return VerificationRecord{}, "", false, w.verificationFailed(ctx, commit, recordPath, err.Error())
+	}
+	if err := w.retainCommandRecord(ctx, recordPath); err != nil {
+		return VerificationRecord{}, "", false, err
 	}
 	// the verify command may move HEAD; what it verified must still be the commit that would land (CRW-965 review)
 	if moved, err := w.head(ctx); err != nil {
@@ -1397,6 +1438,9 @@ func (s *Scheduler) verifiedHeadState(ctx context.Context, in IntegrationBatchIn
 // digest, dependency digests and platform (CRW-965, parent decisions D2 and D2 remainder). A row with a key missing is not
 // reused, so an older row is verified again.
 func verifiedKeysHold(stored, now map[string]string) bool {
+	if stored["repository_command"] != now["repository_command"] {
+		return false
+	}
 	for _, key := range verifiedKeyNames {
 		value, ok := stored[key]
 		if !ok || value != now[key] {
@@ -1420,8 +1464,146 @@ func verifiedKeysOf(ctx context.Context, checkout, head string) (map[string]stri
 		return nil, err
 	}
 	return map[string]string{"tree": strings.TrimSpace(tree), "ci_digest": keys.CiDigest,
-		"dependency_go_sum": keys.Dependencies["go.sum"], "dependency_web_lock": keys.Dependencies["web/package-lock.json"],
+		"repository_command": keys.RepositoryCommand,
+		"dependency_go_sum":  keys.Dependencies["go.sum"], "dependency_web_lock": keys.Dependencies["web/package-lock.json"],
 		"os": runtime.GOOS, "arch": runtime.GOARCH}, nil
+}
+
+// repositoryIntegrationVerifier transports CRW's command receipt to the same
+// record reader as the local and GitHub verifiers.
+func repositoryIntegrationVerifier(command string) IntegrationBatchVerifier {
+	return func(ctx context.Context, dir string, env []string) error {
+		vars := map[string]string{}
+		for _, kv := range env {
+			if k, v, ok := strings.Cut(kv, "="); ok {
+				vars[k] = v
+			}
+		}
+		record, err := VerifyRepositoryCommand(ctx, dir, vars["CRW_VERIFY_HEAD"], vars["CRW_VERIFY_BASE"], command)
+		if err != nil {
+			return &IntegrationVerifierHostError{Detail: err.Error()}
+		}
+		if err := os.WriteFile(vars["CRW_VERIFY_RECORD"], record.Raw, 0o600); err != nil {
+			return &IntegrationVerifierHostError{Detail: err.Error()}
+		}
+		if record.Result != "pass" {
+			return fmt.Errorf("%s exited %d: %s", command, *record.CommandVerification.ExitCode, record.Result)
+		}
+		return nil
+	}
+}
+
+func (w *integrationWorktree) retainCommandRecord(ctx context.Context, path string) error {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	} // the ordinary missing-record diagnostic owns this
+	record, err := DecodeVerificationRecord(raw)
+	if err != nil || record.CommandVerification == nil {
+		return nil
+	}
+	detail, err := json.Marshal(map[string]string{"integration_ref": w.in.IntegrationRef, "verification_record": string(raw)})
+	if err != nil {
+		return err
+	}
+	return w.s.recordCommandEvidence(ctx, w.in, w.batch, string(detail))
+}
+
+// A deterministic command can leave the same receipt on a retry or during
+// bisection. The same evidence is one immutable row, not a duplicate insert.
+func (s *Scheduler) recordCommandEvidence(ctx context.Context, in IntegrationBatchInput, batch, detail string) error {
+	return s.IntegrationWrite(ctx, in.Plan, in.Actor, func(txCtx context.Context) error {
+		var one int
+		if exists, err := queryOne(txCtx, s.Store.Q(txCtx), "SELECT 1 FROM dag_integration_stages WHERE stage_id = ?", []any{registry.CoordinationID("dis", batch, "intent", "", detail)}, &one); err != nil || exists {
+			return err
+		}
+		return s.stageRow(txCtx, in, batch, "intent", Candidate{}, detail)
+	})
+}
+
+// integrateWithCommand gives each frozen head a branch and lets the repository's
+// command perform its merge. It never feeds a speculative CRW merge to the command,
+// retries a side effect by bisection, or resets a target the command moved.
+func (s *Scheduler) integrateWithCommand(ctx context.Context, in IntegrationBatchInput, deps IntegrationBatchDeps, start, base, batch string, candidates []Candidate, command string) (settledIntegration, error) {
+	out := settledIntegration{}
+	previous := start
+	for _, c := range candidates {
+		if err := s.IntegrationWrite(ctx, in.Plan, in.Actor, func(txCtx context.Context) error {
+			current, err := s.frozenCandidateStillCurrent(txCtx, c)
+			if err != nil {
+				return err
+			}
+			if !current {
+				return refuse(contract.RefusalMergeCandidateMoved, "candidate %s changed before integrate_command", c.NodeID)
+			}
+			if c.ExecutionKind == ExecutionAgent {
+				cur, live, err := executionOf(txCtx, s.Store.Q(txCtx), in.Plan, c.NodeID)
+				if err != nil {
+					return err
+				}
+				if !live || cur.Kind != ExecutionAgent {
+					return refuse(contract.RefusalUnregisteredRelationship, "node %s has no execution to integrate", c.NodeID)
+				}
+				if cur.Agent.Actor != in.Actor {
+					return notOrchestrator(in.Actor, cur.Agent)
+				}
+			}
+			return nil
+		}); err != nil {
+			return out, err
+		}
+		if tip, found, err := integrationBranchTip(ctx, in.Checkout, in.IntegrationRef); err != nil || !found || tip != previous {
+			return out, refuse(contract.RefusalStaleMarkContext, "target changed before integrate_command; expected %s", previous)
+		}
+		branch := "crw/integrate/" + strings.TrimPrefix(sha256Digest([]byte(batch+c.NodeID)), "sha256:")[:24]
+		if _, err := runGit(ctx, in.Checkout, nil, "update-ref", "refs/heads/"+branch, c.HeadSHA, zeroObjectID); err != nil {
+			return out, err
+		}
+		cmd := exec.CommandContext(ctx, "sh", "-c", command+` "$1"`, "crw-integrate", branch)
+		cmd.Dir, cmd.Env = in.Checkout, repositoryCommandEnv()
+		cmd.Env = append(cmd.Env, "CRW_INTEGRATE_BASE="+previous, "CRW_INTEGRATE_REF="+in.IntegrationRef, "CRW_INTEGRATE_HEAD="+c.HeadSHA)
+		hash, tail := sha256.New(), &integrationOutputTail{}
+		output := io.MultiWriter(hash, tail)
+		cmd.Stdout, cmd.Stderr = output, output
+		execgroup.Bind(cmd, execgroup.KillGrace)
+		err := cmd.Run()
+		code := -1
+		if cmd.ProcessState != nil {
+			code = cmd.ProcessState.ExitCode()
+		}
+		_, _ = runGit(context.WithoutCancel(ctx), in.Checkout, nil, "update-ref", "-d", "refs/heads/"+branch, c.HeadSHA)
+		tip, found, readErr := integrationBranchTip(context.WithoutCancel(ctx), in.Checkout, in.IntegrationRef)
+		detail, marshalErr := json.Marshal(map[string]any{"integrate_command": command, "branch": branch, "candidate_head": c.HeadSHA, "exit": code,
+			"old_head": previous, "command_head": tip, "integration_ref": in.IntegrationRef, "log_digest": "sha256:" + hex.EncodeToString(hash.Sum(nil)), "log_tail": tail.String()})
+		if marshalErr != nil {
+			return out, marshalErr
+		}
+		if recordErr := s.recordCommandEvidence(context.WithoutCancel(ctx), in, batch, string(detail)); recordErr != nil {
+			return out, recordErr
+		}
+		if err != nil || code != 0 {
+			return out, fmt.Errorf("integrate_command exited %d (target now %s): %v: %s", code, tip, err, tail.String())
+		}
+		if readErr != nil || !found || tip == previous {
+			return out, fmt.Errorf("integrate_command did not move %s: %v", in.IntegrationRef, readErr)
+		}
+		for _, ancestor := range []string{previous, c.HeadSHA} {
+			if ok, err := commitIsAncestor(ctx, in.Checkout, ancestor, tip); err != nil || !ok {
+				return out, fmt.Errorf("integrate_command tip %s does not contain %s: %v", tip, ancestor, err)
+			}
+		}
+		record, digest, pass, err := s.verifyHead(ctx, in, deps, batch, tip, base)
+		if err != nil {
+			return out, err
+		}
+		if !pass {
+			return out, fmt.Errorf("integrate_command moved %s to %s, but its verification failed; the move is recorded and not marked", in.IntegrationRef, tip)
+		}
+		out.merged = append(out.merged, integrationMerge{Candidate: c, MergeCommit: tip})
+		out.head, out.record, out.digest = tip, record, digest
+		previous = tip
+	}
+	return out, nil
 }
 
 // recordVerifiedHead writes the batch's intent to move the branch to a verified head, before the branch moves. The row

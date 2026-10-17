@@ -156,10 +156,11 @@ func BuildLane(ctx context.Context, req LaneRequest, opt LaneOptions) (LaneWorld
 		Verifier: dagsched.VerifierRule{SkillsDigest: skills, Model: review.Model, Effort: review.Effort}}
 	verifier := opt.Verifier
 	if verifier == nil {
-		verifier = ops.NewVerifier(tools)
-		// the shipped verifier runs the repository's CI command only — the configured kind's own
-		// implementation: a milestone that requires another command is refused before the run starts
-		// (CheckHandoff) and again when the run reads it
+		commands, err := crwconfig.LoadRepositoryCommands(ctx, func(k string) string { v, _ := getenv(k); return v }, req.Repo)
+		if err != nil {
+			return LaneWorld{}, err
+		}
+		verifier = ops.RepositoryVerifier{Commands: commands, Fallback: ops.NewVerifier(tools)}
 		relay.RunnableCommand = ShippedRunnableCommand
 	}
 	relay.HostMemory = func() (*dagsched.HostMemoryBound, error) {
@@ -310,14 +311,11 @@ func shippedCrosscheck() *ops.Crosscheck {
 	}
 }
 
-// ShippedRunnableCommand says why the shipped lane's verifier cannot run a required command of a milestone ("" when it can): the
-// verifier is ops.CILocalVerifier, which runs crw-dev ci local and refuses every other command. It is the one predicate of the shipped
-// lane, applied by CheckHandoff before a run starts (crw flow start --handoff, the start of a night batch, crw manage batch decide
-// --handoff) and by SchedRelay.Milestone when the run reads its milestone (CRW-1285). A verifier that runs other commands (make e2e)
-// is the first real project's to decide (CRW-1209); until then such a milestone is an input error the start refuses.
+// ShippedRunnableCommand rejects only empty required commands. The repository
+// verifier records unknown commands as warnings and runs the configured verifier.
 func ShippedRunnableCommand(command string) string {
-	if command != ops.CILocalCommand {
-		return fmt.Sprintf("the shipped lane's verifier runs %q only", ops.CILocalCommand)
+	if strings.TrimSpace(command) == "" {
+		return "a required command must not be empty"
 	}
 	return ""
 }

@@ -9,6 +9,34 @@ record. A node's `merged` mark, the reach observation and the relationship and `
 node (see [DAG scheduler](dag-scheduler.md), "Commit acceptance and local integration"); the queue does not replace them and does not decide
 who may integrate. Code: `internal/integrator` (the logic) and `internal/manage/integrate.go` (the command).
 
+## Repository commands for DAG integration
+
+For `crw.integrate` and `crw relay dag-integrate`, the top-level
+[`repositories` configuration](../CI.md#repository-commands-for-flow-runs) can name
+`verify_command` and `integrate_command`. Missing members retain the configured
+local/GitHub verifier and CRW merge respectively, with a warning in the batch intent.
+This is separate from the queue's `manage.integrate.verify_command` argv setting.
+
+When `integrate_command` is set, CRW creates a temporary local branch pointing at
+the frozen node head and appends that branch as one argument to the configured shell
+command, for example `node scripts/integrate.mjs <branch>`. It runs from the target
+checkout with Git routing variables removed. `CRW_INTEGRATE_HEAD`,
+`CRW_INTEGRATE_BASE` and `CRW_INTEGRATE_REF` describe the expected candidate, previous
+tip and target. The command owns its merge commit, target update and any push; CRW
+does not supply a preliminary merge. This path invokes the command only for `dev`,
+never `main` or a release target.
+
+After each invocation CRW records the command, branch, exit, output digest, previous
+tip and observed target tip. The tip must contain both the prior target and candidate.
+CRW verifies that actual tip with the configured verifier, retains its receipt and
+confirms the post-command tip with the common ref CAS before marking the batch.
+A concurrent move refuses that confirmation without overwriting the newer tip.
+The command may update a checked-out dev worktree itself; the final no-op CAS is
+allowed there, while CRW's ordinary ref-changing path still refuses checked-out
+targets. Command invocations are not bisected or replayed on failure. A command that
+moves a ref and then fails, or leaves a failing verification, retains its observed
+move and remains unmarked; CRW does not undo an external command's effects.
+
 ## The queue
 
 One directory, `queue_dir`, with one file per issue number in `pending/`, and, in a queue whose integrate section names

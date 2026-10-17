@@ -2,17 +2,23 @@ package manage
 
 import (
 	"context"
+	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
 )
 
-// TestBatchDecideRefusesAHandoffWithAnUnrunnableRequiredCommand (CRW-1285 (3)): `crw manage batch decide --handoff` applies the check of
-// the shipped lane's verifier (flow's CheckHandoff), so a handoff whose milestone requires a command other than crw-dev ci local is
-// refused before anything is raised at the relay, not when the night batch's run process reads its milestone.
-func TestBatchDecideRefusesAHandoffWithAnUnrunnableRequiredCommand(t *testing.T) {
+// CRW-1363: unknown required commands survive the handoff and become a verifier
+// warning with the configured command's record. Empty commands still fail before
+// the relay is asked to record a decision.
+func TestBatchDecideRequiredCommandsWarnAndRecordOrRefuseEmpty(t *testing.T) {
 	auditListHome(t)
 	exe, record := batchDecideRelay(t, "raised", 0)
 	old := batchDecideConfig
@@ -29,10 +35,58 @@ func TestBatchDecideRefusesAHandoffWithAnUnrunnableRequiredCommand(t *testing.T)
 		t.Fatal(err)
 	}
 	args := []string{"decide", "--plan", plan, "--flow-plan", "plan-1", "--milestone", "M1", "--token-budget", "750000", "--deadline", "2026-10-13T06:00:00Z", "--by", "manager-task", "--handoff", handoff}
-	if code := batchMain(context.Background(), e, args); code == 0 || !strings.Contains(errOut.String(), "make e2e") {
-		t.Errorf("a handoff that requires make e2e: exit %d: %s", code, errOut.String())
+	if code := batchMain(context.Background(), e, args); code != 0 {
+		t.Fatalf("a handoff that requires make e2e: exit %d: %s", code, errOut.String())
 	}
-	if _, err := os.Stat(record); err == nil {
-		t.Errorf("the relay was asked: %q", coreFakeCalls(t, record))
+	calls := coreFakeCalls(t, record)
+	if len(calls) != 2 || !strings.Contains(strings.Join(calls[0], " "), handoff) {
+		t.Fatalf("unknown command's handoff was not recorded: %q", calls)
+	}
+
+	// Exercise the same repository verifier the shipped lane uses, retaining the
+	// unknown requirement as a warning and the actual command as receipt evidence.
+	repo := t.TempDir()
+	git := func(args ...string) string {
+		t.Helper()
+		out, err := exec.Command("git", append([]string{"-C", repo}, args...)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	git("init", "-b", "dev")
+	git("-c", "user.name=test", "-c", "user.email=test@invalid", "commit", "--allow-empty", "-m", "base")
+	head := git("rev-parse", "HEAD")
+	command := "printf foundation"
+	config, err := json.Marshal(map[string]any{"repositories": map[string]any{repo: map[string]string{"verify_command": command}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(configPath, config, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CRW_CONFIG", configPath)
+	v := ops.RepositoryVerifier{Commands: crwconfig.RepositoryCommands{VerifyCommand: command}}
+	out, err := v.Verify(context.Background(), ops.VerifyRequest{Worktree: repo, Head: head, Base: head, Command: "make e2e"})
+	if err != nil || !out.Pass || !strings.Contains(out.Note, `unknown required command "make e2e"`) {
+		t.Fatalf("unknown requirement warning: %+v: %v", out, err)
+	}
+	receipt, err := dagsched.DecodeVerificationRecord(out.Record)
+	if err != nil || receipt.CommandVerification == nil || receipt.CommandVerification.Command != command || receipt.Result != "pass" || receipt.Digest != out.Digest {
+		t.Fatalf("configured verification record: %+v: %v", receipt, err)
+	}
+
+	for _, command := range []string{"", "   "} {
+		if err := os.WriteFile(handoff, []byte(strings.Replace(doc, "make e2e", command, 1)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		errOut.Reset()
+		if code := batchMain(context.Background(), e, args); code == 0 || !strings.Contains(errOut.String(), "blank") {
+			t.Errorf("empty required command %q: exit %d: %s", command, code, errOut.String())
+		}
+		if got := coreFakeCalls(t, record); len(got) != len(calls) {
+			t.Fatalf("empty command asked the relay: %q", got)
+		}
 	}
 }

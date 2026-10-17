@@ -87,7 +87,7 @@ func (p RequiredStatusPublisher) Publish(ctx context.Context, checkout, remote, 
 	if target == "ci/required-status/"+head {
 		return errors.New("required status: the integration target is the staging branch itself")
 	}
-	keys, err := dagsched.CommitVerificationKeys(ctx, checkout, head)
+	keys, err := dagsched.QueueVerificationKeys(ctx, checkout, head)
 	if err != nil {
 		return fmt.Errorf("required status: %w", err)
 	}
