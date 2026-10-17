@@ -32,7 +32,7 @@ var sizeFields = map[string][]string{
 }
 
 var (
-	headingLine  = regexp.MustCompile(`^ {0,3}#{1,6}\s+(.*?)\s*#*\s*$`)
+	headingLine  = regexp.MustCompile(`^ {0,3}(#{1,6})\s+(.*?)\s*#*\s*$`)
 	bulletLine   = regexp.MustCompile(`^(\s*)(?:[-*+]|\d+[.)])(?:\s+(.*))?$`)
 	checkbox     = regexp.MustCompile(`^\[[ xX]\]\s*`)
 	blockedLine  = regexp.MustCompile(`(?i)^(?:\*\*)?blocked by:`)
@@ -44,12 +44,16 @@ var (
 type section struct {
 	heading string
 	lines   []string
+	depth   int
 }
 
-// sections splits a body at its headings. Text before the first heading belongs to no section.
+// sections splits a body at its headings, omitting an out-of-scope heading and
+// its descendants through the next peer or shallower heading. Text before the
+// first heading belongs to no section.
 func sections(body string) []section {
 	var out []section
 	fence := ""
+	excludedDepth := 0
 	for _, line := range strings.Split(body, "\n") {
 		line = strings.TrimRight(line, "\r")
 		t := strings.TrimLeft(line, " ")
@@ -73,10 +77,19 @@ func sections(body string) []section {
 			continue
 		}
 		if m := headingLine.FindStringSubmatch(line); m != nil {
-			out = append(out, section{heading: normalizeHeading(m[1])})
+			s := section{heading: normalizeHeading(m[2]), depth: len(m[1])}
+			if excludedDepth > 0 && s.depth > excludedDepth {
+				continue
+			}
+			excludedDepth = 0
+			if skill.ReadyOutOfScopeHeading(m[2]) {
+				excludedDepth = s.depth
+				continue
+			}
+			out = append(out, s)
 			continue
 		}
-		if len(out) > 0 {
+		if excludedDepth == 0 && len(out) > 0 {
 			out[len(out)-1].lines = append(out[len(out)-1].lines, line)
 		}
 	}
@@ -197,8 +210,34 @@ func indentOf(ws string) int {
 
 // criteria are the bullets of the criteria sections.
 func criteria(secs []section) []string {
-	lines, _ := linesOf(secs, criteriaHeadings)
-	return bullets(lines, true)
+	// Existing inputs using only the old headings keep their bytes and source
+	// order. A new release-gate heading used by this reader selects kind order.
+	legacy := true
+	for _, s := range secs {
+		kind := skill.ReadyHeadingKind(s.heading)
+		if !contains(criteriaHeadings.kinds, kind) && !contains(regionHeadings.kinds, kind) {
+			continue
+		}
+		switch s.heading {
+		case "끝 조건", "done when", "acceptance", "acceptance criteria", "edit regions":
+		default:
+			legacy = false
+		}
+	}
+	if legacy {
+		lines, _ := linesOf(secs, criteriaHeadings)
+		return bullets(lines, true)
+	}
+	var out []string
+	for _, kind := range criteriaHeadings.kinds {
+		names := headingSet{kinds: []string{kind}}
+		if kind == "done_condition" {
+			names.legacy = criteriaHeadings.legacy
+		}
+		lines, _ := linesOf(secs, names)
+		out = append(out, bullets(lines, true)...)
+	}
+	return out
 }
 
 // regionOf reads the path of one region item: the first backticked span, else the first word. ok is false for a path the scheduler
