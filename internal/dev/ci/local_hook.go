@@ -39,8 +39,8 @@ var localHookScript = strings.ReplaceAll(hookScriptTemplate, "@CRW964_GITLEAKS_P
 const hookScriptTemplate = `#!/usr/bin/env bash
 # crw-dev ci local pre-push hook (CRW-964)
 # Refuses a push whose range brings a secret or a blob over 2 MiB into the history. The range is
-# <remote sha>..<local sha>; when the remote sha is the all-zeros object the whole local sha is
-# judged. A missing scanner, an unreadable range and a finding each exit non-zero.
+# <remote sha>..<local sha>, or for a new ref the local sha minus the push remote's refs when
+# its fetch URL matches the destination. Missing scanners, unreadable ranges and findings fail.
 set -euo pipefail
 
 limit=$((2 * 1024 * 1024))
@@ -57,28 +57,42 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     *) continue ;;  # an all-zero local sha (SHA-1 or SHA-256): the ref is being deleted
   esac
   if [ -z "${remote_sha:-}" ] || [ -z "${remote_sha//0/}" ]; then
-    range="$local_sha"
+    range=("$local_sha")
+    remote=${1:-}
+    destination=${2:-}
+    if [ -n "$remote" ] && [ -n "$destination" ] &&
+      git check-ref-format "refs/remotes/$remote/crw-range-check" >/dev/null 2>&1 &&
+      fetch_url=$(git -C "$root" remote get-url -- "$remote" 2>/dev/null) &&
+      [ -n "$fetch_url" ] && [ "$fetch_url" = "$destination" ] &&
+      remote_refs=$(git -C "$root" for-each-ref --format='%(objectname)' "refs/remotes/$remote/") &&
+      [ -n "$remote_refs" ]; then
+      range+=(--not "--remotes=$remote")
+    fi
   else
-    range="$remote_sha..$local_sha"
+    range=("$remote_sha..$local_sha")
   fi
 
   # The large-blob check: every blob the range brings in, over the limit, blocks the push. The
   # range is read first and its exit status checked, so a range git cannot read is refused rather
   # than read as no offenders.
-  if ! listing=$(git -C "$root" rev-list --objects --no-object-names "$range"); then
-    echo "pre-push: could not read the range $range" >&2
-    exit 1
+  if ! listing=$(git -C "$root" rev-list --objects --no-object-names "${range[@]}"); then
+    if [ "${#range[@]}" -eq 1 ] ||
+      ! listing=$(git -C "$root" rev-list --objects --no-object-names "$local_sha"); then
+      echo "pre-push: could not read the range ${range[*]}" >&2
+      exit 1
+    fi
+    range=("$local_sha")
   fi
   offenders=$(printf '%s\n' "$listing" |
     git -C "$root" cat-file --batch-check='%(objecttype) %(objectname) %(objectsize)' |
     awk -v limit="$limit" '$1 == "blob" && $3 > limit { print $2, $3 }') || {
-      echo "pre-push: could not size the range $range" >&2
+      echo "pre-push: could not size the range ${range[*]}" >&2
       exit 1
     }
   if [ -n "$offenders" ]; then
-    echo "pre-push: a blob over $limit bytes is in $range:" >&2
+    echo "pre-push: a blob over $limit bytes is in ${range[*]}:" >&2
     printf '%s\n' "$offenders" | while read -r oid size; do
-      path=$(git -C "$root" rev-list --objects "$range" | awk -v oid="$oid" '$1 == oid { print $2; exit }')
+      path=$(git -C "$root" rev-list --objects "${range[@]}" | awk -v oid="$oid" '$1 == oid { print $2; exit }')
       echo "  $oid ($size bytes) $path" >&2
     done
     echo 'pre-push: shrink the file or rebuild the branch without it; a public history cannot drop it' >&2
@@ -101,8 +115,8 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   trap 'rm -f "$ignore"' EXIT
   if ! "$scanner" git "$git_dir" --config "$root/.gitleaks.toml" \
     --gitleaks-ignore-path "$ignore" --ignore-gitleaks-allow \
-    --log-opts="-m $range" --redact --no-banner; then
-    echo "pre-push: Gitleaks found a secret in $range" >&2
+    --log-opts="-m ${range[*]}" --redact --no-banner; then
+    echo "pre-push: Gitleaks found a secret in ${range[*]}" >&2
     status=1
   fi
 done
