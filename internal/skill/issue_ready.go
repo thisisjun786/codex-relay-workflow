@@ -95,6 +95,14 @@ func readySplit(title string) bool {
 	return readyOutOfScopeHeading(title) || readyHeadingKind(title) != ""
 }
 
+// ReadyHeadingKind classifies a release-gate heading for both issue-ready and
+// plan-input. It returns criteria, edit_region, decided_answer, red_test,
+// done_condition, open_decisions or scope; unknown and out-of-scope headings
+// return an empty string. The aliases and their matching order live in readyHeadings.
+func ReadyHeadingKind(title string) string {
+	return readyHeadingKind(title)
+}
+
 func readyHeadingKind(title string) string {
 	if readyOutOfScopeHeading(title) {
 		return ""
