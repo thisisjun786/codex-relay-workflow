@@ -273,3 +273,80 @@ func TestSetextDetectionKeepsATXAndListData(t *testing.T) {
 		t.Errorf("ATX/list data changed: %+v", is)
 	}
 }
+
+func TestSetextContextKeepsExcludedContents(t *testing.T) {
+	for _, tc := range []struct{ name, body string }{
+		{"whole title", "Out of scope\n(research)\n---"},
+		{"split scope words", "Out of\nscope\n(research)\n---"},
+		{"list new paragraph", "- item\n\n  continued paragraph\nIn scope\n---"},
+		{"numbered list new paragraph", "1. item\n\n   continued paragraph\nIn scope\n---"},
+		{"quote continuation", "> example\nIn scope\n---"},
+		{"quote multiple continuations", "> example\ncontinued paragraph\nIn scope\n---"},
+		{"comment", "<!--\nIn scope\n---\n-->"},
+		{"comment with blank and fence", "<!--\n\n```\nIn scope\n---\n-->"},
+		{"comment with ATX", "<!--\n## In scope\n-->"},
+		{"single line comment", "<!-- In scope -->\n---"},
+	} {
+		for _, resume := range []bool{false, true} {
+			name := tc.name + "/excluded"
+			if resume {
+				name = tc.name + "/resume"
+			}
+			t.Run(name, func(t *testing.T) {
+				body := "## Criteria\n- keep\n## Edit regions\n- `keep.go`\n## Out of scope\n" +
+					tc.body + "\n### Criteria\n- hidden\n### Edit regions\n- `hidden.go`\n"
+				wantCriteria := []string{"keep"}
+				wantRegions := []compile.Region{{Path: "keep.go", Kind: "file"}}
+				if resume {
+					body += "\nBack\nin scope\n---\n### Criteria\n- after\n### Edit regions\n- `after.go`\n"
+					wantCriteria = append(wantCriteria, "after")
+					wantRegions = append(wantRegions, compile.Region{Path: "after.go", Kind: "file"})
+				}
+				res := build(t, milestone(open(1, body)), Options{})
+				is := only(t, res)
+				if !reflect.DeepEqual(is.Criteria, wantCriteria) || !reflect.DeepEqual(is.Regions, wantRegions) {
+					t.Errorf("context: criteria=%q regions=%+v; want %q %+v", is.Criteria, is.Regions, wantCriteria, wantRegions)
+				}
+				if len(res.Warnings) != 0 {
+					t.Errorf("warnings = %+v; want none", res.Warnings)
+				}
+			})
+		}
+	}
+}
+
+func TestSetextContextEndsAtRealBlockBoundaries(t *testing.T) {
+	for _, preamble := range []string{
+		"Out of scope prose\n\n",
+		"- item\n\n  continued paragraph\n\n",
+		"- item\n\n  continued paragraph\n***\n",
+		"> quote\n\n",
+		"> quote\n>\n",
+		"> quote\n***\n",
+		"<!--\nIn scope\n---\n-->\n",
+	} {
+		t.Run(preamble, func(t *testing.T) {
+			body := "## Out of scope\n" + preamble +
+				"In scope\n---\n### Criteria\n- recovered\n### Edit regions\n- `recovered.go`\n"
+			is := only(t, build(t, milestone(open(1, body)), Options{}))
+			if !reflect.DeepEqual(is.Criteria, []string{"recovered"}) ||
+				!reflect.DeepEqual(is.Regions, []compile.Region{{Path: "recovered.go", Kind: "file"}}) {
+				t.Errorf("context did not end at block boundary: %+v", is)
+			}
+		})
+	}
+}
+
+func TestSetextContextReadsWholeTitleAndFlushesBody(t *testing.T) {
+	body := "Acceptance\ncriteria\n---\n- required behavior\n\nEdit\nregions\n---\n- `keep.go`"
+	is := only(t, build(t, milestone(open(1, body)), Options{}))
+	if !reflect.DeepEqual(is.Criteria, []string{"required behavior"}) ||
+		!reflect.DeepEqual(is.Regions, []compile.Region{{Path: "keep.go", Kind: "file"}}) {
+		t.Errorf("whole Setext titles or final body not read: %+v", is)
+	}
+	body = "## Done when\n- first\n  detail\n\nordinary\nparagraph\n\n- final\n  continuation"
+	is = only(t, build(t, milestone(open(1, body)), Options{}))
+	if !reflect.DeepEqual(is.Criteria, []string{"first detail", "final continuation"}) {
+		t.Errorf("non-heading body changed: %q", is.Criteria)
+	}
+}
