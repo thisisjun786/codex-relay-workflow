@@ -39,7 +39,7 @@ func localJobLimit(jobs, parallel, cpus int) int {
 // carries (CRW-1591). Zero CPUs is the legacy unbudgeted behavior and changes nothing. The jobs
 // the budget feeds is min(cpus, the usual job limit), each job gets cpus/jobs of the budget, and a
 // package parallelism above that is clamped per job. The method is the resolved backend; the
-// fallback additionally names the per-job GOMAXPROCS the sealed environment sets.
+// fallback additionally names the per-package GOMAXPROCS the sealed environment sets.
 func localCPUOptions(opts localOptions) (localOptions, error) {
 	if opts.CPUs < 0 {
 		return opts, fmt.Errorf("cpus must be positive")
@@ -63,7 +63,9 @@ func localCPUOptions(opts localOptions) (localOptions, error) {
 	}
 	opts.cpu = &recordCPU{Limit: opts.CPUs, Method: method, Jobs: jobs, Parallel: opts.Parallel}
 	if method == localCPUFallback {
-		opts.cpu.GOMAXPROCS = perJob
+		// Each concurrently running Go package gets its own GOMAXPROCS, so the per-package
+		// share keeps jobs*parallel*GOMAXPROCS inside the budget.
+		opts.cpu.GOMAXPROCS = max(1, perJob/opts.Parallel)
 	}
 	return opts, nil
 }

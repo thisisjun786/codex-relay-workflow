@@ -139,14 +139,23 @@ whole verifier re-executes inside a `systemd-run --user --scope` cgroup whose
 `CPUQuota=<N>00%` bounds every descendant — all jobs and steps share the single scope,
 never one quota per job, and descendant Go processes read it themselves. A launcher that
 cannot start the scope (no user manager, no systemd-run) falls back to the Go settings:
-each job gets a per-job `GOMAXPROCS` share of the budget and the resolved `-parallel`
-(clamped to that share), an approximation of the limit, not a kernel cap over arbitrary
-native programs. A child verifier that already entered and then fails reports its own
-status and is never retried. The budget seals the step environment: neither the caller's
+each job gets a share of the budget, and the sealed `GOMAXPROCS` is that share divided by
+the resolved `-parallel`, so jobs × packages × `GOMAXPROCS` stays inside the limit — four
+cores with one job at `-p=4` gives `GOMAXPROCS=1` per test package, `--parallel 1` gives
+it 4. This is an approximation for Go scheduling, not a kernel cap over arbitrary native
+programs (or arbitrary Go process spawning). A heavy step that runs through `CRW_CI_HEAVY_GATE`
+returns to the shared scope before its body: the step's shell writes its own PID back to the
+verification's `cgroup.procs` after the gate and before any workflow command, and so does a
+gated version probe. A gate that cannot bring the step back refuses the step before its body
+with a `cpu_budget_unavailable` warning, and the failed record's `cpu.method` is
+`systemd-cgroup-v2-gate-unavailable` — it never runs outside the budget. A child verifier that already
+entered and then fails reports its own status and is never retried. The budget seals the step
+environment: neither the caller's
 nor a step's own `GOMAXPROCS`/`GOFLAGS`/`GODEBUG` can widen it. The record's `cpu` names
-the limit, the method (`systemd-cgroup-v2` or `gomaxprocs`), the job count and the
-parallelism the budget resolved to; a record made under a different budget — or a legacy
-record with none — is not reused. This bounds one verification; it is not a host-wide
+the limit, the method (`systemd-cgroup-v2` or `gomaxprocs`, and the gate-unavailable form
+above), the job count and the parallelism the budget resolved to; a record made under a
+different budget — or a legacy record with none — is not reused. The fallback's recorded
+`gomaxprocs` is the per-package process value. This bounds one verification; it is not a host-wide
 verification queue.
 
 The run makes **clean worktrees** of the commit being verified under the work root (the XDG state directory, or --work-root)

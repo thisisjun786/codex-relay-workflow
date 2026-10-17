@@ -50,14 +50,14 @@ func localToolVersions(pathEnv string) map[string]string {
 
 // localToolVersionsIn is localToolVersions with the verified commit's go.mod for the Go probe, so the
 // toolchain it reports is the one a step in that module selects.
-func localToolVersionsIn(pathEnv string, goMod []byte, gate string) map[string]string {
+func localToolVersionsIn(pathEnv string, goMod []byte, gate string, cpu ...localOptions) map[string]string {
 	versions := map[string]string{}
 	for _, name := range localToolNames {
 		if name == "go" {
-			versions[name] = localObserveToolIn(name, pathEnv, goMod, gate)
+			versions[name] = localObserveToolIn(name, pathEnv, goMod, gate, cpu...)
 			continue
 		}
-		versions[name] = localObserveTool(name, pathEnv, gate)
+		versions[name] = localObserveTool(name, pathEnv, gate, cpu...)
 	}
 	return versions
 }
@@ -75,12 +75,12 @@ func localObservedVersions(versions, pins map[string]string) map[string]string {
 }
 
 // localObserveTool is one tool's version, or "" when it is not on PATH or does not answer.
-func localObserveTool(name, pathEnv, gate string) string {
-	return localObserveToolIn(name, pathEnv, nil, gate)
+func localObserveTool(name, pathEnv, gate string, cpu ...localOptions) string {
+	return localObserveToolIn(name, pathEnv, nil, gate, cpu...)
 }
 
 // localObserveToolIn is localObserveTool run in a directory that holds goMod, when given, as go.mod.
-func localObserveToolIn(name, pathEnv string, goMod []byte, gate string) string {
+func localObserveToolIn(name, pathEnv string, goMod []byte, gate string, cpu ...localOptions) string {
 	var args []string
 	switch name {
 	case "go":
@@ -116,17 +116,24 @@ func localObserveToolIn(name, pathEnv string, goMod []byte, gate string) string 
 			return ""
 		}
 	}
-	cmd := localProbeCommand(gate, path, args, dir, localProbeEnv(filepath.Join(dir, "home"), pathEnv))
-	cmd.Dir = dir
 	// The probe has the steps' isolation: its own HOME and XDG directories, and no GOENV or GOTOOLCHAIN
-	// from the caller.
+	// from the caller. A budgeted run seals it like a step's environment, so the version it reads
+	// is the one a step with this PATH reads — and a scoped run carries its way back into the
+	// verification's cgroup.
 	home := filepath.Join(dir, "home")
+	env := localProbeEnv(home, pathEnv)
+	if len(cpu) > 0 {
+		env = localCPUEnv(env, cpu[0])
+	}
 	if err := os.MkdirAll(home, 0o755); err != nil {
 		return ""
 	}
-	// The probe runs with the steps' sealed environment: the same allowlist, GOTOOLCHAIN local and the
-	// engine's GOFLAGS, so the version it reads is the one a step reads.
-	cmd.Env = localProbeEnv(home, pathEnv)
+	cmd, err := localProbeCommand(gate, path, args, dir, env)
+	if err != nil {
+		return ""
+	}
+	cmd.Dir = dir
+	cmd.Env = env
 	out, err := cmd.Output()
 	if err != nil {
 		return ""
@@ -249,16 +256,29 @@ func localRecomputedReuse(opts localOptions, plan []localJob, current verificati
 // localProbeCommand is the command a version probe runs. The probe runs through the heavy-check gate when
 // one is configured, as the checks it informs do, so the versions a record names are read under the same
 // gate as the steps (pre-merge finding d1).
-func localProbeCommand(gate, path string, args []string, dir string, env []string) *exec.Cmd {
+func localProbeCommand(gate, path string, args []string, dir string, env []string) (*exec.Cmd, error) {
 	words := strings.Fields(gate)
 	if len(words) == 0 {
-		return exec.Command(path, args...)
+		return exec.Command(path, args...), nil
 	}
 	argv := append(append([]string{}, words...), "env", "-i")
 	argv = append(argv, env...)
-	argv = append(argv, "bash", "-c", localChdirScript, "bash", dir, path)
-	argv = append(argv, args...)
-	return exec.Command(argv[0], argv[1:]...)
+	argv = append(argv, "bash", "-c", localChdirScript, "bash", dir)
+	// A scoped run's probe environment carries the way back into the verification's cgroup; the
+	// guard script returns the tool to it before the probe itself runs.
+	command := append([]string{path}, args...)
+	for _, kv := range env {
+		if strings.HasPrefix(kv, localCPUProcsEnv+"=") {
+			guard := filepath.Join(dir, "cpu-probe.sh")
+			if err := os.WriteFile(guard, []byte(localCPUGateGuard+"exec \"$@\"\n"), 0o700); err != nil {
+				return nil, err
+			}
+			command = append([]string{"bash", "--noprofile", "--norc", "-eo", "pipefail", guard}, command...)
+			break
+		}
+	}
+	argv = append(argv, command...)
+	return exec.Command(argv[0], argv[1:]...), nil
 }
 
 // localCheckoutDiff names the first tracked file whose bytes in the clean worktree are not the bytes the
