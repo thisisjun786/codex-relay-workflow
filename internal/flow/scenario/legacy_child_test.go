@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io/fs"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/script"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/workflows"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/workflows/lib"
 )
 
 // The `child` session path is retired (CRW-1415), and the records an old run left stay read only. A run whose journal holds a crw.releaseChild
@@ -98,11 +100,12 @@ func TestLegacyIssueChildRunIsNotResumedUnderTheNewLane(t *testing.T) {
 	l := NewLab(t, NodeSpec{ID: "A", Issue: "CRW-A", Title: "a big issue", Regions: []string{"a/"}, SizeFit: "child", SizeReason: "regions_gt3"})
 	l.UseLegacyDesign()
 	text := legacyDesignLane(t)
-	if !bytes.Contains(text, []byte(newChildBranch)) {
-		t.Fatalf("project-lane.js no longer holds the retired child branch this test replaces")
+	build, err := fs.ReadFile(lib.FS, "project-build.js")
+	if err != nil || !bytes.Contains(build, []byte(newChildBranch)) {
+		t.Fatalf("project-build.js no longer holds the retired child branch this test replaces (%v)", err)
 	}
-	oldText := bytes.Replace(text, []byte(newChildBranch), []byte(oldChildBranch), 1)
-	oldLane, err := script.Load(script.Source{Name: "project-lane.js", Text: oldText, Dir: workflows.FS})
+	oldLane, err := script.Load(script.Source{Name: "project-lane.js", Text: text, Dir: workflows.FS,
+		Lib: libWith(t, "project-build.js", string(build), strings.Replace(string(build), newChildBranch, oldChildBranch, 1))})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +158,8 @@ func TestLegacyChildStartWithNoReleaseChildRowIsNotResumed(t *testing.T) {
 	l := NewLab(t, NodeSpec{ID: "A", Issue: "CRW-A", Title: "a big issue", Regions: []string{"a/"}, SizeFit: "child", SizeReason: "regions_gt3"})
 	l.UseLegacyDesign()
 	text := legacyDesignLane(t)
-	oldLane, err := script.Load(script.Source{Name: "project-lane.js", Text: bytes.Replace(text, []byte(newChildBranch), []byte(oldChildBranch), 1), Dir: workflows.FS})
+	oldLane, err := script.Load(script.Source{Name: "project-lane.js", Text: text, Dir: workflows.FS,
+		Lib: libWith(t, "project-build.js", newChildBranch, oldChildBranch)})
 	if err != nil {
 		t.Fatal(err)
 	}

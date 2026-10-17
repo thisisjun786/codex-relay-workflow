@@ -7,7 +7,7 @@ remove inapplicable items instead of sending placeholders. Embed the acceptance
 criteria unless the worker's access to the linked issue has been established;
 another task may not have the same connectors.
 
-The packets below are for a `child` session of a plan with no run. A flow run starts no `child` session: a node sized for one goes up as a `size_split` escalation with detail `child_retired`, and the repository session asks for a bundle split. A node a run releases is built by the run's own calls: the thread sends it no packet, and it starts no PABCD state machine ([who owns control](../../crw-canon/references/flow.md#who-owns-control-in-a-flow-managed-run)). A node sized `split` with sub-tasks is one such node: the run builds its sub-tasks in order on the node's one executor thread, each next one a turn the run sends (`subtask:<node>:<tier>:s<k>`), and the thread sends no packet for any of them.
+The packets below are for a `child` session of a plan with no run. A flow run starts no `child` session: a node sized for one goes up as a `size_split` escalation with detail `child_retired`, and the repository session asks for a bundle split. A node a run releases is built by the run's own calls: the thread sends it no packet, and it starts no PABCD state machine ([who owns control](../../crw-canon/references/flow/control.md#who-owns-control-in-a-flow-managed-run)). A node sized `split` with sub-tasks is one such node: the run builds its sub-tasks in order on the node's one executor thread, each next one a turn the run sends (`subtask:<node>:<tier>:s<k>`), and the thread sends no packet for any of them.
 
 ## Child task titles
 
