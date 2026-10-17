@@ -43,7 +43,7 @@ The project session's pull request of a milestone (PR-unit landing): the run lan
 branch (the plan's target base_ref), and this command opens one pull request from that branch toward dev and reads it back. The dev
 merge is done by the dev queue (crw manage integrate --enqueue-pr REF --head SHA --release-impact TEXT, then its pass), never by this command.
 
-  decide the parent's merge decision for the pull request of the queue's pull_request_repo (the manage.integrate section):
+  decide the 부모's merge decision for the pull request of the queue's pull_request_repo (the manage.integrate section):
          head match, base tip, checks, queue order and the release impact — never the diff's content. The answer is the
          crw-pr-decision/1 record on stdout and in --record (default <runs_dir>/decisions/pr-N-<head>.json): enqueued or
          needs_ci is exit 0; refused, needs_base and hold_order are exit 2. --update-base merges a moved base tip into the

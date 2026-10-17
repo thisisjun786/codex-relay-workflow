@@ -22,6 +22,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/gitprobe"
 	"github.com/thisisjun786/codex-relay-workflow/internal/integrator"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 	"github.com/thisisjun786/codex-relay-workflow/internal/tracking"
 )
 
@@ -339,7 +340,7 @@ func Decide(ctx context.Context, runner *integrator.Runner, in DecideInput) (Dec
 		return Decision{}, err
 	}
 	if !has {
-		text := fmt.Sprintf("state: %s\nhead: %s\nbase: %s\nbase_head: %s\nrelease_impact: %s\n\nThe parent's checks passed for this head and base; the queue entry is still being written.", decisionReady, in.Head, cfg.Branch, baseSHA, in.ReleaseImpact)
+		text := fmt.Sprintf("state: %s\nhead: %s\nbase: %s\nbase_head: %s\nrelease_impact: %s\n\nThe 부모's checks passed for this head and base; the queue entry is still being written.", decisionReady, in.Head, cfg.Branch, baseSHA, in.ReleaseImpact)
 		if err := src.Comment(ctx, ref, header, text); err != nil {
 			return Decision{}, err
 		}
@@ -489,11 +490,11 @@ func (d *decider) updateBase(ctx context.Context, pr tracking.PullRequest, baseS
 	if err := os.MkdirAll(c.WorkRoot, 0o775); err != nil {
 		return "", false, err
 	}
-	wt, err := os.MkdirTemp(c.WorkRoot, "decide-wt-")
+	wt, err := tmploc.MkdirTempIn(c.WorkRoot, "decide-wt-")
 	if err != nil {
 		return "", false, err
 	}
-	hooks, err := os.MkdirTemp(c.WorkRoot, "decide-hooks-")
+	hooks, err := tmploc.MkdirTempIn(c.WorkRoot, "decide-hooks-")
 	if err != nil {
 		_ = os.RemoveAll(wt)
 		return "", false, err
@@ -530,7 +531,7 @@ func (d *decider) updateBase(ctx context.Context, pr tracking.PullRequest, baseS
 		return "", false, err
 	}
 	if fields := strings.Fields(parents); len(fields) != 3 || fields[0] != merged || fields[1] != d.in.Head || fields[2] != baseSHA {
-		return "", false, fmt.Errorf("the merge %s does not have head %s and base %s as its parents (%q)", merged, d.in.Head, baseSHA, parents)
+		return "", false, fmt.Errorf("the merge %s does not have head %s and base %s as its parent commits (%q)", merged, d.in.Head, baseSHA, parents)
 	}
 	// the pull request and the remote must still be exactly what the decision was made over (the checks of the old head may
 	// be pending or red: that is what the base update is for, so they are not re-read here)
