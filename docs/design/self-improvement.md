@@ -4,6 +4,8 @@ Status: proposed design, CRW-1544. The coordinator reviews this design before an
 automation is implemented or activated. This document changes no collector,
 instruction, model setting, stored format or running service.
 
+Layer names follow the [level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels).
+
 The loop is **capture → analyse → propose → ordinary delivery → measure → keep or
 revert**. Every observed problem, including a minor one, enters the evidence inbox
 when it is noticed. Frequency and cost determine when to investigate it, not
