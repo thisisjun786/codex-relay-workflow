@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -212,5 +213,130 @@ func TestAQueueWithoutATrackingAdapterHoldsALandingWhoseCommentIsNotWrittenYet(t
 	}
 	if !w.doneFor("pr-1", pr.HeadSHA) {
 		t.Error("the entry is not done after the repost")
+	}
+}
+
+func worktreeAddFailState(t *testing.T, w *prWorld, rep Report, head, base string) {
+	t.Helper()
+	requireExit(t, rep, ExitUsage, "error")
+	if w.remoteDev() != base {
+		t.Errorf("remote dev moved: %s != %s", w.remoteDev(), base)
+	}
+	if w.pendingHead("pr-1") != head || w.doneFor("pr-1", head) {
+		t.Errorf("the entry did not stay pending (pending %q, done %v)", w.pendingHead("pr-1"), w.doneFor("pr-1", head))
+	}
+	if w.ctlRead("verify-n") != "" || w.ctlRead("review-calls") != "" {
+		t.Errorf("verification or review ran")
+	}
+	if n := len(w.fake.Comments(1)); n != 0 {
+		t.Errorf("%d comments posted", n)
+	}
+	if rep.Summary != nil || rep.Landing != nil {
+		t.Errorf("summary %+v landing %+v", rep.Summary, rep.Landing)
+	}
+	tmpDirs, err := filepath.Glob(filepath.Join(w.cfg.WorkRoot, "tmp-*"))
+	if err != nil || len(tmpDirs) != 0 {
+		t.Errorf("temporary dirs left: %v %v", tmpDirs, err)
+	}
+}
+
+func soleRunLog(t *testing.T, w *prWorld) []byte {
+	t.Helper()
+	paths, err := filepath.Glob(filepath.Join(w.cfg.RunsDir, "*.log"))
+	if err != nil || len(paths) != 1 {
+		t.Fatalf("run logs: %v %v", paths, err)
+	}
+	raw, err := os.ReadFile(paths[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
+func TestWorktreeAddFailureIncludesGitStderr(t *testing.T) {
+	w := newPRWorld(t, true)
+	pr := w.milestone("10")
+	w.enqueue("o/r#1")
+	base := w.remoteDev()
+	delegate := w.r.Exec
+	adds := 0
+	var wt string
+	w.r.Exec = func(ctx context.Context, c Cmd) (int, error) {
+		if len(c.Argv) == 8 && c.Argv[3] == "worktree" && c.Argv[4] == "add" {
+			adds++
+			wt = c.Argv[6]
+			if err := os.WriteFile(wt, []byte("fixture-owned collision\n"), 0o600); err != nil {
+				t.Fatalf("inject worktree collision: %v", err)
+			}
+		}
+		return delegate(ctx, c)
+	}
+	rep := w.pass()
+	worktreeAddFailState(t, w, rep, pr.HeadSHA, base)
+	if adds != 1 {
+		t.Fatalf("%d worktree adds", adds)
+	}
+	if body, err := os.ReadFile(wt); err != nil || string(body) != "fixture-owned collision\n" {
+		t.Errorf("the sentinel file did not survive: %q %v", body, err)
+	}
+	text := strings.TrimSpace(string(soleRunLog(t, w)))
+	if text == "" || !strings.Contains(text, wt) {
+		t.Fatalf("the run log lost git's rejection: %q", text)
+	}
+	if !strings.Contains(rep.Error, text) || !strings.Contains(rep.Error, "worktree add failed") || !strings.Contains(rep.Error, "status 128") {
+		t.Fatalf("the failure lost git's stderr: %q", rep.Error)
+	}
+}
+
+func TestWorktreeAddFailureReportsExecutionDetails(t *testing.T) {
+	for _, tc := range []struct {
+		name, stdout, stderr, wantStatus string
+		rc                               int
+		err                              error
+	}{
+		{name: "nonzero exit", rc: 128, stdout: "worktree stdout marker\n", stderr: "fatal: injected worktree stderr\n", wantStatus: "status 128"},
+		{name: "execution error", rc: -1, err: errors.New("signal: killed"), stdout: "partial worktree stdout\n", stderr: "worktree process stopped\n", wantStatus: "status -1"},
+		{name: "start error", rc: -1, err: errors.New("git executable is unavailable"), wantStatus: "status -1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newPRWorld(t, true)
+			pr := w.milestone("10")
+			w.enqueue("o/r#1")
+			base := w.remoteDev()
+			delegate := w.r.Exec
+			adds := 0
+			w.r.Exec = func(ctx context.Context, c Cmd) (int, error) {
+				if len(c.Argv) == 8 && c.Argv[3] == "worktree" && c.Argv[4] == "add" {
+					adds++
+					if _, err := io.WriteString(c.Stdout, tc.stdout); err != nil {
+						return -1, err
+					}
+					if _, err := io.WriteString(c.Stderr, tc.stderr); err != nil {
+						return -1, err
+					}
+					return tc.rc, tc.err
+				}
+				return delegate(ctx, c)
+			}
+			rep := w.pass()
+			worktreeAddFailState(t, w, rep, pr.HeadSHA, base)
+			if adds != 1 {
+				t.Fatalf("%d worktree adds", adds)
+			}
+			if !strings.Contains(rep.Error, "worktree add failed") || !strings.Contains(rep.Error, tc.wantStatus) {
+				t.Fatalf("the failure lost the status: %q", rep.Error)
+			}
+			if tc.err != nil && !strings.Contains(rep.Error, tc.err.Error()) {
+				t.Fatalf("the failure lost the process error: %q", rep.Error)
+			}
+			for _, s := range []string{tc.stdout, tc.stderr} {
+				if s != "" && !strings.Contains(rep.Error, strings.TrimSpace(s)) {
+					t.Fatalf("the failure lost %q: %q", s, rep.Error)
+				}
+			}
+			if raw := soleRunLog(t, w); string(raw) != tc.stdout+tc.stderr {
+				t.Fatalf("the run log changed: %q", raw)
+			}
+		})
 	}
 }
