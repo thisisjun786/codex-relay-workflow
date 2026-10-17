@@ -42,7 +42,11 @@ func TestCILocalIntegrationRunsTheMergedTreesOwnCrwDev(t *testing.T) {
 	data, _ := os.ReadFile(log)
 	got := strings.Split(strings.TrimSpace(string(data)), "\n")
 	want := []string{"run", "-tags", "dev", "./cmd/crw-dev", "ci", "local", "--commit", "h1", "--base", "b1", "--record", "/r/record.json", "--runner", "local"}
-	if len(got) < 3 || got[0] != tree || !strings.HasPrefix(got[1], filepath.Join(root, "bin")+":") || got[2] != root || strings.Join(got[3:], " ") != strings.Join(want, " ") {
+	wantTree, err := filepath.EvalSymlinks(tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) < 3 || got[0] != wantTree || !strings.HasPrefix(got[1], filepath.Join(root, "bin")+":") || got[2] != root || strings.Join(got[3:], " ") != strings.Join(want, " ") {
 		t.Errorf("the batch ran %q", got)
 	}
 	if notes.Len() != 0 {

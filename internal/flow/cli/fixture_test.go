@@ -30,7 +30,12 @@ type world struct {
 
 func newWorld(t *testing.T) *world {
 	t.Helper()
-	w := &world{t: t, state: t.TempDir(), tmp: t.TempDir()}
+	// The state and its database must share a physical root for pinned input paths.
+	state, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := &world{t: t, state: state, tmp: t.TempDir()}
 	w.db = filepath.Join(w.state, "relay.sqlite3")
 	w.open()
 	t.Cleanup(w.close)
