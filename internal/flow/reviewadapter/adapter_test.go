@@ -1294,7 +1294,7 @@ func meteredProfile() Profile {
 			}
 			return out.Answer, nil
 		},
-		Usage: func(stdout []byte) (Usage, bool) {
+		Usage: func(stdout []byte, _ Request) (Usage, bool) {
 			var out struct {
 				Usage *struct {
 					Cache    int64 `json:"cache"`
@@ -1322,6 +1322,11 @@ func meteredOutput(answer string, cache int64, commands int) string {
 // checkFor runs one check of p on f whose call takes d on a fake clock.
 func checkFor(t *testing.T, p Profile, f fakeRun, d time.Duration) Result {
 	t.Helper()
+	return checkForWorktree(t, p, t.TempDir(), f, d)
+}
+
+func checkForWorktree(t *testing.T, p Profile, dir string, f fakeRun, d time.Duration) Result {
+	t.Helper()
 	clock := time.Date(2026, 10, 16, 4, 0, 0, 0, time.UTC)
 	calls := 0
 	now := func() time.Time {
@@ -1331,7 +1336,9 @@ func checkFor(t *testing.T, p Profile, f fakeRun, d time.Duration) Result {
 		}
 		return clock.Add(d)
 	}
-	res, err := Adapter{Run: f.run, Fingerprint: hashFiles, Now: now}.Check(t.Context(), request(t, p))
+	req := request(t, p)
+	req.Worktree = dir
+	res, err := Adapter{Run: f.run, Fingerprint: hashFiles, Now: now}.Check(t.Context(), req)
 	if err != nil {
 		t.Fatalf("Check: %v", err)
 	}
