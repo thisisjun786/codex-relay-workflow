@@ -165,3 +165,36 @@ func TestSessionRenotifyScheduleGrowsToTheMax(t *testing.T) {
 		t.Fatal("the defaults")
 	}
 }
+
+// A step can arrive between the owner's empty next answer and the end of its
+// turn. That first busy observation must not postpone the wake for 15 minutes.
+func TestSessionWakesAfterBusyOwnerYields(t *testing.T) {
+	for _, status := range []string{"idle", "notLoaded"} {
+		t.Run(status, func(t *testing.T) {
+			h, _, rec := wakeKit(t, "active")
+			h.cfg.Session.WakeAfter = 15 * time.Minute
+			now := time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC)
+			h.cfg.Now = func() time.Time { return now }
+			e := &Engine{cfg: h.cfg, j: h.journal, runID: "run-test", sessW: newSessionWaker()}
+			e.sessW.published("c1/t1-a1", now)
+			e.wakeLook(context.Background())
+			if wakes, _ := rec.got(); len(wakes) != 0 {
+				t.Fatalf("woke a busy owner: %+v", wakes)
+			}
+			host := h.cfg.Session.Host.(*fakeSessionHost)
+			host.mu.Lock()
+			host.agents[sessionOwner].Status = status
+			host.mu.Unlock()
+			now = now.Add(time.Second)
+			e.wakeLook(context.Background())
+			wakes, _ := rec.got()
+			if len(wakes) != 1 || wakes[0].Renotify != 0 || wakes[0].OwnerStatus != status {
+				t.Fatalf("owner yielded with an untaken step: want immediate initial wake, got %+v", wakes)
+			}
+			e.wakeLook(context.Background())
+			if wakes, _ := rec.got(); len(wakes) != 1 {
+				t.Fatalf("initial wake repeated without a new batch: %+v", wakes)
+			}
+		})
+	}
+}

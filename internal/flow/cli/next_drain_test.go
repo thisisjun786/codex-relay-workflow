@@ -62,7 +62,7 @@ func TestNextKeepsHandingOutStepsWhileADrainedRunLives(t *testing.T) {
 		proc.Release()
 		t.Fatalf("a drained run whose process lives: %+v %+v", ans, td.spawned)
 	}
-	if !strings.Contains(ans.Hint, sessionLoop(run)) || strings.Contains(ans.Hint, "is paused") {
+	if !strings.Contains(ans.Hint, "take every step's tool call") || !strings.Contains(ans.Hint, "--wait 120 --json once") || strings.Contains(ans.Hint, "is paused") || strings.Contains(ans.Hint, "alternate") {
 		proc.Release()
 		t.Fatalf("the hint of a drained live run is not the session loop: %s", ans.Hint)
 	}
