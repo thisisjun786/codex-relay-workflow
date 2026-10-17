@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/journal"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
@@ -79,4 +80,73 @@ func (r *SchedRelay) Integrated(ctx context.Context, plan string, node ops.PlanN
 		return unproven(fmt.Sprintf("the integration target lost the accepted head %s (tip %s)", cur.Agent.Head, tip))
 	}
 	return ops.IntegratedState{Integrated: true, AcceptanceID: cur.AcceptanceID, Head: cur.Agent.Head, IntegrationRef: ref, Tip: tip}, nil
+}
+
+// IntegrationHistory is the relay's read of the earlier runs of the plan for the integration proof (CRW-1649): project-lane and
+// land-head runs of the same plan and repository that started before this run, newest first. CrosscheckHistory is the same read
+// without land-head: the crosscheck's prior is a project-lane run's recorded crosscheck_pending.
+var _ ops.IntegrationHistoryReader = (*SchedRelay)(nil)
+var _ ops.CrosscheckHistoryReader = (*SchedRelay)(nil)
+
+func (r *SchedRelay) IntegrationHistory(ctx context.Context, plan string) ([]ops.DesignRun, error) {
+	return r.recordedRuns(ctx, plan, true)
+}
+
+func (r *SchedRelay) CrosscheckHistory(ctx context.Context, plan string) ([]ops.DesignRun, error) {
+	return r.recordedRuns(ctx, plan, false)
+}
+
+func (r *SchedRelay) recordedRuns(ctx context.Context, plan string, includeLand bool) ([]ops.DesignRun, error) {
+	// Source timestamps are always UTC RFC3339Nano via journal.stamp; its variable-length fraction sorts wrongly once the 'Z'
+	// terminator is compared ('.1Z' > '.12Z', 'Z' > '.'). Stripping it gives the correct lexical order; ties keep the rowid.
+	rs, err := r.q(ctx).QueryContext(ctx, `
+SELECT previous.run_id
+FROM flow_runs AS previous
+JOIN flow_runs AS current ON current.run_id = ?
+WHERE previous.plan_id = ? AND current.plan_id = previous.plan_id
+  AND (previous.workflow = 'project-lane' OR (? AND previous.workflow = 'land-head'))
+  AND (replace(previous.started_at, 'Z', '') < replace(current.started_at, 'Z', '') OR
+       (previous.started_at = current.started_at AND previous.rowid < current.rowid))
+ORDER BY replace(previous.started_at, 'Z', '') DESC, previous.rowid DESC`, r.RunID, plan, includeLand)
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for rs.Next() {
+		var id string
+		if err := rs.Scan(&id); err != nil {
+			_ = rs.Close()
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rs.Err(); err != nil {
+		_ = rs.Close()
+		return nil, err
+	}
+	if err := rs.Close(); err != nil {
+		return nil, err
+	}
+	out := make([]ops.DesignRun, 0, len(ids))
+	for _, id := range ids {
+		spec, err := ReadSpec(r.State, id)
+		if err != nil {
+			out = append(out, ops.DesignRun{Run: id, Reason: ops.ReuseSourceUnreadable, Detail: err.Error()})
+			continue
+		}
+		if spec.Repo == "" || !sameDirectory(spec.Repo, r.Repo) {
+			out = append(out, ops.DesignRun{Run: id, Reason: ops.ReuseRepoMismatch, Detail: "the run's repository is " + spec.Repo})
+			continue
+		}
+		events, hasRun, err := journal.Load(ctx, r.Sched.Store, id)
+		if err != nil {
+			return nil, err
+		}
+		if !hasRun {
+			out = append(out, ops.DesignRun{Run: id, Reason: ops.ReuseSourceUnreadable, Detail: "the run has no journal"})
+			continue
+		}
+		out = append(out, ops.DesignRun{Run: id, Events: events})
+	}
+	return out, nil
 }

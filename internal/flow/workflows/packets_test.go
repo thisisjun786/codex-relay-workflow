@@ -663,20 +663,20 @@ func TestCrosscheckRuleIsOneTableForPacketOpAndClose(t *testing.T) {
 
 // TestCrosscheckFixPacketNamesTheRouteOfTheFix (CRW-1473): the fix packet of a crosscheck that needs changes names the blocking
 // findings by id (not the carried ones), the range as a git diff command over their files, the criteria, and the route of part A: a
-// correction issue of the milestone, a new executor subagent on a branch from the integration tip, the land through land-head, and
-// the report of the verdict up to the 부모.
+// correction issue of the milestone and a new project-lane run of the same plan, whose ordinary lane builds the correction and
+// whose close reports the verdict up to the 부모.
 func TestCrosscheckFixPacketNamesTheRouteOfTheFix(t *testing.T) {
 	const v = "{ verdict: 'needs_changes', round: 1, head: 'h9', base: 'b0', carried: ['f2'], findings: [" +
 		"{ id: 'f1', severity: 'P1', impact: 'core_function', file: 'a.go', line: 3, text: 'the store loses a row' }, " +
 		"{ id: 'f2', severity: 'P3', impact: 'minor_separable', file: 'b.go', line: 1, text: 'a nit' }] }"
 	packet := packetText(t, "crosscheck-fix-packet", "crosscheckFixPacket", "crosscheckFixPacket(ms, "+v+")")
 	for _, want := range []string{"f1 [P1/core_function] a.go:3 the store loses a row", "git diff b0..h9 -- a.go", "correction issue of milestone M1 naming these finding ids: f1",
-		"a new executor subagent", "crw flow start land-head", "crw flow report-up", "부모"} {
+		"ordinary lane", "crw flow start project-lane", "crw flow report-up", "부모"} {
 		if !strings.Contains(packet, want) {
 			t.Errorf("the fix packet lacks %q:\n%s", want, packet)
 		}
 	}
-	for _, gone := range []string{"f2", "b.go", "start crosscheck"} {
+	for _, gone := range []string{"f2", "b.go", "start crosscheck", "crw flow start land-head"} {
 		if strings.Contains(packet, gone) {
 			t.Errorf("the fix packet names %q:\n%s", gone, packet)
 		}
