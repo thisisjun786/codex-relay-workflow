@@ -930,8 +930,8 @@ const (
 	metaLine           = "\nexport const meta = "
 )
 
-// legacyDesignSchemaJSON is the DESIGN of crw:lib/schemas before S-1 (CRW-1435): a node is sized for an executor, a child or a split,
-// and an issue has no sub_tasks member. TestLegacyDesignLaneSwapsOnlyTheDesignSchema pins it to the current DESIGN less S-1.
+// legacyDesignSchemaJSON is the DESIGN before S-1 (CRW-1435) and exclusion assessments (CRW-1538):
+// a node is sized for an executor, a child or a split, and issues have no sub_tasks member.
 const legacyDesignSchemaJSON = `{"type":"object","properties":{` +
 	`"decisions":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"evidence":{"type":"array","items":{"type":"string"}},"change":{"type":"string"},` +
 	`"alternatives":{"type":"array","items":{"type":"string"}},"assumptions":{"type":"array","items":{"type":"string"}}},"required":["id","evidence","change","alternatives","assumptions"],"additionalProperties":false}},` +
@@ -965,7 +965,7 @@ func legacyDesignLane(t *testing.T) []byte {
 	return []byte(legacyDesignImport + head[:end] + legacyDesignConst + head[end:])
 }
 
-// legacyDesignOf is a DESIGN as an architect before S-1 answered it: d with the sub_tasks member of every issue dropped.
+// legacyDesignOf is an old architect's DESIGN: no excluded_scope member and no issue sub_tasks member.
 func legacyDesignOf(t *testing.T, d ops.Design) json.RawMessage {
 	t.Helper()
 	b, err := json.Marshal(d)
@@ -976,6 +976,7 @@ func legacyDesignOf(t *testing.T, d ops.Design) json.RawMessage {
 	if err := json.Unmarshal(b, &m); err != nil {
 		t.Fatal(err)
 	}
+	delete(m, "excluded_scope")
 	issues, _ := m["issues"].([]any)
 	for _, is := range issues {
 		delete(is.(map[string]any), "sub_tasks")
@@ -996,8 +997,7 @@ func (l *Lab) UseLegacyDesign() {
 	l.legacyDesign = true
 }
 
-// The legacy lane differs from the current project lane only in where DESIGN comes from, and its DESIGN is the current one less S-1
-// (CRW-1435): child back in the size_fit enum and no sub_tasks member. The lane loads.
+// The legacy lane changes only the source of DESIGN. Its schema predates sub_tasks and excluded_scope; the lane still loads.
 func TestLegacyDesignLaneSwapsOnlyTheDesignSchema(t *testing.T) {
 	text, err := workflows.Source("project-lane")
 	if err != nil {
@@ -1018,6 +1018,14 @@ func TestLegacyDesignLaneSwapsOnlyTheDesignSchema(t *testing.T) {
 	if err := json.Unmarshal([]byte(current), &want); err != nil {
 		t.Fatal(err)
 	}
+	delete(want["properties"].(map[string]any), "excluded_scope")
+	var rootRequired []any
+	for _, r := range want["required"].([]any) {
+		if r != "excluded_scope" {
+			rootRequired = append(rootRequired, r)
+		}
+	}
+	want["required"] = rootRequired
 	issue := want["properties"].(map[string]any)["issues"].(map[string]any)["items"].(map[string]any)
 	props := issue["properties"].(map[string]any)
 	delete(props, "sub_tasks")
@@ -1036,7 +1044,7 @@ func TestLegacyDesignLaneSwapsOnlyTheDesignSchema(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		gb, _ := json.MarshalIndent(got, "", " ")
 		wb, _ := json.MarshalIndent(want, "", " ")
-		t.Errorf("the legacy DESIGN is not the current DESIGN less S-1\nlegacy:\n%s\nwant:\n%s", gb, wb)
+		t.Errorf("the legacy DESIGN is not the current DESIGN without later fields\nlegacy:\n%s\nwant:\n%s", gb, wb)
 	}
 	if errs := script.LintStrictSchema(got); len(errs) > 0 {
 		t.Errorf("the legacy DESIGN fails the strict structured-output lint: %v", errs)

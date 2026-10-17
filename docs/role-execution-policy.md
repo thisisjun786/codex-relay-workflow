@@ -59,6 +59,12 @@ recorded settings say. A `supervisor` entry that tries to carry a `model` or a `
 not load: the server refuses it at startup. That is how "the child policy is never propagated to
 the parent" is a mechanism rather than a sentence someone has to remember.
 
+## Choosing sufficient capability
+
+When assigning work to a role, recommend the cheapest sufficient model capability and reasoning effort among the choices its policy permits. Judge the concrete work's ambiguity, risk, reversibility and cost of an undetected error, together with the available verification. A broad mechanical edit with complete checks can need less capability than a small security-sensitive decision. More reasoning effort buys deliberation, not missing capability.
+
+Keep an explicit user choice and the operator-owned policy authoritative. This guidance does not change any role's allowed pairs, select a new provider, or alter a running task; a mismatch is a recommendation to the existing decision owner. Raise the recommendation when observed failures or unresolved assumptions show the current choice is insufficient, and lower it when bounded work and reliable checks justify less cost. Name the tests, review or other verification still required: a stronger model or higher effort replaces none of that evidence.
+
 ## An effort name belongs to its model
 
 Reasoning-effort names are catalog values, and two models that both offer a name do not thereby
