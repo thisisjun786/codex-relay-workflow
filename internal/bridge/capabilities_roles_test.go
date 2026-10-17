@@ -72,16 +72,23 @@ func TestCRW1330_CapabilitiesAgentRolesComeFromTheRoleHelperSnapshot(t *testing.
 	if section["source"] != store || section["digest"] != role.ReadFlowSnapshot(host.LookupEnv(os.LookupEnv)).Digest() || pyjson.Text(pyjson.Map(roles[0])["role"]) != "architect" {
 		t.Fatalf("agentRoles %v", section)
 	}
-	if byRole["executor"]["model"] != "anthropic/claude-haiku-5" || byRole["executor"]["reasoningEffort"] != "xhigh" || byRole["critic"]["model"] != "gpt-6.1-sol" || byRole["critic"]["state"] != "compiled_default" || byRole["architect"]["state"] != "undecided" {
+	if byRole["executor"]["model"] != "anthropic/claude-haiku-5" || byRole["executor"]["reasoningEffort"] != "xhigh" || byRole["critic"]["model"] != "gpt-6.1-sol" || byRole["critic"]["state"] != "reviewer" || byRole["unit-check"]["model"] != "gpt-6-astra" || byRole["unit-check"]["state"] != "compiled_default" || byRole["architect"]["state"] != "undecided" {
 		t.Fatalf("roles %v", byRole)
 	}
 	if _, listed := byRole["reviewer-final"]; listed {
 		t.Fatalf("the retired reviewer-final key is described as a role: %v", byRole)
 	}
-	// Every role described carries the design's model aliases, the critic's those of the gpt reviewers (CRW-1434).
+	// Every agent role described carries the design's model aliases, the critic's those of the gpt reviewers (CRW-1434);
+	// the unit check is a tool, so it carries none (CRW-1589).
 	for name, entry := range byRole {
 		want := execution.DefaultModelAliases(name)
 		got, _ := entry["aliases"].([]any)
+		if name == "unit-check" {
+			if len(got) != 0 {
+				t.Fatalf("the tool role's aliases %v", got)
+			}
+			continue
+		}
 		if len(want) == 0 || len(got) != len(want) || got[0] != want[0] {
 			t.Fatalf("role %s aliases %v, want %v", name, got, want)
 		}

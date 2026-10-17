@@ -2,48 +2,53 @@ package engine
 
 import (
 	"os"
-	"slices"
 	"testing"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/role"
 )
 
-// TestCriticDefaultPairIsTheSameEverywhere (CRW-1434): the critic's compiled default pair is one pair in the three places
-// that name it. The execution policy fills it into a file that declares no critic (execution.DefaultCriticPair), the helper
-// role store gives it to a store without a critic member, and the fake backend's table puts the critic on the same model
-// family, which is not the architect's: the design audit is independent of the design by model family.
-func TestCriticDefaultPairIsTheSameEverywhere(t *testing.T) {
-	withRoleStore(t, `{"roles": {}}`)
+// TestCRW1589_CriticFollowsTheReviewerPair (CRW-1589): a role store that declares no critic gives the critic the
+// reviewer's pair — the compiled default of CRW-1434 is gone with the other-family constraint of CRW-1515. A critic
+// call resolves onto that pair, a run records it as the call's configured pair, and the same inheritance fills the
+// critic of a policy file written before it. unit-check stays a tool name only: it is no role of the table, no call
+// resolves to it.
+func TestCRW1589_CriticFollowsTheReviewerPair(t *testing.T) {
+	withRoleStore(t, `{"roles": {
+  "architect": {"mode": "model", "model": "anthropic/claude-opus-5-5", "effort": "xhigh"},
+  "executor": {"mode": "model", "model": "anthropic/claude-haiku-5", "effort": "xhigh"},
+  "reviewer": {"mode": "model", "model": "gpt-6-astra", "effort": "xhigh"},
+  "explorer": {"mode": "model", "model": "anthropic/claude-haiku-5", "effort": "high"}}}`)
 	snap := role.ReadFlowSnapshot(host.LookupEnv(os.LookupEnv))
 	critic, ok := snap.Role(role.Critic)
-	if !ok {
-		t.Fatalf("the role store's snapshot has no critic: %+v", snap.Roles)
+	if !ok || critic.Model != "gpt-6-astra" || critic.Effort != "xhigh" || critic.State != "reviewer" {
+		t.Fatalf("the snapshot's critic %+v (present %v), want the reviewer pair", critic, ok)
 	}
-	if critic.State != role.FlowRoleCompiledDefault || critic.Model != execution.DefaultCriticPair.Model || critic.Effort != execution.DefaultCriticPair.Effort {
-		t.Fatalf("store critic %+v, execution default %+v", critic, execution.DefaultCriticPair)
-	}
-	// The table of a production run has the critic at that pair, in a family of its own, read-only, named by agentType.
+	// The table of a production run resolves a critic call onto that pair, in a family of its own, read-only, named by agentType.
 	table := PolicyFromRoleHelper(snap)
-	spec := table.Roles["critic"]
-	if spec.Pair != (Pair{execution.DefaultCriticPair.Model, execution.DefaultCriticPair.Effort}) || spec.Family != "critic" || spec.Sandbox != SandboxReadOnly || table.States["critic"] != "compiled_default" {
-		t.Fatalf("role-helper critic %+v (%s)", spec, table.States["critic"])
+	res, refusal := table.ResolveFresh(CallOpts{AgentType: "critic"})
+	if refusal != nil || res.Role != "critic" || res.Spec.Pair != (Pair{"gpt-6-astra", "xhigh"}) || res.Spec.Family != "critic" || res.Spec.Sandbox != SandboxReadOnly {
+		t.Fatalf("agentType critic: %+v %+v", res, refusal)
 	}
-	// The fake backend's critic: on the default's model family, not the architect's, and alone in its role family.
-	fake := FakePolicy()
-	fc, ok := fake.Roles["critic"]
-	if !ok {
-		t.Fatal("the fake backend's table has no critic")
+	// A run records the pair the call ran on: the reviewer's, not a compiled default.
+	h := newHarness(t)
+	h.cfg.Policy = table
+	got := value[struct {
+		Status string `json:"status"`
+		Pair   Pair   `json:"pair"`
+	}](t, h.run(`const r = await agent.call('audit the design', { agentType: 'critic', label: 'audit' }); return { status: r.status, pair: r.meta.configuredPair }`))
+	if got.Status != "completed" || got.Pair != (Pair{"gpt-6-astra", "xhigh"}) {
+		t.Fatalf("the critic call ran on %+v", got)
 	}
-	if family := execution.ModelFamily(fc.Pair.Model); family != execution.ModelFamily(execution.DefaultCriticPair.Model) || family == execution.ModelFamily(fake.Roles["architect"].Pair.Model) {
-		t.Fatalf("fake critic %+v, architect %+v", fc, fake.Roles["architect"])
+	// unit-check is a tool run, not an agent role: it is no role of the table and no call resolves to it.
+	if _, ok := table.Roles["unit-check"]; ok {
+		t.Error("unit-check is a role of the table: a call could spawn it")
 	}
-	if fc.Family != "critic" || fc.Sandbox != SandboxReadOnly || fc.Pair.Effort != execution.DefaultCriticPair.Effort || !slices.Equal(fc.ModelAliases, execution.DefaultModelAliases("critic")) {
-		t.Fatalf("fake critic %+v", fc)
+	if res, refusal := table.ResolveFresh(CallOpts{AgentType: "unit-check"}); refusal == nil || res.Role != "" {
+		t.Errorf("agentType unit-check resolved to %+v, want a refusal", res)
 	}
 	// A call names the critic by agentType; no alias row leads to it (ocx-gpt-6-1-sol is the reviewer's at any effort).
-	for _, p := range []*Policy{fake, table} {
+	for _, p := range []*Policy{FakePolicy(), table} {
 		res, refusal := p.ResolveFresh(CallOpts{AgentType: "critic"})
 		if refusal != nil || res.Role != "critic" {
 			t.Fatalf("agentType critic: %+v %+v", res, refusal)
@@ -58,9 +63,14 @@ func TestCriticDefaultPairIsTheSameEverywhere(t *testing.T) {
 	if got := agentTypeOf("critic"); got != "reviewer" {
 		t.Errorf("the critic spawns as agent_type %q", got)
 	}
-	// An execution policy file written before the critic still gives the table a critic, at the default pair.
+	// The fake backend's critic is the reviewer's placeholder pair, as a store without a critic resolves it.
+	fake := FakePolicy()
+	if fc := fake.Roles["critic"]; fc.Pair != fake.Roles["reviewer"].Pair || fc.Family != "critic" || fc.Sandbox != SandboxReadOnly {
+		t.Errorf("fake critic %+v, reviewer %+v", fc, fake.Roles["reviewer"])
+	}
+	// An execution policy file written before the critic still gives the table a critic: its own reviewer's pair.
 	fromFile := loadPolicy(t, policyFile("claude-haiku", "xhigh"))
-	if got := fromFile.Roles["critic"]; got.Pair != spec.Pair || got.Family != "critic" {
-		t.Fatalf("a six-role policy file's critic %+v", got)
+	if got := fromFile.Roles["critic"]; got.Pair != fromFile.Roles["reviewer"].Pair || got.Family != "critic" {
+		t.Fatalf("a five-role policy file's critic %+v, reviewer %+v", got, fromFile.Roles["reviewer"])
 	}
 }

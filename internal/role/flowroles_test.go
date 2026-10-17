@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 )
 
 // CRW-1330 (CRW-1316 S1): the flow's role table comes from the helper role store. The flow-only keys, executor-t1 and
@@ -18,7 +20,8 @@ const sixRoleStore = `{"roles": {
   "executor-t1": {"mode": "model", "model": "anthropic/claude-sonnet-5-5", "effort": "high", "promptOverride": "final"},
   "reviewer": {"mode": "model", "model": "gpt-6.1-sol", "effort": "high"},
   "explorer": {"mode": "model", "model": "anthropic/claude-haiku-5", "effort": "high"},
-  "critic": {"mode": "model", "model": "gpt-6.1-sol", "effort": "xhigh"}}}`
+  "critic": {"mode": "model", "model": "gpt-6.1-sol", "effort": "xhigh"},
+  "unit-check": {"mode": "model", "model": "gpt-6-astra", "effort": "high"}}}`
 
 func flowPairs(s FlowSnapshot) map[RoleName][3]string {
 	out := map[RoleName][3]string{}
@@ -39,14 +42,15 @@ func TestCRW1330_FlowSnapshotReadsTheSixRolesFromOneRolesObject(t *testing.T) {
 	for _, r := range snap.Roles {
 		order = append(order, r.Role)
 	}
-	if !reflect.DeepEqual(order, FlowRoles()) || !reflect.DeepEqual(FlowRoles(), []RoleName{Architect, Executor, ExecutorT1, Reviewer, Explorer, Critic}) {
+	if !reflect.DeepEqual(order, FlowRoles()) || !reflect.DeepEqual(FlowRoles(), []RoleName{Architect, Executor, ExecutorT1, Reviewer, Explorer, Critic, UnitCheck}) {
 		t.Fatalf("order %v", order)
 	}
 	want := map[RoleName][3]string{
 		Architect: {"anthropic/claude-opus-5-5", "xhigh", "store"}, Executor: {"anthropic/claude-haiku-5", "xhigh", "store"},
 		ExecutorT1: {"anthropic/claude-sonnet-5-5", "high", "store"}, Reviewer: {"gpt-6.1-sol", "high", "store"},
-		Explorer: {"anthropic/claude-haiku-5", "high", "store"},
-		Critic:   {"gpt-6.1-sol", "xhigh", "store"},
+		Explorer:  {"anthropic/claude-haiku-5", "high", "store"},
+		Critic:    {"gpt-6.1-sol", "xhigh", "store"},
+		UnitCheck: {"gpt-6-astra", "high", "store"},
 	}
 	if got := flowPairs(snap); !reflect.DeepEqual(got, want) {
 		t.Fatalf("pairs %v", got)
@@ -80,10 +84,10 @@ func TestCRW1330_MissingFlowKeysUseTheCompiledDefaultsAndWarn(t *testing.T) {
 	if _, has := got[ReviewerFinal]; has {
 		t.Fatalf("the retired key has a pair: %v", got)
 	}
-	if got[Critic] != [3]string{"gpt-6.1-sol", "xhigh", "compiled_default"} {
-		t.Fatalf("critic %v", got[Critic])
+	if got[Critic] != [3]string{"gpt-6.1-sol", "high", "reviewer"} || got[UnitCheck] != [3]string{"gpt-6-astra", "high", "compiled_default"} {
+		t.Fatalf("critic %v unit-check %v", got[Critic], got[UnitCheck])
 	}
-	if len(snap.Warnings) != 2 || !strings.Contains(snap.Warnings[0], "executor-t1") || !strings.Contains(snap.Warnings[1], "critic") || !strings.Contains(snap.Warnings[0], "compiled default") {
+	if len(snap.Warnings) != 3 || !strings.Contains(snap.Warnings[0], "executor-t1") || !strings.Contains(snap.Warnings[1], "critic") || !strings.Contains(snap.Warnings[1], "reviewer pair") || !strings.Contains(snap.Warnings[2], "unit-check") || !strings.Contains(snap.Warnings[0], "compiled default") {
 		t.Fatalf("warnings %q", snap.Warnings)
 	}
 }
@@ -108,10 +112,11 @@ func TestCRW1330_ModeDefaultRoleIsUndecided(t *testing.T) {
 			t.Errorf("warnings lack %q:\n%s", want, joined)
 		}
 	}
-	// A missing store is the same reading: four undecided roles, two compiled defaults, nothing written.
+	// A missing store is the same reading: five undecided roles (the critic inherits the undecided reviewer), two
+	// compiled defaults, nothing written.
 	env2, dir2 := home(t)
 	snap2 := ReadFlowSnapshot(env2)
-	if snap2.Present || len(snap2.Warnings) != 6 || flowPairs(snap2)[Critic][2] != "compiled_default" || flowPairs(snap2)[ExecutorT1][2] != "compiled_default" || flowPairs(snap2)[Explorer][2] != "undecided" {
+	if snap2.Present || len(snap2.Warnings) != 7 || flowPairs(snap2)[Critic][2] != "undecided" || flowPairs(snap2)[ExecutorT1][2] != "compiled_default" || flowPairs(snap2)[UnitCheck][2] != "compiled_default" || flowPairs(snap2)[Explorer][2] != "undecided" {
 		t.Fatalf("missing store: %+v", snap2)
 	}
 	if _, err := os.Stat(dir2); !os.IsNotExist(err) {
@@ -199,8 +204,8 @@ func TestCRW1330_HelperSetGetResetTheFlowKeys(t *testing.T) {
 		t.Fatalf("list %+v", cfg)
 	}
 	reset := helperCLIDecode[map[string]any](t, RunHelper(ParseHelperArgs([]string{"reset", "critic"}), env))
-	if reset["source"] != "compiled_default" || reset["model"] != "gpt-6.1-sol" {
-		t.Fatalf("reset: %v", reset)
+	if reset["source"] != "undecided" {
+		t.Fatalf("reset (no reviewer in the store): %v", reset)
 	}
 	if strings.Contains(readText(t, dir+"/"+StoreFile), "critic") {
 		t.Fatal("reset left the key")
@@ -215,9 +220,9 @@ func TestCRW1330_HelperSetGetResetTheFlowKeys(t *testing.T) {
 	}
 }
 
-// CRW-1434 (bundle CRW-1424, D-1, D-2): the design critic is a flow-only key. A store written before it, with the five
-// other members, runs the critic on its compiled default (the final reviewer's pair, a model family other than the
-// architect's) and warns once, naming the role and the reset that brings the default back; the critic is the last flow role.
+// CRW-1434 (bundle CRW-1424, D-1, D-2) and CRW-1589: the design critic is a flow-only key. A store written before it,
+// with the five other members, gives the critic the reviewer's pair and warns once; the unit check's key, absent from
+// every store written before CRW-1589, runs its compiled default.
 func TestFlowSnapshotWithoutACriticEntryUsesTheCompiledDefaultAndWarns(t *testing.T) {
 	env, dir := home(t)
 	writeStore(t, dir, `{"roles": {
@@ -227,19 +232,22 @@ func TestFlowSnapshotWithoutACriticEntryUsesTheCompiledDefaultAndWarns(t *testin
   "reviewer": {"mode": "model", "model": "gpt-6.1-sol", "effort": "high"},
   "explorer": {"mode": "model", "model": "anthropic/claude-haiku-5", "effort": "high"}}}`)
 	snap := ReadFlowSnapshot(env)
-	if got := flowPairs(snap)[Critic]; got != [3]string{"gpt-6.1-sol", "xhigh", "compiled_default"} {
+	if got := flowPairs(snap)[Critic]; got != [3]string{"gpt-6.1-sol", "high", "reviewer"} {
 		t.Fatalf("critic: %v", got)
 	}
-	if len(snap.Warnings) != 1 || !strings.Contains(snap.Warnings[0], "critic") || !strings.Contains(snap.Warnings[0], "crw role helper reset critic") || !strings.Contains(snap.Warnings[0], "compiled default") {
+	if got := flowPairs(snap)[UnitCheck]; got != [3]string{"gpt-6-astra", "high", "compiled_default"} {
+		t.Fatalf("unit-check: %v", got)
+	}
+	if len(snap.Warnings) != 2 || !strings.Contains(snap.Warnings[0], "critic") || !strings.Contains(snap.Warnings[0], "inherits the reviewer pair") || !strings.Contains(snap.Warnings[1], "unit-check") {
 		t.Fatalf("warnings %q", snap.Warnings)
 	}
 	roles := FlowRoles()
-	if len(roles) != 6 || roles[len(roles)-1] != Critic || !reflect.DeepEqual(FlowOnlyRoles(), []RoleName{ExecutorT1, Critic}) {
+	if len(roles) != 7 || roles[len(roles)-1] != UnitCheck || roles[len(roles)-2] != Critic || !reflect.DeepEqual(FlowOnlyRoles(), []RoleName{ExecutorT1, Critic, UnitCheck}) {
 		t.Fatalf("FlowRoles %v, FlowOnlyRoles %v", roles, FlowOnlyRoles())
 	}
 	// the helper addresses the key by name and shows what the flow uses; the oracle's list does not change
 	view := helperCLIDecode[map[string]any](t, RunHelper(ParseHelperArgs([]string{"get", "critic"}), env))
-	if view["model"] != "gpt-6.1-sol" || view["effort"] != "xhigh" || view["source"] != "compiled_default" {
+	if view["model"] != "gpt-6.1-sol" || view["effort"] != "high" || view["source"] != "reviewer" {
 		t.Fatalf("get critic: %v", view)
 	}
 	if len(Roles()) != 4 {
@@ -289,5 +297,115 @@ func TestHelperRefusesTheRetiredKeyAndResetRemovesIt(t *testing.T) {
 	// a reset of a store that holds no entry for it is a no-op answer, not an error
 	if r := RunHelper(ParseHelperArgs([]string{"reset", "reviewer-final"}), env); r.Code != 0 {
 		t.Fatalf("a second reset: %+v", r)
+	}
+}
+
+// CRW-1589: one role store decides every role model. The unit check's tool pair is a seventh key of the same roles
+// object (a tool run, never a spawned agent), and a store that declares no critic gives the critic the reviewer's pair
+// instead of a compiled default, because the other-family constraint (CRW-1515) is gone.
+func TestCRW1589_FlowSnapshotCarriesUnitCheckAndCriticInheritsTheReviewer(t *testing.T) {
+	env, dir := home(t)
+	writeStore(t, dir, `{"roles": {"reviewer": {"mode": "model", "model": "gpt-6-astra", "effort": "xhigh"}}}`)
+	snap := ReadFlowSnapshot(env)
+	got := flowPairs(snap)
+	if got[Critic] != [3]string{"gpt-6-astra", "xhigh", "reviewer"} {
+		t.Errorf("a store with no critic entry: critic %v, want the reviewer pair", got[Critic])
+	}
+	uc, ok := snap.Role(RoleName("unit-check"))
+	if !ok || uc.Model != "gpt-6-astra" || uc.Effort != "high" || uc.State != FlowRoleCompiledDefault {
+		t.Errorf("the unit check's row %+v (present %v), want the compiled default gpt-6-astra at high", uc, ok)
+	}
+	if n := len(snap.Roles); n != 7 || snap.Roles[n-1].Role != RoleName("unit-check") {
+		t.Errorf("the snapshot lists %d roles, want the six agent roles and unit-check last: %+v", n, snap.Roles)
+	}
+	// A store that declares the critic keeps it; a critic in mode default stays undecided.
+	writeStore(t, dir, `{"roles": {"reviewer": {"mode": "model", "model": "gpt-6-astra", "effort": "xhigh"}, "critic": {"mode": "model", "model": "gpt-7-sol", "effort": "medium"}}}`)
+	if got := flowPairs(ReadFlowSnapshot(env))[Critic]; got != [3]string{"gpt-7-sol", "medium", "store"} {
+		t.Errorf("a declared critic %v, want its own pair", got)
+	}
+	writeStore(t, dir, `{"roles": {"reviewer": {"mode": "model", "model": "gpt-6-astra", "effort": "xhigh"}, "critic": {"mode": "default"}}}`)
+	if got := flowPairs(ReadFlowSnapshot(env))[Critic]; got != [3]string{"", "", "undecided"} {
+		t.Errorf("a critic in mode default %v, want undecided", got)
+	}
+}
+
+// CRW-1589: the unit-check key is configured like any role's (mode model/model/effort, helper set/reset), its pair is in
+// the snapshot's digest, and a non-blank CRW_UNIT_CHECK_MODEL or CRW_UNIT_CHECK_EFFORT overrides its field at snapshot
+// time while the other field keeps the store's value.
+func TestCRW1589_UnitCheckConfigDigestAndEnvOverrides(t *testing.T) {
+	env, dir := home(t)
+	writeStore(t, dir, `{"roles": {"reviewer": {"mode": "model", "model": "gpt-6-astra", "effort": "xhigh"}, "unit-check": {"mode": "model", "model": "gpt-7-sol", "effort": "medium"}}}`)
+	snap := ReadFlowSnapshot(env)
+	uc, ok := snap.Role(RoleName("unit-check"))
+	if !ok || uc.Model != "gpt-7-sol" || uc.Effort != "medium" || uc.State != FlowRoleStored {
+		t.Fatalf("a configured unit-check %+v (present %v)", uc, ok)
+	}
+	// The unit check's pair is in the digest: without the entry the digest changes.
+	writeStore(t, dir, `{"roles": {"reviewer": {"mode": "model", "model": "gpt-6-astra", "effort": "xhigh"}}}`)
+	if got := ReadFlowSnapshot(env).Digest(); got == snap.Digest() {
+		t.Fatal("the digest ignores the unit-check entry")
+	}
+	// A unit-check entry in mode default runs the tool's compiled default; a stored model without an effort runs the
+	// default effort, not an undecided one.
+	writeStore(t, dir, `{"roles": {"unit-check": {"mode": "default"}}}`)
+	if uc, _ := ReadFlowSnapshot(env).Role(RoleName("unit-check")); uc.Model != "gpt-6-astra" || uc.Effort != "high" || uc.State != FlowRoleCompiledDefault {
+		t.Errorf("unit-check in mode default %+v, want the compiled default", uc)
+	}
+	writeStore(t, dir, `{"roles": {"unit-check": {"mode": "model", "model": "gpt-7-sol"}}}`)
+	if uc, _ := ReadFlowSnapshot(env).Role(RoleName("unit-check")); uc.Model != "gpt-7-sol" || uc.Effort != "high" {
+		t.Errorf("unit-check without an effort %+v, want the default effort high", uc)
+	}
+	// A non-blank environment value overrides its field only; a blank one is no override.
+	over := func(vars map[string]string) host.LookupEnv {
+		return func(k string) (string, bool) {
+			if v, ok := vars[k]; ok {
+				return v, true
+			}
+			return env(k)
+		}
+	}
+	writeStore(t, dir, `{"roles": {"unit-check": {"mode": "model", "model": "gpt-7-sol", "effort": "medium"}}}`)
+	snap = ReadFlowSnapshot(over(map[string]string{"CRW_UNIT_CHECK_MODEL": "o9"}))
+	if uc, _ := snap.Role(RoleName("unit-check")); uc.Model != "o9" || uc.Effort != "medium" || uc.State != "environment" {
+		t.Errorf("a model override %+v, want o9 at the stored medium", uc)
+	}
+	snap = ReadFlowSnapshot(over(map[string]string{"CRW_UNIT_CHECK_EFFORT": "low"}))
+	if uc, _ := snap.Role(RoleName("unit-check")); uc.Model != "gpt-7-sol" || uc.Effort != "low" {
+		t.Errorf("an effort override %+v, want the stored model at low", uc)
+	}
+	snap = ReadFlowSnapshot(over(map[string]string{"CRW_UNIT_CHECK_MODEL": "  ", "CRW_UNIT_CHECK_EFFORT": "xhigh"}))
+	if uc, _ := snap.Role(RoleName("unit-check")); uc.Model != "gpt-7-sol" || uc.Effort != "xhigh" {
+		t.Errorf("a blank model override is ignored: %+v", uc)
+	}
+}
+
+// CRW-1589: `crw role helper get|set|reset` address unit-check by name, as they do the other flow-only keys; the
+// helper's list stays the four helper roles, and a reset critic inherits the reviewer pair again.
+func TestCRW1589_HelperControlsUnitCheckByName(t *testing.T) {
+	env, dir := home(t)
+	writeStore(t, dir, `{"roles": {"reviewer": {"mode": "model", "model": "gpt-6-astra", "effort": "xhigh"}}}`)
+	view := helperCLIDecode[map[string]any](t, RunHelper(ParseHelperArgs([]string{"get", "unit-check"}), env))
+	if view["model"] != "gpt-6-astra" || view["effort"] != "high" || view["source"] != "compiled_default" {
+		t.Fatalf("get unit-check: %v", view)
+	}
+	set := helperCLIDecode[map[string]any](t, RunHelper(ParseHelperArgs([]string{"set", "unit-check", "--mode", "model", "--model", "gpt-7-sol", "--effort", "medium"}), env))
+	if set["model"] != "gpt-7-sol" || set["effort"] != "medium" || set["source"] != "store" {
+		t.Fatalf("set unit-check: %v", set)
+	}
+	if p := flowPairs(ReadFlowSnapshot(env))[RoleName("unit-check")]; p != [3]string{"gpt-7-sol", "medium", "store"} {
+		t.Fatalf("the snapshot after the set: %v", p)
+	}
+	reset := helperCLIDecode[map[string]any](t, RunHelper(ParseHelperArgs([]string{"reset", "unit-check"}), env))
+	if reset["source"] != "compiled_default" || reset["model"] != "gpt-6-astra" {
+		t.Fatalf("reset unit-check: %v", reset)
+	}
+	cfg := helperCLIDecode[Config](t, RunHelper(ParseHelperArgs(nil), env))
+	if len(cfg.Roles) != 4 {
+		t.Fatalf("the helper's list %+v", cfg)
+	}
+	helperCLIDecode[map[string]any](t, RunHelper(ParseHelperArgs([]string{"set", "critic", "--mode", "model", "--model", "gpt-9", "--effort", "low"}), env))
+	got := helperCLIDecode[map[string]any](t, RunHelper(ParseHelperArgs([]string{"reset", "critic"}), env))
+	if got["source"] != "reviewer" || got["model"] != "gpt-6-astra" || got["effort"] != "xhigh" {
+		t.Fatalf("a reset critic does not inherit the reviewer pair: %v", got)
 	}
 }

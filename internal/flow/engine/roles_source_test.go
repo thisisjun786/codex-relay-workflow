@@ -22,7 +22,8 @@ func roleStore(executor, reviewer string) string {
   "executor-t1": {"mode": "model", "model": "anthropic/claude-sonnet-5-5", "effort": "xhigh"},
   "reviewer": {"mode": "model", "model": "` + reviewer + `", "effort": "high"},
   "critic": {"mode": "model", "model": "gpt-6.1-sol", "effort": "xhigh"},
-  "explorer": {"mode": "model", "model": "anthropic/claude-haiku-5", "effort": "high"}}}`
+  "explorer": {"mode": "model", "model": "anthropic/claude-haiku-5", "effort": "high"},
+  "unit-check": {"mode": "model", "model": "gpt-6-astra", "effort": "high"}}}`
 }
 
 // withRoleStore points CRW_HOME at a fresh directory holding text as the store (no file when text is "") and returns the path.
@@ -109,10 +110,10 @@ func TestCRW1330_PlaceholderTableOnlyUnderTestIsolationWithoutAStore(t *testing.
 		t.Fatalf("%v %+v", err, table)
 	}
 	// Outside the isolation (a production process) a missing store is the role helper's reading: four undecided roles and the
-	// two compiled defaults (executor-t1, critic), each warned.
+	// two compiled defaults (executor-t1, unit-check), each warned; the critic inherits the undecided reviewer.
 	t.Setenv(isolationRootEnv, "")
 	table, _, err = LoadPolicy()
-	if err != nil || table.Source == "" || table.Roles["explorer"].Pair != (Pair{}) || table.Roles["executor-t1"].Pair != (Pair{"anthropic/claude-sonnet-5-5", "xhigh"}) || table.Roles["critic"].Pair != (Pair{"gpt-6.1-sol", "xhigh"}) || len(table.Warnings) != 6 {
+	if err != nil || table.Source == "" || table.Roles["explorer"].Pair != (Pair{}) || table.Roles["executor-t1"].Pair != (Pair{"anthropic/claude-sonnet-5-5", "xhigh"}) || table.Roles["critic"].Pair != (Pair{}) || table.UnitCheck != (Pair{"gpt-6-astra", "high"}) || len(table.Warnings) != 7 {
 		t.Fatalf("%v %+v", err, table)
 	}
 }
@@ -185,6 +186,64 @@ func TestCRW1330_ResumeRepinsWhenAPairOfTheSnapshotChanges(t *testing.T) {
 	}
 }
 
+// CRW-1589: the unit check's pair travels with the role snapshot. The started row records it under role_pairs for every
+// backend (the unit check is a tool run, never a spawned agent) and names each environment value applied under
+// unit_check_overrides; the digest covers the effective pair. unit-check is still no role of the table: agent() refuses it.
+func TestCRW1589_UnitCheckPairIsJournaledForEveryBackend(t *testing.T) {
+	withRoleStore(t, strings.Replace(roleStore("anthropic/claude-haiku-5", "gpt-6.1-sol"), `"model": "gpt-6-astra", "effort": "high"`, `"model": "gpt-7-sol", "effort": "medium"`, 1))
+	t.Setenv(execution.EnvPolicy, "")
+	t.Setenv("CRW_UNIT_CHECK_MODEL", "o9")
+	table, _, err := LoadPolicy()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := table.Roles["unit-check"]; ok {
+		t.Fatal("unit-check is a role of the table: a call could spawn it")
+	}
+	if res, refusal := table.ResolveFresh(CallOpts{AgentType: "unit-check"}); refusal == nil || res.Role != "" {
+		t.Fatalf("agentType unit-check resolved to %+v", res)
+	}
+	checkStarted := func(events []Event, backend string) {
+		t.Helper()
+		var started Event
+		for _, e := range events {
+			if e.Kind == KindRun && e.Event == "started" {
+				started = e
+			}
+		}
+		pairs, _ := started.Data["role_pairs"].(map[string]any)
+		uc, _ := pairs["unit-check"].(map[string]any)
+		if uc["model"] != "o9" || uc["effort"] != "medium" {
+			t.Errorf("%s: the started row's unit-check pair %v, want the environment-overridden o9/medium", backend, uc)
+		}
+		overrides := map[string]any{}
+		switch m := started.Data["unit_check_overrides"].(type) {
+		case map[string]any:
+			overrides = m
+		case map[string]string:
+			for k, v := range m {
+				overrides[k] = v
+			}
+		}
+		if overrides["CRW_UNIT_CHECK_MODEL"] != "o9" {
+			t.Errorf("%s: unit_check_overrides %v, want CRW_UNIT_CHECK_MODEL=o9", backend, overrides)
+		}
+		if started.Data["policy_digest"] != snapshotDigest(t) {
+			t.Errorf("%s: digest %v, want the snapshot's %s", backend, started.Data["policy_digest"], snapshotDigest(t))
+		}
+	}
+	// an ordinary backend
+	h := newHarness(t)
+	h.cfg.Policy = table
+	h.run(`return 1`)
+	checkStarted(h.journal.Events(), "app-server")
+	// a session run
+	k := newSessionKit(t)
+	k.h.cfg.Policy = table
+	k.h.run(`return 1`)
+	checkStarted(k.h.journal.Events(), "session")
+}
+
 func TestCRW1330_FlowRolesShowsTheStoreTheDigestThePairsAndTheWarnings(t *testing.T) {
 	store := withRoleStore(t, `{"roles": {
   "architect": {"mode": "model", "model": "anthropic/claude-opus-5-5", "effort": "xhigh"},
@@ -202,18 +261,18 @@ func TestCRW1330_FlowRolesShowsTheStoreTheDigestThePairsAndTheWarnings(t *testin
 	if err := json.Unmarshal([]byte(out), &report); err != nil {
 		t.Fatal(err)
 	}
-	if report.Source == nil || *report.Source != store || report.Digest == nil || *report.Digest != snapshotDigest(t) || report.Placeholder || len(report.Roles) != len(execution.AgentRoleNames) {
+	if report.Source == nil || *report.Source != store || report.Digest == nil || *report.Digest != snapshotDigest(t) || report.Placeholder || len(report.Roles) != len(execution.AgentRoleNames)+1 {
 		t.Fatalf("%+v", report)
 	}
 	states := map[string]string{}
 	for _, r := range report.Roles {
 		states[r.Role] = r.State
 	}
-	if states["executor"] != "store" || states["executor-t1"] != "compiled_default" || states["explorer"] != "undecided" || states["critic"] != "compiled_default" {
+	if states["executor"] != "store" || states["executor-t1"] != "compiled_default" || states["explorer"] != "undecided" || states["critic"] != "reviewer" || states["unit-check"] != "compiled_default" {
 		t.Fatalf("states %v", states)
 	}
 	joined := strings.Join(report.Warnings, "\n")
-	for _, want := range []string{"executor-t1", "explorer", "critic", "agent-roles", "no longer reads"} {
+	for _, want := range []string{"executor-t1", "explorer", "critic", "unit-check", "agent-roles", "no longer reads"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("warnings lack %q: %q", want, report.Warnings)
 		}
