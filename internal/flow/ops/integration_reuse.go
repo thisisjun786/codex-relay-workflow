@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/audit"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 )
@@ -430,4 +432,69 @@ func (l *Lane) reusedAudits(ctx context.Context, r rows, ms string, reader audit
 		out = append(out, audit.Audit(ctx, reader, src.Events, s))
 	}
 	return out, nil
+}
+
+type reusedReceiptCheck struct {
+	SourceRun, SourceAcceptCall string
+	Row                         engine.Event
+}
+
+func (l *Lane) reusedReceiptChecks(ctx context.Context, r rows, m Milestone) (map[string]reusedReceiptCheck, string, string) {
+	out := map[string]reusedReceiptCheck{}
+	reused := r.current(OpReuseIntegrated)
+	var sources []DesignRun
+	loaded := false
+	for _, n := range m.Nodes {
+		reuse, ok := reused.last(func(ev engine.Event) bool {
+			return dataStr(ev, "milestone") == m.ID && dataStr(ev, "node") == n.ID
+		})
+		if !ok || !dataBool(reuse, "reused") {
+			continue
+		}
+		missing := func(detail string) (map[string]reusedReceiptCheck, string, string) {
+			return nil, n.ID, fmt.Sprintf("node %s: its reused executor receipt from run %s is unavailable: %s", n.ID, dataStr(reuse, "source_run"), detail)
+		}
+		var d ReuseIntegratedResult
+		if err := json.Unmarshal(resultOf(reuse), &d); err != nil || d.SourceRun == "" || d.SourceAcceptCall == "" || d.Head == "" || d.Node != n.ID || d.Milestone != m.ID || d.Plan != m.Plan {
+			return missing("the reuse record does not identify its source acceptance and head")
+		}
+		if !loaded {
+			if l.d.DesignHistory == nil {
+				return missing("no run history is wired")
+			}
+			var err error
+			sources, err = l.d.DesignHistory(ctx, d.Plan)
+			if err != nil {
+				return missing(err.Error())
+			}
+			loaded = true
+		}
+		at := slices.IndexFunc(sources, func(s DesignRun) bool { return s.Run == d.SourceRun && s.Reason == "" })
+		if at < 0 {
+			return missing("the source journal cannot be read")
+		}
+		sr := rows(sources[at].Events)
+		acc, ok := sr.current(OpAccept).last(func(ev engine.Event) bool { return ev.CallID == d.SourceAcceptCall })
+		if !ok || dataStr(acc, "node") != d.Node || dataStr(acc, "plan") != d.Plan || dataStr(acc, "head") != d.Head || dataStr(acc, "acceptance_id") != d.AcceptanceID {
+			return missing("the source acceptance does not match the reused node and head")
+		}
+		check, ok := sr.current(OpUnitCheck).last(func(ev engine.Event) bool {
+			if dataStr(ev, "node") != d.Node || (dataStr(ev, "role") != execution.AgentUnitCheck && dataStr(ev, "state") != StateReceiptHeld) {
+				return false
+			}
+			head := dataStr(ev, "commit")
+			if head == "" {
+				head = dataStr(ev, "head")
+			}
+			if head != "" {
+				return strings.EqualFold(head, d.Head)
+			}
+			return ev.CallID != "" && ev.CallID == dataStr(acc, "reviewer_call")
+		})
+		if !ok {
+			return missing("no unit check records the reused node and head")
+		}
+		out[n.ID] = reusedReceiptCheck{SourceRun: d.SourceRun, SourceAcceptCall: d.SourceAcceptCall, Row: check}
+	}
+	return out, "", ""
 }
