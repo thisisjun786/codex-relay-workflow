@@ -35,6 +35,39 @@ func localJobLimit(jobs, parallel, cpus int) int {
 	return max(1, cpus/parallel)
 }
 
+// localCPUOptions resolves a budgeted run's job/parallel split and the recordCPU the record
+// carries (CRW-1591). Zero CPUs is the legacy unbudgeted behavior and changes nothing. The jobs
+// the budget feeds is min(cpus, the usual job limit), each job gets cpus/jobs of the budget, and a
+// package parallelism above that is clamped per job. The method is the resolved backend; the
+// fallback additionally names the per-job GOMAXPROCS the sealed environment sets.
+func localCPUOptions(opts localOptions) (localOptions, error) {
+	if opts.CPUs < 0 {
+		return opts, fmt.Errorf("cpus must be positive")
+	}
+	if opts.CPUs == 0 {
+		return opts, nil
+	}
+	if opts.Jobs < 0 {
+		return opts, fmt.Errorf("jobs must be zero (automatic) or positive")
+	}
+	parallel := opts.Parallel
+	if parallel <= 0 {
+		parallel = 4
+	}
+	jobs := min(opts.CPUs, localJobLimit(opts.Jobs, parallel, opts.CPUs))
+	perJob := max(1, opts.CPUs/jobs)
+	opts.Jobs, opts.Parallel = jobs, min(parallel, perJob)
+	method := opts.cpuMethod
+	if method != localCPUCgroup {
+		method = localCPUFallback
+	}
+	opts.cpu = &recordCPU{Limit: opts.CPUs, Method: method, Jobs: jobs, Parallel: opts.Parallel}
+	if method == localCPUFallback {
+		opts.cpu.GOMAXPROCS = perJob
+	}
+	return opts, nil
+}
+
 // localTask is one leg of one job flattened in plan order; a job with no legs is one empty leg.
 type localTask struct {
 	job   localJob

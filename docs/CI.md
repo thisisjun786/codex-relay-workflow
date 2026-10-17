@@ -4,10 +4,93 @@
 activate GitHub enforcement. It is developer-only: every check runs from a checkout.
 Installing and operating the runtime is [runtime installation](runtime-install.md).
 
-Local full verification is the primary route: `crw-dev ci local` runs every job and step below
-in a clean worktree of the commit being verified and writes a `verification-record/1`, whose
-`result` is a pass only when every step succeeded. GitHub Actions is an optional remote run: the
-workflow starts only on a manual dispatch, and integration does not wait on it.
+The repository verification is selected by `verifier.kind`: `local` (the default) runs
+`crw-dev ci local`, and `github-actions` dispatches the configured GitHub workflow.
+Both produce a `verification-record/1`; a passing record is the integration evidence.
+The node, integration and milestone-close paths use the same configured verifier.
+
+## Choosing the verifier
+
+Existing configurations keep the local verifier and its `go_root` and `crw_dev` settings.
+To select GitHub Actions:
+
+```sh
+crw config verifier --kind github-actions \
+  --repository OWNER/REPO --workflow 'CRW CI' --branch-prefix ci/
+```
+
+The corresponding configuration section is:
+
+```json
+{
+  "verifier": {
+    "kind": "github-actions",
+    "repository": "OWNER/REPO",
+    "workflow": "CRW CI",
+    "branch_prefix": "ci/"
+  }
+}
+```
+
+`repository` is required in GitHub mode. The workflow defaults to `CRW CI` and the
+branch prefix to `ci/`. An unknown kind or invalid remote configuration stops verification;
+it does not fall back to a local run. `crw config verifier --kind local` selects local
+verification again. Prerequisite checks inspect the selected mode: GitHub mode needs
+`git`, `gitleaks`, an authenticated `gh`, repository write permission, and an active
+workflow. It does not require local Go or `crw-dev`. Authentication uses the caller's
+normal GitHub CLI configuration or token.
+
+The common command can verify a committed head directly:
+
+```sh
+crw flow verify --checkout /path/to/repository \
+  --head FULL_HEAD_SHA --base FULL_BASE_SHA --record /path/to/verification-record.json
+```
+
+The integration queue can set its existing `verify_command` to
+`["crw", "flow", "verify"]`. The command reads `CRW_VERIFY_HEAD`,
+`CRW_VERIFY_BASE` and `CRW_VERIFY_RECORD` supplied by that queue. The lane's
+integration adapter and `crw.verify` use the same selection. Existing plans keep
+`crw-dev ci local` as their repository-CI requirement string; the selected verifier
+satisfies that requirement, while the receipt's `runner` and `verifierKind` say where
+verification actually ran.
+
+Before a GitHub push, Gitleaks must report the version the verified commit declares
+as `scan_version` in `scripts/ci/secrets.sh`; an absent pin or a version mismatch
+stops verification. It scans the current `base..head` commit range, including merge
+deltas, with redaction and repository ignore suppression. A finding, missing
+scanner or unreadable range stops the operation before anything is pushed.
+Every push URL of `origin` must match the configured repository. The verifier pushes the
+exact head to an existing work branch when available, otherwise to
+`ci/<label>-<sha8>` (or the configured prefix). It never force-pushes or deletes a
+remote branch, and it never uses `dev`, `main` or `master` as the verification branch.
+Automatic tag following is disabled for this push.
+
+The verifier dispatches the workflow at that branch and waits for a new run with the
+exact head, branch, workflow and `workflow_dispatch` event. A successful run needs
+nonempty job results with every job successful. A failed run gets one
+`gh run rerun --failed`; the verifier waits for the new attempt, retains the original
+failures, and records `flake_rerun_passed: true` when the rerun passes. Cancellation,
+missing results and infrastructure errors cannot become a pass.
+
+A GitHub receipt uses `runner: github-actions`, `verifierKind: github-actions` and
+`verifierRules: github-actions/1`. It carries the run URL, run head, workflow identity
+and digest, job conclusions, failed test lines, attempt history and the current
+range's secret-scan evidence. Its `pins` are declarations from the commit; empty
+`tools`, `os` and `arch` fields do not claim local measurements of remote runners.
+The workflow definition identifies the remote execution environment. Local receipts
+keep their measured tools and platform checks.
+
+Successful remote records are cached below the Git common directory, so linked
+worktrees can reuse them. The key includes the tree, repository, workflow identity
+and digest, CI and dependency digests, declared pins, verifier kind and rule version.
+The current range is scanned again on every reuse. Only new commit objects may have
+appeared since the original run: new tree or blob objects require a full workflow
+run, including when a file was added and removed before returning to the same tree.
+An empty commit or a same-tree integration merge can reuse the passing tree evidence.
+The new receipt names its current head and base and retains the original run as
+`reusedFrom` provenance. Failed, malformed and incompatible records are not reused,
+and local records cannot supply remote evidence.
 
 ## Checks
 
@@ -36,15 +119,35 @@ See the [workflow](../.github/workflows/ci.yml) for the exact job inputs.
 
 `crw-dev ci local` (and `make ci-local`) runs every job and step of
 [the workflow](../.github/workflows/ci.yml) locally, at the same pinned
-versions, and writes a `verification-record/1`. The record of the integration batch is the evidence, and the hosted run is optional: it runs only when started with
-`workflow_dispatch`.
+versions, and writes a `verification-record/1`. This is the execution path when
+`verifier.kind` is `local`. GitHub mode instead obtains that evidence through
+`workflow_dispatch`, as described in [Choosing the verifier](#choosing-the-verifier).
 
 Independent jobs and matrix legs run concurrently. `-jobs N` bounds the number in flight;
-`-jobs 1` runs them serially. The default (`-jobs 0`) is the CPU count divided by
+`-jobs 1` runs them serially. The default (`-jobs 0`) is the selected CPU budget divided by
 `-parallel` (Go package parallelism, default 4), rounded down with a minimum of one:
-20 CPUs select five jobs. Steps within a job remain sequential. The aggregate `dev-gate`
+the default four-core budget selects one job, and eight cores select two. An explicit job
+count is capped to the budget. Steps within a job remain sequential. The aggregate `dev-gate`
 waits for every preceding job, including failed jobs. Output and record entries stay in
 workflow order, with each job's output kept together.
+
+### The CPU budget
+
+One verification runs inside one CPU budget: `--cpus N`, default 4 or `CRW_CI_CPUS` (an
+explicit `--cpus` wins over the environment; the value must be positive). On Linux the
+whole verifier re-executes inside a `systemd-run --user --scope` cgroup whose
+`CPUQuota=<N>00%` bounds every descendant — all jobs and steps share the single scope,
+never one quota per job, and descendant Go processes read it themselves. A launcher that
+cannot start the scope (no user manager, no systemd-run) falls back to the Go settings:
+each job gets a per-job `GOMAXPROCS` share of the budget and the resolved `-parallel`
+(clamped to that share), an approximation of the limit, not a kernel cap over arbitrary
+native programs. A child verifier that already entered and then fails reports its own
+status and is never retried. The budget seals the step environment: neither the caller's
+nor a step's own `GOMAXPROCS`/`GOFLAGS`/`GODEBUG` can widen it. The record's `cpu` names
+the limit, the method (`systemd-cgroup-v2` or `gomaxprocs`), the job count and the
+parallelism the budget resolved to; a record made under a different budget — or a legacy
+record with none — is not reused. This bounds one verification; it is not a host-wide
+verification queue.
 
 The run makes **clean worktrees** of the commit being verified under the work root (the XDG state directory, or --work-root)
 (`git worktree add --detach`), with `HOME` and the XDG directories pointed into a
@@ -118,7 +221,9 @@ empty when it was unset), `tmpDir` and `home` (the run's own temporary and home 
 Multiple jobs use separate children of these roots; a single-job plan uses the roots directly.
 These are paths,
 written as they are. A failed checkout's record carries it too. It is absent from every record written before it, which a
-reader takes as unknown, and it is not a reuse key: a reused record keeps the `runEnv` of the run that verified it. `digest` is the sha256 of the
+reader takes as unknown, and it is not a reuse key: a reused record keeps the `runEnv` of the run that verified it. `cpu` (CRW-1591, additive) names the budget
+the steps ran under — `limit`, `method`, `jobs`, `parallel`, and the per-job `gomaxprocs` under the fallback;
+absent means a legacy or unbudgeted run, which a budgeted run's record cannot answer and vice versa. `digest` is the sha256 of the
 canonical serialization: the record as JSON with its keys sorted, no indentation and no HTML
 escaping, and the `digest` member removed. A tool whose observed version differs from its
 pin is named in `pinMismatch`, and such a record is never reused.
@@ -200,7 +305,7 @@ The verifier finds sealed PASS records in
 `<git-common-dir>/crw-ci/<tree>/<rules-key>/<record-digest>.json`, shared across linked worktrees.
 `--reuse <record>` supplies a preferred candidate; `--fresh` disables reuse and still publishes a
 new pass. The tree, command/plan digest, ci.yml, tools and pins, dependency digests, platform,
-GOFLAGS, GOENV, heavy gate and verifier identity must match. Every candidate still faces the
+GOFLAGS, GOENV, heavy gate, CPU budget and verifier identity must match. Every candidate still faces the
 record digest, plan structure and recomputed pin checks above. Failed records are never cached
 or reused. An unavailable cache falls back to execution without choosing another storage location.
 
@@ -244,11 +349,11 @@ shared checkout is the operator's to install.
 
 ## The workflow
 
-`ci.yml` starts only on `workflow_dispatch`: a person asks for the full hosted
-verification of a commit. Integration no longer runs through a hosted event, so a
-dispatch run is a developer's remote check and never integration or release
-evidence. The job bodies are the ones `crw-dev ci local` runs locally (the local full
-verification CRW-964 adds), so a dispatch exercises the same checks.
+`ci.yml` starts only on `workflow_dispatch`: a person or the configured GitHub
+verifier requests the full hosted verification of a commit. In GitHub mode the
+verifier binds that run to the requested head and writes the integration receipt.
+The release workflow still verifies the SHA it publishes itself. The job bodies are
+the ones `crw-dev ci local` runs locally, so a dispatch exercises the same checks.
 
 Two jobs gate themselves on changed paths. `skill-scripts-node` runs the skills' Node
 tests only when a path under `plugins/crw/skills` changed, and ends successfully without installing Node when

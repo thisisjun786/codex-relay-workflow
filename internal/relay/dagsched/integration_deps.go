@@ -42,8 +42,10 @@ func CommandVerifierEnv(argv []string, base func() []string) IntegrationBatchVer
 			}
 		}
 		cmd.Env = append(cmd.Env, env...)
-		var stderr bytes.Buffer
-		cmd.Stderr = &stderr
+		// both streams go to one bounded tail (os/exec serializes the shared writer), so a failure's error carries the
+		// tail of stdout and stderr (CRW-1595)
+		tail := &integrationOutputTail{}
+		cmd.Stdout, cmd.Stderr = tail, tail
 		// the command leads its own group, so a cancel ends everything it started (CRW-1573), not only its first process
 		execgroup.Bind(cmd, execgroup.KillGrace)
 		if err := cmd.Run(); err != nil {
@@ -56,7 +58,7 @@ func CommandVerifierEnv(argv []string, base func() []string) IntegrationBatchVer
 				// the command never ran: a host failure, not a verification result
 				return &IntegrationVerifierHostError{Detail: fmt.Sprintf("the verification command could not start: %v", err)}
 			}
-			return fmt.Errorf("the verification command failed: %v: %s", err, strings.TrimSpace(stderr.String()))
+			return fmt.Errorf("the verification command failed: %v: %s", err, strings.TrimSpace(tail.String()))
 		}
 		return nil
 	}
@@ -66,6 +68,11 @@ func CommandVerifierEnv(argv []string, base func() []string) IntegrationBatchVer
 // oldCommit creates the branch and refuses when it already exists, so a ref that moved under the batch fails the update instead of
 // being overwritten.
 func UpdateIntegrationRef(ctx context.Context, checkout, ref, newCommit, oldCommit string) error {
+	// a branch a worktree has checked out never moves (CRW-1595): git's own update-ref would move it and leave the
+	// worktree's files and index on the old head
+	if err := checkIntegrationCheckout(ctx, checkout, ref); err != nil {
+		return err
+	}
 	cmd := exec.CommandContext(ctx, "git", "-C", checkout, "update-ref", "refs/heads/"+ref, newCommit, oldCommit)
 	// inherited GIT_* variables would redirect the write to another repository (finding d4)
 	for _, kv := range os.Environ() {

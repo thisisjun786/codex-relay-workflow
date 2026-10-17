@@ -30,6 +30,7 @@ const Usage = `usage: crw flow start WORKFLOW [--args JSON | --args-file FILE] [
        crw flow recover [--run RUN] CALL (--adopt THREAD|TURN | --absent)
        crw flow status-line --thread T
        crw flow digest RUN [--out FILE]
+       crw flow verify [--checkout DIR] [--head SHA] [--base SHA] [--record FILE] [--label LABEL]
        crw flow audit (--run RUN | --acceptance ID) [--milestone M] [--json] [--no-record]
        crw flow report-up --kind project_blocked|project_decision_request|jun_decision_request --run RUN --evidence FILE [--subject TEXT] [--question ESC]
        crw flow reports [--initiative I] [--unread] [--json] [--project P]
@@ -42,7 +43,7 @@ const Usage = `usage: crw flow start WORKFLOW [--args JSON | --args-file FILE] [
 // session run's steps (next.go). audit is `crw flow audit` (audit.go); the reach-up
 // commands of Commands (report.go) run over an Environment (RunEnv).
 var commands = map[string]bool{"start": true, "ps": true, "show": true, "watch": true, "answer": true, "pause": true, "cancel": true,
-	"status-line": true, "digest": true, "resume": true, "recover": true, "audit": true, ProcessCommand: true, "next": true, "dispatched": true,
+	"status-line": true, "digest": true, "resume": true, "recover": true, "audit": true, ProcessCommand: true, "next": true, "dispatched": true, "verify": true,
 	"report-up": true, "reports": true, "report-ack": true, "report-delivered": true, "cleanup-worktrees": true}
 
 // Commands are the `crw flow` commands that work on the relay store's flow rows over an Environment: report-up, reports, report-ack
@@ -114,6 +115,8 @@ func RunWith(ctx context.Context, d *Deps, args []string, stdin io.Reader, stdou
 		return c.statusLine(args[1:])
 	case "digest":
 		return c.digest(args[1:])
+	case "verify":
+		return c.verify(args[1:])
 	case "resume":
 		return c.resume(args[1:])
 	case "recover":

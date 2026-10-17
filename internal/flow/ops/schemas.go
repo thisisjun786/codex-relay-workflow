@@ -130,12 +130,29 @@ func resolvedSchema(name string) (*jsonschema.Resolved, error) {
 	return r, nil
 }
 
+// storedVerdictSchema reads the empty impact older reviews recorded without
+// widening the output schema given to a new reviewer.
+var storedVerdictSchema = sync.OnceValues(func() (*jsonschema.Resolved, error) {
+	var sch jsonschema.Schema
+	if err := json.Unmarshal([]byte(schemaTexts[SchemaVerdict]), &sch); err != nil {
+		return nil, err
+	}
+	impact := sch.Properties["defects"].Items.Properties["impact"]
+	impact.Enum = append(impact.Enum, "")
+	return sch.Resolve(nil)
+})
+
 // Validate checks an answer against the schema of that name: one JSON document that satisfies it.
 func Validate(name string, raw []byte) error {
 	r, err := resolvedSchema(name)
 	if err != nil {
 		return err
 	}
+	return validateSchema(name, raw, r)
+}
+
+// validateSchema is Validate against an already resolved schema.
+func validateSchema(name string, raw []byte, r *jsonschema.Resolved) error {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	var v any
 	if err := dec.Decode(&v); err != nil {
@@ -210,14 +227,22 @@ func checkDefects(what string, defects []Defect) error {
 	return nil
 }
 
-// DecodeVerdict reads a VERDICT. A verified verdict names no defect that blocks (premerge.Blocks: P0 to P2, or an impact other than
+// DecodeVerdict reads a VERDICT. Stored empty impacts remain empty and follow premerge.Blocks; new answers still use the strict
+// producer schema. A verified verdict names no defect that blocks (premerge.Blocks: P0 to P2, or an impact other than
 // minor_separable) and no criterion that is not met: those are the findings a premerge record needs a disposition for, and the
 // default disposition is blocking (only the orchestrator separates or carries one), so a reviewer that says verified over one does
 // not say what its own record says.
 func DecodeVerdict(raw []byte) (ReviewVerdict, error) {
-	v, err := decode[ReviewVerdict](SchemaVerdict, raw)
+	var v ReviewVerdict
+	sch, err := storedVerdictSchema()
 	if err != nil {
+		return v, fmt.Errorf("%s: %w", SchemaVerdict, err)
+	}
+	if err := validateSchema(SchemaVerdict, raw, sch); err != nil {
 		return v, err
+	}
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return v, fmt.Errorf("%s: %w", SchemaVerdict, err)
 	}
 	return v, v.check("VERDICT")
 }

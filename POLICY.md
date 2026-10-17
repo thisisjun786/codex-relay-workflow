@@ -19,10 +19,10 @@ another task's history or discard dirty work.
 
 Internal work integrates by one integrator. The integrator prepares the candidate,
 merges it into a local integration tree over the current `dev`, obtains the
-repository's local full verification, a `verification-record/1` with `result: pass`
-for that merged tree, and fast-forwards `dev` to it. A pull request, a hosted gate,
+repository's configured verification, a `verification-record/1` with `result: pass`
+for that merged tree, and fast-forwards `dev` to it. A pull request, a PR status check,
 a human approval and an external bot review are not integration conditions.
-Independent review, the pre-merge evaluation, the local full verification and the
+Independent review, the pre-merge evaluation, the configured full verification and the
 pre-push secret scan are kept, and a candidate whose verification fails does not land.
 
 External contributions may still arrive as pull requests against `dev`. The
@@ -64,22 +64,24 @@ state that separately from installation and successful live operation.
 
 ## Verification
 
-Local full verification is the primary route: `crw-dev ci local` runs every job and
-step of `.github/workflows/ci.yml` locally, in a clean worktree of the commit being
-verified, and writes a `verification-record/1`. The record is evidence about that
-tree only; it names the commit, the tree, the pinned tools, the dependency digests,
-the OS and the architecture, and its `result` is a pass only when every step
-succeeded. See [CI operation](docs/CI.md).
+The configured verifier produces the integration evidence. `verifier.kind: local`
+is the default and runs `crw-dev ci local` in a clean worktree.
+`verifier.kind: github-actions` dispatches the configured workflow for the exact
+head after a pre-push secret scan and waits for its job results. Both produce a
+`verification-record/1` bound to the tree and verification rules. The node,
+integration and milestone-close paths use the same selection. See
+[Choosing the verifier](docs/CI.md#choosing-the-verifier).
 
-GitHub Actions is an optional remote run. `.github/workflows/ci.yml` starts only on a
-manual `workflow_dispatch` and runs the same jobs, so a developer can ask for the full
-hosted verification of a commit; it is not integration or release evidence, because
-integration no longer runs through a hosted event. The release workflow verifies the
-SHA it will publish itself, inside the workflow.
+GitHub Actions starts through `workflow_dispatch`. Its receipt records the run URL,
+head, workflow, jobs and any failed-job retry; a passing configured GitHub receipt
+is integration evidence. A reused tree receipt retains the original run provenance
+and refreshes the current commit-range scan. Remote branches are retained.
+The release workflow verifies the SHA it will publish itself, inside the workflow;
+passing either verifier does not authorize a release.
 
 | Evidence | What it establishes |
 | --- | --- |
-| `verification-record/1` from `crw-dev ci local` | Every job and step of `ci.yml` ran and succeeded on the verified tree, with the pinned tools |
+| `verification-record/1` from the configured local or GitHub Actions verifier | The required verification passed for the tree and rules named in the receipt, with current range evidence and any reuse or retry recorded |
 | Skill metadata, local links and no Python outside skill assets | Repository structure, and that Python sits only in skill assets, so the runtime, installer and CI do not depend on it |
 | Large-blob guard: no blob over 2 MiB that a commit brings into the history, unless `.large-blob-allowlist.json` names it | No oversized file enters the public `dev` history, which cannot drop it afterwards |
 | Installer and skill-linker tests in temporary destinations (Go) | Idempotence and preservation of conflicting files, directories and links |
@@ -204,7 +206,7 @@ with wording or invented issue ids.
 ### Integration
 
 Preparation and review run in parallel. The integrator takes the prepared changes, merges them
-into one integration tree over the current `dev`, verifies that tree with the local full
+into one integration tree over the current `dev`, verifies that tree with the configured full
 verification, and fast-forwards `dev` to it. A risky or urgent change goes alone. A failure
 removes or fixes the cause and what depends on it and re-verifies the changed tree; when the
 destination moves, only the invalidated evidence is refreshed.
@@ -247,7 +249,7 @@ dispositions are kept. Quantitative proof of the effect is not a condition for p
 
 ### Unchanged
 
-No force push and no unverified integration. The candidate's local full verification and the
+No force push and no unverified integration. The candidate's configured full verification and the
 release workflow's own verification of the published SHA stay separate.
 
 ## Activation

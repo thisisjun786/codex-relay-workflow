@@ -21,6 +21,12 @@ import (
 var crwDev string
 
 func TestMain(m *testing.M) {
+	// CRW-1591: the CPU-budget helpers run this binary as a step's command and as the
+	// verifier itself; dispatch before the harness rewrites HOME and friends, so a helper
+	// observes its true process environment.
+	if os.Getenv("CRW_TEST_CPU_HELPER") != "" {
+		os.Exit(crw1591TestCommand())
+	}
 	if os.Getenv("CRW_TEST_REUSE_HELPER") == "1" {
 		os.Exit(crw1590Command())
 	}

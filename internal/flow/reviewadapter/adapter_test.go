@@ -1143,6 +1143,92 @@ func TestBugbotCommittedReaderTakesOnlyTheRequestedRange(t *testing.T) {
 	})
 }
 
+// TestBugbotReadsNegatedPartialStatements (CRW-1505): a whole sentence that denies the omissions the partial-review wordings name
+// ("No files were skipped.", "nothing was dropped") is no report of a partial review: the wordings are read sentence by sentence,
+// and a sentence the denial covers is passed by, while a denial inside a bigger sentence ("I cannot say that no files were
+// skipped."), a qualified one ("no files were skipped except ...") and a sentence that is itself partial still read partial. The
+// committed-mode reader reads them the same, and a findings table keeps its findings.
+func TestBugbotReadsNegatedPartialStatements(t *testing.T) {
+	clean := []string{
+		"No files were skipped.",
+		"No findings were removed.",
+		"No findings were dropped.",
+		"No findings were omitted.",
+		"No findings were removed, dropped, or omitted.",
+		"Nothing was skipped.",
+		"None of the changed files were skipped.",
+		"The files were not skipped.",
+		"Findings have not been dropped.",
+		"Bugbot did not skip any files.",
+		"The validator didn't remove any findings.",
+		`The review was not "not clean".`,
+		"NO FILES WERE SKIPPED.\nNo findings were dropped.",
+		"No files were\nskipped.",
+		"No findings were removed,\ndropped, or omitted.",
+	}
+	for _, text := range clean {
+		t.Run("uncommitted clean: "+text, func(t *testing.T) {
+			res := check(t, BugbotProfile(), fakeRun{stdout: bugbotEnvelope(t, text+"Bugbot found no bugs.")})
+			wantState(t, res, StateOK)
+			if res.Verdict != VerdictVerified || len(res.Findings) != 0 {
+				t.Fatalf("result = %+v", res)
+			}
+		})
+	}
+	const base, head = "1111111aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "2222222bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	committed := BugbotCommittedProfile()
+	cleanRange := "Bugbot found no bugs in the changes between 1111111 and 2222222."
+	for _, text := range clean {
+		t.Run("committed clean: "+text, func(t *testing.T) {
+			res := checkRange(t, committed, base, head, fakeRun{stdout: bugbotEnvelope(t, text+cleanRange)})
+			wantState(t, res, StateOK)
+			if res.Verdict != VerdictVerified || len(res.Findings) != 0 {
+				t.Fatalf("result = %+v", res)
+			}
+		})
+	}
+	t.Run("a denial after a findings table keeps the finding", func(t *testing.T) {
+		text := "Bugbot found 1 finding in the changes between 1111111 and 2222222.\n\n" +
+			"| Severity | Location (file:line) | Finding |\n| --- | --- | --- |\n" +
+			"| nit | internal/quote/quote.go:12 | The helper name does not say what it returns. |\n\n" +
+			"No files were skipped."
+		res := checkRange(t, committed, base, head, fakeRun{stdout: bugbotEnvelope(t, text)})
+		wantState(t, res, StateOK)
+		if res.Verdict != VerdictVerified || len(res.Findings) != 1 || res.Findings[0].Impact != "minor_separable" {
+			t.Fatalf("result = %+v, want verified with one minor_separable finding", res)
+		}
+	})
+	partial := []string{
+		"No files were skipped. One finding was dropped.",
+		"No findings were dropped; some files were skipped.",
+		"No files were skipped except the generated files.",
+		"No files were skipped unless they were too large.",
+		"I cannot say that no files were skipped.",
+		"The review was not clean.",
+		"No files were not skipped.",
+		"Not all files were checked; some files were not reviewed.",
+		"No files were skipped\nexcept the generated files.",
+		"No files were skipped\r\nunless they were too large.",
+		"No files were skipped?",
+	}
+	for _, text := range partial {
+		t.Run("uncommitted not whole: "+text, func(t *testing.T) {
+			res := check(t, BugbotProfile(), fakeRun{stdout: bugbotEnvelope(t, text+"Bugbot found no bugs.")})
+			wantState(t, res, StateInvalid)
+			if !strings.Contains(res.Detail, "not whole") {
+				t.Fatalf("detail = %q, want not whole", res.Detail)
+			}
+		})
+		t.Run("committed not whole: "+text, func(t *testing.T) {
+			res := checkRange(t, committed, base, head, fakeRun{stdout: bugbotEnvelope(t, text+cleanRange)})
+			wantState(t, res, StateInvalid)
+			if !strings.Contains(res.Detail, "not whole") {
+				t.Fatalf("detail = %q, want not whole", res.Detail)
+			}
+		})
+	}
+}
+
 // TestMergeFindingsKeepsTheHigherSeverityAndTheBlockingImpact: MergeFindings merges the findings of several lists (the two passes of
 // a crosscheck round) into one finding per id: the first copy's file, line and text, the higher severity, and a blocking impact over
 // a non-blocking or empty one, whichever list holds which copy. Findings of other ids keep their order, and the inputs are not changed.

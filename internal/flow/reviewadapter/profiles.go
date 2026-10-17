@@ -134,6 +134,38 @@ var bugbotPartial = regexp.MustCompile(`\b(` + strings.Join([]string{
 	`not clean`, `removed`, `dropped`, `omitted`,
 }, "|") + `)\b`)
 
+// bugbotDenial recognizes complete statements denying omissions. Matching a whole
+// sentence keeps qualifications such as "except ..." and unrelated negations from
+// hiding an affirmative report of an incomplete review.
+var bugbotDenial = func() *regexp.Regexp {
+	omitted := `(?:skipped|removed|dropped|omitted)`
+	omissions := omitted + `(?:\s*(?:,\s*(?:(?:or|and)\s+)?|(?:or|and)\s+)` + omitted + `)*`
+	things := `(?:changed |uncommitted |modified )?(?:files?|findings?|issues?|bugs?)`
+	passive := `(?:was|were|is|are|has been|have been)`
+	return regexp.MustCompile(`^(?:` + strings.Join([]string{
+		`(?:no ` + things + `|nothing|none of the ` + things + `)(?: ` + passive + `)? ` + omissions,
+		`(?:the )?` + things + ` (?:` + passive + ` (?:not|never)|(?:has|have) (?:not|never) been) ` + omissions,
+		`(?:i|we|bugbot|the reviewer|the validator) (?:did not|didn['’]t) (?:skip|remove|drop|omit) (?:any )?` + things,
+		`(?:the review|it) (?:is|was) not ["'“‘]?not clean["'”’]?`,
+	}, "|") + `)$`)
+}()
+
+func bugbotPartialReason(prose string) string {
+	for _, sentence := range strings.FieldsFunc(strings.ToLower(prose), func(r rune) bool {
+		return r == '.' || r == ';' || r == '!'
+	}) {
+		// A line break can wrap a qualification, and a question is not a denial.
+		sentence = strings.Join(strings.Fields(sentence), " ")
+		if bugbotDenial.MatchString(sentence) {
+			continue
+		}
+		if word := bugbotPartial.FindString(sentence); word != "" {
+			return word
+		}
+	}
+	return ""
+}
+
 // bugbotAnswer is the answer reader of a Bugbot profile whose scope is scope: it reads cursor-agent's envelope and turns its result
 // prose into a document of AnswerSchema. A blank result is a blank answer. Prose outside the findings tables that names a scope the
 // profile refuses (scope.wrong) is not an answer, and a clean sentence takes only the profile's scope phrases (scope.phrase). A ranged
@@ -172,7 +204,7 @@ func readBugbot(stdout []byte, scope bugbotScope, req Request) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if w := bugbotPartial.FindString(strings.ToLower(prose)); w != "" {
+	if w := bugbotPartialReason(prose); w != "" {
 		return nil, fmt.Errorf("the review was not whole (%q): %s", w, firstLine([]byte(prose)))
 	}
 	if scope.wrong != nil {

@@ -221,11 +221,20 @@ func TestMilestoneCloseRerunsAfterLaneSuffix(t *testing.T) {
 			ranLive = append(ranLive, live{ev.Op, ev.Path})
 		}
 	}
+	// the trace now includes the lane's native bundle check, a no-op (not_required) for this direct-landing plan
 	want := []live{{"crw.integrate", lostPath}, {"crw.finalGate", "root"}, {"crw.verify", "root"}, {"crw.finalGate", "root"}, {"crw.crosscheck", "root"},
 		{"crw.milestoneClose", "root"}, {"crw.currentDesign", "root"}, {"crw.spawnDecision", "root"}, {"crw.reflection", "root"},
-		{"crw.replanSignals", "root"}, {"crw.audit", "root"}, {"crw.reportUp", "root"}, {"crw.spawnDecision", "root"}}
+		{"crw.replanSignals", "root"}, {"crw.audit", "root"}, {"crw.reportUp", "root"}, {"crw.spawnDecision", "root"}, {"crw.prOpen", "root"}}
 	if !slices.Equal(ranLive, want) {
 		t.Errorf("live operations %v, want %v", ranLive, want)
+	}
+	for _, ev := range rowsAfter(l, before) {
+		if ev.Kind == engine.KindCall && ev.Event == engine.EvCompleted && ev.Op == ops.OpPROpen && str(ev.Data, "state") != "not_required" {
+			t.Errorf("direct landing attempted a pull request: %v", ev.Data)
+		}
+		if ev.Kind == engine.KindCall && ev.Event == engine.EvCompleted && ev.Op == ops.OpMergeRequest {
+			t.Errorf("direct landing requested a pull request merge: %v", ev.Data)
+		}
 	}
 	if agents := turnsSince(l, before); len(agents) != 1 || labelOf(l, agents[0].call) != "reflection:M1" {
 		t.Errorf("live agent turns %+v, want the reflection on the new head only", agents)
@@ -367,9 +376,18 @@ func TestMilestoneCloseRunsAgainWhenTheTargetMovedOn(t *testing.T) {
 			live = append(live, ev.Op)
 		}
 	}
+	// the trace now includes the lane's native bundle check, a no-op (not_required) for this direct-landing plan
 	if !slices.Equal(live, []string{"crw.finalGate", "crw.verify", "crw.finalGate", "crw.crosscheck", "crw.milestoneClose", "crw.currentDesign", "crw.spawnDecision", "crw.reflection",
-		"crw.replanSignals", "crw.audit", "crw.reportUp", "crw.spawnDecision"}) {
+		"crw.replanSignals", "crw.audit", "crw.reportUp", "crw.spawnDecision", "crw.prOpen"}) {
 		t.Errorf("live operations %v", live)
+	}
+	for _, ev := range rowsAfter(l, before) {
+		if ev.Kind == engine.KindCall && ev.Event == engine.EvCompleted && ev.Op == ops.OpPROpen && str(ev.Data, "state") != "not_required" {
+			t.Errorf("direct landing attempted a pull request: %v", ev.Data)
+		}
+		if ev.Kind == engine.KindCall && ev.Event == engine.EvCompleted && ev.Op == ops.OpMergeRequest {
+			t.Errorf("direct landing requested a pull request merge: %v", ev.Data)
+		}
 	}
 	if turns := turnsSince(l, before); len(turns) != 1 || labelOf(l, turns[0].call) != "reflection:M1" {
 		t.Errorf("live agent turns %+v, want the reflection on the new head only", turns)

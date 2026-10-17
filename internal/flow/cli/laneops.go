@@ -28,6 +28,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/role"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/buildinfo"
 	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tracking"
 )
 
 // The operations of the project lane as the shipped binary installs them (CRW-1277 h): cmd/crw/main.go assigns SchedulerLane to OpsFor,
@@ -84,6 +85,12 @@ type LaneOptions struct {
 	// Crosscheck is what crw.crosscheck runs a milestone's crosscheck with (CRW-1473); nil is shippedCrosscheck. Its Authors, when nil,
 	// are the author pairs of the run's role table (laneCrosscheck).
 	Crosscheck *ops.Crosscheck
+	// NewPullRequests makes the tracking adapter of a repository for the lane's pull request seams (crw.prOpen, crw.mergeRequest);
+	// nil is publication.NewGitHub. It is invoked lazily: a direct plan never builds an adapter.
+	NewPullRequests func(string) (tracking.PullRequests, error)
+	// PRRepository overrides the tracking repository a bundle's pull request lives in (tests); "" reads the configuration's
+	// tracking section lazily.
+	PRRepository string
 }
 
 // SchedulerLane is the OpsFor of the shipped binary.
@@ -131,7 +138,7 @@ func BuildLane(ctx context.Context, req LaneRequest, opt LaneOptions) (LaneWorld
 	}
 	verify := opt.IntegrationVerify
 	if verify == nil {
-		verify = CILocalIntegration(tools, os.Stderr)
+		verify = ConfiguredIntegration(tools, os.Stderr)
 	}
 	sched := &dagsched.Scheduler{Store: req.Store, Tips: mergeturn.TargetReader{}, Ancestry: dagsched.GitAncestry{}.Ancestry}
 	if opt.Now != nil {
@@ -149,8 +156,9 @@ func BuildLane(ctx context.Context, req LaneRequest, opt LaneOptions) (LaneWorld
 		Verifier: dagsched.VerifierRule{SkillsDigest: skills, Model: review.Model, Effort: review.Effort}}
 	verifier := opt.Verifier
 	if verifier == nil {
-		verifier = ops.CILocalVerifier{Tools: tools}
-		// the shipped verifier runs crw-dev ci local only: a milestone that requires another command is refused before the run starts
+		verifier = ops.NewVerifier(tools)
+		// the shipped verifier runs the repository's CI command only — the configured kind's own
+		// implementation: a milestone that requires another command is refused before the run starts
 		// (CheckHandoff) and again when the run reads it
 		relay.RunnableCommand = ShippedRunnableCommand
 	}
@@ -171,8 +179,10 @@ func BuildLane(ctx context.Context, req LaneRequest, opt LaneOptions) (LaneWorld
 			return LaneWorld{}, err
 		}
 	}
+	prReader, prTarget, prOpen := lanePRSeams(relay, req, opt, spec)
 	lane := ops.NewLane(ops.Deps{RunID: spec.RunID, Repo: req.Repo, Journal: journal, Relay: seam, Verifier: verifier, Decisions: ops.StoreDecisions{DB: req.Store.DB},
-		Threads: req.Threads, Reporter: reporter, Actor: spec.Thread, LandRoot: RunDir(req.State, spec.RunID), UnitCheck: unitCheck,
+		Threads: req.Threads, Reporter: reporter, Actor: spec.Thread, LandRoot: RunDir(req.State, spec.RunID), UnitCheck: unitCheck, PullRequests: prReader,
+		PRTarget: prTarget, PROpen: prOpen,
 		DesignHistory: func(ctx context.Context, plan string) ([]ops.DesignRun, error) {
 			return designHistory(ctx, req.Store, req.State, req.Repo, spec.RunID, plan)
 		},

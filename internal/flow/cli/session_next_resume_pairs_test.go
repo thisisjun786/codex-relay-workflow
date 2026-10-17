@@ -122,6 +122,14 @@ func standInProcess(t *testing.T, w *world, run string, table *engine.Policy, de
 	return done
 }
 
+func waitForStandInProcess(done <-chan struct{}) error {
+	if done == nil {
+		return errors.New("next did not spawn a stand-in process")
+	}
+	<-done
+	return nil
+}
+
 // ownerLines counts the lines of the owner thread's flow-bound file.
 func ownerLines(t *testing.T, thread string) int {
 	t.Helper()
@@ -177,7 +185,9 @@ func TestNextThatResumesARunTakesThePairsTheResumedProcessPinned(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("next: %d %s %s", code, out, errOut)
 	}
-	<-processBound
+	if err := waitForStandInProcess(processBound); err != nil {
+		t.Fatalf("%v: %s %s", err, out, errOut)
+	}
 	ans := decodeNext(t, out)
 	if ans.Resumed == 0 {
 		t.Fatalf("next did not resume the run: %+v", ans)
@@ -228,7 +238,9 @@ func TestNextThatResumesARunTakesTheRoleStoreTheResumeReads(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("next: %d %s %s", code, out, errOut)
 	}
-	<-processBound
+	if err := waitForStandInProcess(processBound); err != nil {
+		t.Fatalf("%v: %s %s", err, out, errOut)
+	}
 	ans := decodeNext(t, out)
 	if ans.Resumed == 0 {
 		t.Fatalf("next did not resume the run: %+v", ans)
@@ -366,5 +378,51 @@ func TestAStandInProcessIsOverWhenItsTestIsOver(t *testing.T) {
 	case <-done:
 	default:
 		t.Fatal("the stand-in is still running after its test ended")
+	}
+}
+
+func TestStandInWaitFailsWhenNextReturnsWithoutSpawn(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	w := newWorld(t)
+	td := w.deps()
+	run := "run-0123456789b9"
+	deadPinnedRun(t, w, run)
+	spec, err := ReadSpec(w.state, run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec.Env = map[string]string{"TMPDIR": filepath.Join(w.tmp, "missing")}
+	if err := os.Remove(filepath.Join(RunDir(w.state, run), "run.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteSpec(w.state, spec); err != nil {
+		t.Fatal(err)
+	}
+	spawn := td.Spawn
+	var processBound <-chan struct{}
+	td.Spawn = func(ctx context.Context, req SpawnRequest) (int, error) {
+		processBound = standInProcess(t, w, run, engine.FakePolicy(), 0, false)
+		return spawn(ctx, req)
+	}
+	code, out, errOut := td.do("next", run, "--json", "--state", w.state)
+	if code != 0 {
+		t.Fatalf("next: %d %s %s", code, out, errOut)
+	}
+	ans := decodeNext(t, out)
+	if ans.Resumed != 0 || len(td.spawned) != 0 || processBound != nil {
+		t.Fatalf("next spawned with an unusable recorded TMPDIR: %+v", ans)
+	}
+	if len(ans.Warnings) != 1 || !strings.Contains(ans.Warnings[0], "recorded TMPDIR") {
+		t.Fatalf("next did not report the pre-spawn refusal: %+v", ans)
+	}
+	finished := make(chan error, 1)
+	go func() { finished <- waitForStandInProcess(processBound) }()
+	select {
+	case err := <-finished:
+		if err == nil || err.Error() != "next did not spawn a stand-in process" {
+			t.Fatalf("stand-in wait = %v; want the missing-spawn failure", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("stand-in wait blocked after next returned without Spawn")
 	}
 }

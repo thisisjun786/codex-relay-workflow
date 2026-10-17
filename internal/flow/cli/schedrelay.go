@@ -833,6 +833,10 @@ func (r *SchedRelay) Integrate(ctx context.Context, req ops.IntegrateRequest) (o
 		for _, sp := range res.Split {
 			if sp.NodeID == req.Node && !out.Landed {
 				out.Reason, out.Detail = sp.Reason, fmt.Sprintf("the batch %s left %s out: %s", res.BatchID, req.Node, sp.Reason)
+				if sp.Detail != "" {
+					// the split carries the bounded diagnostic of the candidate's own failing verification (CRW-1595)
+					out.Detail += ": " + sp.Detail
+				}
 			}
 		}
 		if !out.Landed {

@@ -44,7 +44,7 @@ go run -tags dev ./cmd/crw-dev ci contracts
 git diff --check
 ```
 
-The full local verification is one command:
+When using the local verifier, full verification is one command:
 
 ```sh
 go run -tags dev ./cmd/crw-dev ci local
@@ -86,10 +86,10 @@ scanner setup and the difference between offline checks and live proof.
 
 A contribution is proposed as an ordinary PR against `dev`, and that is the route an
 external contributor uses. The maintainer reads it, verifies the tree it delivers with
-the local full verification (`crw-dev ci local`, a `verification-record/1` PASS), and
-fast-forwards `dev` to the verified tree. Integration does not wait on a hosted event:
-`.github/workflows/ci.yml` starts only on a manual `workflow_dispatch`, and the integrator
-runs the same checks locally. Include exact checks and their results, and identify
+the configured verifier (`local` or `github-actions`, a `verification-record/1` PASS), and
+fast-forwards `dev` to the verified tree. The local verifier runs the checks locally;
+GitHub mode dispatches the workflow for the exact head and waits for its job results.
+See [Choosing the verifier](docs/CI.md#choosing-the-verifier). Include exact checks and their results, and identify
 untested behavior. An absent check is not a pass.
 
 The integrator owns the integration and handles review through resolution. A normal

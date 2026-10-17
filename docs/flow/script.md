@@ -533,13 +533,39 @@ before it writes a run, the preview included, and a project without `pr_base` is
 `crw flow pr open --run RUN --push DIR` opens the one pull request from the run's journal: it refuses unless the run closed its milestone
 and the milestone's crosscheck is verified at the close tip, it takes the issues from the milestone's nodes, builds the body from the run,
 refuses a title or body that leaks a host path, the host name or a thread, call or run id, and pushes exactly the crosschecked tip, never
-forced; it reads the crosscheck of the close from the run's `crw.crosscheck` rows (CRW-1442), so a run with no such row is refused with `crosscheck_missing` and the pull request is opened from a text with `--issue` as before. A script of the bundle then calls `crw.mergeRequest(milestone, {pr, review: {bots, unresolved}})` judges that pull request in order (open and not merged, the
-crosscheck verified at its head, its checks green, no unresolved review comment while the review bots are connected) and either answers
-`{state: "refused", reason}` as a result of the op, writing a row of its own (`pr_not_open`, `crosscheck_missing`, `head_moved`,
-`crosscheck_not_accepted`, `checks_failed`, `checks_pending`, `checks_none`, `comments_unresolved`), or hands a merge request to the
-reporter, which asks the parent to merge. The op is not part of the built-in `project-lane`: a script that calls it needs a lane wired with a pull request reader and a reporter that takes merge requests, and the op is a Go error without them. The request goes once per head: a second call at the same head of the same pull request answers
-again with `repeated` and sends nothing, and a head that moved needs a new crosscheck and a new request. The run never merges the pull
-request; the dev queue does.
+forced; it reads the crosscheck of the close from the run's `crw.crosscheck` rows (CRW-1442), so a run with no such row is refused with `crosscheck_missing` and the pull request is opened from a text with `--issue` as before.
+
+The built-in `project-lane` does the same natively for a bundle: after the milestone's close is reported, `crw.prOpen(milestone)`
+proves the closing acceptance from the journal — the latest unsuperseded `crw.milestoneClose` at the live integration tip, its gate
+a `crw.finalGate` pass recorded before it at the same tip, the closing review's verified verdict (or the legacy Final) bound to the
+tip and the milestone, and the `crw.reportUp` of that close — and opens or reuses the pull request the plan's `pr_base` names
+(`crw flow pr open`'s `OpenBundle`): the close's tip pushed once, never forced, an existing pull request at the same head and base
+reused (a resume after the POST finds it by lookup and never opens a second), and the persisted review record refreshed for the
+head. A plan without `pr_base` answers `not_required` and the run ends `closed` as before; a milestone that did not close, a gate
+that is not the close's pass or a report that did not happen answers `refused` (`milestone_not_closed`,
+`final_gate_not_accepted`, `head_moved`) and opens nothing. The lane then calls `crw.mergeRequest(milestone, {pr, review: {record}})`, which judges that pull request in order (open and not merged, the same closing acceptance at its head, its checks green, no unresolved review comment while the review bots are connected) and either answers
+`{state: "refused", reason}` as a result of the op, writing a row of its own (`pr_not_open`, `milestone_not_closed`,
+`final_gate_not_accepted`, `head_moved`, `checks_failed`, `checks_pending`, `checks_none`, `comments_unresolved`), or hands a merge request to the
+reporter, which asks the parent to merge. The request goes once per head: a second call at the same head of the same pull request answers
+again with `repeated` and sends nothing, and a head that moved needs a new close and a new request. The run never merges the pull
+request; the dev queue does. `open --run` stays the standalone path: it reads a *finished* run's journal, while `crw.prOpen` consumes
+the live journal of the run it is in — a run that has not yet produced its finished row uses the native op, not the command.
+
+`crw flow pr comments --pr REF --head SHA --record PATH --bots connected|not_connected --round 1|2`
+collects Devin and Codex comments from the issue, inline-review and review surfaces. Identical findings share an item key;
+`--dispositions FILE` supplies a JSON array of `{key, disposition, reason}`, with `disposition` either `applied` or `rejected`
+and a nonblank reason for each decided item. The `crw-pr-review/1` record retains unresolved items across rounds.
+An unresolved second round answers `round_limit`; a third round is refused. A refresh at the same head can complete that round's
+dispositions, while a changed head needs the next round. With no connected bots and no recorded bot comments,
+the record says `리뷰 봇 미연결`. `mergeRequest` reads this file and binds it to the exact PR head; missing, malformed or
+stale records fail, and caller-supplied `bots` or `unresolved` scalars cannot approve a request.
+
+The parent runs `crw flow pr decide --pr REF --head SHA --release-impact TEXT` against `manage.integrate`.
+It checks the expected head, the remote base tip, successful checks and overlapping earlier pending PRs, without reading diff content.
+An outdated base answers `needs_base`; `--update-base` merges it into the PR head with `--no-ff`, pushes without force while
+checking the advertised old head, and answers `needs_ci`. Overlapping earlier PRs answer `hold_order`.
+An all-green decision records the supplied release impact, posts an idempotent readiness comment and enqueues the pinned head.
+`--record PATH` selects the decision record; the default is `<runs_dir>/decisions/pr-N-SHA.json`.
 
 **Decisions.** `crw.spawnDecision(rule, decision, info)` appends a `flow_spawn_decisions` row for every decision to spawn, do the work
 inline (SP-INL-1), reuse an answer (SP-INL-2), skip, refuse or hand a question to the owner thread; the explorer routing
@@ -1039,7 +1065,7 @@ process finished `completed` with nothing left to go on with is `blocked` when n
 in its last process (`item_error` rows: a lane of `crw.dag` whose `crw.release` failed is one). The engine's status of the run stays
 `completed`. A node the scheduler held back unreleased in the last process (capacity, a region in use: a wait a resume asks again) keeps the
 run `completed`, and so does a node that started. Another script run (a judge panel, a scout) that names no plan never meant to start a
-node: an item of it that threw is shown, and the run stays `completed`.
+node: an item of it that threw is shown, and the run stays `completed`. The run views keep superseded questions as history and do not count them as waiting. Escalations with no ask appear separately from answerable questions; a finished escalated outcome keeps the run held without adding a waiting question. A later completion of the same escalation operation can make its recorded question current again.
 
 The intent rows say what a later process needs to find the request again. `thread_requested` and `fork_requested` carry the
 `cwd` the thread is to run in, the `send` ordinal of the request (1, then one more each time reconcile proved the previous

@@ -29,6 +29,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/storeseed"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tracking"
 )
 
 // The lane lab of CRW-1277: the run process of the shipped binary (ProductionWorld, with the lane operations SchedulerLane builds) over a
@@ -68,6 +69,11 @@ type laneLab struct {
 	killed  bool
 	cancel  context.CancelFunc
 	effects []string
+	// the pull request seams of a bundle's e2e (CRW-1423): prFactory the tracking adapter factory, prRepo the tracking
+	// repository override, mergeRequester the parent's merge-request delivery (nil records nothing).
+	prFactory      func(string) (tracking.PullRequests, error)
+	prRepo         string
+	mergeRequester ops.MergeRequester
 	// verifications counts the verifications of merged trees; processes the run processes the lab ran.
 	verifications int
 	processes     int
@@ -92,6 +98,9 @@ type laneLab struct {
 	// verifyFail, when a test sets it, is asked by labVerifier for every verification request and a true answer fails the
 	// verification of that head (CRW-1490 close repair tests).
 	verifyFail func(req ops.VerifyRequest) bool
+	// mergeVerifyFail, when a test sets it, is the error verifyMerged answers for the integration batch's merged tree
+	// (CRW-1595): the batch's verification fails with it.
+	mergeVerifyFail func(vars map[string]string) error
 	// turn, when a test sets it, is asked first for every turn of the model: a plan it answers with true is the turn's, false leaves
 	// the turn to the happy path below (CRW-1452).
 	turn func(c labCall, r fakehost.TurnRequest) (fakehost.TurnPlan, bool)
@@ -307,7 +316,7 @@ func newLaneLabFor(t *testing.T, owner, target string, issues ...labIssue) *lane
 			t.Errorf("the run's world hands the lane no reporter of F11: %T", req.Reporter)
 		}
 		return BuildLane(ctx, req, LaneOptions{Verifier: labVerifier{l}, IntegrationVerify: l.verifyMerged, SkillsDigest: "sha256:lab-skills", Reporter: &labReporter{l: l},
-			UnitCheck: l.uc.seam(), Crosscheck: l.cc.seam(),
+			UnitCheck: l.uc.seam(), Crosscheck: l.cc.seam(), NewPullRequests: l.prFactory, PRRepository: l.prRepo,
 			Relay: func(r *SchedRelay) ops.Relay {
 				r.testAfterBatch = func() error {
 					l.mu.Lock()
@@ -555,6 +564,17 @@ func (r *labReporter) ReportUp(_ context.Context, rep ops.Report) (string, error
 	return "rep_" + rep.Milestone, nil
 }
 
+// MergeRequest delegates to the mergeRequester a test set; without one the call records nothing (a direct landing never asks).
+func (r *labReporter) MergeRequest(ctx context.Context, mr ops.MergeRequest) (string, error) {
+	r.l.mu.Lock()
+	m := r.l.mergeRequester
+	r.l.mu.Unlock()
+	if m == nil {
+		return "", nil
+	}
+	return m.MergeRequest(ctx, mr)
+}
+
 // ---- the verifications ----
 
 // sealed is the verification-record/1 crw-dev ci local leaves for a commit over a base: the keys of the commit in the repository, sealed.
@@ -608,6 +628,12 @@ func (l *laneLab) verifyMerged(ctx context.Context, dir string, env []string) er
 		if k, v, ok := strings.Cut(kv, "="); ok {
 			vars[k] = v
 		}
+	}
+	l.mu.Lock()
+	fail := l.mergeVerifyFail
+	l.mu.Unlock()
+	if fail != nil {
+		return fail(vars)
 	}
 	raw, err := l.sealed(ctx, dir, vars["CRW_VERIFY_HEAD"], vars["CRW_VERIFY_BASE"])
 	if err != nil {
