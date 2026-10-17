@@ -29,12 +29,30 @@ const (
 // by the start, not by a Prober, and it is listed after the five only when it is not a pass.
 const FactProjectKey = "project_key_bound"
 
+// FactRepository is emitted when the repository for the run's worktrees cannot
+// be resolved. Unlike advisory relay facts, it blocks both start and preview.
+const FactRepository = "repository_available"
+
+// repositoryFact uses the same resolver as the run process. A valid repository
+// adds no fact, preserving the existing preview for starts that can proceed.
+func repositoryFact(ctx context.Context, named string) (string, *Fact) {
+	repo, err := repository(ctx, named)
+	if err == nil {
+		return repo, nil
+	}
+	return "", &Fact{
+		Name: FactRepository, Level: LevelFail, Reading: err.Error(),
+		Reason: "the run needs a Git repository for its worktrees",
+	}
+}
+
 // Facts is the five facts in the order the preview lists them.
 var Facts = []string{FactAssignment, FactDelivery, FactReachable, FactWaits, FactIdleWake}
 
-// Fact is one preflight fact with the level it was judged at, the reading it was judged on and, for a fact that did not pass, the
-// reason of its level. A fact is never a refusal: `crw flow start` prints the facts and records the ones that did not pass in the
-// run's spec, and starts the run (CRW-1318). Pass is Level == pass, kept for the readers of the earlier shape.
+// Fact is one preflight reading with its level and reason. Relay and session
+// facts are advisory: start prints and records non-passing facts (CRW-1318).
+// FactRepository also sets Plan.Blocked and refuses the start (CRW-1613).
+// Pass is Level == pass, kept for readers of the earlier shape.
 type Fact struct {
 	Name    string `json:"name"`
 	Level   string `json:"level"`
@@ -279,7 +297,7 @@ func Dispositions(src Source) []string {
 // BundleBranchProblem says why a bundle's run cannot start ("" when it can). A project whose target names a pr_base is a bundle
 // (CRW-1440): its run integrates on the target's own branch in the target's repository, which `crw flow pr branch` makes, and the
 // pull request is opened against pr_base later. The branch has to be there when the run starts, because the integration lands the
-// nodes on it and never makes it. It is a refusal of the start and not a preflight fact: a fact never stops a start (CRW-1318).
+// nodes on it and never makes it. It is a refusal of the start, separate from the advisory relay preflight facts (CRW-1318).
 // A project without a target or without pr_base is not a bundle and git is not run for it. env is the environment git runs in (nil is
 // the process environment); the routing variables are removed from it, so the check reads the target's repository and no other.
 func BundleBranchProblem(ctx context.Context, env []string, in compile.Input, plan string) string {
