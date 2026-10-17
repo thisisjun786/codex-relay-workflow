@@ -117,7 +117,7 @@ unknown cancellation causes stay unknown. Inspect required checks, not only a gr
 summary or check count. Missing, skipped or cancelled tests are not passing tests.
 Apply the hosted-CI evidence procedure in `crw-dev` §3 (DEV-CI-EVIDENCE-01) to tell
 those states apart before acting on them. When the work is split across parallel Codex
-tasks rather than one stack, the lane manifest and merge handoff in `crw-pabcd`
+tasks rather than one stack, the lane manifest and merge handoff in `crw-work`
 `references/dispatch-surfaces.md` (DISPATCH-LANE-MANIFEST-01, DISPATCH-LANE-MERGE-01)
 own duplicate-ownership detection and landing order. Note also that a `[WRONG BRANCH]`
 verdict can be a repository enforcer rejecting a legitimate parent base: inspect that
@@ -153,7 +153,7 @@ Lanes are prepared by separate Codex tasks, one task per lane, each in its own
 worktree. They are not `spawn_agent` subagents — a subagent runs in the parent's
 own checkout on the parent's branch, so N subagents preparing N lanes means N
 writers on one HEAD. Asking for parallel lane preparation is the user request
-those tasks need. See `crw-pabcd` `references/dispatch-surfaces.md`.
+those tasks need. See `crw-work` `references/dispatch-surfaces.md`.
 
 ### Tip-only CI
 
@@ -265,8 +265,8 @@ Stack when **all** of these hold:
 - the lower parts are mergeable on their own — they do not need the upper parts to be
   correct or safe.
 
-A `crw-pabcd` PHASE-SPLIT-01 map orders implementation dependencies, not GitHub
-features. A phase map or `crw-loop` chain alone selects neither a PR stack nor native
+A `crw-work` PHASE-SPLIT-01 map orders implementation dependencies, not GitHub
+features. A phase map or `crw-continue` chain alone selects neither a PR stack nor native
 registration. Decide whether a manual chain is useful using the criteria above;
 the native feature still requires DEV-STACK-OPT-IN-01.
 
@@ -292,7 +292,7 @@ their own runs. Outside that authorization, every layer keeps its own gate.
 
 **Slice by dependency, never by effort.** "Quick wins first" produces layers whose
 dependency runs opposite to the merge order, so the stack cannot land bottom-up. This is
-`crw-pabcd` PHASE-SPLIT-01 applied to branches.
+`crw-work` PHASE-SPLIT-01 applied to branches.
 
 ## DEV-STACK-02 — Cascading edits (STRICT)
 

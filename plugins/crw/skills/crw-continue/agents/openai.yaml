@@ -1,0 +1,6 @@
+interface:
+  display_name: "crw-continue"
+  short_description: "Scoped completion with explicit authority boundaries."
+  default_prompt: "Use $crw-continue to finish this task within its authorized scope and completion condition; a milestone request goes to crw-run."
+policy:
+  allow_implicit_invocation: true

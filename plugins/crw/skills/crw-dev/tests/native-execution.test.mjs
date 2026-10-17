@@ -43,7 +43,7 @@ async function batch(results, overrides = {}, code) {
 const completed = output => ({ exit_code: 0, output });
 
 test("native owner routes resolve from common entrypoints and peer projection", () => {
-  for (const name of ["crw-dev/SKILL.md", "crw-loop/SKILL.md", "crw-pabcd/SKILL.md", "crw-dev/references/peer-collaboration.md"]) {
+  for (const name of ["crw-dev/SKILL.md", "crw-continue/SKILL.md", "crw-work/SKILL.md", "crw-dev/references/peer-collaboration.md"]) {
     const file = resolve(root, name);
     const targets = [...readFileSync(file, "utf8").matchAll(/\]\(([^)]+)\)/g)]
       .map(([, p]) => resolve(dirname(file), p));

@@ -44,7 +44,7 @@ func TestSkillsDoNotTellTheAgentToDropTheBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The durable goalplan reference carries the rule a HOTL goal is created under.
-	raw, err := os.ReadFile(filepath.Join(root, "crw-loop", "references", "durable-goalplan.md"))
+	raw, err := os.ReadFile(filepath.Join(root, "crw-continue", "references", "durable-goalplan.md"))
 	if err != nil {
 		t.Fatal(err)
 	}

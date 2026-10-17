@@ -4,7 +4,7 @@
     "commit": "3c1459acadeb1906d97c00a598e1457327ae372d",
     "skills_listing_sha256": "79d9580f39ca27221cb9c24337080e3fe4a1e71f76338c7329fca63f76a32e89"
   },
-  "table_sha256": "fd84a8db22c3838ba6bb2ae0804ca58f9e81dbbd121b18e62da4b27d4eb70769",
+  "table_sha256": "8a34c4ce12981ae3823355a015b6c9453201b3faa5a282e2b48167f0ef420a9f",
   "from": "dev-testing",
   "files": {
     "SKILL.md": {
@@ -35,7 +35,7 @@
       "original": "53affdad3bf32334ac1922fdd6026f18b7379080ae5c8c8ae3266ba487805533"
     },
     "references/limited-oracle-evaluation.md": {
-      "original": "334e1fde9a4dc837ae2352ead85b90656cd8df81433997c9b0bfe34bb988b657"
+      "original": "334eace5cf616b6c6503f15695642315fc4d01ba15c94300ef70f17b6f62169a"
     },
     "references/load-testing.md": {
       "original": "884ad5d296ae513cef8296e0d17380475a1c5fe241d5975557827cb3dd5a2a3c"
@@ -254,9 +254,9 @@
     },
     {
       "file": "references/reference-result-evaluation.md",
-      "reason": "CRW-1220: the description is scoped to automated test strategy; the test auditor gates move to crw-dev-code-reviewer behind one link; the limited-oracle reference becomes reference-result-evaluation",
+      "reason": "CRW-1526: rename task work skills and references; preserve source provenance and stored hook/state contracts",
       "add": true,
-      "sha256": "c27814aa51fa6b5c147f1357b8d43173e5745fcc10f73e6da960713028fe9703"
+      "sha256": "e335d3bcd5b779938a080169b7d2c3db7e0afb997089c8bd50c74edbfeba5bd2"
     }
   ]
 }

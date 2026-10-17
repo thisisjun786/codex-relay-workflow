@@ -70,7 +70,7 @@ standalone brief (objective, output format, expected sources, boundaries, stop
 rule) and require provenance records back: claim, source title, publisher, date,
 URL, tier, confidence, contradictions, gaps. Explorers never write report drafts,
 spawn, or update the plan. Dispatch mechanics (V1 wait/send_input/close, V2
-task_name/followup_task) are owned by `pabcd/references/delegation.md`. Collect results opportunistically; keep working while
+task_name/followup_task) are owned by `crw-work/references/delegation.md`. Collect results opportunistically; keep working while
 they run; use short bounded waits only when their evidence is needed.
 
 **SEARCH-DEEP-04 Aside lane.** For signed-in, JS-rendered, or judgment-heavy

@@ -403,7 +403,7 @@ prepared and published.
 
 ## S18 The workflow is missing, and the run is not called normal
 
-Observed: a managed assignment is about to run, and the `crw-loop` workflow the assignment assumes is
+Observed: a managed assignment is about to run, and the `crw-continue` workflow the assignment assumes is
 not available, because the `crw` runtime behind it is missing, or its contract is absent, or the
 installed version does not match what the packet was written against.
 
@@ -417,7 +417,7 @@ what that blocks.
 
 Reporting it requires nothing to be installed, upgraded or tested mid-assignment and changes no
 permission. Receipt reading, acknowledgement and recovery continue exactly as before. If a format
-question comes up while resolving it, read the owning `crw-pabcd` or `crw-loop` file rather than a paraphrase, since the
+question comes up while resolving it, read the owning `crw-work` or `crw-continue` file rather than a paraphrase, since the
 packet and report formats are defined there and the adapter that carries them is a separate issue.
 
 Preserved: the running assignment's settings and its existing receipts, acknowledgements and
@@ -566,7 +566,7 @@ and the other session's binding, goalplan, pending obligations and recovery evid
 ## S25 Run and goal mode share project scope; the parent holds no goal by default
 
 Observed: the user submits Run with a project link. A and B are ready; C depends on A. In another
-run the user asks Run explicitly for a child goal on the agreed A/B/C scope, or submits `$crw-loop`
+run the user asks Run explicitly for a child goal on the agreed A/B/C scope, or submits `$crw-continue`
 with that project and coordination intent, which starts no loop and hands over to goal mode; its
 goal/hook preflight passes. In a third the request carries an explicit no-goal limit.
 
@@ -590,7 +590,7 @@ the second reaches idle only after its bounded Stop budget releases, at a turn p
 Dispatch-only Run may hand off pending `child` sessions; status-only Run reads without waking them.
 
 Preserved: one project session, existing `child` sessions and PRs, requested batch/merge limits, `child` session
-`crw-loop` defaults, an explicit no-goal limit recorded even where it changed nothing, and the difference
+`crw-continue` defaults, an explicit no-goal limit recorded even where it changed nothing, and the difference
 between child and `child` session goal authority.
 
 ## S26 Goal conflicts and unsupported continuation do not become new goals
@@ -598,7 +598,7 @@ between child and `child` session goal authority.
 Observed: goal mode is requested. Variants are: a matching active goal; a matching blocked
 goal without an exposed resume control; a different unfinished goal; unreadable goal
 state; explicit no-goal; and a fresh child whose Stop hook routes all active native
-goals into PABCD implementation phases. An active compatible goal-mode run later encounters its
+goals into task work implementation phases. An active compatible goal-mode run later encounters its
 first blocker, with another independent issue still ready.
 
 Clauses: OPS-8.1, OPS-8.2, OPS-8.4; goal decisions belong to
@@ -609,7 +609,7 @@ goal and resolve its specific resume/conflict/read requirement; do not create ov
 No-goal prevents goal mode's activation and nothing else: the run continues as the ordinary
 goal-free default, which needs no separate authorization, and no `child` session is withheld for it.
 The incompatible Stop hook blocks activation before goal creation or new worker dispatch;
-record the supported host fix, without disabling hooks or faking PABCD. In the compatible
+record the supported host fix, without disabling hooks or faking task work. In the compatible
 active run, continue independent ready work; do not mark the whole goal blocked on a
 first failure. Use the real host threshold and observations for any eventual blocked
 transition. A paused goal resumes only through authorized supported controls.

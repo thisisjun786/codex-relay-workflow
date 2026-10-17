@@ -11,6 +11,71 @@ import (
 	"time"
 )
 
+func TestCompletedBatchesAreNotAbandonedByLaterBatches(t *testing.T) {
+	t.Parallel()
+	k := newBatchKit(t,
+		batchNode{name: "a", files: map[string]string{"a.txt": "a"}},
+		batchNode{name: "b", files: map[string]string{"b.txt": "b"}},
+		batchNode{name: "c", files: map[string]string{"c.txt": "c"}})
+	in := k.batchIn()
+	deps := IntegrationDeps(stubVerifier(writeStubVerifier(t)))
+	var completed []string
+	for _, node := range []string{"a", "b", "c"} {
+		k.acceptByCommit(node)
+		in.Nodes = []string{node}
+		res, err := k.sched.IntegrateBatch(context.Background(), in, deps)
+		if err != nil {
+			t.Fatalf("batch %s: %v", node, err)
+		}
+		if len(res.Merged) != 1 || res.Merged[0].NodeID != node || len(res.MarkedEvents) != 1 {
+			t.Fatalf("batch %s: merged=%v marked=%v", node, res.Merged, res.MarkedEvents)
+		}
+		if len(res.Abandoned) != 0 {
+			t.Errorf("batch %s abandoned completed batches: %v; completed=%v", node, res.Abandoned, completed)
+		}
+		completed = append(completed, res.BatchID)
+		var moved, marked int
+		for _, row := range k.stageRows() {
+			if row.BatchID != res.BatchID {
+				continue
+			}
+			if row.Stage == "ref_moved" && row.Detail == res.NewHead {
+				moved++
+			}
+			if row.Stage == "marked" {
+				marked++
+			}
+		}
+		if moved != 1 || marked != 1 {
+			t.Fatalf("batch %s: ref_moved=%d marked=%d; want one each", node, moved, marked)
+		}
+	}
+}
+
+func TestUnmovedBatchIsAbandonedWhenVerifiedHeadIsNotTip(t *testing.T) {
+	t.Parallel()
+	k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a"}})
+	k.acceptByCommit("a")
+	in := k.batchIn()
+	k.repo.git("branch", in.IntegrationRef, k.base)
+	deps := IntegrationDeps(stubVerifier(writeStubVerifier(t)))
+	deps.Update = func(context.Context, string, string, string, string) error {
+		return fmt.Errorf("stop before moving the ref")
+	}
+	res, err := k.sched.IntegrateBatch(context.Background(), in, deps)
+	if err == nil || len(verifiedIntents(t, k)) != 1 || countStage(k.stageRows(), "ref_moved") != 0 {
+		t.Fatalf("want a verified intent without a move: %+v, %v", res, err)
+	}
+	tip, found := k.branchTip(in.IntegrationRef)
+	if !found || tip != k.base {
+		t.Fatalf("branch tip=%s found=%v; want unchanged base %s", tip, found, k.base)
+	}
+	var abandoned IntegrationBatchResult
+	if err := k.sched.reconcilePlannedMoves(context.Background(), in, tip, &abandoned); err != nil || len(abandoned.Reconciled) != 0 || len(abandoned.Abandoned) != 1 || abandoned.Abandoned[0] != res.BatchID {
+		t.Errorf("unmoved batch must be abandoned: %+v, %v", abandoned, err)
+	}
+}
+
 // The command for b calls back before merging, after a's verified intent is
 // durable. This fixes the interleaving without sleeps or direct database edits.
 func TestCommandPrefixRecoveryAfterEarlierPrefixReconciled(t *testing.T) {
@@ -123,8 +188,8 @@ func TestCommandPrefixRecoveryAfterEarlierPrefixReconciled(t *testing.T) {
 		t.Errorf("move rows by head = %v; want a and a+b once each", moves)
 	}
 	var abandoned IntegrationBatchResult
-	if err := k.sched.reconcilePlannedMoves(ctx, in, k.base, &abandoned); err != nil || len(abandoned.Reconciled) != 0 || len(abandoned.Abandoned) != 1 || abandoned.Abandoned[0] != first.BatchID {
-		t.Errorf("no matching prefix must abandon the whole batch: %+v, %v", abandoned, err)
+	if err := k.sched.reconcilePlannedMoves(ctx, in, k.base, &abandoned); err != nil || len(abandoned.Reconciled) != 0 || len(abandoned.Abandoned) != 0 {
+		t.Errorf("recorded moves must keep the batch out of abandoned: %+v, %v", abandoned, err)
 	}
 }
 

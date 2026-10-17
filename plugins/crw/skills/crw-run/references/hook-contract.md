@@ -4,7 +4,7 @@ The sessions in this document are named by [the level table](../../crw-canon/ref
 
 Read when deciding whether a Codex hook may conclude that a managed assignment finished, or when
 implementing the marker, disposition, and blocking behaviour that later issues install. This
-reference DECIDES those rules; it installs nothing. No hook is registered by this contract, no PABCD
+reference DECIDES those rules; it installs nothing. No hook is registered by this contract, no task work
 (`.crw/`) state is read or written, and no tracking write happens from a hook. The one run that did register
 hooks, recorded in the host-verification packet, did so inside a throwaway `CODEX_HOME` that was
 removed afterwards, and left nothing installed.
@@ -393,7 +393,7 @@ published facts rather than on whatever pruning happens to have run.
 
 The root sits outside the source checkout and outside the relay database, on a writable parent both
 the coordinator and the `child` session can reach. The daemon gets no access at all: nothing in the marker
-feeds delivery, and the hook is already forbidden to read PABCD (`.crw/`) state.
+feeds delivery, and the hook is already forbidden to read task work (`.crw/`) state.
 
 On a single-uid host, which is the configuration measured here, file permissions cannot separate
 coordinator from `child` session, and the directory name is derivable from any workspace path, so neither read
@@ -637,7 +637,7 @@ misreporting, and so is one that cites this table without the fixture behind it.
 ## Blocking policy
 
 The decision is a pure function of the marker state, the delivered `turn_id` and `stop_hook_active`,
-the disposition record, and the receipt record. It reads no PABCD (`.crw/`) state, assumes no hook ordering, and
+the disposition record, and the receipt record. It reads no task work (`.crw/`) state, assumes no hook ordering, and
 shares no mutable state with any other hook.
 
 A hold is only ever issued at Stop, only for a claimed managed session, and only for
@@ -674,15 +674,15 @@ several registered handlers, not of anything CRW runs today.
 
 What CRW runs today composes nothing. This completion guard is not installed (see the top of this
 reference), and the Go tree registers one Stop entry, `stop-checking-pabcd-continuation`, with no
-handler behind it: the entry runs one evaluator per invocation and the PABCD continuation is
+handler behind it: the entry runs one evaluator per invocation and the task work continuation is
 unimplemented, as the implementation status in
 [start policy](start-policy.md#goal-mode-activates-its-goal-its-stop-continuation-does-not-carry-the-run)
 states.
 
 The design target, not yet built, is a single CRW Stop entry that composes this completion guard with
-the PABCD continuation and the background completion wake as three independent evaluators, each with
+the task work continuation and the background completion wake as three independent evaluators, each with
 its own state and budget, where several that hold emit one block whose reasons are joined in a fixed
-order. Once the PABCD continuation exists it applies its own continuation caps, so a turn can then be
+order. Once the task work continuation exists it applies its own continuation caps, so a turn can then be
 held by more than one owner and the totals compound. This contract governs only its own holds; it
 never inspects, relaxes, or counts another evaluator's.
 
@@ -775,5 +775,5 @@ Where a host supports event-driven return, a child is woken by the delivery path
 repeated polling, and a native subagent completion is not the same thing as an independent task's
 relay handoff. No host is assumed to support automatic wake.
 
-This contract changes no PABCD state, does not change any other skill's reference, and does not
+This contract changes no task work state, does not change any other skill's reference, and does not
 authorise a hook to write to the tracking repository.

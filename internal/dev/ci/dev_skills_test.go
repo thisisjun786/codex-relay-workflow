@@ -75,7 +75,7 @@ func crwDevDescriptionErrors(description string) []string {
 }
 
 // executorRowErrors reads the router's executor row: the skills it loads are crw-dev and crw-dev-* skills that
-// exist, and never the loop or PABCD skills.
+// exist, and never the loop or task work skills.
 func executorRowErrors(root, text string) []string {
 	var found [][]string
 	for _, row := range tableRows(text, "Caller") {
@@ -156,8 +156,8 @@ func TestCrwDevDescriptionNoCatchAll(t *testing.T) {
 			return "| Caller | Loads | Does not load |\n|---|---|---|\n" + row + "\n"
 		}
 		expectEqual(t, "ok", executorRowErrors(root, table("| executor of a flow-managed run | `crw-dev`, `crw-dev-backend` | the loop |")), []string(nil))
-		got := strings.Join(executorRowErrors(root, table("| executor of a run | `crw-dev`, `crw-loop`, `crw-pabcd`, `crw-dev-nothing` | - |")), "\n")
-		for _, want := range []string{"loads crw-loop, which is not a crw-dev-* skill", "loads crw-pabcd, which is not", "names crw-dev-nothing, which has no SKILL.md"} {
+		got := strings.Join(executorRowErrors(root, table("| executor of a run | `crw-dev`, `crw-continue`, `crw-work`, `crw-dev-nothing` | - |")), "\n")
+		for _, want := range []string{"loads crw-continue, which is not a crw-dev-* skill", "loads crw-work, which is not", "names crw-dev-nothing, which has no SKILL.md"} {
 			if !strings.Contains(got, want) {
 				t.Errorf("no error contains %q:\n%s", want, got)
 			}
@@ -191,7 +191,7 @@ func c4RowErrors(text string) []string {
 		}
 	}
 	flat := strings.Join(strings.Fields(text), " ")
-	for _, want := range []string{"the crosscheck does not replace the critic's design check", "oversized child start no PABCD state machine"} {
+	for _, want := range []string{"the crosscheck does not replace the critic's design check", "oversized child start no task work state machine"} {
 		if !strings.Contains(flat, want) {
 			errs = append(errs, "crw-dev lacks "+want)
 		}
@@ -206,7 +206,7 @@ func TestCrwDevC4RowNamesFlowLane(t *testing.T) {
 		}
 	})
 	t.Run("fixture: the old C4 row fails", func(t *testing.T) {
-		old := "| Class | Name | Signals | Default Process |\n|---|---|---|---|\n| C4 | High-Risk | Auth | Full PABCD (mandatory) + full relevant gates + durable risk/evidence record |\n"
+		old := "| Class | Name | Signals | Default Process |\n|---|---|---|---|\n| C4 | High-Risk | Auth | Full task work (mandatory) + full relevant gates + durable risk/evidence record |\n"
 		got := strings.Join(c4RowErrors(old), "\n")
 		for _, want := range []string{"lacks flow-managed run", "lacks the critic's separate review execution", "lacks unit check of each node's work", "lacks starts no FSM", "lacks the crosscheck does not replace"} {
 			if !strings.Contains(got, want) {

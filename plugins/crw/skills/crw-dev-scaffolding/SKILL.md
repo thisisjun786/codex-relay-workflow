@@ -58,7 +58,7 @@ Keep it light:
 - Cross-link scaffold docs to evidence paths (`path:line`, plan file, ADR, current-architecture note) so future workers can audit why files exist.
 - Follow existing phase/decade numbering when present; do not flatten or renumber local history.
 - In multi-cycle loop units, the decade docs (010, 020, 030...) are authored during
-  the docs-only first work-phase (LOOP-DOCS-FIRST-01, `crw-loop`), not scaffolded
+  the docs-only first work-phase (LOOP-DOCS-FIRST-01, `crw-continue`), not scaffolded
   empty.
 - Treat source-of-truth placement as part of scaffolding completion: the final audit must say which durable convention was reused or that none existed.
 - Boundary/public-export decisions still route to `dev-architecture` §1 (`ARCH-DECISION-01`, `ARCH-MAP-01`); scaffolding owns file placement and skeleton consistency.
@@ -66,7 +66,7 @@ Keep it light:
 ## 2.1 Lightweight Source of Truth
 
 The numbered plan documents of a C2+ unit are workspace-local execution evidence owned by
-[Implementation units](../crw-pabcd/references/implementation-units.md); scaffolding does not
+[Implementation units](../crw-work/references/implementation-units.md); scaffolding does not
 create or number them. C0/C1 record exemptions are owned by crw-dev §0.1. Propose the
 `docs/`/`plans/` architecture docs when:
 
@@ -95,13 +95,13 @@ decision that is hard to reverse, surprising without context, or has a real trad
 **SoT sync (DEFAULT, SOT-SYNC-01):** before patching a repo, FIND its general
 source-of-truth docs first (architecture/INDEX docs, or equivalent)
 and read them; any unit that changes architecture, contracts, or structure patches
-the SoT doc in the SAME unit (C gate, `pabcd` C phase). If the repo has no SoT doc,
+the SoT doc in the SAME unit (task validation, `crw-work` references/phase-check.md). If the repo has no SoT doc,
 recommend creating one — once, via the proposal flow above — rather than silently
 working without a source of truth.
 
 Keep diff-level plans in files, not chat; keep chat summaries short: explain the phase,
 show a compact tree/change map, then link the plan file. Phase naming is owned by
-[Implementation units](../crw-pabcd/references/implementation-units.md) (LEXICO-SPLIT-01).
+[Implementation units](../crw-work/references/implementation-units.md) (LEXICO-SPLIT-01).
 
 Before creating any new source-of-truth folders, ask concisely: state that no durable docs were found,
 show the proposed tree, give a specific recommendation, and confirm you will not create them without approval.
@@ -148,7 +148,7 @@ When creating a new project with no existing framework, guide the user through p
 Present options as `<Framework> — <what it gives you>`, recommend one with reasoning, let the user pick.
 
 Match tool complexity to task complexity. Escalate tooling only when justified by user requirements (SEO, CMS, scaling).
-If the task is ambiguous or cross-cutting, route through the `pabcd` skill flow before scaffolding.
+If the task is ambiguous or cross-cutting, route through the `crw-work` skill flow before scaffolding.
 
 ## 4. Fullstack Split Rule
 
@@ -190,7 +190,7 @@ Principle: “flat until you can't” — start flat, add a sub-folder only when
 | Python files        | snake_case + suffix   | `stock_price_tool.py`        |
 | Go files            | snake_case            | `stock_price.go`             |
 | Rust files          | snake_case            | `stock_price.rs`             |
-| Plan documents      | owned by [Implementation units](../crw-pabcd/references/implementation-units.md) | |
+| Plan documents      | owned by [Implementation units](../crw-work/references/implementation-units.md) | |
 | Functions (JS/TS)   | camelCase             | `getStockPrice()`            |
 | Functions (Python)  | snake_case            | `get_stock_price()`          |
 | Functions (Go)      | PascalCase (exported) | `GetStockPrice()`            |
@@ -283,7 +283,7 @@ When generating project documentation or scaffolding docs:
 3. Follow the repo's existing source-of-truth convention when one exists
 
 ### Planning Documentation
-1. Follow decade numbering ([Implementation units](../crw-pabcd/references/implementation-units.md), LEXICO-SPLIT-01): 000-009 research, 010-019 phase 1, etc.
+1. Follow decade numbering ([Implementation units](../crw-work/references/implementation-units.md), LEXICO-SPLIT-01): 000-009 research, 010-019 phase 1, etc.
 2. Each plan entry should capture: title, date, what changed, why, evidence paths
 3. Cross-reference related plan entries within the same work folder when helpful
 

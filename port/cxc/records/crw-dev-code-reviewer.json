@@ -4,11 +4,11 @@
     "commit": "3c1459acadeb1906d97c00a598e1457327ae372d",
     "skills_listing_sha256": "79d9580f39ca27221cb9c24337080e3fe4a1e71f76338c7329fca63f76a32e89"
   },
-  "table_sha256": "fd84a8db22c3838ba6bb2ae0804ca58f9e81dbbd121b18e62da4b27d4eb70769",
+  "table_sha256": "8a34c4ce12981ae3823355a015b6c9453201b3faa5a282e2b48167f0ef420a9f",
   "from": "dev-code-reviewer",
   "files": {
     "SKILL.md": {
-      "original": "782ff460c2cf8a713ebfa6b1e682e8487b19eca23e12a59f4d3656822817dfa6"
+      "original": "b41afde176a9bc7d0200c36aed4ec0464428b89a4f005505b30445778df00f06"
     },
     "agents/openai.yaml": {
       "original": "4ba6754ad21b4858c602d4486a6d8a6b3dfa1f711351b4f42ea1719eb2dd2216"
@@ -23,7 +23,7 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "CRW-1344: Linear wording became tracking wording (a tracking issue, the tracking repository, a milestone), and the skill catalog no longer lists a Linear skill",
+      "reason": "CRW-1634: name table maps cxc-pabcd/cxc-loop to crw-work/crw-continue",
       "hunks": [
         {
           "line": 3,
@@ -52,25 +52,27 @@
           ]
         },
         {
-          "line": 91,
+          "line": 90,
           "old": [
+            "For dispatched plan-audit (PABCD A-gate) reviews the verdict is additionally\n",
             "machine-scannable: end the reply with a final line `VERDICT: PASS`,\n",
             "`VERDICT: GO-WITH-FIXES (blockers=N)`, or `VERDICT: FAIL` (mapping:\n",
             "Approve -> PASS; Approve-with-suggestions -> GO-WITH-FIXES; Request-changes /\n",
             "Block -> FAIL). The dispatching agent's exit rule is AUDIT-LOOP-01\n",
-            "(`crw-pabcd` §A): FAIL always triggers another round.\n"
+            "(`crw-work` §A): FAIL always triggers another round.\n"
           ],
           "new": [
+            "For dispatched outline-assessment (legacy state A) reviews the verdict is additionally\n",
             "machine-scannable: end the reply with exactly two final lines, `LAUNCH: <the launch id the\n",
             "packet gave you>` and then `VERDICT: PASS`, `VERDICT: GO-WITH-FIXES (blockers=N)`, or\n",
             "`VERDICT: FAIL` (mapping: Approve -> PASS; Approve-with-suggestions -> GO-WITH-FIXES;\n",
             "Request-changes / Block -> FAIL). `N` is the number of blocking findings you went ahead\n",
             "with, a whole number from 1 to 9999; name them as `(blockers=N; findings=c1,r2)` when\n",
-            "that helps. The same grammar is what the PABCD observer records and what the relay\n",
+            "that helps. The same grammar is what the task work observer records and what the relay\n",
             "renders in a report. A bare `VERDICT: GO-WITH-FIXES` still counts, with no count; a count\n",
             "on `PASS` or `FAIL`, or a count that is zero, negative or not a number, is no verdict at\n",
             "all, and the round stays open. The dispatching agent's exit rule is AUDIT-LOOP-01\n",
-            "(`crw-pabcd` §A): FAIL always triggers another round, and each blocker of a\n",
+            "(`crw-work` references/phase-audit.md): FAIL always triggers another round, and each blocker of a\n",
             "GO-WITH-FIXES is folded into the plan or rebutted, which the main agent records in the attest's `auditBlockers`.\n"
           ]
         },

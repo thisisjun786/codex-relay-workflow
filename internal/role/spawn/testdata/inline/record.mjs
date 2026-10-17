@@ -21,18 +21,20 @@ for (const folder of ['dev', 'search', 'dev-testing', 'loop', 'pabcd']) {
   fs.writeFileSync(path.join(skillsDir, folder, 'references/development-practice.md'), 'Detail reference is not automatically loaded.\n');
 }
 const symbolic = s => s.replaceAll(skillsDir, '${SKILLS}');
+const table = JSON.parse(fs.readFileSync(new URL('../../../../../contract/schema/cxc/name-substitution.json', import.meta.url), 'utf8'));
+const skillNames = new Map(table.skills.filter(row => row.crw).map(row => [row.cxc, row.crw]));
+const skillName = folder => skillNames.get('cxc-' + folder) ?? 'crw-' + folder;
 // The cli rows of contract/schema/cxc/name-substitution.json drive the command renames, as the Go replay's
 // verbPass does (internal/dev/cxccorpus/schema.go): longest cxc verb first, a \b after the verb. The kept
 // "cxc orchestration" rule is the noun in the V1 notice, which is not the verb "orchestrate" and so is not a
 // cli row; the oracle's bare-cxc rule (R33) renames its prefix.
 const cliRows = (() => {
-  const table = JSON.parse(fs.readFileSync(new URL('../../../../../contract/schema/cxc/name-substitution.json', import.meta.url), 'utf8'));
   const esc = w => w.replace(/[.*+?^\${}()|[\]\\]/g, '\\$&');
   const rules = table.cli.filter(r => r.crw !== null).sort((a, b) => b.cxc.length - a.cxc.length)
     .map(r => [new RegExp('\\bcxc ' + r.cxc.map(esc).join(' ') + '\\b', 'g'), 'crw ' + r.crw.join(' ')]);
   return s => { for (const [re, to] of rules) s = s.replace(re, to); return s; };
 })();
-const rename = s => cliRows(s).replaceAll('$codexclaw:cxc-', '$crw:crw-').replaceAll('cxc-', 'crw-').replaceAll('[CXC-', '[CRW-').replaceAll('cxc orchestration', 'crw orchestration').replace(/\/(dev|search|dev-testing)(?=\/SKILL\.md)/g, '/crw-$1');
+const rename = s => cliRows(s).replaceAll('$codexclaw:', '$crw:').replace(/cxc-([a-z0-9-]+)/g, (_, folder) => skillName(folder)).replaceAll('cxc-', 'crw-').replaceAll('[CXC-', '[CRW-').replaceAll('cxc orchestration', 'crw orchestration').replace(/\/(dev|search|dev-testing|loop|pabcd)(?=\/SKILL\.md)/g, (_, folder) => '/' + skillName(folder));
 const groups = [];
 let group;
 const wrap = op => (...args) => {
@@ -40,7 +42,7 @@ const wrap = op => (...args) => {
   const input = op === 'inlineSkillBodies' || op === 'mentionedFolders' ? args[0] : '';
   const value = actual instanceof Set ? [...actual].sort() : symbolic(actual);
   const row = { op, classification: 'intentionally-changed', reason: 'CRW skill/namespace/folder, inline tag and marker substitutions.' };
-  if (Array.isArray(value)) { row.input = rename(symbolic(input)); row.folders = value.map(f => 'crw-' + f); }
+  if (Array.isArray(value)) { row.input = rename(symbolic(input)); row.folders = value.map(skillName).sort(); }
   else if (input.length > 4096) {
     const flood = input.startsWith('<skill name="cxc-dev">');
     const n = flood ? input.split('<skill name="cxc-dev">').length - 1 : input.match(/^[xy]+/)[0].length;
@@ -76,6 +78,6 @@ assert.ok(security.oracleInline.includes('OUTSIDE-CONTENT'));
 assert.ok(security.oracleCatalog.includes('outside sentinel'));
 const decoder = [[0xe2,0x82],[0xed,0xa0,0x80],[0xf0,0x9f,0x92],[0xc0,0xaf],[0xe2,0x28,0xa1],[0xef,0xbb,0xbf],[0xf4,0x90,0x80,0x80],[0x80,0x80]].map(bytes => ({ bytes, expected: Buffer.from(bytes).toString('utf8') }));
 const metadata = ['name:\u00a0cxc-dev\r\ndescription:\t"line"\r\n', '# body\nname: cxc-other\ndescription: "body metadata"\n', 'name:\nnext-line-name\ndescription:\nnext-line-description\n', 'name: cxc-dev\ndescription: has "quotes" in middle\n', 'name: cxc-dev\ndescription: "single"\u2028name: extra\n', 'name: cxc-dev\ndescription: ' + 'x'.repeat(130) + '\n'];
-const catalogCases = metadata.map((body, i) => { const dir = path.join(scratch, 'metadata-' + i); fs.mkdirSync(path.join(dir, 'dev'), {recursive:true}); fs.writeFileSync(path.join(dir, 'dev/SKILL.md'), body); const result=api.buildLeafSkillCatalog(dir).replaceAll(dir, '${SKILLS}'); return { body: rename(body), oracle: result, expected: rename(result), classification: 'intentionally-changed', reason: 'CRW metadata name substitution; regex quirks retained.' }; });
-fs.writeFileSync(output, JSON.stringify({ oracle: 'CXC v0.2.40 (3c1459ac)', source: 'subagent-config/src/spawn-attach-hook.ts:284-350,596-848', tests: 'subagent-config/test/spawn-attach-hook.test.ts:804-810,835-841,879-963,1172-1200', skills: Object.fromEntries(Object.entries(bodies).map(([folder, body]) => ['crw-' + folder, rename(body)])), groups, guards, security, decoder, catalogCases }, null, 2) + '\n');
+const catalogCases = metadata.map((body, i) => { const dir = path.join(scratch, 'metadata-' + i); fs.mkdirSync(path.join(dir, 'dev'), {recursive:true}); fs.writeFileSync(path.join(dir, 'dev/SKILL.md'), body); const result=api.buildLeafSkillCatalog(dir).replaceAll(dir, '${SKILLS}'); return { body: rename(body), oracle: result, expected: '', classification: 'intentionally-changed', reason: 'CRW-1114 (known-defects.md:936, :937): catalog metadata is read from a closed frontmatter at the head of SKILL.md only, so these bodies without one list no skill.' }; });
+fs.writeFileSync(output, JSON.stringify({ oracle: 'CXC v0.2.40 (3c1459ac)', source: 'subagent-config/src/spawn-attach-hook.ts:284-350,596-848', tests: 'subagent-config/test/spawn-attach-hook.test.ts:804-810,835-841,879-963,1172-1200', skills: Object.fromEntries(Object.entries(bodies).map(([folder, body]) => [skillName(folder), rename(body)])), groups, guards, security, decoder, catalogCases }, null, 2) + '\n');
 console.log('Recorded ' + groups.length + ' original B-class callbacks; guard strings and unsafe linked reads characterized.');

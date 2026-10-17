@@ -37,7 +37,7 @@ var rowTestReads = []rowTestRead{
 	{"TestCodeReviewerNoParentSessionWording", "internal/dev/ci", []string{"plugins/crw/skills/crw-dev-code-reviewer/", "plugins/crw/skills/crw-dev-debugging/", "plugins/crw/skills/crw-dev/SKILL.md"}, nil},
 	{"TestWorktreeOwnerTable", "internal/dev/ci", []string{"plugins/crw/skills/crw-worktree-guardian/SKILL.md", "plugins/crw/skills/crw-dev-devops/SKILL.md", "plugins/crw/skills/crw-run/SKILL.md"}, nil},
 	{"TestRepoGovernanceInCanon", "internal/dev/ci", []string{"plugins/crw/skills/crw-dev-devops/", "plugins/crw/skills/crw-canon/references/", "plugins/crw/skills/crw-dev/references/"}, nil},
-	{"TestPabcdHasNoPlanTriggers", "internal/dev/ci", []string{"plugins/crw/skills/crw-pabcd/SKILL.md", "plugins/crw/skills/crw-plan/SKILL.md", "plugins/crw/skills/crw-define/SKILL.md"}, nil},
+	{"TestPabcdHasNoPlanTriggers", "internal/dev/ci", []string{"plugins/crw/skills/crw-work/SKILL.md", "plugins/crw/skills/crw-plan/SKILL.md", "plugins/crw/skills/crw-define/SKILL.md"}, nil},
 	{"TestRefactorHasNoWriteProcedure", "internal/dev/ci", []string{"plugins/crw/skills/crw-refactor/SKILL.md", "plugins/crw/skills/crw-refactor/references/candidate-record.md"}, nil},
 	{"TestNoDuplicateSkillAssets", "internal/dev/ci", []string{"plugins/crw/skills/"}, nil},
 	{"TestScaffoldingCanonWording", "internal/dev/ci", []string{"plugins/crw/skills/crw-dev-scaffolding/"}, nil},

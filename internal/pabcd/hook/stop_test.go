@@ -373,7 +373,7 @@ func TestStopGoalIdleGuidanceAndReleases(t *testing.T) {
 	sessionHookStateFile(t, cwd, stopSID, func(s *state.State) { s.Slug = "shell" })
 	stopWritePlan(t, cwd, "shell", nil)
 	got := stopBlockReason(t, stopRun(cwd, env))
-	if !strings.HasSuffix(got, "The bound goalplan 'shell' is EMPTY: register workPhases[]/criteria[] in .crw/goalplans/shell/goalplan.json (schema in $crw-loop) so remaining work is durable and the E8 gate can pass.") {
+	if !strings.HasSuffix(got, "The bound goalplan 'shell' is EMPTY: register workPhases[]/criteria[] in .crw/goalplans/shell/goalplan.json (schema in $crw-continue) so remaining work is durable and the E8 gate can pass.") {
 		t.Errorf("empty plan: %q", got)
 	}
 	for _, slug := range []string{"", "no-such-plan", ".", "..", "../x", "a b"} {

@@ -20,8 +20,8 @@ import (
 func TestModeTableDrivesUsageAndDispatch(t *testing.T) {
 	var out, errOut strings.Builder
 	if code := run(context.Background(), "crw", []string{"nope"}, &out, &errOut); code != parserExit ||
-		!strings.Contains(errOut.String(), "usage: crw [-h] [--version] {relay,bridge,hook,skill,doctor,install,review,manage,gui,config,publish,tools,recall,work,role,provider,map,flow,help,version} ...") ||
-		!strings.Contains(errOut.String(), "(choose from 'relay', 'bridge', 'hook', 'skill', 'doctor', 'install', 'review', 'manage', 'gui', 'config', 'publish', 'tools', 'recall', 'work', 'role', 'provider', 'map', 'flow', 'help', 'version')") {
+		!strings.Contains(errOut.String(), "usage: crw [-h] [--version] {host,executor,worker,relay,bridge,hook,skill,doctor,install,review,manage,gui,config,publish,tools,recall,work,role,provider,map,flow,help,version} ...") ||
+		!strings.Contains(errOut.String(), "(choose from 'host', 'executor', 'worker', 'relay', 'bridge', 'hook', 'skill', 'doctor', 'install', 'review', 'manage', 'gui', 'config', 'publish', 'tools', 'recall', 'work', 'role', 'provider', 'map', 'flow', 'help', 'version')") {
 		t.Fatalf("unknown mode: %d %q", code, errOut.String())
 	}
 	out.Reset()

@@ -34,6 +34,11 @@ func TestShippedSkillsNameOnlySkillsTheRepositoryHolds(t *testing.T) {
 		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".md") {
 			return err
 		}
+		// CRW-1523's canonical old-to-new name map preserves historical
+		// spellings; those are migration keys, not requests to load a skill.
+		if path == filepath.Join(root, "plugins/crw/skills/crw-canon/references/naming.md") {
+			return nil
+		}
 		text, err := os.ReadFile(path)
 		if err != nil {
 			return err

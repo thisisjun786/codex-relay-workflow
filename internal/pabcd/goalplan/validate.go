@@ -39,7 +39,7 @@ func ValidateGoalplan(plan *Goalplan, ctx *GoalplanValidationCtx) GoalplanValida
 	reasons = append(reasons, GoalplanDefinitionIntegrityReasons(plan)...)
 	reasons = append(reasons, GoalplanDependencyCompletionReasons(plan)...)
 	if len(plan.WorkPhases) == 0 && len(plan.Criteria) == 0 {
-		reasons = append(reasons, "plan is empty: no workPhases[] and no criteria[] registered — fill the goalplan (schema in $crw-loop) before the E8 gate can certify completion")
+		reasons = append(reasons, "plan is empty: no workPhases[] and no criteria[] registered — fill the goalplan (schema in $crw-continue) before the E8 gate can certify completion")
 	}
 	for i := range plan.Criteria {
 		c := &plan.Criteria[i]

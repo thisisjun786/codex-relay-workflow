@@ -179,10 +179,10 @@ func TestSpawnPolicyWakeAndHelperRules(t *testing.T) {
 	}
 }
 
-// TestDispatchSurfacesNameTheChildsStepSpawns: the dispatch surfaces of crw-pabcd no longer keep the child's thread to read-only
+// TestDispatchSurfacesNameTheChildsStepSpawns: the dispatch surfaces of crw-work no longer keep the child's thread to read-only
 // and review helpers: it spawns the run's role subagents for the steps it is given.
 func TestDispatchSurfacesNameTheChildsStepSpawns(t *testing.T) {
-	text := normalized(readRepoText(t, "plugins/crw/skills/crw-pabcd/references/dispatch-surfaces.md"))
+	text := normalized(readRepoText(t, "plugins/crw/skills/crw-work/references/dispatch-surfaces.md"))
 	if strings.Contains(text, "uses read-only and review helpers only") {
 		t.Error("dispatch-surfaces.md still keeps the child's thread to read-only and review helpers")
 	}
@@ -194,12 +194,12 @@ func TestDispatchSurfacesNameTheChildsStepSpawns(t *testing.T) {
 	}
 }
 
-// TestDispatchSurfacesNameTheAssignedReceiptTree: the bounded checkout worker of crw-pabcd writes its receipt under the tree the
+// TestDispatchSurfacesNameTheAssignedReceiptTree: the bounded checkout worker of crw-work writes its receipt under the tree the
 // dispatch assigned (CRW-1115's `CRW-WORKTREE:` assignment, CRW-1482's flow executor file), not under the coordinator's native cwd;
 // only a dispatch with no assignment keeps the native cwd's `.crw/evidence`.
 func TestDispatchSurfacesNameTheAssignedReceiptTree(t *testing.T) {
 	var worker string
-	for _, para := range strings.Split(strings.ReplaceAll(readRepoText(t, "plugins/crw/skills/crw-pabcd/references/dispatch-surfaces.md"), "\r\n", "\n"), "\n\n") {
+	for _, para := range strings.Split(strings.ReplaceAll(readRepoText(t, "plugins/crw/skills/crw-work/references/dispatch-surfaces.md"), "\r\n", "\n"), "\n\n") {
 		if strings.Contains(para, "**bounded checkout worker**") {
 			worker = normalized(para)
 			break

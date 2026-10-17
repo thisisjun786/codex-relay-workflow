@@ -52,7 +52,7 @@ Usage:
 
 Notes:
   Collapse EARLY at P for satisfy-spec work; collapse LATE at D for
-  maximize-metric work where the local metric can deceive (crw-loop).
+  maximize-metric work where the local metric can deceive (crw-continue).
   Turn divergence off once the plateau is broken — it is a mode, not a state.
   Every candidate needs at least one --source: an unsourced candidate is a guess.`
 

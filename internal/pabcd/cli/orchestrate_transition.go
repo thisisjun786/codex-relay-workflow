@@ -91,7 +91,7 @@ func orchestrateTransitionWithArchitectHint(phase state.Phase, output string) st
 	if phase != state.PhaseP {
 		return output
 	}
-	return output + " [formal P: architect proposal -> main executable plan -> same-architect reflection before A (crw-pabcd phase-plan)]"
+	return output + " [formal P: architect proposal -> main executable plan -> same-architect reflection before A (crw-work phase-plan)]"
 }
 
 // orchestrateTransitionPlanBindingOf is :1073-1074: the P>A edge keeps the unit and epoch it just minted,

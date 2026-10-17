@@ -30,7 +30,6 @@
  | `dev-debugging` | 5-phase root-cause debugging methodology |
  | `dev-devops` | Containers, K8s, CI/CD, IaC, SRE |
  | `dev-frontend` | Frontend/UI implementation, responsive, motion, React/Vue/Svelte |
- | `dev-pabcd` | cli-jaw PABCD orchestration workflows |
  | `dev-scaffolding` | Project setup, feature scaffolding, structural audits |
  | `dev-security` | XSS, CSRF, auth, OWASP, threat model |
  | `dev-testing` | Unit/integration/E2E/contract tests, TDD, coverage |
@@ -41,7 +40,7 @@
  | `diagram` | SVG diagrams, charts, interactive visualizations |
  | `docx` | Word DOCX create/read/edit/review |
  | `github` | GitHub operations via gh CLI |
- | `goal` | Goal execution with PABCD integration |
+ | `goal` | Goal execution with task work integration |
  | `hwp` | HWP/HWPX Korean documents |
  | `memory` | Persistent long-term memory across sessions |
  | `pdf` | PDF read/create/edit/review |

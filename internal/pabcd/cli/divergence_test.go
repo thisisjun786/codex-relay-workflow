@@ -61,7 +61,7 @@ func TestDivergenceCliMatchesTheRecordedOracle(t *testing.T) {
 	}
 	// The timestamp pattern and the name substitution are function-local (no package-level init).
 	stamp := regexp.MustCompile(`\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z`)
-	names := strings.NewReplacer("cxc divergence", "crw work divergence", "cxc-loop", "crw-loop")
+	names := strings.NewReplacer("cxc divergence", "crw work divergence", "cxc-loop", "crw-continue")
 	for _, c := range fixture.Cases {
 		t.Run(c.ID, func(t *testing.T) {
 			root := divergenceCliSandbox(t)

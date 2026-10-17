@@ -29,7 +29,7 @@ coordination, with host permission and wake checks. This does not activate a
 Tier-3 swarm; peer reports are leads, not primary-source proof or independent
 corroboration.
 
-When any PABCD workflow enters divergence mode (HITL manual entry or goal-mode
+When any task work workflow enters divergence mode (HITL manual entry or goal-mode
 plateau prompt), every N>=2 candidate must carry search provenance in the divergence
 archive:
 
@@ -37,7 +37,7 @@ archive:
   claims may be cited only after this proof step.
 - `add-1`: at least Tier 1 discovered, with candidate URL recorded. Promote to
   Tier 2 before using detailed claims from it.
-- Record provenance URLs with `crw pabcd divergence candidate add ... --source <url>`.
+- Record provenance URLs with `crw work divergence candidate add ... --source <url>`.
   The archive enforces non-empty source URLs; it does not certify the search tier.
   The agent must state Tier 1/Tier 2 evidence in the rationale or phase notes.
 
@@ -109,7 +109,7 @@ with gapless citations, then deliver the artifact through `dev-visualizer` or
 the format-specific owner and verify it. Direct retrieval is the default; two or
 three explorer subagents only when independent lanes each need several dependent
 reads, each with this skill attached (SEARCH-ATTACH-01); dispatch mechanics are
-owned by `pabcd/references/delegation.md`. For signed-in,
+owned by `crw-work/references/delegation.md`. For signed-in,
 JS-rendered or delegated survey browsing the reference defines an Aside lane
 (SEARCH-DEEP-04) under the portable browser policy. When the host exposes a native
 deep-research skill, it owns plan tracking and artifact mechanics; this ladder
@@ -142,7 +142,7 @@ auto-loads the skill at launch and follows its Tier 1/2 tool guidance
 the single source of truth for the tool list; do not duplicate it as prose in
 the spawn message.
 
-PABCD A-gate audit/reviewer dispatches are in scope too: a plan auditor must
+Outline-assessment (legacy state A) reviewer dispatches are in scope too: a plan auditor must
 verify references and external/current claims, so the audit dispatch packet
 explicitly names `$crw:crw-search` alongside
 `$crw:crw-dev-code-reviewer` (AUDIT-LOOP-01). The spawn wrapper's

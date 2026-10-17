@@ -151,7 +151,7 @@ func TestRecordedLoopArmPlatforms(t *testing.T) {
 	for _, c := range golden.Platforms {
 		// CRW-1084 (port: fixed): the recipe leads with the project-coordination branch; the recording is the oracle's text.
 		t.Run(c.Platform, func(t *testing.T) {
-			want := strings.Replace(c.Directive, "Load $crw:crw-loop", loopArmProjectBranch+"Load $crw:crw-loop", 1)
+			want := strings.Replace(c.Directive, "Load $crw:crw-continue", loopArmProjectBranch+"Load $crw:crw-continue", 1)
 			directiveEqual(t, "loop arm", LoopArmDirective(c.Platform), want)
 		})
 	}
@@ -221,7 +221,7 @@ func TestProjectSessionDirectiveNamesTheChild(t *testing.T) {
 		d := LoopScopeDirective(parent)
 		for _, want := range []string{
 			"which creates or reuses a native goal for the 자식 only where one was asked for",
-			"The 자식 (project session) never follows the crw-loop or crw-pabcd procedure",
+			"The 자식 (project session) never follows the crw-continue or crw-work procedure",
 			"does not make this session a 자식.",
 		} {
 			if !strings.Contains(d, want) {

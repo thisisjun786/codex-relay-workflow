@@ -27,7 +27,7 @@ what follows is the goal convention those roles carry.
 | --- | --- | --- | --- |
 | Initiative management task | None, and no automatic loop | None | Development, technical acceptance and merge judgment. It talks with the user, relays requests, reads child state, resumes within the approved scope, and summarises. |
 | Project session | None by default. It waits idle with no goal and a relay event brings it back. A goal exists only where the user explicitly asked for one, in [goal mode](goal-mode.md) | None. It builds no goalplan and no FSM | A fabricated source change to close a goal it does hold |
-| `child` session | Creates or reuses its own for the issue scope | Keeps `crw-loop` and PABCD | The child's merge authority, and a second goal where one already exists |
+| `child` session | Creates or reuses its own for the issue scope | Keeps `crw-continue` and task work | The child's merge authority, and a second goal where one already exists |
 
 A project session runs goal-free by default, and that is a decision about what wakes it rather
 than a restriction on what it may do. Waiting is the only thing a goal was carrying, and a
@@ -349,9 +349,9 @@ The goal activates: a project session creates or reuses its native goal and read
 What follows is not durable automatic continuation. Measured before the port on the original plugin
 `0.2.33` and re-read on `0.2.34`, the Stop handler of its `pabcd-state` component blocked the stop
 when a goal read `active` while the phase was `IDLE` and no orchestration was in flight, and the
-continuation it injected carried an unconditional directive to enter PABCD, adding a
-loop-initialisation line (`crw pabcd loop init` in CRW) when no goalplan slug is bound. CRW's own
-PABCD Stop continuation is not in the Go tree yet (its handler is empty today), so the measurement
+continuation it injected carried an unconditional directive to enter task work, adding a
+loop-initialisation line (`crw work continue init` in CRW) when no goalplan slug is bound. CRW's own
+task work Stop continuation is not in the Go tree yet (its handler is empty today), so the measurement
 describes the behaviour to expect once the hook is ported from that handler, and it is re-read when
 the hook is activated. A project session declines that directive, because this contract forbids it a goalplan or an FSM and forbids
 closing a goal before its scope is actually delivered, and it spends the continued turn on its
@@ -370,7 +370,7 @@ continuation.
 
 Because a compaction can lose this, the goal objective and the recovery record both state in plain
 words that this is a coordination goal, meaning a project session goal that carries no
-implementation loop, and that it never runs loop initialisation, never enters PABCD,
+implementation loop, and that it never runs loop initialisation, never enters task work,
 and never closes early. A later session reads that before it reads anything else.
 
 Measured once, and narrowly. On 2026-09-21 a deliberately trivial test actor was created holding an
@@ -388,7 +388,7 @@ must, what a real project session carrying scope would do, and any saving betwee
 all `unmeasured`.
 
 This is a known incompatibility rather than a scheduled repair. The design is a single CRW Stop
-entry that composes the completion guard with the PABCD continuation; today the entry runs one
+entry that composes the completion guard with the task work continuation; today the entry runs one
 evaluator per invocation and the continuation is unimplemented, so nothing composes them yet. When
 the continuation is ported as it stood, it will not skip a project session registered in goal mode, and making it skip one is a
 deliberate deviation from the port, an owner decision recorded in
@@ -520,7 +520,7 @@ creation; `no-create` bars that. Unless a row says otherwise the project session
 | 7a | Goal mode was requested, its goal is unsupported, and the user declines goal-free Run in its place | none | 0 | `blocked`, owning issue cited | the blocker preserved, not re-asked as new |
 | 7b | A genuinely new decision is required | asked before any creation | 0 until answered | that action alone held | baseline, packets and read-only diagnosis continue |
 | 7c | Goal mode was requested, its goal is unsupported, and the user has not declined goal-free Run in its place | none | D | `goal-free-run`, reported as the default rather than as a degraded goal mode | path, error and impact returned to CRW-29 owner; never reported as an activated goal mode |
-| 7d | Goal mode activates and its Stop-continuation is the bounded PABCD nudge | none | D | `goal`, the directive declined and the nudge recorded as bounded | goal-active and continuation kept as separate facts; a known incompatibility evidenced in CRW-29 and CRW-145, not a promised fix, and not a reason to open a goal the default does not need |
+| 7d | Goal mode activates and its Stop-continuation is the bounded task work nudge | none | D | `goal`, the directive declined and the nudge recorded as bounded | goal-active and continuation kept as separate facts; a known incompatibility evidenced in CRW-29 and CRW-145, not a promised fix, and not a reason to open a goal the default does not need |
 | 7e | Readiness fact 5 has no evidence on this operating scope | none | D | `goal-free-run` with `active-observation`, fact 5 recorded `unmeasured` | the child keeps bounded waits and claims no automatic resume until a wake is observed here |
 | 8 | An installed version or hook rule changed | only if the re-read forces one | D | the changed field re-adjudicated, the rest restored | the changed identity recorded against the superseded value |
 | 9 | `child` sessions of this child are already live | none | D, which subtracts them | `goal-free-run`; the standing cap is unchanged and D subtracts the live `child` sessions | the existing owners preserved, never replaced |

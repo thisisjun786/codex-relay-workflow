@@ -1363,8 +1363,8 @@ the obligations were met.
 
 ### OPS-10.2 The workflow is present, or its absence is reported
 
-Managed execution here always runs the `crw-loop` workflow and the
-`crw pabcd` commands and hooks behind it, so a missing runtime, an absent contract, or an incompatible
+Managed execution here always runs the `crw-continue` workflow and the
+`crw work` commands and hooks behind it, so a missing runtime, an absent contract, or an incompatible
 version is a condition to report, not something to route around while calling the run normal. Quietly proceeding without it produces work that looks ordinary and
 carries none of the evidence the workflow exists to produce.
 
@@ -1379,8 +1379,8 @@ exactly as they already do; this clause only forbids the silent substitution.
 
 ### OPS-10.3 Where the packet and report formats are defined
 
-The detailed correspondence between a `crw-loop` instruction packet and the report and review formats is
-owned elsewhere and is deliberately not restated here. The `crw-pabcd` and `crw-loop` skill files are the source:
+The detailed correspondence between a `crw-continue` instruction packet and the report and review formats is
+owned elsewhere and is deliberately not restated here. The `crw-work` and `crw-continue` skill files are the source:
 `delegation.md` for the task packet, `plan-output.md` for plan output, `loop-engineering.md` sections
 11.2 and 11.3, `phase-check.md` for check evidence, `phase-control.md` for attestation evidence,
 `dispatch-surfaces.md` for choosing a surface, and `waiting.md` for waiting on work.

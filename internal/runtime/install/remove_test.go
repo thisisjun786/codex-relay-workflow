@@ -2,6 +2,7 @@ package install_test
 
 import (
 	"context"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -293,18 +294,95 @@ func TestRemoveSeesAScriptStartedByARelativePath(t *testing.T) {
 	old := runtimeDir(h, "0.9.0", first, t)
 	h.mustInstall(t, "install", first)
 	h.mustInstall(t, "update", archive(t, "0.9.1", ""))
-	writeExecutable(t, filepath.Join(old, "bin", "run.sh"), []byte("sleep 30; true\n"), 0o644)
-	process := exec.Command(sh, filepath.Join(filepath.Base(old), "bin", "run.sh"))
+	// A script-side handshake establishes that argv is published; Start alone
+	// only waits for the close-on-exec pipe. Keep the shell alive on stdin until
+	// cleanup, without a sleeping child that could outlive it.
+	writeExecutable(t, filepath.Join(old, "bin", "run.sh"), []byte("printf R\nread -r stop\n"), 0o644)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	process := exec.CommandContext(ctx, sh, filepath.Join(filepath.Base(old), "bin", "run.sh"))
 	process.Dir = h.dest
+	input, err := process.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer input.Close()
+	output, err := process.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := process.Start(); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = process.Process.Kill(); _ = process.Wait() })
+	var ready [1]byte
+	if _, err := io.ReadFull(output, ready[:]); err != nil || ready[0] != 'R' {
+		t.Fatalf("script did not signal readiness: %q, %v", ready, err)
+	}
 	refused, code := install.Remove(context.Background(), h.realProcesses(), old)
 	if code != install.Refused || len(golden.List(at(refused, "processes"))) == 0 {
 		t.Fatalf("exit %d\n%s", code, golden.Canon(refused))
 	}
+	found := false
+	for _, raw := range golden.List(at(refused, "processes")) {
+		found = found || at(golden.Obj(raw), "pid") == int64(process.Process.Pid)
+	}
+	if !found {
+		t.Fatalf("the refusal did not identify the script's pid %d\n%s", process.Process.Pid, golden.Canon(refused))
+	}
 	if _, err := os.Stat(filepath.Join(old, "bin", "crw")); err != nil {
 		t.Fatal("the runtime was removed under a running script")
+	}
+}
+
+// Start's close-on-exec handshake can finish before Linux publishes the new argv:
+// exe and cwd are readable, but cmdline is still empty. Hold that observed phase
+// in the fake process table so removal cannot win the race by deleting the script.
+func TestRemoveRefusesAScriptWhoseCommandLineIsNotReady(t *testing.T) {
+	// sequential: FakeProc replaces the process-reading hooks.
+	h := newHost(t)
+	first := archive(t, "0.9.0", "")
+	old := runtimeDir(h, "0.9.0", first, t)
+	h.mustInstall(t, "install", first)
+	h.mustInstall(t, "update", archive(t, "0.9.1", ""))
+	const pid = 4242
+	h.proc = install.FakeProc(t, install.FakeProcess{
+		Pid: pid, Exe: "/bin/sh", Cwd: h.dest, Cmdline: []byte{},
+	})
+	before, err := os.ReadFile(h.record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	refused, code := install.Remove(context.Background(), h.options(), old)
+	unknown := golden.List(at(refused, "unreadableProcesses"))
+	if code != install.Refused || at(refused, "applied") != false || len(unknown) != 1 || at(golden.Obj(unknown[0]), "pid") != int64(pid) {
+		t.Fatalf("before argv is published: exit %d\n%s", code, golden.Canon(refused))
+	}
+	after, err := os.ReadFile(h.record)
+	if err != nil || string(after) != string(before) {
+		t.Fatalf("the refusal changed the host record: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(old, "bin", "crw")); err != nil {
+		t.Fatalf("the refusal removed the runtime: %v", err)
+	}
+
+	// Publishing argv makes the same process a known user of the runtime.
+	cmdline := filepath.Join(h.proc, "4242", "cmdline")
+	if err := os.Chmod(cmdline, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	write(t, cmdline, string(install.Argv("sh", filepath.Join(filepath.Base(old), "bin", "run.sh"))))
+	refused, code = install.Remove(context.Background(), h.options(), old)
+	processes := golden.List(at(refused, "processes"))
+	if code != install.Refused || len(processes) != 1 || at(golden.Obj(processes[0]), "pid") != int64(pid) {
+		t.Fatalf("after argv is published: exit %d\n%s", code, golden.Canon(refused))
+	}
+	// Once the process exits, this runtime can be removed normally.
+	if err := os.RemoveAll(filepath.Join(h.proc, "4242")); err != nil {
+		t.Fatal(err)
+	}
+	removed, code := install.Remove(context.Background(), h.options(), old)
+	if code != install.OK || at(removed, "removed") != true {
+		t.Fatalf("after the process exits: exit %d\n%s", code, golden.Canon(removed))
 	}
 }
