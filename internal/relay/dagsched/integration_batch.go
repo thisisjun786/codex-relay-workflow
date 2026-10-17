@@ -128,7 +128,7 @@ func (s *Scheduler) IntegrateBatch(ctx context.Context, in IntegrationBatchInput
 		return out, refuse(contract.RefusalDispositionConflict, "repository integrate_command is only used for dev, never main or a release target")
 	}
 	if commands.VerifyCommand != "" {
-		deps.Verify = repositoryIntegrationVerifier(commands.VerifyCommand)
+		deps.Verify = repositoryIntegrationVerifier(in.Checkout, commands.VerifyCommand)
 	}
 	// a branch a worktree has checked out is refused before the verification runs; it is checked again inside the
 	// fenced move transaction below (CRW-1595)
@@ -1471,15 +1471,15 @@ func verifiedKeysOf(ctx context.Context, checkout, head string) (map[string]stri
 
 // repositoryIntegrationVerifier transports CRW's command receipt to the same
 // record reader as the local and GitHub verifiers.
-func repositoryIntegrationVerifier(command string) IntegrationBatchVerifier {
-	return func(ctx context.Context, dir string, env []string) error {
+func repositoryIntegrationVerifier(checkout, command string) IntegrationBatchVerifier {
+	return func(ctx context.Context, _ string, env []string) error {
 		vars := map[string]string{}
 		for _, kv := range env {
 			if k, v, ok := strings.Cut(kv, "="); ok {
 				vars[k] = v
 			}
 		}
-		record, err := VerifyRepositoryCommand(ctx, dir, vars["CRW_VERIFY_HEAD"], vars["CRW_VERIFY_BASE"], command)
+		record, err := VerifyRepositoryCommand(ctx, checkout, vars["CRW_VERIFY_HEAD"], vars["CRW_VERIFY_BASE"], command)
 		if err != nil {
 			return &IntegrationVerifierHostError{Detail: err.Error()}
 		}
