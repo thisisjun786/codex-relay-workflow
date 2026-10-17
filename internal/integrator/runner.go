@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/gitprobe"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tracking"
 )
 
 // Runner runs integration passes over one configured queue. The seams are what a test
@@ -29,6 +30,7 @@ type Runner struct {
 	// PullRequests reads the queue's pull requests and takes the record of their landing (the tracking adapter for the
 	// configured pull_request_repo; nil: the queue lands no pull request).
 	PullRequests PullRequestSource
+	StatusGitHub func(string) (*tracking.GitHub, error)
 
 	// hookMove is a test seam: it runs while a pending file is being moved, after the head the
 	// file holds was read and before the file leaves pending/.
@@ -117,6 +119,18 @@ func (r *Runner) gitRO(ctx context.Context, dir string, args ...string) (string,
 	var out bytes.Buffer
 	rc, err := r.Exec(ctx, Cmd{Argv: append([]string{r.Cfg.Git}, gitprobe.Args(dir, args...)...), Env: gitprobe.ProbeEnv(r.baseEnv()), Stdout: &out, Stderr: io.Discard})
 	return strings.TrimSpace(out.String()), rc, err
+}
+
+func lastValueWins(env []string) func(string) string {
+	return func(name string) string {
+		out := ""
+		for _, e := range env {
+			if k, v, ok := strings.Cut(e, "="); ok && k == name {
+				out = v
+			}
+		}
+		return out
+	}
 }
 
 func jsonLine(v any) (string, error) {

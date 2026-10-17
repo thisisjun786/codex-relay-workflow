@@ -40,6 +40,7 @@ type VerificationRecord struct {
 	VerifierRules string              `json:"verifierRules,omitempty"`
 	GitHub        *GitHubVerification `json:"github,omitempty"`
 	Digest        string              `json:"digest"`
+	Raw           json.RawMessage     `json:"-"`
 }
 
 // VerificationRecordResultPass is the one result word a reusable record carries (CRW-964 writes "pass").
@@ -84,6 +85,7 @@ func DecodeVerificationRecord(raw []byte) (VerificationRecord, error) {
 	if record.Schema != VerificationRecordSchema {
 		return record, refuse(contract.RefusalMalformedReceipt, "the verification record names schema %q; this path reads %s", record.Schema, VerificationRecordSchema)
 	}
+	record.Raw = append(json.RawMessage(nil), raw...)
 	return record, nil
 }
 

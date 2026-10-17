@@ -87,6 +87,12 @@ func PushIntegration(ctx context.Context, checkout, remote, remoteRef, integrati
 // branch is read and names a head the relay never recorded for an integration ref. Neither its answer nor its failure
 // changes what is pushed; a refusal after a moved target names it in its detail.
 func PushIntegrationChecked(ctx context.Context, checkout, remote, remoteRef, integrationRef string, moved MovedHeadCheck, stale StaleNodesCheck, target TargetCheck) (PushResult, error) {
+	return PushIntegrationWithStatus(ctx, checkout, remote, remoteRef, integrationRef, moved, stale, target, nil)
+}
+
+type BeforeIntegrationPush func(context.Context, string, string, string, string, string) error
+
+func PushIntegrationWithStatus(ctx context.Context, checkout, remote, remoteRef, integrationRef string, moved MovedHeadCheck, stale StaleNodesCheck, target TargetCheck, beforePush BeforeIntegrationPush) (PushResult, error) {
 	out := PushResult{Remote: remote, RemoteRef: remoteRef}
 	// a name that starts with a dash would be read by git as an option (CRW-965 review): refused before git runs
 	if strings.HasPrefix(remote, "-") || strings.HasPrefix(remoteRef, "-") {
@@ -132,7 +138,7 @@ func PushIntegrationChecked(ctx context.Context, checkout, remote, remoteRef, in
 			out.TargetMoved = moved
 		}
 	}
-	if err := pushRead(ctx, checkout, remote, remoteRef, integrationRef, pushTarget, local, &out); err != nil {
+	if err := pushRead(ctx, checkout, remote, remoteRef, integrationRef, pushTarget, local, beforePush, &out); err != nil {
 		return out, nameTargetMoved(err, out.TargetMoved, remote, remoteRef)
 	}
 	return out, nil
@@ -140,7 +146,7 @@ func PushIntegrationChecked(ctx context.Context, checkout, remote, remoteRef, in
 
 // pushRead finishes a push once the remote head is read: an equal remote is up to date, a remote the branch contains is
 // advanced, any other is refused, and an unreachable push is deferred.
-func pushRead(ctx context.Context, checkout, remote, remoteRef, integrationRef, pushTarget, local string, out *PushResult) error {
+func pushRead(ctx context.Context, checkout, remote, remoteRef, integrationRef, pushTarget, local string, beforePush BeforeIntegrationPush, out *PushResult) error {
 	remoteHead := out.RemoteHead
 	if remoteHead == local {
 		out.Outcome = PushUpToDate
@@ -156,6 +162,11 @@ func pushRead(ctx context.Context, checkout, remote, remoteRef, integrationRef, 
 		}
 		if !ancestor {
 			return refuse(contract.RefusalMergeBaseMismatch, "%s on %s points at %s, which %s does not contain: nothing is pushed", remoteRef, remote, remoteHead, integrationRef)
+		}
+	}
+	if beforePush != nil {
+		if err := beforePush(ctx, checkout, remote, remoteRef, integrationRef, local); err != nil {
+			return refuse(contract.RefusalMergeTargetUnreadable, "required integration status: %v; nothing was pushed", err)
 		}
 	}
 	if err := pushCommit(ctx, checkout, pushTarget, local, remoteRef); err != nil {
