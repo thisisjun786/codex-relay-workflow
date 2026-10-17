@@ -34,7 +34,7 @@ func (a *attemptRun) selectFlowSteer(ctx context.Context, lifecycle delivery.Lif
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return false, err
 	}
-	if err == nil && last.RetrySafe != 0 && steerTarget(last.Record) == turn {
+	if err == nil && last.RetrySafe != 0 && steerTarget(last.Record) == turn && !steerFailedBeforeDispatch(last.Record) {
 		return false, nil
 	}
 	a.steerTurn = turn
@@ -52,6 +52,15 @@ func steerTarget(record string) string {
 	return r.Turn
 }
 
+func steerFailedBeforeDispatch(record string) bool {
+	var r struct {
+		ReceiptStatus   string `json:"transportReceiptStatus"`
+		FailedOperation string `json:"failedOperation"`
+		SendAttempted   string `json:"sendAttempted"`
+	}
+	return json.Unmarshal([]byte(record), &r) == nil && r.ReceiptStatus == delivery.FailedStatus && r.FailedOperation == "thread/read" && r.SendAttempted == "no"
+}
+
 // A rejected steer is safe to defer. A lost response or a response naming a
 // different turn is uncertain and must never be resent under a new request id.
 func classifyFlowSteer(receipt delivery.Obj, expected string) delivery.Facts {
@@ -65,7 +74,10 @@ func classifyFlowSteer(receipt delivery.Obj, expected string) delivery.Facts {
 	if status == "accepted" && turn == expected && receipt.Get("delivery") == "accepted_not_applied" {
 		f.ReceiptStatus, f.DeliveryState, f.SendAttempted = delivery.Accepted, delivery.Dispatched, "yes"
 		f.TurnID, f.FailedOperation, f.RetrySafe = turn, nil, false
-	} else if (status == "failed" && rpc != nil && rpc.Get("code") != "steered_turn_mismatch" && turn == nil) || status == "not_attempted" {
+	} else if status == "not_attempted" {
+		f.ReceiptStatus, f.DeliveryState, f.SendAttempted = delivery.FailedStatus, delivery.DeferredBusy, "no"
+		f.TurnID, f.FailedOperation, f.RetrySafe = nil, "thread/read", true
+	} else if status == "failed" && rpc != nil && rpc.Get("code") != "steered_turn_mismatch" && turn == nil {
 		f.ReceiptStatus, f.DeliveryState, f.SendAttempted = delivery.FailedStatus, delivery.DeferredBusy, "no"
 		f.TurnID, f.FailedOperation, f.RetrySafe = nil, "turn/steer", true
 	}
