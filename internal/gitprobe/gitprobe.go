@@ -36,6 +36,7 @@ var routing = []string{
 	"GIT_PREFIX", "GIT_IMPLICIT_WORK_TREE", "GIT_INTERNAL_SUPER_PREFIX",
 	"GIT_SHALLOW_FILE", "GIT_GRAFT_FILE", "GIT_REPLACE_REF_BASE", "GIT_NO_REPLACE_OBJECTS",
 	"GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT",
+	"GIT_CONFIG", // Only git config reads this override; push and remote use the normal configuration sources.
 }
 
 // IsRouting says whether name is a variable Sanitize removes: one of the routing variables, or a numbered
