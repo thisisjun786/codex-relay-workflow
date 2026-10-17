@@ -422,7 +422,7 @@ func TestReferenceAndContainerBoundaries(t *testing.T) {
 		{"indented fence continues quote", kept + "## Out of scope\n> quote\n>     ```\nIn scope\n---\n" + hidden},
 		{"indented ATX continues quote", kept + "## Out of scope\n> quote\n>     ## Notes\nIn scope\n---\n" + hidden},
 		{"new nested quote code is not continuation", "## Out of scope\n> quote\n> >     <div>\nIn scope\n---\n" + kept},
-		{"shallower quote code is not continuation", "## Out of scope\n> > quote\n>     <div>\nIn scope\n---\n" + kept},
+		{"shallower quote retains paragraph", kept + "## Out of scope\n> > quote\n>     <div>\nIn scope\n---\n" + hidden},
 	} {
 		for _, ending := range []struct{ name, value string }{{"LF", "\n"}, {"CRLF", "\r\n"}} {
 			t.Run(tc.name+"/"+ending.name, func(t *testing.T) {
@@ -434,6 +434,59 @@ func TestReferenceAndContainerBoundaries(t *testing.T) {
 				}
 				if len(res.Warnings) != 0 {
 					t.Errorf("warnings = %+v; want none", res.Warnings)
+				}
+			})
+		}
+	}
+}
+
+func TestLazyQuoteDepth(t *testing.T) {
+	for _, quote := range []string{
+		"> > paragraph\n>     continuation",
+		"> > paragraph\n>     continuation\n> >     <div>",
+		"> > > paragraph\n> >     continuation\n>     more\n> > >     <div>",
+	} {
+		t.Run(quote, func(t *testing.T) {
+			body := "## Criteria\n- keep\n## Edit regions\n- `keep.go`\n## Out of scope\n" +
+				quote + "\nIn scope\n---\n### Criteria\n- hidden\n### Edit regions\n- `hidden.go`\n"
+			is := only(t, build(t, milestone(open(1, body)), Options{}))
+			if !reflect.DeepEqual(is.Criteria, []string{"keep"}) ||
+				!reflect.DeepEqual(is.Regions, []compile.Region{{Path: "keep.go", Kind: "file"}}) {
+				t.Errorf("lazy quote released exclusion: %+v", is)
+			}
+		})
+	}
+}
+
+func TestReferenceTitleIndentedFences(t *testing.T) {
+	for _, indent := range []string{"    ", "        ", "\t"} {
+		for _, fence := range []string{"```", "~~~"} {
+			t.Run(indent+fence, func(t *testing.T) {
+				body := "[spec]: /spec \"start\n" + indent + fence + "\nend\"\n" +
+					"Criteria\n---\n- keep\n\nEdit regions\n---\n- `keep.go`\n"
+				res := build(t, milestone(open(1, body)), Options{})
+				is := only(t, res)
+				if !reflect.DeepEqual(is.Criteria, []string{"keep"}) ||
+					!reflect.DeepEqual(is.Regions, []compile.Region{{Path: "keep.go", Kind: "file"}}) ||
+					len(res.Warnings) != 0 {
+					t.Errorf("indented reference text swallowed sections: issue=%+v warnings=%+v", is, res.Warnings)
+				}
+			})
+		}
+	}
+}
+
+func TestFenceIndentation(t *testing.T) {
+	for _, indent := range []string{"", "   "} {
+		for _, fence := range []string{"```", "~~~"} {
+			t.Run(indent+fence, func(t *testing.T) {
+				body := "## Criteria\n- keep\n" + indent + fence + "\n    " + fence +
+					"\n## Criteria\n- hidden\n" + indent + fence +
+					"\n## Edit regions\n- `keep.go`\n"
+				is := only(t, build(t, milestone(open(1, body)), Options{}))
+				if !reflect.DeepEqual(is.Criteria, []string{"keep"}) ||
+					!reflect.DeepEqual(is.Regions, []compile.Region{{Path: "keep.go", Kind: "file"}}) {
+					t.Errorf("four-space marker closed a fence: %+v", is)
 				}
 			})
 		}

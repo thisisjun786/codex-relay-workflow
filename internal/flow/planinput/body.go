@@ -68,14 +68,13 @@ func readHeadingBlock(line string, inParagraph bool) headingBlockLine {
 		text: text, indent: indentOf(line[:len(line)-len(text)]),
 		atx: headingLine.FindStringSubmatch(line), blank: text == "",
 	}
-	t := strings.TrimLeft(line, " ")
-	switch {
-	case strings.HasPrefix(t, "```"):
-		b.fence = "```"
-	case strings.HasPrefix(t, "~~~"):
-		b.fence = "~~~"
-	}
 	if b.indent <= 3 {
+		switch {
+		case strings.HasPrefix(text, "```"):
+			b.fence = "```"
+		case strings.HasPrefix(text, "~~~"):
+			b.fence = "~~~"
+		}
 		b.html = headingHTMLStart(text, inParagraph)
 		b.setext = setextLine.MatchString(line)
 		b.rule = setextBreakLine.MatchString(text)
@@ -253,8 +252,13 @@ func sections(body string) []section {
 			}
 		case block.quote:
 			text, depth := headingQuoteText(line)
-			continued := state.kind == quoteParagraph && state.quoteDepth == depth &&
+			continued := state.kind == quoteParagraph && depth <= state.quoteDepth &&
 				(state.itemText == 0 || inItem)
+			if continued {
+				// A lazy line can omit quote markers without leaving the
+				// paragraph's original container.
+				depth = state.quoteDepth
+			}
 			flush()
 			if !inItem {
 				state.itemText = 0
