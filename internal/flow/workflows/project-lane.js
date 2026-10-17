@@ -285,14 +285,10 @@ async function nodeLane(n, rel, sig) {
   // verification and the summary of its last receipt, all from the node's own calls and checks. A fresh thread has none of the turns
   // before it, so its packet carries them; the first build has none.
   const last = { findings: [], ci: null, receipt: null }
-  // the sub-tasks of a node sized for a split (CRW-1459) run in their order on one executor thread: done is the sub-tasks with a
-  // checkpoint commit of the node, from the first, and failed the receipts of those that reported failed, by id. A sub-task before the
-  // last is committed as a checkpoint, with no unit check, no verification and no land, and the same thread goes on to the next; the
-  // receipt of the last, and every one after it, goes on to the node's commit and verification, then the one check of the node's whole
-  // change (base..head, every criterion of the node) and the land, so the node is judged once, as a whole, and its acceptance rests on
-  // that check alone. A fresh thread (a rebuild, the executor-t1 build) starts at the node's last commit, which holds the done ones, and
-  // its packet starts at the first one not done: the progress is part of the node's last state (last.split), which a fresh thread's
-  // packet carries.
+  // the sub-tasks of a node sized for a split run in order on one executor thread. Each gets a scoped unit check before its
+  // commit. Earlier commits are checkpoints; only after the last does the run verify and check the node's whole base..head
+  // range, and acceptance rests on that committed check alone. done counts committed sub-tasks; failed keeps self_failed
+  // receipts as context. A rebuild or tier step starts from the last checkpoint and the first sub-task not yet committed.
   const subs = (plan.size_fit === 'split' && plan.sub_tasks) || []
   const split = { done: 0, failed: {} }
   if (subs.length) last.split = split
@@ -415,44 +411,57 @@ async function nodeLane(n, rel, sig) {
         continue
       }
     } else if (subs.length) {
-      // ready or self_failed of a split node: the run judges the worktree, never the executor's report
-      if (split.done + 1 < subs.length) {
-        // a sub-task before the last: a checkpoint commit of its tree against its own regions, with no unit check, and the next
-        // sub-task on the same thread; a sub-task that reported failed is no judgement of the node, which judges it with the rest after
-        // the last
-        const sub = subs[split.done]
-        await crw.commit(node, ex, sub.edit_regions)
-        if (s === 'self_failed') split.failed[sub.id] = { summary: (ex.output && ex.output.summary) || '', gap: (ex.output && ex.output.gap) || '' }
-        split.done++
-        ex = await agent.call(subTaskPacket(plan, split.done, split.failed), { resume: ex, schema: RECEIPT, label: 'subtask:' + node + ':' + tier + ':s' + (split.done + 1) })
+      // ready or self_failed of a split node: the run judges the worktree, never the executor's report. Every sub-task's own
+      // change is checked, scoped to it, before its checkpoint commit — the last one too; work after all of them are
+      // committed (a whole-node review fix, a verification fix, a tier rebuild) gets only the whole-range committed check.
+      const currentSub = subs[split.done]
+      const scoped = currentSub
+        ? await judge(await crw.unitCheck(node, ex, { round, final: fixes >= UNIT_CHECK_ROUNDS, sub: currentSub.id }), round)
+        : {}
+      if (scoped.end) return scoped.end
+      if (scoped.fix) {
+        ex = await scoped.fix()
         continue
       }
-      // the last sub-task, a fix after it or a tier's build: the node's commit, which holds every sub-task, with no check before it
-      head = await crw.commit(node, ex, plan.regions)
-      if (split.done < subs.length) split.done = subs.length
-      const ci = await crw.verify(node, head)
-      if (!ci.ran) {
-        await crw.hold(node, { reason: 'verify_unavailable', call: ex.callId, source: 'verify' })
-        return { node, state: 'held', reason: 'verify_unavailable', detail: ci.error }
-      }
-      ev.verification(tier, head.commit, ci.pass, ci.digest)
-      last.ci = ci
-      if (ci.pass) {
-        // a split node is judged as a whole (CRW-1459): the committed range from the node's base (the base its verification stands on)
-        // to its head is checked against every criterion of the node, and the acceptance rests on this check alone; its findings go to
-        // the same thread as a fix round, whose work is committed, verified and checked as a whole again
-        const whole = await judge(await crw.unitCheck(node, ex, { round, final: fixes >= UNIT_CHECK_ROUNDS, commit: head, base: ci.base }), round)
-        if (whole.end) return whole.end
-        if (whole.fix) {
-          ex = await whole.fix()
+      if (!scoped.step) {
+        if (split.done + 1 < subs.length) {
+          // the scoped check passed: checkpoint this sub-task in its own regions and continue on the same thread.
+          // A self_failed receipt is context for the next sub-task; the review determines whether the work passes.
+          const sub = subs[split.done]
+          await crw.commit(node, ex, sub.edit_regions)
+          if (s === 'self_failed') split.failed[sub.id] = { summary: (ex.output && ex.output.summary) || '', gap: (ex.output && ex.output.gap) || '' }
+          split.done++
+          ex = await agent.call(subTaskPacket(plan, split.done, split.failed), { resume: ex, schema: RECEIPT, label: 'subtask:' + node + ':' + tier + ':s' + (split.done + 1) })
           continue
         }
-        if (!whole.step) return landEnd(await crw.land(node, landOpts(head, ci)))
-      } else if (!ev.tierStepDue(tier)) {
-        // fix the verification on the executor's own thread; its work is committed, verified and checked as a whole again
-        ex = await agent.call(fixPacket(node, null, ci, null, ex.output), { resume: ex, schema: RECEIPT, label: 'fix:' + node + ':' + tier + ':r' + round })
-        continue
+        // commit the last checked sub-task, or a whole-node fix after all sub-tasks; verify and review the whole range below
+        head = await crw.commit(node, ex, plan.regions)
+        if (split.done < subs.length) split.done = subs.length
+        const ci = await crw.verify(node, head)
+        if (!ci.ran) {
+          await crw.hold(node, { reason: 'verify_unavailable', call: ex.callId, source: 'verify' })
+          return { node, state: 'held', reason: 'verify_unavailable', detail: ci.error }
+        }
+        ev.verification(tier, head.commit, ci.pass, ci.digest)
+        last.ci = ci
+        if (ci.pass) {
+          // a split node is judged as a whole (CRW-1459): the committed range from the node's base (the base its verification stands on)
+          // to its head is checked against every criterion of the node, and the acceptance rests on this check alone; its findings go to
+          // the same thread as a fix round, whose work is committed, verified and checked as a whole again
+          const whole = await judge(await crw.unitCheck(node, ex, { round, final: fixes >= UNIT_CHECK_ROUNDS, commit: head, base: ci.base }), round)
+          if (whole.end) return whole.end
+          if (whole.fix) {
+            ex = await whole.fix()
+            continue
+          }
+          if (!whole.step) return landEnd(await crw.land(node, landOpts(head, ci)))
+        } else if (!ev.tierStepDue(tier)) {
+          // fix the verification on the executor's own thread; its work is committed, verified and checked as a whole again
+          ex = await agent.call(fixPacket(node, null, ci, null, ex.output), { resume: ex, schema: RECEIPT, label: 'fix:' + node + ':' + tier + ':r' + round })
+          continue
+        }
       }
+      // a scoped step reaches the tier-step code below without committing or starting the next sub-task
     } else {
       // ready or self_failed: the run judges the worktree, never the executor's report. The unit check reads the uncommitted
       // changes the call left (the tree crw.commit will commit); final: no fix round can follow it on this tier.

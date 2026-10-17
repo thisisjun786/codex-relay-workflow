@@ -80,8 +80,8 @@ func CodexReviewProfile(cfg CodexReviewConfig) Profile {
 }
 
 // CodexReviewCommittedProfile is the committed mode of the unit check through `codex review --base <base>`: the same overrides as
-// CodexReviewProfile, and Args that give `--base <Request.Base>` and no prompt (whether codex takes a prompt with --base is
-// unverified, so none is sent; PromptSent false); a request with a blank Base is refused before any call. Codex reviews the diff from
+// CodexReviewProfile, and Args that give `--base <Request.Base>` and no prompt (codex-cli 0.163.0 refuses PROMPT with --base;
+// PromptSent is false); a request with a blank Base is refused before any call. Codex reviews the diff from
 // its own merge-base(base, HEAD) to the worktree, which in land-head's clean checkout of the range's head is base..head. A commit id
 // as --base on a detached head was probed by the parent on 10-16 (codex-cli 0.154.0: exit 0 and a review of the range,
 // inputs/codex-review-sample-one-finding.txt). The reader does not read the range from the answer (Codex does not name it), so the
@@ -94,6 +94,23 @@ func CodexReviewCommittedProfile(cfg CodexReviewConfig) Profile {
 			return nil, errors.New("a committed codex review needs the range's base and the request names none")
 		}
 		return []string{"--base", base}, nil
+	}
+	return p
+}
+
+// CodexSubtaskReviewProfile uses Codex's custom review instructions for a sub-task's uncommitted change.
+// codex-cli 0.163.0 refuses PROMPT together with --uncommitted or --base, so the prompt itself states the diff scope.
+// The model, review_model, effort, read-only sandbox and answer reader are the same as the ordinary review profiles.
+func CodexSubtaskReviewProfile(cfg CodexReviewConfig) Profile {
+	p := codexCall("codex-review-subtask", cfg)
+	p.Args = func(req Request) ([]string, error) {
+		if req.Base != "" || req.Head != "" {
+			return nil, errors.New("a sub-task codex review accepts only an uncommitted change")
+		}
+		if strings.TrimSpace(req.Prompt) == "" {
+			return nil, errors.New("a sub-task codex review requires its scope prompt")
+		}
+		return []string{"--", req.Prompt}, nil
 	}
 	return p
 }

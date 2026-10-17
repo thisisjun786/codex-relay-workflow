@@ -246,6 +246,9 @@ func shippedUnitCheck(policy *engine.Policy) (*ops.UnitCheck, error) {
 			}
 			return reviewadapter.Profile{}, fmt.Errorf("the shipped unit check has no fallback for mode %q", mode)
 		},
+		SubtaskProfile: func() (reviewadapter.Profile, error) {
+			return reviewadapter.CodexSubtaskReviewProfile(cfg), nil
+		},
 		Limit: shippedUnitCheckLimit,
 	}, nil
 }

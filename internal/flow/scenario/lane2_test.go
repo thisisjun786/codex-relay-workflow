@@ -1133,15 +1133,20 @@ func rowsOfNode(l *Lab, op, node string) []engine.Event {
 	return out
 }
 
-// noJudgementBefore asserts that no crw.unitCheck, crw.verify, crw.review, crw.accept or crw.integrate row of node A comes before seq:
-// a split node's sub-tasks run with no check between them, and the node is judged once, after its last sub-task.
+// noJudgementBefore asserts that no crw.verify, crw.review, crw.accept or crw.integrate row of node A comes before seq, and no
+// check of its whole committed change either: a split node's sub-tasks each get a scoped uncommitted check before their own
+// commit (CRW-1564), and the node is judged as a whole once, after its last sub-task.
 func noJudgementBefore(t *testing.T, l *Lab, seq int, what string) {
 	t.Helper()
 	for _, op := range []string{ops.OpUnitCheck, ops.OpVerify, "crw.review", ops.OpAccept, ops.OpIntegrate} {
 		for _, r := range rowsOfNode(l, op, "A") {
-			if r.Seq < seq {
-				t.Errorf("a %s row (seq %d) before %s (seq %d)", op, r.Seq, what, seq)
+			if r.Seq >= seq {
+				continue
 			}
+			if op == ops.OpUnitCheck && str(r.Data, "mode") == ops.UnitCheckUncommitted {
+				continue // a scoped check of a sub-task's own change is expected before its commit
+			}
+			t.Errorf("a %s row (seq %d) before %s (seq %d)", op, r.Seq, what, seq)
 		}
 	}
 }
@@ -1250,11 +1255,14 @@ func TestSplitSubTaskSelfFailedGoesOnWithoutAJudgement(t *testing.T) {
 	if n := len(rowsOfNode(l, ops.OpIntegrate, "A")); n != 1 {
 		t.Errorf("%d crw.integrate rows of A, want 1", n)
 	}
-	// the node lands on the check of its whole change after the last sub-task, never on the failed sub-task's receipt
+	// the node lands on the check of its whole change after the last sub-task, never on the failed sub-task's receipt; each
+	// sub-task's own change got its scoped check (CRW-1564), and only the committed whole-change check is the judgment the
+	// acceptance rests on
 	checks, accepts := rowsOfNode(l, ops.OpUnitCheck, "A"), rowsOfNode(l, ops.OpAccept, "A")
-	if len(checks) != 1 || str(checks[0].Data, "mode") != ops.UnitCheckCommitted || str(checks[0].Data, "commit") != str(commits[1].Data, "commit") ||
-		len(accepts) != 1 || str(accepts[0].Data, "reviewer_call") != checks[0].CallID {
-		t.Errorf("checks %v and acceptances %v of A, want one acceptance on the one check of the whole change", checks, accepts)
+	if len(checks) != 3 || str(checks[0].Data, "mode") != ops.UnitCheckUncommitted || str(checks[1].Data, "mode") != ops.UnitCheckUncommitted ||
+		str(checks[2].Data, "mode") != ops.UnitCheckCommitted || str(checks[2].Data, "commit") != str(commits[1].Data, "commit") ||
+		len(accepts) != 1 || str(accepts[0].Data, "reviewer_call") != checks[2].CallID {
+		t.Errorf("checks %v and acceptances %v of A, want two scoped checks, then one acceptance on the check of the whole change", checks, accepts)
 	}
 	last := str(commits[1].Data, "commit")
 	for _, id := range []string{"one", "two"} {
@@ -1342,13 +1350,14 @@ func criteriaChecker(c CheckInfo) (UnitCheck, bool) {
 	return UnitCheck{}, true
 }
 
-// TestASplitSubTaskIsNotCheckedBeforeTheLast (CRW-1459, the crosscheck's tiers_exhausted sequence; a check of each sub-task alone is
-// CRW-1564's): a split node's sub-tasks run with no unit check between them, and the node is checked once, after the last, on its whole change (the committed range from its base to its head) against every criterion of the
-// node. With a checker that reports every criterion its prompt names and the tree does not meet, a correct first sub-task is not
-// failed for the second sub-task's criterion: the second sub-task runs on the same thread and the node lands with no tier step (a check
-// of the whole node's criteria on the first sub-task ran two fix rounds, stepped the tier and ended tiers_exhausted after four checks,
-// with no commit and no second sub-task).
-func TestASplitSubTaskIsNotCheckedBeforeTheLast(t *testing.T) {
+// TestEachSubTaskIsCheckedScopedBeforeItsCommit (CRW-1564; the CRW-1459 shape it refines): a split node's every sub-task gets a
+// scoped unit check of its own uncommitted change before its checkpoint commit — the first while the later sub-tasks' work is
+// absent — and the node is still checked once, after the last, on its whole change (the committed range from its base to its
+// head) against every criterion of the node. With a checker that reports every criterion its prompt names and the tree does
+// not meet, a correct first sub-task is not failed for the second sub-task's criterion: the second sub-task runs on the same
+// thread and the node lands with no tier step (a check of the whole node's criteria on the first sub-task ran two fix rounds,
+// stepped the tier and ended tiers_exhausted after four checks, with no commit and no second sub-task).
+func TestEachSubTaskIsCheckedScopedBeforeItsCommit(t *testing.T) {
 	l := splitLabWith(t, splitCriteria, "one", "two")
 	l.OnUnitCheck(criteriaChecker)
 	l.Sequence("^build:A:executor$", writes("one", "ready_for_review"))
@@ -1370,10 +1379,21 @@ func TestASplitSubTaskIsNotCheckedBeforeTheLast(t *testing.T) {
 	}
 	base, head := str(commits[0].Data, "parent"), str(commits[1].Data, "commit")
 	checks := l.Checker.Calls("A")
-	if len(checks) != 1 {
-		t.Fatalf("%d unit checks of A, want only the check of the whole change", len(checks))
+	if len(checks) != 3 {
+		t.Fatalf("%d unit checks of A, want the two scoped and the one of the whole change", len(checks))
 	}
-	prompt := checks[0].Request.Prompt
+	for i, w := range []string{"SUB-TASK 1 of 2 (one)", "SUB-TASK 2 of 2 (two)"} {
+		prompt := checks[i].Request.Prompt
+		if !strings.Contains(prompt, w) || !strings.HasPrefix(prompt, "Review the uncommitted changes") {
+			t.Errorf("scoped check %d's prompt:\n%s", i+1, prompt)
+		}
+		for _, banned := range []string{"c1: a/one.txt holds one", "c2: a/two.txt holds two"} {
+			if strings.Contains(prompt, banned) {
+				t.Errorf("the scoped check %d of A judges the node's whole criterion (%q):\n%s", i+1, banned, prompt)
+			}
+		}
+	}
+	prompt := checks[2].Request.Prompt
 	for _, w := range []string{"Review the changes between " + base + " and " + head, "the whole change of the node", "c1: a/one.txt holds one", "c2: a/two.txt holds two"} {
 		if !strings.Contains(prompt, w) {
 			t.Errorf("the check of A lacks %q:\n%s", w, prompt)
@@ -1385,11 +1405,18 @@ func TestASplitSubTaskIsNotCheckedBeforeTheLast(t *testing.T) {
 		}
 	}
 	rows := rowsOfNode(l, ops.OpUnitCheck, "A")
-	if len(rows) != 1 || str(rows[0].Data, "mode") != ops.UnitCheckCommitted || str(rows[0].Data, "base") != base || str(rows[0].Data, "commit") != head || rows[0].Seq < commits[1].Seq {
-		t.Fatalf("the unit-check rows of A %v, want one committed check of %s..%s after the node's commit", rows, base, head)
+	if len(rows) != 3 || str(rows[0].Data, "mode") != ops.UnitCheckUncommitted || str(rows[1].Data, "mode") != ops.UnitCheckUncommitted ||
+		str(rows[2].Data, "mode") != ops.UnitCheckCommitted || str(rows[2].Data, "base") != base || str(rows[2].Data, "commit") != head || rows[2].Seq < commits[1].Seq {
+		t.Fatalf("the unit-check rows of A %v, want two scoped checks and one committed check of %s..%s after the node's commit", rows, base, head)
 	}
-	if _, ok := rows[0].Data["sub"]; ok {
-		t.Errorf("the check of A names a sub-task: %v", rows[0].Data)
+	for _, w := range []string{"sub"} {
+		if _, ok := rows[2].Data[w]; ok {
+			t.Errorf("the check of A names a %s: %v", w, rows[2].Data)
+		}
+	}
+	// each scoped check ran before its sub-task's commit
+	if rows[0].Seq > commits[0].Seq || rows[1].Seq > commits[1].Seq {
+		t.Errorf("scoped check rows %d, %d against commits %d, %d: a check ran after its sub-task's commit", rows[0].Seq, rows[1].Seq, commits[0].Seq, commits[1].Seq)
 	}
 }
 
@@ -1446,8 +1473,19 @@ func TestASplitNodeIsAcceptedOnTheCheckOfItsWholeChange(t *testing.T) {
 			t.Errorf("check %d of the whole change: %v, want the range %s..%s", i+1, r.Data, base, h)
 		}
 	}
-	if rows := rowsOfNode(l, ops.OpUnitCheck, "A"); len(rows) != len(wholeRows) {
-		t.Errorf("%d unit checks of A, want only the %d of its whole change: %v", len(rows), len(wholeRows), rows)
+	// the whole node checks are the only committed ones: the two scoped sub-task checks came before the node's commit, and the
+	// fix's work got no new scoped or uncommitted check — only the whole range's
+	all := rowsOfNode(l, ops.OpUnitCheck, "A")
+	if len(all) != len(wholeRows)+2 || str(all[0].Data, "mode") != ops.UnitCheckUncommitted || str(all[1].Data, "mode") != ops.UnitCheckUncommitted {
+		t.Errorf("the unit-check rows of A %v, want two scoped checks before the %d of the whole change", all, len(wholeRows))
+	}
+	for i, r := range all {
+		if i < 2 && r.Seq > commits[1].Seq {
+			t.Errorf("a scoped check after the last sub-task's commit: %v", r.Data)
+		}
+		if i >= 2 && str(r.Data, "mode") != ops.UnitCheckCommitted {
+			t.Errorf("a check after the scoped ones that is not of the whole change: %v", r.Data)
+		}
 	}
 	verifies := rowsOfNode(l, ops.OpVerify, "A")
 	if len(verifies) != 2 || !(verifies[0].Seq < wholeRows[0].Seq && wholeRows[0].Seq < fix.Seq && verifies[1].Seq < wholeRows[1].Seq) {
@@ -1503,7 +1541,10 @@ func TestASplitNodeAfterATierStepPastItsLastSubTaskIsBuiltAsAWhole(t *testing.T)
 		t.Errorf("no check of the whole change of A")
 	}
 	for _, r := range checks {
-		if _, sub := r.Data["sub"]; sub || str(r.Data, "mode") != ops.UnitCheckCommitted || r.Seq < t1.Seq {
+		if str(r.Data, "mode") == ops.UnitCheckUncommitted {
+			continue // a scoped sub-task check, before its commit — not the whole-change judgment this test bounds
+		}
+		if _, sub := r.Data["sub"]; sub || r.Seq < t1.Seq {
 			t.Errorf("a check of A %v, want only checks of its whole change after the executor-t1 build", r.Data)
 		}
 	}
@@ -1541,8 +1582,8 @@ func TestARepeatedFindingOfTheWholeChangeStepsTheTier(t *testing.T) {
 	if len(steps) != 1 {
 		t.Fatalf("step rows %+v, want one", steps)
 	}
-	if whole != 3 || len(l.Checker.Calls("A")) != 3 {
-		t.Errorf("%d checks of the whole change of %d checks of A, want 3 of 3", whole, len(l.Checker.Calls("A")))
+	if whole != 3 || len(l.Checker.Calls("A")) != 5 {
+		t.Errorf("%d checks of the whole change of %d checks of A, want 3 of 5 (the two scoped ones besides)", whole, len(l.Checker.Calls("A")))
 	}
 }
 
@@ -1555,7 +1596,20 @@ func TestTheCheckOfASplitNodesWholeChangeKeepsTheRoundCapAndCarries(t *testing.T
 	f1 := Finding("P2", "the first thing is wrong")
 	run := func(t *testing.T, second, third UnitCheck) (*Lab, carriedResult, string, string, []string) {
 		l := splitLab(t, "one", "two")
-		l.UnitChecks("A", NeedsChanges(f1), second, third, UnitCheck{})
+		// the scripted answers are for the checks of the whole change; the scoped sub-task checks (CRW-1564) that come first
+		// pass and never consume them
+		whole := []UnitCheck{NeedsChanges(f1), second, third, UnitCheck{}}
+		l.OnUnitCheck(func(c CheckInfo) (UnitCheck, bool) {
+			if !strings.HasPrefix(c.Prompt, "Review the changes between ") {
+				return UnitCheck{}, false
+			}
+			if len(whole) == 0 {
+				return UnitCheck{}, true
+			}
+			u := whole[0]
+			whole = whole[1:]
+			return u, true
+		})
 		l.Sequence("^build:A:executor$", writes("one", "ready_for_review"))
 		l.Sequence("^subtask:A:executor:s2$", writes("two", "ready_for_review"))
 		fixes := 0
@@ -1565,12 +1619,12 @@ func TestTheCheckOfASplitNodesWholeChangeKeepsTheRoundCapAndCarries(t *testing.T
 		})
 		got, state, reason, carried := runCarried(t, l)
 		for _, r := range rowsOfNode(l, ops.OpUnitCheck, "A") {
-			if str(r.Data, "mode") != ops.UnitCheckCommitted {
-				t.Errorf("a check of A that is not of its whole change: %v", r.Data)
+			if str(r.Data, "mode") != ops.UnitCheckCommitted && str(r.Data, "mode") != ops.UnitCheckUncommitted {
+				t.Errorf("a check of A that is not of its whole change or a scoped sub-task's: %v", r.Data)
 			}
 		}
-		if n := len(l.Checker.Calls("A")); n != 3 {
-			t.Errorf("%d checks of A, want 3", n)
+		if n := len(l.Checker.Calls("A")); n != 5 {
+			t.Errorf("%d checks of A, want 5 (the two scoped and the three of the whole change)", n)
 		}
 		noTierStep(t, l)
 		return l, got, state, reason, carried
