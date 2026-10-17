@@ -14,18 +14,25 @@ const (
 )
 
 func commandReadsCheckout(command, worktree string) bool {
-	root, err := filepath.Abs(worktree)
-	if err != nil || strings.TrimSpace(worktree) == "" {
+	if strings.TrimSpace(worktree) == "" {
 		return false
 	}
-	root, err = filepath.EvalSymlinks(root)
-	if err != nil {
+	base := ""
+	if !filepath.IsAbs(worktree) {
+		wd, err := os.Getwd()
+		if err != nil {
+			return false
+		}
+		base = wd
+	}
+	root, ok := resolveProofPath(worktree, base)
+	if !ok {
 		return false
 	}
-	return checkoutProgramReads(command, root, root, 0, true)
+	return checkoutProgramReads(command, root, root, 0, true, proofInput{})
 }
 
-func checkoutProgramReads(command, cwd, root string, depth int, succeeded bool) bool {
+func checkoutProgramReads(command, cwd, root string, depth int, succeeded bool, input proofInput) bool {
 	if depth > readProofMaxDepth || len(command) > readProofMaxLen || strings.TrimSpace(command) == "" {
 		return false
 	}
@@ -34,7 +41,12 @@ func checkoutProgramReads(command, cwd, root string, depth int, succeeded bool) 
 		return false
 	}
 	st := &proofState{root: root, cwd: cwd, depth: depth}
-	return st.stmtsRead(f.Stmts, false, succeeded)
+	return st.stmtsRead(f.Stmts, input, succeeded)
+}
+
+type proofInput struct {
+	files []string
+	taken bool
 }
 
 type proofState struct {
@@ -44,10 +56,10 @@ type proofState struct {
 	blocked bool
 }
 
-func (st *proofState) stmtsRead(stmts []*syntax.Stmt, pipedIn, succeeded bool) bool {
+func (st *proofState) stmtsRead(stmts []*syntax.Stmt, input proofInput, succeeded bool) bool {
 	read := false
 	for i, s := range stmts {
-		_, r := st.stmtEval(s, pipedIn, succeeded && i == len(stmts)-1)
+		_, r := st.stmtEval(s, input, succeeded && i == len(stmts)-1)
 		read = read || r
 		if st.blocked {
 			return read
@@ -56,7 +68,7 @@ func (st *proofState) stmtsRead(stmts []*syntax.Stmt, pipedIn, succeeded bool) b
 	return read
 }
 
-func (st *proofState) stmtEval(s *syntax.Stmt, pipedIn, succeeded bool) (ran, read bool) {
+func (st *proofState) stmtEval(s *syntax.Stmt, input proofInput, succeeded bool) (ran, read bool) {
 	if st.blocked {
 		return false, false
 	}
@@ -64,17 +76,17 @@ func (st *proofState) stmtEval(s *syntax.Stmt, pipedIn, succeeded bool) (ran, re
 		st.blocked = true
 		return false, false
 	}
-	stdinFiles, stdinTaken, ok := st.scanRedirs(s.Redirs, pipedIn)
+	eff, ok := st.scanRedirs(s.Redirs, input)
 	if st.blocked || !ok {
 		return false, false
 	}
 	switch c := s.Cmd.(type) {
 	case *syntax.CallExpr:
-		return st.callEval(c, stdinFiles, stdinTaken, succeeded)
+		return st.callEval(c, eff.files, eff.taken, succeeded)
 	case *syntax.BinaryCmd:
 		switch c.Op {
 		case syntax.AndStmt:
-			lran, lread := st.stmtEval(c.X, pipedIn, succeeded)
+			lran, lread := st.stmtEval(c.X, eff, succeeded)
 			if st.blocked {
 				return false, lread
 			}
@@ -85,15 +97,15 @@ func (st *proofState) stmtEval(s *syntax.Stmt, pipedIn, succeeded bool) (ran, re
 				st.blocked = true
 				return false, false
 			}
-			return st.stmtEval(c.Y, pipedIn, succeeded)
+			return st.stmtEval(c.Y, eff, succeeded)
 		case syntax.OrStmt:
-			_, lread := st.stmtEval(c.X, pipedIn, false)
+			_, lread := st.stmtEval(c.X, eff, false)
 			st.blocked = true
 			return false, lread
 		case syntax.Pipe, syntax.PipeAll:
 			x, y := *st, *st
-			_, xread := x.stmtEval(c.X, pipedIn, false)
-			yran, yread := y.stmtEval(c.Y, true, succeeded)
+			_, xread := x.stmtEval(c.X, eff, false)
+			yran, yread := y.stmtEval(c.Y, proofInput{taken: true}, succeeded)
 			return succeeded || yran, xread || yread
 		default:
 			st.blocked = true
@@ -101,68 +113,74 @@ func (st *proofState) stmtEval(s *syntax.Stmt, pipedIn, succeeded bool) (ran, re
 		}
 	case *syntax.Subshell:
 		inner := *st
-		return succeeded, inner.stmtsRead(c.Stmts, stdinTaken, succeeded)
+		return succeeded, inner.stmtsRead(c.Stmts, eff, succeeded)
 	case *syntax.Block:
-		return succeeded, st.stmtsRead(c.Stmts, stdinTaken, succeeded)
+		return succeeded, st.stmtsRead(c.Stmts, eff, succeeded)
 	default:
 		st.blocked = true
 		return false, false
 	}
 }
 
-func (st *proofState) scanRedirs(redirs []*syntax.Redirect, pipedIn bool) (files []string, stdin bool, ok bool) {
-	stdin = pipedIn
+func (st *proofState) scanRedirs(redirs []*syntax.Redirect, input proofInput) (proofInput, bool) {
+	out := input
 	for _, r := range redirs {
 		switch r.Op {
 		case syntax.Hdoc, syntax.DashHdoc, syntax.WordHdoc:
-			stdin = true
-			files = nil
+			if r.N == nil || r.N.Value == "0" {
+				out.taken = true
+				out.files = nil
+			}
 		case syntax.RdrIn, syntax.RdrInOut:
 			w, ok := literalWord(r.Word)
 			if !ok {
 				st.blocked = true
-				return nil, false, false
+				return out, false
 			}
-			if _, ok := st.existingPath(w); !ok {
-				return nil, false, false
+			resolved, ok := st.existingPath(w)
+			if !ok {
+				return out, false
 			}
 			if r.N == nil || r.N.Value == "0" {
-				stdin = true
-				files = []string{w}
+				out.taken = true
+				out.files = []string{resolved}
 			}
 		case syntax.DplIn:
 			w, ok := literalWord(r.Word)
 			if !ok {
 				st.blocked = true
-				return nil, false, false
+				return out, false
 			}
 			if fdWord(w) {
-				stdin = true
-				files = nil
+				if r.N == nil || r.N.Value == "0" {
+					out.taken = true
+					out.files = nil
+				}
 				continue
 			}
-			if _, ok := st.existingPath(w); !ok {
-				return nil, false, false
+			resolved, ok := st.existingPath(w)
+			if !ok {
+				return out, false
 			}
 			if r.N == nil || r.N.Value == "0" {
-				stdin = true
-				files = []string{w}
+				out.taken = true
+				out.files = []string{resolved}
 			}
 		default:
 			w, ok := literalWord(r.Word)
 			if !ok {
 				st.blocked = true
-				return nil, false, false
+				return out, false
 			}
 			if r.Op == syntax.DplOut && fdWord(w) {
 				continue
 			}
 			if !st.creatable(w) {
-				return nil, false, false
+				return out, false
 			}
 		}
 	}
-	return files, stdin, true
+	return out, true
 }
 
 func fdWord(w string) bool {
@@ -177,32 +195,46 @@ func fdWord(w string) bool {
 	return w != ""
 }
 
-func (st *proofState) existingPath(path string) (string, bool) {
-	if !filepath.IsAbs(path) {
-		if st.cwd == "" {
-			return "", false
-		}
-		path = filepath.Join(st.cwd, path)
-	}
-	resolved, err := filepath.EvalSymlinks(filepath.Clean(path))
-	if err != nil {
+func proofPath(path, cwd string) (string, bool) {
+	if path == "" {
 		return "", false
 	}
-	return resolved, true
+	if filepath.IsAbs(path) {
+		return path, true
+	}
+	if cwd == "" {
+		return "", false
+	}
+	return cwd + string(os.PathSeparator) + path, true
+}
+
+func resolveProofPath(path, cwd string) (string, bool) {
+	raw, ok := proofPath(path, cwd)
+	if !ok {
+		return "", false
+	}
+	resolved, err := filepath.EvalSymlinks(raw)
+	return resolved, err == nil
+}
+
+func (st *proofState) existingPath(path string) (string, bool) {
+	return resolveProofPath(path, st.cwd)
 }
 
 func (st *proofState) creatable(path string) bool {
-	if !filepath.IsAbs(path) {
-		if st.cwd == "" {
-			return false
-		}
-		path = filepath.Join(st.cwd, path)
+	raw, ok := proofPath(path, st.cwd)
+	if !ok {
+		return false
 	}
-	parent, err := filepath.EvalSymlinks(filepath.Dir(filepath.Clean(path)))
+	parent, _ := filepath.Split(raw)
+	if parent == "" {
+		return false
+	}
+	resolved, err := filepath.EvalSymlinks(parent)
 	if err != nil {
 		return false
 	}
-	info, err := os.Stat(parent)
+	info, err := os.Stat(resolved)
 	return err == nil && info.IsDir()
 }
 
@@ -230,7 +262,7 @@ func (st *proofState) callEval(c *syntax.CallExpr, stdinFiles []string, stdin, s
 	args := argv[1:]
 	switch name {
 	case "sh", "bash", "zsh", "dash":
-		return succeeded, st.shellScriptReads(args, succeeded)
+		return succeeded, st.shellScriptReads(args, proofInput{files: stdinFiles, taken: stdin}, succeeded)
 	case "cd", "pushd":
 		if st.cdEval(args) {
 			return true, false
@@ -266,8 +298,16 @@ func (st *proofState) callEval(c *syntax.CallExpr, stdinFiles []string, stdin, s
 
 func (st *proofState) cdEval(args []string) bool {
 	dir := ""
+	physical := false
 	for _, a := range args {
-		if a == "-L" || a == "-P" || a == "--" {
+		switch a {
+		case "-L":
+			physical = false
+			continue
+		case "-P":
+			physical = true
+			continue
+		case "--":
 			continue
 		}
 		if dir != "" || a == "-" || strings.HasPrefix(a, "-") {
@@ -278,7 +318,11 @@ func (st *proofState) cdEval(args []string) bool {
 	if dir == "" {
 		return false
 	}
-	resolved, ok := st.existingPath(dir)
+	target := dir
+	if !physical {
+		target = filepath.Clean(dir)
+	}
+	resolved, ok := st.existingPath(target)
 	if !ok {
 		return false
 	}
@@ -290,7 +334,7 @@ func (st *proofState) cdEval(args []string) bool {
 	return true
 }
 
-func (st *proofState) shellScriptReads(args []string, succeeded bool) bool {
+func (st *proofState) shellScriptReads(args []string, input proofInput, succeeded bool) bool {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		if len(a) < 2 || a[0] != '-' {
@@ -312,7 +356,7 @@ func (st *proofState) shellScriptReads(args []string, succeeded bool) bool {
 		if i+1 >= len(args) {
 			return false
 		}
-		return checkoutProgramReads(args[i+1], st.cwd, st.root, st.depth+1, succeeded)
+		return checkoutProgramReads(args[i+1], st.cwd, st.root, st.depth+1, succeeded, input)
 	}
 	return false
 }
@@ -411,17 +455,33 @@ func flagSet(names ...string) map[string]bool {
 
 var readerSpecs = map[string]argSpec{"cat": catSpec, "nl": nlSpec, "head": headSpec, "tail": tailSpec}
 
+func (st *proofState) readerPathsRead(operands, stdinFiles []string, directory bool) bool {
+	readsStdin := len(operands) == 0
+	for _, p := range operands {
+		if p == "-" {
+			readsStdin = true
+			continue
+		}
+		if st.pathReads(p, directory) {
+			return true
+		}
+	}
+	if readsStdin {
+		for _, p := range stdinFiles {
+			if st.pathReads(p, false) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (st *proofState) fileReaderReads(name string, args, stdinFiles []string) bool {
 	operands, _, ok := splitArgs(args, readerSpecs[name])
 	if !ok {
 		return false
 	}
-	for _, p := range append(operands, stdinFiles...) {
-		if st.pathReads(p, false) {
-			return true
-		}
-	}
-	return false
+	return st.readerPathsRead(operands, stdinFiles, false)
 }
 
 func (st *proofState) sedReads(args, stdinFiles []string) bool {
@@ -435,12 +495,7 @@ func (st *proofState) sedReads(args, stdinFiles []string) bool {
 		}
 		operands = operands[1:]
 	}
-	for _, p := range append(operands, stdinFiles...) {
-		if st.pathReads(p, false) {
-			return true
-		}
-	}
-	return false
+	return st.readerPathsRead(operands, stdinFiles, false)
 }
 
 func (st *proofState) rgReads(args, stdinFiles []string, stdin bool) bool {
@@ -455,15 +510,8 @@ func (st *proofState) rgReads(args, stdinFiles []string, stdin bool) bool {
 		}
 		paths = paths[1:]
 	}
-	for _, p := range paths {
-		if st.pathReads(p, true) {
-			return true
-		}
-	}
-	for _, p := range stdinFiles {
-		if st.pathReads(p, false) {
-			return true
-		}
+	if st.readerPathsRead(paths, stdinFiles, true) {
+		return true
 	}
 	return len(paths) == 0 && len(stdinFiles) == 0 && !stdin && insideRoot(st.cwd, st.root)
 }
@@ -518,9 +566,10 @@ var gitPatchFlags = flagSet(
 	"--minimal", "--patience", "--histogram", "--no-indent-heuristic", "--ignore-submodules", "--no-relative",
 )
 
+var gitPatchOptionalValOpts = flagSet("--unified", "--color", "--abbrev", "--find-renames", "--find-copies", "--relative")
+
 var gitPatchValOpts = flagSet(
-	"--unified", "--color", "--src-prefix", "--dst-prefix", "--line-prefix", "--abbrev", "--find-renames",
-	"--find-copies", "--diff-filter", "--diff-algorithm", "--ws-error-highlight", "--relative",
+	"--src-prefix", "--dst-prefix", "--line-prefix", "--diff-filter", "--diff-algorithm", "--ws-error-highlight",
 )
 
 func (st *proofState) gitPatchOpt(args []string, i *int) bool {
@@ -529,6 +578,9 @@ func (st *proofState) gitPatchOpt(args []string, i *int) bool {
 		name, attached := a, false
 		if j := strings.IndexByte(a, '='); j >= 0 {
 			name, attached = a[:j], true
+		}
+		if gitPatchOptionalValOpts[name] {
+			return true
 		}
 		if gitPatchValOpts[name] {
 			if !attached {
@@ -554,6 +606,9 @@ func (st *proofState) gitShowReads(args []string, repo string) bool {
 		a := args[i]
 		switch {
 		case a == "--":
+			if i == len(args)-1 {
+				return proved || !sawObject
+			}
 			for _, p := range args[i+1:] {
 				if st.pathspecInside(p, repo) {
 					return true
@@ -595,6 +650,9 @@ func (st *proofState) gitDiffReads(args []string, repo string) bool {
 		a := args[i]
 		switch {
 		case a == "--":
+			if i == len(args)-1 {
+				return true
+			}
 			for _, p := range args[i+1:] {
 				if st.pathspecInside(p, repo) {
 					return true
@@ -616,7 +674,7 @@ func (st *proofState) gitDiffReads(args []string, repo string) bool {
 
 func (st *proofState) pathOperand(a, base string) (string, bool) {
 	if filepath.IsAbs(a) {
-		if resolved, err := filepath.EvalSymlinks(filepath.Clean(a)); err == nil {
+		if resolved, err := filepath.EvalSymlinks(a); err == nil {
 			return resolved, true
 		}
 		return filepath.Clean(a), true
@@ -640,23 +698,19 @@ func (st *proofState) repoPathInside(p, repo string) bool {
 	if p == "" || strings.HasPrefix(p, ":") {
 		return false
 	}
-	if !filepath.IsAbs(p) {
-		base := st.root
-		if strings.HasPrefix(p, "./") || strings.HasPrefix(p, "../") || p == "." || p == ".." {
-			base = repo
-		}
-		p = filepath.Join(base, p)
+	base := st.root
+	if strings.HasPrefix(p, "./") || strings.HasPrefix(p, "../") || p == "." || p == ".." {
+		base = repo
 	}
-	clean := filepath.Clean(p)
-	if !insideRoot(clean, st.root) {
+	raw, ok := proofPath(p, base)
+	if !ok {
 		return false
 	}
-	resolved, err := filepath.EvalSymlinks(clean)
-	if err != nil {
-		return true
+	if resolved, err := filepath.EvalSymlinks(raw); err == nil {
+		info, err := os.Stat(resolved)
+		return err == nil && info.Mode().IsRegular() && insideRoot(resolved, st.root)
 	}
-	info, err := os.Stat(resolved)
-	return err == nil && info.Mode().IsRegular() && insideRoot(resolved, st.root)
+	return insideRoot(filepath.Clean(raw), st.root)
 }
 
 func looksLikeHex(s string) bool {
@@ -679,17 +733,8 @@ func (st *proofState) pathReads(path string, directory bool) bool {
 }
 
 func checkoutPath(path, cwd, root string, directory bool) bool {
-	if path == "" {
-		return false
-	}
-	if !filepath.IsAbs(path) {
-		if cwd == "" {
-			return false
-		}
-		path = filepath.Join(cwd, path)
-	}
-	resolved, err := filepath.EvalSymlinks(filepath.Clean(path))
-	if err != nil {
+	resolved, ok := resolveProofPath(path, cwd)
+	if !ok {
 		return false
 	}
 	if !insideRoot(resolved, root) {
