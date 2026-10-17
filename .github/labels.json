@@ -1,0 +1,127 @@
+[
+  {
+    "name": "P0",
+    "color": "b60205",
+    "description": "Blocking work that must be addressed now."
+  },
+  {
+    "name": "P1",
+    "color": "d93f0b",
+    "description": "Work that must be completed within the milestone."
+  },
+  {
+    "name": "P2",
+    "color": "fbca04",
+    "description": "Work to address after milestone-critical items."
+  },
+  {
+    "name": "P3",
+    "color": "0e8a16",
+    "description": "Lower-priority follow-up work."
+  },
+  {
+    "name": "defect",
+    "color": "d73a4a",
+    "description": "Incorrect behavior that needs a fix."
+  },
+  {
+    "name": "feature",
+    "color": "a2eeef",
+    "description": "New or improved user-visible behavior."
+  },
+  {
+    "name": "test",
+    "color": "5319e7",
+    "description": "Test coverage, fixtures, and regression verification."
+  },
+  {
+    "name": "docs",
+    "color": "0075ca",
+    "description": "Documentation and usage guidance."
+  },
+  {
+    "name": "area:bridge",
+    "color": "1d76db",
+    "description": "Agent bridge, App Server connections, and MCP."
+  },
+  {
+    "name": "area:dev-ci",
+    "color": "1d76db",
+    "description": "Development tools, build checks, and CI."
+  },
+  {
+    "name": "area:flow",
+    "color": "1d76db",
+    "description": "Workflows, plans, execution, and pull-request operations."
+  },
+  {
+    "name": "area:gui",
+    "color": "1d76db",
+    "description": "Web interface and embedded GUI assets."
+  },
+  {
+    "name": "area:install",
+    "color": "1d76db",
+    "description": "Runtime installation, updates, diagnostics, and plugin wiring."
+  },
+  {
+    "name": "area:integrator",
+    "color": "1d76db",
+    "description": "Integration queue, verification, and landing."
+  },
+  {
+    "name": "area:manage",
+    "color": "1d76db",
+    "description": "Repository management commands and configuration."
+  },
+  {
+    "name": "area:work",
+    "color": "1d76db",
+    "description": "Task work (formerly PABCD): internal/pabcd and the crw work commands."
+  },
+  {
+    "name": "area:relay",
+    "color": "1d76db",
+    "description": "Relay scheduling, sessions, delivery, and supervision."
+  },
+  {
+    "name": "area:review",
+    "color": "1d76db",
+    "description": "Independent review pipeline, findings, and adjudication."
+  },
+  {
+    "name": "area:skills",
+    "color": "1d76db",
+    "description": "Skill instructions, contracts, and skill commands."
+  },
+  {
+    "name": "area:tracking",
+    "color": "1d76db",
+    "description": "Tracking providers, issues, milestones, and references."
+  },
+  {
+    "name": "blocks-real-use",
+    "color": "b60205",
+    "description": "Blocks a real run from finishing without human intervention."
+  },
+  {
+    "name": "real-use-caveat",
+    "color": "fbca04",
+    "description": "Known limitation retained during real use."
+  },
+  {
+    "name": "found-in-trial",
+    "color": "c5def5",
+    "description": "Finding discovered during a real-use trial."
+  },
+  {
+    "name": "설계 먼저",
+    "color": "d4c5f9",
+    "description": "Needs design decisions before the issue is ready for implementation."
+  },
+  {
+    "name": "from-linear",
+    "color": "ededed",
+    "description": "Migrated issue with its original Linear identifier retained."
+  }
+]
