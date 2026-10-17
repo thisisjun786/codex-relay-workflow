@@ -71,6 +71,9 @@ type localOptions struct {
 	// cpuMethod is the backend the budget was applied with once decided: the re-entered verifier
 	// observes its scope from the kernel, a scope that never started selects the fallback.
 	cpuMethod string
+	// cpuGroup is the verification's cgroup path when the kernel shows one, so a gated step can
+	// rejoin it; empty under the fallback or before the scope is observed.
+	cpuGroup string
 	// cpu is the immutable resolved budget the workers share (localCPUOptions).
 	cpu  *recordCPU
 	Plan []localJob
@@ -453,7 +456,7 @@ func localCurrentKeys(opts localOptions) (verificationRecord, error) {
 		HeadCommit:   head,
 		TreeHash:     tree,
 		CiDigest:     ciDigest,
-		Tools:        localObservedVersions(localToolVersionsIn(localPathEnv(opts.Env), goMod, opts.HeavyGate), pins),
+		Tools:        localObservedVersions(localToolVersionsIn(localPathEnv(opts.Env), goMod, opts.HeavyGate, opts), pins),
 		GoFlags:      localEngineFlags(opts.Parallel),
 		HeavyGate:    localGateDigest(opts.HeavyGate),
 		GoEnv:        localIsolatedGoEnv,
@@ -743,7 +746,28 @@ func localExecute(opts localOptions, plan []localJob, current verificationRecord
 			break
 		}
 	}
+	// A gate that could not return its step to the verification's scope marked that step before
+	// failing it; the record's CPU method says so rather than claiming the plain cgroup backend.
+	// Only a cgroup run's failed steps qualify: the same warning text in an ordinary fallback
+	// step's output keeps the honest gomaxprocs method.
+	if record.CPU != nil && record.CPU.Method == localCPUCgroup && localFailedStepReason(record.Jobs, localCPUGateFailure) {
+		budget := *record.CPU
+		budget.Method = localCPUGateUnavailable
+		record.CPU = &budget
+	}
 	return record, false, nil
+}
+
+// localFailedStepReason reports whether some failed recorded step's reason carries the marker.
+func localFailedStepReason(jobs []recordJob, marker string) bool {
+	for _, job := range jobs {
+		for _, step := range job.Steps {
+			if step.Result == localFailed && strings.Contains(step.Reason, marker) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // localTests is what a step's output says of the go test packages it ran (localTestPackagesRun).
@@ -770,7 +794,7 @@ func localRunStepOutput(opts localOptions, step localStep, worktree, leg string,
 	case localCheckout:
 		return localPassed, "the clean worktree of " + shortHash(opts.Commit), ""
 	case localGo, localNode:
-		return localPassed, step.tool + " " + localObserveTool(step.tool, localPathEnv(env), opts.HeavyGate), ""
+		return localPassed, step.tool + " " + localObserveTool(step.tool, localPathEnv(env), opts.HeavyGate, opts), ""
 	case localAggregate:
 		// dev-gate: every prerequisite job must have succeeded, judged from the jobs already
 		// recorded rather than from a hosted needs object.
@@ -794,7 +818,7 @@ func localRunStepOutput(opts localOptions, step localStep, worktree, leg string,
 	// (a loop, a heredoc) runs as the runner runs it, and a gate between this process and bash
 	// never sees the command's own characters. systemd-run, for one, expands the arguments it is
 	// handed, which would otherwise mangle a run text that uses a shell variable.
-	script, err := localWriteScript(opts, command)
+	script, err := localWriteScript(opts, localCPUStepCommand(opts, step, command))
 	if err != nil {
 		return localFailed, err.Error(), ""
 	}
