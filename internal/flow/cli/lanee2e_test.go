@@ -106,9 +106,9 @@ func TestDesignAuditCarriesPriorFindingsAndDispositionsFromRoundTwo(t *testing.T
 		switch c.Label {
 		case "design-audit:r1":
 			return labSay(map[string]any{"verdict": "needs_changes", "findings": []any{map[string]any{"ref": "issue A-1", "severity": "P1", "finding": finding,
-				"evidence": []string{"README.md:1"}}}, "summary": "one P1 finding"}), true
+				"evidence": []string{"README.md:1"}}}, "summary": "one P1 finding", "root": nil, "first_check": nil}), true
 		case "design-audit:r2":
-			return labSay(map[string]any{"verdict": "approved", "findings": []any{}, "summary": "the finding is folded"}), true
+			return labSay(map[string]any{"verdict": "approved", "findings": []any{}, "summary": "the finding is folded", "root": nil, "first_check": nil}), true
 		case "design-fix:r1":
 			d := l.design()
 			d.Dispositions = []ops.Disposition{{Finding: "r1.1", Disposition: "folded", Reason: reason}}
@@ -451,7 +451,7 @@ func TestFirstDesignAuditLoopReadsTheDesignHead(t *testing.T) {
 		case strings.HasPrefix(c.Label, "explore:") && lands == 1:
 			land("landed during the audit loop")
 		case c.Label == "design-audit:r1":
-			return labSay(map[string]any{"verdict": "needs_changes", "findings": []any{map[string]any{"ref": "D1", "severity": "P2", "finding": "state the order", "evidence": []string{}}}, "summary": "one thing"}), true
+			return labSay(map[string]any{"verdict": "needs_changes", "findings": []any{map[string]any{"ref": "D1", "severity": "P2", "finding": "state the order", "evidence": []string{}}}, "summary": "one thing", "root": nil, "first_check": nil}), true
 		case c.Label == "design-audit:r2":
 			return fakehost.TurnPlan{Message: "not json"}, true
 		}
@@ -1873,7 +1873,7 @@ func TestProjectLaneDoesNotReuseUnapprovedDesign(t *testing.T) {
 		if c.Role == "critic" && strings.HasPrefix(c.Label, "design-audit") {
 			return labSay(map[string]any{"verdict": "needs_changes", "findings": []any{map[string]any{
 				"ref": l.nodeOf["A-1"], "severity": "P1", "finding": "the design does not hold", "evidence": []string{}}},
-				"summary": "the DESIGN needs changes"}), true
+				"summary": "the DESIGN needs changes", "root": nil, "first_check": nil}), true
 		}
 		return fakehost.TurnPlan{}, false
 	}

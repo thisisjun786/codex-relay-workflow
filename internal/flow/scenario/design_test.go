@@ -75,10 +75,11 @@ func TestDesignAuditNeedsChangesReturnsToArchitect(t *testing.T) {
 	l.Sequence("^design-fix:r1$", func(*Call) fakehostPlan { return Say(revised) })
 	l.Sequence("^design-audit:r\\d+$",
 		func(*Call) fakehostPlan {
-			return Say(map[string]any{"verdict": "needs_changes", "findings": []any{map[string]any{"ref": "CRW-A", "severity": "P1", "finding": "the approach names no test", "evidence": []string{}}}, "summary": "not yet"})
+			return Say(map[string]any{"verdict": "needs_changes", "findings": []any{map[string]any{"ref": "CRW-A", "severity": "P1", "finding": "the approach names no test", "evidence": []string{}}}, "summary": "The approach has no falsifiable test. First check: name one test that fails before the change.",
+				"root": "The approach has no falsifiable test.", "first_check": "Name one test that fails before the change."})
 		},
 		func(*Call) fakehostPlan {
-			return Say(map[string]any{"verdict": "approved", "findings": []any{}, "summary": "now it holds"})
+			return Say(map[string]any{"verdict": "approved", "findings": []any{}, "summary": "now it holds", "root": nil, "first_check": nil})
 		})
 	got := mustRun(t, l)
 	if got.State != "closed" {
@@ -94,6 +95,9 @@ func TestDesignAuditNeedsChangesReturnsToArchitect(t *testing.T) {
 	}
 	if text := textOfCall(l, fix.ID); !strings.Contains(text, "the approach names no test") {
 		t.Errorf("the architect was not given the finding:\n%s", text)
+	}
+	if text := textOfCall(l, fix.ID); !strings.Contains(text, "The approach has no falsifiable test.") || !strings.Contains(text, "name one test that fails before the change") {
+		t.Errorf("the architect was not given the audit's root and first check:\n%s", text)
 	}
 	states := []string{}
 	for _, r := range l.Rows(ops.OpDesignAudit) {
@@ -504,7 +508,7 @@ func TestOpenQuestionRoutesThroughDesignAudit(t *testing.T) {
 var policyQuestion = ops.OpenQuestion{ID: "policy", Question: "does the project ship the flag in 1.0?", Scope: "authority:policy", FilesNeeded: []string{}}
 
 func designAuditNeedsChanges(*Call) fakehostPlan {
-	return Say(map[string]any{"verdict": "needs_changes", "findings": []any{map[string]any{"ref": "D1", "severity": "P2", "finding": "state the order of the nodes", "evidence": []string{}}}, "summary": "one thing to fix"})
+	return Say(map[string]any{"verdict": "needs_changes", "findings": []any{map[string]any{"ref": "D1", "severity": "P2", "finding": "state the order of the nodes", "evidence": []string{}}}, "summary": "one thing to fix", "root": nil, "first_check": nil})
 }
 
 // designQuestions are the design_question escalations of the run, in order.
@@ -718,7 +722,7 @@ func TestANewAskCarriesTheAuthorityQuestionsStillUnanswered(t *testing.T) {
 	revised.OpenQuestions = []ops.OpenQuestion{policyQuestion, env}
 	l.Sequence("^design-fix:r1$", func(*Call) fakehostPlan { return Say(revised) })
 	l.Sequence("^design-audit:r\\d+$", designAuditNeedsChanges, func(*Call) fakehostPlan {
-		return Say(map[string]any{"verdict": "approved", "findings": []any{}, "summary": "now it holds"})
+		return Say(map[string]any{"verdict": "approved", "findings": []any{}, "summary": "now it holds", "root": nil, "first_check": nil})
 	})
 	if got := mustRun(t, l); got.State != "closed" {
 		t.Fatalf("state %q; calls %v", got.State, l.Labels())

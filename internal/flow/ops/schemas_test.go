@@ -687,3 +687,105 @@ func TestCRW1538DesignExcludedScope(t *testing.T) {
 		})
 	}
 }
+
+func TestCRW1539DesignAuditRootAndFirstCheck(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		present    bool
+		root       any
+		firstCheck any
+	}{
+		{name: "recorded", present: true,
+			root:       "The released reader cannot read the proposed record format.",
+			firstCheck: "Run the released reader on one new-format fixture; a decoding failure refutes compatibility."},
+		{name: "optional nulls", present: true},
+		{name: "legacy missing fields"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			doc := map[string]any{
+				"verdict": "needs_changes",
+				"findings": []any{map[string]any{
+					"ref": "D1", "severity": "P1", "finding": "reader compatibility is unproved",
+					"evidence": []string{"store/reader.go:10"},
+				}},
+				"summary": "Check reader compatibility before building.",
+			}
+			if tc.present {
+				doc["root"], doc["first_check"] = tc.root, tc.firstCheck
+			}
+			raw, err := json.Marshal(doc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			before := bytes.Clone(raw)
+			if tc.present {
+				if err := Validate(SchemaDesignAudit, raw); err != nil {
+					t.Fatalf("optional root/first_check refused: %v", err)
+				}
+			}
+			audit, err := DecodeDesignAudit(raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(before, raw) {
+				t.Fatal("decoding changed the stored audit bytes")
+			}
+			if audit.Verdict != "needs_changes" || len(audit.Findings) != 1 || audit.Findings[0].Severity != "P1" {
+				t.Fatalf("audit verdict/findings changed: %+v", audit)
+			}
+			encoded, err := json.Marshal(audit)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got map[string]any
+			if err := json.Unmarshal(encoded, &got); err != nil {
+				t.Fatal(err)
+			}
+			if tc.present {
+				for _, key := range []string{"root", "first_check"} {
+					value, exists := got[key]
+					if !exists || !reflect.DeepEqual(value, doc[key]) {
+						t.Errorf("%s round trip = %#v (present %v), want %#v", key, value, exists, doc[key])
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestCRW1539DesignAuditOptionalFieldBoundaries(t *testing.T) {
+	const base = `{"root":null,"first_check":null,"verdict":"approved","findings":[],"summary":"ok"}`
+	for _, key := range []string{"root", "first_check"} {
+		t.Run(key, func(t *testing.T) {
+			var m map[string]any
+			if err := json.Unmarshal([]byte(base), &m); err != nil {
+				t.Fatal(err)
+			}
+			m[key] = 7
+			bad, _ := json.Marshal(m)
+			if _, err := DecodeDesignAudit(bad); err == nil {
+				t.Error("malformed present field was defaulted or accepted")
+			}
+			delete(m, key)
+			old, _ := json.Marshal(m)
+			if err := Validate(SchemaDesignAudit, old); err == nil {
+				t.Error("fresh strict output accepted a missing key")
+			}
+			got, err := DecodeDesignAudit(old)
+			if err != nil {
+				t.Fatalf("stored answer with one missing optional key: %v", err)
+			}
+			if got.Root != nil || got.FirstCheck != nil {
+				t.Errorf("absent/null fields decoded as %+v", got)
+			}
+		})
+	}
+	for _, raw := range []string{
+		`{"root":"compatibility breaks","first_check":"read one new record","verdict":"approved","findings":[{"ref":"D1","severity":"P1","finding":"old reader fails","evidence":["reader.go:10"]}],"summary":"ok"}`,
+		`{"root":"unsupported claim","first_check":null,"verdict":"needs_changes","findings":[],"summary":"fix"}`,
+	} {
+		if _, err := DecodeDesignAudit([]byte(raw)); err == nil {
+			t.Error("root/first_check bypassed the existing verdict/findings rule")
+		}
+	}
+}

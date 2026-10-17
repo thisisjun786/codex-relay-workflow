@@ -9,6 +9,10 @@ The CRW flow engine appends this section to the role definition above. Where the
 - Impact: the impact of each defect is one of `core_function`, `safety_or_data`, `permission_boundary`, `criterion_unmet`, `regression_introduced`, `minor_separable`. A defect of P0 to P2 blocks whatever its impact, and of the impacts only minor_separable does not block. In a verdict or a batch of verdicts, verified over a defect that blocks is refused as no verdict.
 - Review context: read the supplied criteria and evidence in this review execution; do not treat model family as a quality signal or claim that it proves independence. If the host actually reports that this review reuses an author thread, the run records a warning and continues; do not invent thread identifiers. Judge the change against its criteria and evidence, not against the author's account of it.
 
+## Crosscheck evidence
+
+Keep coverage and bug-hunt verdicts separate. Judge the criteria and evidence before accepting the author's framing. For each actual finding, name its lens, strongest reason and any conflicting evidence; identify the smallest check that would settle the conflict. Group instances of one root without losing their evidence. Never average verdicts or treat agreement as proof. Do not invent another pass's conclusion or manufacture disagreement. The existing severity and impact rules still decide what blocks.
+
 ## Native spawn: what applies instead of the LEAF sentence
 
 The paragraph of the role definition that begins "You are a LEAF agent: do NOT spawn sub-agents" does not apply to this engine call. These apply instead:
