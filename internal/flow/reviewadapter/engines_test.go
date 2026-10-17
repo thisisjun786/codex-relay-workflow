@@ -2,6 +2,7 @@ package reviewadapter
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -330,7 +331,7 @@ func TestEngineProfilesReadTheirUsage(t *testing.T) {
 	}
 
 	t.Run("grok reads the envelope's usage and its fallbacks", func(t *testing.T) {
-		if u, ok := grok.Usage([]byte(grokEnvelope(t, nil, true)), Request{}); !ok || u != (Usage{CacheRead: 2729216}) {
+		if u, ok := grok.Usage(t.Context(), []byte(grokEnvelope(t, nil, true)), Request{}); !ok || u != (Usage{CacheRead: 2729216}) {
 			t.Fatalf("the real fixture: %+v %v", u, ok)
 		}
 		for name, c := range map[string]struct {
@@ -344,7 +345,7 @@ func TestEngineProfilesReadTheirUsage(t *testing.T) {
 			"every name zero":                 {map[string]any{"cache_read_input_tokens": 0, "input_tokens": 0}, 0},
 		} {
 			t.Run(name, func(t *testing.T) {
-				if u, ok := grok.Usage([]byte(grokUsageEnvelope(t, c.usage)), Request{}); !ok || u != (Usage{CacheRead: c.want}) {
+				if u, ok := grok.Usage(t.Context(), []byte(grokUsageEnvelope(t, c.usage)), Request{}); !ok || u != (Usage{CacheRead: c.want}) {
 					t.Fatalf("usage = %+v %v, want %d", u, ok, c.want)
 				}
 			})
@@ -354,7 +355,7 @@ func TestEngineProfilesReadTheirUsage(t *testing.T) {
 			"a usage of no name": grokUsageEnvelope(t, map[string]any{"output_tokens": 10}),
 			"not an envelope":    "the review is done",
 		} {
-			if u, ok := grok.Usage([]byte(out), Request{}); ok {
+			if u, ok := grok.Usage(t.Context(), []byte(out), Request{}); ok {
 				t.Fatalf("%s: usage %+v read", name, u)
 			}
 		}
@@ -365,18 +366,28 @@ func TestEngineProfilesReadTheirUsage(t *testing.T) {
 			t.Fatal(err)
 		}
 		req := Request{Worktree: wt}
-		if u, ok := astra.Usage([]byte(astraStream(astraAnswerText)), req); !ok || u != (Usage{CacheRead: 1039360, Commands: 0}) {
+		if u, ok := astra.Usage(t.Context(), []byte(astraStream(astraAnswerText)), req); !ok || u != (Usage{CacheRead: 1039360, Commands: 0}) {
 			t.Fatalf("the real fixture: %+v %v", u, ok)
 		}
 		cmd := astraCommandLine(t, "c", "cat "+filepath.Join(wt, "a.go"))
 		started := `{"type":"item.started","item":{"id":"c","type":"command_execution","command":"cat","status":"in_progress"}}`
 		stream := strings.Join([]string{started, cmd, started, cmd, cmd, "not an event",
 			`{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":4}}`}, "\n")
-		if u, ok := astra.Usage([]byte(stream), req); !ok || u != (Usage{CacheRead: 4, Commands: 3}) {
+		if u, ok := astra.Usage(t.Context(), []byte(stream), req); !ok || u != (Usage{CacheRead: 4, Commands: 3}) {
 			t.Fatalf("three commands: %+v %v", u, ok)
 		}
-		if u, ok := astra.Usage([]byte(strings.Join([]string{cmd, cmd, cmd}, "\n")), req); ok {
+		if u, ok := astra.Usage(t.Context(), []byte(strings.Join([]string{cmd, cmd, cmd}, "\n")), req); ok {
 			t.Fatalf("a stream without turn.completed: usage %+v read", u)
+		}
+		repo := gitRepo1603(t)
+		gitRead := astraCommandLine(t, "g", "git show HEAD:README.md") + "\n" + astraStream(astraAnswerText)
+		if u, ok := astra.Usage(t.Context(), []byte(gitRead), Request{Worktree: repo}); !ok || u != (Usage{CacheRead: 1039360, Commands: 1}) {
+			t.Fatalf("a git read of a blob under a live call: %+v %v", u, ok)
+		}
+		ended, cancel := context.WithCancel(t.Context())
+		cancel()
+		if u, ok := astra.Usage(ended, []byte(gitRead), Request{Worktree: repo}); !ok || u != (Usage{CacheRead: 1039360, Commands: 0}) {
+			t.Fatalf("the same read under an ended call: %+v %v", u, ok)
 		}
 	})
 	t.Run("through the adapter the floors decide", func(t *testing.T) {
@@ -435,7 +446,7 @@ func TestAstraCountsOnlyTheCommandsThatSucceeded(t *testing.T) {
 		"a command with no exit code":    {[]string{noExit, ok, turn}, 1},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if u, read := astra.Usage([]byte(strings.Join(c.lines, "\n")), req); !read || u != (Usage{CacheRead: 4, Commands: c.want}) {
+			if u, read := astra.Usage(t.Context(), []byte(strings.Join(c.lines, "\n")), req); !read || u != (Usage{CacheRead: 4, Commands: c.want}) {
 				t.Fatalf("usage %+v %v, want %d commands", u, read, c.want)
 			}
 		})
