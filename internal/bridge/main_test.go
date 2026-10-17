@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/sandboxroot/sandboxroottest"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // TestMain points CRW_HOME at a temporary directory for the whole package: every resume a test
@@ -13,7 +14,7 @@ import (
 // (CRW-1140), and the real ~/.crw must never receive one. A test that needs its own CRW home still
 // sets it with t.Setenv.
 func TestMain(m *testing.M) {
-	home, err := os.MkdirTemp("", "crw-bridge-home-")
+	home, err := tmploc.MkdirTemp("crw-bridge-home-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "bridge tests: a temporary CRW home:", err)
 		os.Exit(1)

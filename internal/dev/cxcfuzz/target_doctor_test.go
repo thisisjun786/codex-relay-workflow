@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/doctor"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // TestDoctorTargetIsRegistered is the issue's red case: before this target is registered,
@@ -362,7 +363,7 @@ func TestDoctorMalformedCheckAgreesAcrossSides(t *testing.T) {
 	if !ok {
 		t.Fatal("the doctor target is not registered")
 	}
-	root, err := os.MkdirTemp("", "cxcfuzz-doctor-shrink-")
+	root, err := tmploc.MkdirTemp("cxcfuzz-doctor-shrink-")
 	if err != nil {
 		t.Fatal(err)
 	}

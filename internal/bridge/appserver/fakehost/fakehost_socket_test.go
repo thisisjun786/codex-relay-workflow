@@ -40,7 +40,7 @@ func TestStart_bindsAndServes_whenTMPDIRIsLong(t *testing.T) {
 // socket under a short TMPDIR would fit. The short TMPDIR is made below /tmp, not t.TempDir(), so
 // it stays short whatever TMPDIR the run itself has.
 func TestSocketPath_isNeverUnderTMPDIR(t *testing.T) {
-	tmp, err := os.MkdirTemp("/tmp", "fh-")
+	tmp, err := tmploc.MkdirTemp("fh-")
 	if err != nil {
 		t.Fatal(err)
 	}

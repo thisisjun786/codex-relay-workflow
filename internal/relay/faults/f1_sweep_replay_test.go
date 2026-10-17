@@ -9,11 +9,12 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 func f1ReplayStores(t *testing.T) (context.Context, string) {
 	t.Helper()
-	home, e := os.MkdirTemp("/dev/shm", "f1-stores-")
+	home, e := tmploc.MkdirTemp("f1-stores-")
 	if e != nil {
 		t.Fatal(e)
 	}

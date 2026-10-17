@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tmploc"
 )
 
 // Replay a publication's stable state through the CLI, including refusals
@@ -49,7 +50,7 @@ func TestF1SeededCLIOracle(t *testing.T) {
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			home, err := os.MkdirTemp("/dev/shm", "f1-seeded-")
+			home, err := tmploc.MkdirTemp("f1-seeded-")
 			if err != nil {
 				t.Fatal(err)
 			}
