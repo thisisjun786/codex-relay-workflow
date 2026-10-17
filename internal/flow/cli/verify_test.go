@@ -87,7 +87,11 @@ printf '%s' '` + receipt + `' > "$record"
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got, want := strings.TrimSpace(string(path)), filepath.Join(repo, ".git", "crw-verify", "verification-record-HEAD.json"); got != want {
+			wantRepo, err := filepath.EvalSymlinks(repo)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, want := strings.TrimSpace(string(path)), filepath.Join(wantRepo, ".git", "crw-verify", "verification-record-HEAD.json"); got != want {
 				t.Errorf("subprocess record path = %q, want %q", got, want)
 			}
 			for _, path := range []string{strings.TrimSpace(string(path)), wantRecord} {

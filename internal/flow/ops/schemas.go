@@ -77,7 +77,7 @@ var schemaTexts = map[string]string{
 		`"excluded_scope":{"type":["array","null"],"items":{"type":"object","properties":{"scope":{"type":"string"},"reason":{"type":"string"},"alternative":{"type":["string","null"]}},"required":["scope","reason","alternative"],"additionalProperties":false}},` +
 		`"dispositions":{"type":["array","null"],"items":{"type":"object","properties":{"finding":{"type":"string"},"disposition":{"type":"string","enum":["folded","rebutted"]},"reason":{"type":"string"}},` +
 		`"required":["finding","disposition","reason"],"additionalProperties":false}}},"required":["decisions","issues","open_questions","risks","excluded_scope","dispositions"],"additionalProperties":false}`,
-	SchemaDesignAudit: `{"type":"object","properties":{"verdict":{"type":"string","enum":["approved","needs_changes"]},"findings":{"type":"array","items":{"type":"object","properties":{"ref":{"type":"string"},"severity":{"type":"string","enum":` + severities + `},"finding":{"type":"string"},"evidence":` + textsJSON + `},"required":["ref","severity","finding","evidence"],"additionalProperties":false}},"summary":{"type":"string"}},"required":["verdict","findings","summary"],"additionalProperties":false}`,
+	SchemaDesignAudit: `{"type":"object","properties":{"root":{"type":["string","null"]},"first_check":{"type":["string","null"]},"verdict":{"type":"string","enum":["approved","needs_changes"]},"findings":{"type":"array","items":{"type":"object","properties":{"ref":{"type":"string"},"severity":{"type":"string","enum":` + severities + `},"finding":{"type":"string"},"evidence":` + textsJSON + `},"required":["ref","severity","finding","evidence"],"additionalProperties":false}},"summary":{"type":"string"}},"required":["root","first_check","verdict","findings","summary"],"additionalProperties":false}`,
 	SchemaReflection:  `{"type":"object","properties":{"verdict":{"type":"string","enum":["ALIGNED","MISALIGNED"]},"misaligned":{"type":"array","items":{"type":"object","properties":{"decision_id":{"type":"string"},"observed":{"type":"string"},"affected_nodes":` + textsJSON + `,"evidence":` + textsJSON + `},"required":["decision_id","observed","affected_nodes","evidence"],"additionalProperties":false}}},"required":["verdict","misaligned"],"additionalProperties":false}`,
 	SchemaQACapture: `{"type":"object","properties":{"captures":{"type":"array","items":{"type":"object","properties":{"path":{"type":"string"},"kind":{"type":"string","enum":["screenshot","terminal_capture","response","transcript"]},"shows":{"type":"string"}},"required":["path","kind","shows"],"additionalProperties":false}},` +
 		`"matrix":` + textsJSON + `,"teardown":` + textsJSON + `,"summary":{"type":"string"}},"required":["captures","matrix","teardown","summary"],"additionalProperties":false}`,
@@ -637,14 +637,18 @@ type AuditFinding struct {
 
 // DesignAudit is the answer of the auditor of a DESIGN (DESIGN_AUDIT).
 type DesignAudit struct {
-	Verdict  string         `json:"verdict"`
-	Findings []AuditFinding `json:"findings"`
-	Summary  string         `json:"summary"`
+	Root       *string        `json:"root"`
+	FirstCheck *string        `json:"first_check"`
+	Verdict    string         `json:"verdict"`
+	Findings   []AuditFinding `json:"findings"`
+	Summary    string         `json:"summary"`
 }
 
 // DecodeDesignAudit reads a DESIGN_AUDIT. An approval over a P0 or P1 finding is not an approval, and needs_changes names at
-// least one finding the architect can act on.
+// least one finding the architect can act on. Missing optional fields in an older stored answer are read as null without
+// changing its bytes.
 func DecodeDesignAudit(raw []byte) (DesignAudit, error) {
+	raw = withLegacyAuditFields(raw)
 	a, err := decode[DesignAudit](SchemaDesignAudit, raw)
 	if err != nil {
 		return a, err
@@ -662,6 +666,30 @@ func DecodeDesignAudit(raw []byte) (DesignAudit, error) {
 		}
 	}
 	return a, nil
+}
+
+// withLegacyAuditFields supplies optional fields absent in older stored audits.
+// Present values are left for the schema to judge.
+func withLegacyAuditFields(raw []byte) []byte {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &m); err != nil || m == nil {
+		return raw
+	}
+	changed := false
+	for _, key := range []string{"root", "first_check"} {
+		if _, ok := m[key]; !ok {
+			m[key] = json.RawMessage("null")
+			changed = true
+		}
+	}
+	if !changed {
+		return raw
+	}
+	out, err := json.Marshal(m)
+	if err != nil {
+		return raw
+	}
+	return out
 }
 
 // Misaligned is one decision a reflection found the milestone to depart from.

@@ -137,7 +137,8 @@ type Deps struct {
 	// operation answers not_required for the existing custom lane callers; the production wiring always sets it).
 	PRTarget func(ctx context.Context, plan string) (BundlePRTarget, error)
 	// PROpen is the parent's pull request opener for crw.prOpen; nil answers that no opener is wired.
-	PROpen func(ctx context.Context, req BundlePROpenRequest) (BundlePRResult, error)
+	PROpen    func(ctx context.Context, req BundlePROpenRequest) (BundlePRResult, error)
+	Executors *engine.ExecutorCollector
 }
 
 // Lane is the set of operations of the project lane.
@@ -202,6 +203,7 @@ func (l *Lane) Ops() map[string]engine.Op {
 		NameMergeRequest:     &mergeRequestOp{l},
 		NamePROpen:           &prOpenOp{l},
 		NameReuseIntegrated:  &reuseIntegratedOp{l},
+		NameExecutorCollect:  &executorCollectOp{l},
 	}
 }
 

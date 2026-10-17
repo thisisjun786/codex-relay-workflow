@@ -15,6 +15,7 @@ import (
 	"github.com/dop251/goja"
 	"github.com/google/jsonschema-go/jsonschema"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/executor"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/script"
 )
 
@@ -354,13 +355,14 @@ type callRun struct {
 	resolve  func(any) error
 	complete func(func())
 
-	startSeq   int
-	threadID   string
-	configured Pair
-	turnIDs    []string
-	tokens     Tokens
-	repairUsed bool
-	delivered  bool
+	startSeq          int
+	threadID          string
+	configured        Pair
+	turnIDs           []string
+	executorAdmission *executor.Admission
+	tokens            Tokens
+	repairUsed        bool
+	delivered         bool
 
 	// placement is where the call runs when the backend places calls (Placer); placeReq is what it was asked.
 	placement *Placement
@@ -429,6 +431,7 @@ func (c *callRun) journalDown() (CallResult, bool) {
 // prepare writes the call's intent row before anything is sent.
 func (c *callRun) prepare() {
 	p := c.plan
+	c.prepareExecutorAdmission()
 	var ctxb map[string]any
 	c.digest, ctxb = c.inputDigest()
 	c.snapshot = c.readSnapshot()
@@ -483,6 +486,9 @@ func (c *callRun) prepare() {
 	}
 	if p.schema != nil {
 		d["schema_digest"] = digestJSON(p.schema)
+	}
+	if c.executorAdmission != nil {
+		d["executor_admission"] = *c.executorAdmission
 	}
 	if p.qa {
 		d["qa"] = true
@@ -547,6 +553,7 @@ func (c *callRun) terminal(ev, status, reason string, data map[string]any) CallR
 		data[ownDirectoryKey] = c.placement.Path
 	}
 	row := c.event(ev, data)
+	c.recordExecutorProvenance(row)
 	return c.result(status, reason, row.Seq, data)
 }
 

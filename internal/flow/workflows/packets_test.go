@@ -576,7 +576,10 @@ func TestCrosscheckRuleIsOneTableForPacketOpAndClose(t *testing.T) {
 	const g = "{ milestone: 'M1', head: 'h9', base: 'b0', range: 'b0..h9', decisions: [{ id: 'D1', nodes: ['n1'], change: 'split the store' }] }"
 	for pass, lens := range map[string]string{"A": "PASS A (coverage)", "B": "PASS B (bug hunt)"} {
 		packet := packetText(t, "crosscheck-packet-"+pass, "crosscheckPacket", "crosscheckPacket(ms, "+g+", '"+pass+"', {})")
-		for _, want := range []string{ops.CrosscheckRule, lens, "Review the changes between b0 and h9", "HEAD: h9", "D1 (nodes n1): split the store"} {
+		for _, want := range []string{ops.CrosscheckRule, lens, "Review the changes between b0 and h9", "HEAD: h9", "D1 (nodes n1): split the store",
+			"verdict of this pass and its own lens", "criteria and evidence before accepting the author's framing",
+			"conflicting evidence or an unresolved assumption", "smallest check", "Never average verdicts or treat agreement as proof",
+			"Do not invent another pass's conclusion", "no findings remains an empty list", "no extra passes or helper calls"} {
 			if !strings.Contains(packet, want) {
 				t.Errorf("the crosscheck packet of pass %s lacks %q:\n%s", pass, want, packet)
 			}

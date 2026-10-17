@@ -607,10 +607,10 @@ func TestReplanReauditsDesignBeforeRelease(t *testing.T) {
 	fixedOnce(l, "A")
 	l.Sequence("^design-audit:replan-s2:r\\d+$",
 		func(*Call) fakehostPlan {
-			return Say(map[string]any{"verdict": "needs_changes", "findings": []any{map[string]any{"ref": "D1", "severity": "P2", "finding": "state the order of the nodes", "evidence": []string{}}}, "summary": "one thing to fix"})
+			return Say(map[string]any{"verdict": "needs_changes", "findings": []any{map[string]any{"ref": "D1", "severity": "P2", "finding": "state the order of the nodes", "evidence": []string{}}}, "summary": "one thing to fix", "root": nil, "first_check": nil})
 		},
 		func(*Call) fakehostPlan {
-			return Say(map[string]any{"verdict": "approved", "findings": []any{}, "summary": "the delta holds"})
+			return Say(map[string]any{"verdict": "approved", "findings": []any{}, "summary": "the delta holds", "root": nil, "first_check": nil})
 		})
 	got := mustRun(t, l)
 	if got.State != "closed" {
@@ -669,7 +669,7 @@ func TestReplanNeverApprovedReleasesNothing(t *testing.T) {
 	mismatching(l, "A")
 	fixedOnce(l, "A")
 	l.Sequence("^design-audit:replan-s2:r\\d+$", func(*Call) fakehostPlan {
-		return Say(map[string]any{"verdict": "needs_changes", "findings": []any{map[string]any{"ref": "D1", "severity": "P2", "finding": "no", "evidence": []string{}}}, "summary": "no"})
+		return Say(map[string]any{"verdict": "needs_changes", "findings": []any{map[string]any{"ref": "D1", "severity": "P2", "finding": "no", "evidence": []string{}}}, "summary": "no", "root": nil, "first_check": nil})
 	})
 	res := l.Run()
 	if res.Status != engine.RunCompleted {
@@ -1770,11 +1770,11 @@ func TestReplanAuditFixUsesPinnedHead(t *testing.T) {
 				})
 			}
 			needsChanges := func(*Call) fakehostPlan {
-				return Say(map[string]any{"verdict": "needs_changes", "findings": []any{map[string]any{"ref": "D1", "severity": "P2", "finding": "check the newly landed source", "evidence": []string{}}}, "summary": "revise the delta"})
+				return Say(map[string]any{"verdict": "needs_changes", "findings": []any{map[string]any{"ref": "D1", "severity": "P2", "finding": "check the newly landed source", "evidence": []string{}}}, "summary": "revise the delta", "root": nil, "first_check": nil})
 			}
 			lab.Sequence("^design-audit:replan-.*:r[0-9]+$", needsChanges, needsChanges,
 				func(*Call) fakehostPlan {
-					return Say(map[string]any{"verdict": "approved", "findings": []any{}, "summary": "approved"})
+					return Say(map[string]any{"verdict": "approved", "findings": []any{}, "summary": "approved", "root": nil, "first_check": nil})
 				})
 			var heads, detached sync.Map
 			lab.On("^design-fix:replan-", func(call *Call) *fakehostPlan {
