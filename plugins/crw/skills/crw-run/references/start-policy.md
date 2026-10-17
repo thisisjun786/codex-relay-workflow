@@ -303,6 +303,15 @@ one that is usually skipped.
    decides authorization under whichever one its own process can read, so a wake observed under a
    different one is evidence about a different configuration.
 
+   Read the relay journal's append-only `delivery_wake_observed` record (`relay-wake/1`):
+   one attempt binds its request id, recipient, pre-send lifecycle, newly opened turn id,
+   observation time, required settings and the identities above. The record survives consumption
+   of the transient `delivery_wakes` scheduling row. Preflight's `idle_wake_observed` compares
+   it with independently observed current identities and settings; a pending wake, a manual send,
+   an uncertain outcome or a steer into an existing turn cannot pass it. Missing current identity
+   or matching evidence leaves fact 5 unmeasured. A separate probe uses this same record and
+   comparison; the probe's historical record cannot supply the current identity it is compared to.
+
    The wake must also cover the load state the wait will end up in, which is not the one it is
    adjudicated in. An idle recipient and one the host reports `notLoaded` are not woken the same
    way: a resume into an unloaded task transmits a pair only where it derives from the role's
