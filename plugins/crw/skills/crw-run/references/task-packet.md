@@ -70,6 +70,10 @@ Retain a verified snapshot when old linked revisions cannot be recovered. Retain
 
 ```text
 Task: [one issue ID and bounded result]
+Understood scope: [the request as checked against handed-over material, accepted decisions
+  and repository evidence; keep inferred intent labelled as a proposal]
+Remaining fork: [one consequential choice still unresolved by that evidence, or none;
+  send it through the existing decision owner, not a new question channel]
 Parent: [one milestone ref and verified coordinator task ID, or no milestone
   for a standalone issue; retain the real coordinator task ID if delegated.
   Initiative membership does not assign another project]
