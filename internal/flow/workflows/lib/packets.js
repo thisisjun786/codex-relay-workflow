@@ -637,6 +637,7 @@ export function crosscheckPacket(ms, g, pass, opts) {
     section('CRITERIA OF THE MILESTONE', criteriaList(ms.criteria, (ms.delivery_criteria || []).map((c) => c.id))),
     section('DESIGN DECISIONS (the approved DESIGN of this milestone)', decisionLines(g.decisions)),
     CROSSCHECK_LENS[pass] || CROSSCHECK_LENS.B,
+    'Give the verdict of this pass and its own lens; judge the criteria and evidence before accepting the author\'s framing. In each actual finding\'s text, name the lens and strongest reason, lead with conflicting evidence or an unresolved assumption, and identify the smallest check that would settle it. Group instances of one root without losing their evidence. Never average verdicts or treat agreement as proof. Do not invent another pass\'s conclusion or manufacture disagreement; no findings remains an empty list. Apply the existing severity and impact rules, with no extra passes or helper calls.',
     CROSSCHECK_RULE,
     findingsSection('PRIOR FINDINGS (re-evaluate each at this head; a resolved finding does not carry forward)', opts && opts.prior && opts.prior.findings),
     opts && opts.evidence && opts.evidence.length ? 'EVIDENCE ANSWERS:\n' + JSON.stringify(opts.evidence) : '',

@@ -111,7 +111,7 @@ func TestAQuestionTheLaterDesignNoLongerRaisesStaysAnswerable(t *testing.T) {
 	revised.OpenQuestions = []ops.OpenQuestion{envQuestion}
 	l.Sequence("^design-fix:r1$", func(*Call) fakehostPlan { return Say(revised) })
 	l.Sequence("^design-audit:r\\d+$", designAuditNeedsChanges, func(*Call) fakehostPlan {
-		return Say(map[string]any{"verdict": "approved", "findings": []any{}, "summary": "now it holds"})
+		return Say(map[string]any{"verdict": "approved", "findings": []any{}, "summary": "now it holds", "root": nil, "first_check": nil})
 	})
 	if got := mustRun(t, l); got.State != "closed" {
 		t.Fatalf("state %q; calls %v", got.State, l.Labels())

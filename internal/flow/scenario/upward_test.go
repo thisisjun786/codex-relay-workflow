@@ -250,7 +250,7 @@ func TestDesignLoopCapsWarnAndTellTheOrchestrator(t *testing.T) {
 		l := NewLab(t, twoNodes()...)
 		sender := l.wireUpward(t, false)
 		l.Sequence("^design-audit:r\\d+$", func(*Call) fakehostPlan {
-			return Say(map[string]any{"verdict": "needs_changes", "findings": []any{map[string]any{"ref": "D1", "severity": "P2", "finding": "no", "evidence": []string{}}}, "summary": "no"})
+			return Say(map[string]any{"verdict": "needs_changes", "findings": []any{map[string]any{"ref": "D1", "severity": "P2", "finding": "no", "evidence": []string{}}}, "summary": "no", "root": nil, "first_check": nil})
 		})
 		res := l.Run()
 		if res.Status != engine.RunCompleted {
@@ -395,7 +395,7 @@ func TestDesignLoopCacheDoesNotEscalate(t *testing.T) {
 		t.Run(stage, func(t *testing.T) {
 			l := NewLab(t, oneNode()...)
 			sender := l.wireUpward(t, false)
-			approved := map[string]any{"verdict": "approved", "findings": []any{}, "summary": "approved"}
+			approved := map[string]any{"verdict": "approved", "findings": []any{}, "summary": "approved", "root": nil, "first_check": nil}
 			answer := map[string]any{"answer": "answer", "evidence": []string{"README.md"}, "verified": []string{}, "inferred": []string{}, "unknown": []string{}}
 			cachedPlan := func(v any) *fakehostPlan {
 				p := Say(v)
