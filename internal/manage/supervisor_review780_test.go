@@ -143,8 +143,9 @@ func TestSupervisorReview780OutputPipeChild(t *testing.T) {
 
 // supervisorReview780HelpPipeChild runs one supervisor command line in a child process whose
 // stdout is a pipe. With the read end closed first, the write reaches a pipe nobody reads, which is
-// the case a fake writer cannot produce. The child's TMPDIR points at the parent's temporary
-// directory, so the child's own isolation root is removed with it rather than left behind.
+// the case a fake writer cannot produce. The child inherits the parent's tmpfs choice: when a tmpfs root
+// was chosen its isolation tree stays there; otherwise TMPDIR is the parent's temporary directory.
+// In either case the parent removes the child's isolation tree.
 func supervisorReview780HelpPipeChild(t *testing.T, args []string, closeReadEnd, stderrOnPipe bool) (code int, stdout, stderr string, signaled bool) {
 	t.Helper()
 	read, write, err := os.Pipe()
