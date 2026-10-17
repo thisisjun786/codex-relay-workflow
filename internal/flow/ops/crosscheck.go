@@ -95,6 +95,13 @@ type Crosscheck struct {
 	Checkout func(ctx context.Context, ms string, round, evidenceRound int, pass string, attempt int, head string) (dir string, done func() error, err error)
 }
 
+// CrosscheckHistoryReader is the optional relay seam a round-1 crosscheck reads for the most recent earlier run of the same plan
+// that stopped crosscheck_pending (CRW-1649): only it supplies a prior; DesignHistory is never a fallback for it, so a run of a
+// node that was not reused reads no receipt history at all.
+type CrosscheckHistoryReader interface {
+	CrosscheckHistory(context.Context, string) ([]DesignRun, error)
+}
+
 // CrosscheckCheckoutError is a checkout of a pass the op does not run a pass in: the reason (crosscheck_worktree_dirty,
 // crosscheck_worktree_moved), the directory, which is kept as it is for the 자식 to read, and what was found.
 type CrosscheckCheckoutError struct {
@@ -197,6 +204,7 @@ type CrosscheckOutcome struct {
 	Detail    string                   `json:"detail"`
 	Verdict   *CrosscheckVerdictRecord `json:"verdict"`
 	Questions []CrosscheckQuestion     `json:"questions"`
+	Prior     *CrosscheckVerdictRecord `json:"prior,omitempty"`
 }
 
 // CrosscheckVerdictOf is the close rule (CrosscheckRule) over merged findings: needs_changes when a finding premerge.Blocks, else verified;
@@ -272,7 +280,12 @@ func (o *crosscheckOp) Run(ctx context.Context, req engine.OpRequest) (engine.Op
 		round = *opts.Round
 	}
 	data := map[string]any{"milestone": ms, "plan": plan, "head": gate.Head, "round": round, "evidence_round": opts.EvidenceRound}
+	var prior *CrosscheckVerdictRecord
 	finish := func(out CrosscheckOutcome) (engine.OpResult, error) {
+		out.Prior = prior
+		if prior != nil {
+			data["prior"] = prior
+		}
 		if out.Questions == nil {
 			out.Questions = []CrosscheckQuestion{}
 		}
@@ -288,17 +301,33 @@ func (o *crosscheckOp) Run(ctx context.Context, req engine.OpRequest) (engine.Op
 		return engine.OpResult{Result: result(out), Data: data}, nil
 	}
 
-	// the rounds (CRW-1490): round 1 has no prior; round 2 is the close's one recheck and carries the round-1 verdict it rechecks,
+	// the rounds (CRW-1490): round 1 has no prior of its own but may carry the most recent earlier run's recorded
+	// crosscheck_pending verdict (CRW-1649); round 2 is the close's one recheck and carries the round-1 verdict it rechecks,
 	// which must be the verdict this run's recorded round 1 wrote (a script-forged or another run's prior does not replay). A third
 	// round is never served.
-	var prior *CrosscheckVerdictRecord
 	invalid := func(detail string) (engine.OpResult, error) {
 		return finish(CrosscheckOutcome{State: CrosscheckStateRefused, Reason: ReasonCrosscheckPriorInvalid, Detail: detail})
 	}
 	switch {
 	case round == 1:
+		var err error
+		prior, err = o.l.previousPendingCrosscheck(ctx, req, plan, ms)
+		if err != nil {
+			if ctx.Err() != nil {
+				return engine.OpResult{}, ctx.Err()
+			}
+			return invalid(err.Error())
+		}
 		if present(opts.Prior) {
-			return invalid("round 1 with a prior: a first round has no verdict to recheck")
+			var supplied CrosscheckVerdictRecord
+			if prior == nil || json.Unmarshal(opts.Prior, &supplied) != nil {
+				return invalid("round 1 prior must be the previous run's recorded crosscheck_pending verdict")
+			}
+			have, _ := json.Marshal(prior)
+			want, _ := json.Marshal(supplied)
+			if !bytes.Equal(have, want) {
+				return invalid("round 1 prior differs from the previous run's recorded verdict")
+			}
 		}
 	case round == 2:
 		var p CrosscheckVerdictRecord
@@ -396,6 +425,25 @@ func (o *crosscheckOp) Run(ctx context.Context, req engine.OpRequest) (engine.Op
 	}
 	section := receiptsSection(v)
 	prompts := map[string]string{CrosscheckPassA: withSection(opts.Prompts.A, section), CrosscheckPassB: withSection(opts.Prompts.B, section)}
+	if round == 1 && prior != nil {
+		blocking := make([]reviewadapter.Finding, 0, len(prior.Findings))
+		for _, f := range prior.Findings {
+			if premerge.Blocks(f.Severity, f.Impact) {
+				blocking = append(blocking, f)
+			}
+		}
+		raw, err := json.Marshal(blocking)
+		if err != nil {
+			return engine.OpResult{}, err
+		}
+		priorSection := "PRIOR FINDINGS (previous crosscheck_pending of this plan and milestone)\n" +
+			"Source run: " + prior.Run + "\nPrior head: " + prior.Head + "\nPrior base: " + prior.Base + "\n" +
+			"Re-evaluate every blocking finding below at the current head. A finding still present remains a finding; if unchanged, retain its file and finding text. A resolved finding does not carry forward. Repeating the close is not evidence that a finding was resolved.\n" +
+			string(raw)
+		for pass, prompt := range prompts {
+			prompts[pass] = withSection(prompt, priorSection)
+		}
+	}
 	for _, pass := range []string{CrosscheckPassA, CrosscheckPassB} {
 		if n := len(prompts[pass]); n > CrosscheckPromptLimit {
 			return finish(CrosscheckOutcome{State: CrosscheckStateFailed, Reason: ReasonCrosscheckPromptTooLarge,
@@ -982,4 +1030,75 @@ func (l *Lane) crosscheckWorktree(ctx context.Context, ms string, round, evidenc
 		return err
 	}
 	return dir, done, nil
+}
+
+// previousPendingCrosscheck finds the most recent earlier run of the same plan that stopped crosscheck_pending and returns the
+// recorded verdict it left (CRW-1649): the next run's first round re-judges that verdict's blocking findings rather than
+// starting a fresh judgment without them. Only a relay implementing CrosscheckHistoryReader supplies sources; a missing,
+// mismatched or unreadable pending record refuses the round rather than silently judging without it.
+func (l *Lane) previousPendingCrosscheck(ctx context.Context, req engine.OpRequest, plan, ms string) (*CrosscheckVerdictRecord, error) {
+	reader, ok := l.d.Relay.(CrosscheckHistoryReader)
+	if !ok {
+		return nil, nil
+	}
+	sources, err := reader.CrosscheckHistory(ctx, plan)
+	if err != nil {
+		return nil, err
+	}
+	for _, src := range sources {
+		if src.Run == "" || src.Run == req.RunID || src.Reason == ReuseRepoMismatch {
+			continue
+		}
+		if src.Reason != "" {
+			return nil, fmt.Errorf("previous run %s is unreadable: %s", src.Run, src.Detail)
+		}
+		var last engine.Event
+		for _, ev := range src.Events {
+			if ev.Kind == engine.KindFlow && ev.Event == engine.EvEscalation {
+				last = ev
+			}
+		}
+		// Only the immediately preceding project run, not an older pending run.
+		if dataStr(last, "reason") != "crosscheck_pending" {
+			return nil, nil
+		}
+		raw, err := json.Marshal(last.Data["evidence"])
+		if err != nil {
+			return nil, err
+		}
+		var evidence struct {
+			Crosscheck *CrosscheckVerdictRecord `json:"crosscheck"`
+		}
+		if err := json.Unmarshal(raw, &evidence); err != nil || evidence.Crosscheck == nil {
+			return nil, fmt.Errorf("previous run %s has unreadable crosscheck_pending evidence", src.Run)
+		}
+		p := evidence.Crosscheck
+		// authenticate the pending evidence against the run's recorded verdict before the milestone is read: an escalation
+		// naming another milestone still has to be that run's recorded verdict, or a forged one would pass unnoticed.
+		if p.Run != src.Run || p.Plan != plan || p.Milestone == "" ||
+			p.Verdict != reviewadapter.VerdictNeedsChanges || (p.Round != 1 && p.Round != 2) {
+			return nil, fmt.Errorf("previous run %s has mismatched crosscheck_pending evidence", src.Run)
+		}
+		row, found := rows(src.Events).current(OpCrosscheck).last(func(ev engine.Event) bool {
+			return dataStr(ev, "milestone") == p.Milestone &&
+				(dataStr(ev, "state") == CrosscheckStateVerdict || dataStr(ev, "state") == CrosscheckStateEvidence)
+		})
+		var recorded CrosscheckOutcome
+		if !found || json.Unmarshal(resultOf(row), &recorded) != nil || recorded.Verdict == nil {
+			return nil, fmt.Errorf("previous run %s has no recorded crosscheck verdict", src.Run)
+		}
+		if row.Seq > last.Seq && recorded.Verdict.Verdict == reviewadapter.VerdictVerified {
+			return nil, nil
+		}
+		have, _ := json.Marshal(recorded.Verdict)
+		want, _ := json.Marshal(p)
+		if !bytes.Equal(have, want) {
+			return nil, fmt.Errorf("previous run %s pending evidence is not its recorded crosscheck verdict", src.Run)
+		}
+		if p.Milestone != ms {
+			return nil, nil
+		}
+		return recorded.Verdict, nil
+	}
+	return nil, nil
 }

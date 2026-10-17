@@ -59,6 +59,27 @@ type IntegratedReader interface {
 	Integrated(context.Context, string, PlanNode) (IntegratedState, error)
 }
 
+// IntegrationHistoryReader is the optional relay seam the integration proof reads for earlier runs of the plan, including
+// land-head sources (CRW-1649). A relay that does not implement it leaves the wired DesignHistory in place.
+type IntegrationHistoryReader interface {
+	IntegrationHistory(context.Context, string) ([]DesignRun, error)
+}
+
+func (l *Lane) hasIntegrationHistory() bool {
+	_, ok := l.d.Relay.(IntegrationHistoryReader)
+	return ok || l.d.DesignHistory != nil
+}
+
+func (l *Lane) integrationHistory(ctx context.Context, plan string) ([]DesignRun, error) {
+	if reader, ok := l.d.Relay.(IntegrationHistoryReader); ok {
+		return reader.IntegrationHistory(ctx, plan)
+	}
+	if l.d.DesignHistory != nil {
+		return l.d.DesignHistory(ctx, plan)
+	}
+	return nil, nil
+}
+
 // ReuseIntegratedResult is the answer of crw.reuseIntegrated(milestone, node): the reuse decision of one node. A reused node
 // carries the provenance of the earlier run's landing: the source run, its acceptance and integration calls, the accepted head
 // and batch commit, and the node's slice and criteria and the run ledger's revision and digest the decision stands on.
@@ -81,6 +102,8 @@ type ReuseIntegratedResult struct {
 	CriteriaDigest      string `json:"criteria_digest,omitempty"`
 	Revision            string `json:"revision,omitempty"`
 	DesignDigest        string `json:"design_digest,omitempty"`
+	SourceKind          string `json:"source_kind,omitempty"`
+	SourceReleaseCall   string `json:"source_release_call,omitempty"`
 }
 
 // normalizeRef is the integration ref as both sides name it: with or without the refs/heads/ prefix.
@@ -100,13 +123,14 @@ func auditSubjectOf(events []engine.Event, plan, ms, node, head, acceptanceID, c
 type reuseIntegratedOp struct{ l *Lane }
 
 func (o *reuseIntegratedOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResult, error) {
-	return o.read(ctx, req, false)
+	return o.read(ctx, req, false, o.l.integrationHistory)
 }
 
 // read shares the landing proof between design discovery and build. Design discovery
 // has no current ledger to compare; it returns the source issue and its decisions.
-// Build still requires the current DESIGN to match that same proven source.
-func (o *reuseIntegratedOp) read(ctx context.Context, req engine.OpRequest, forDesign bool) (engine.OpResult, error) {
+// An ordinary source's DESIGN must match at build; a land source proves its release instead.
+func (o *reuseIntegratedOp) read(ctx context.Context, req engine.OpRequest, forDesign bool,
+	history func(context.Context, string) ([]DesignRun, error)) (engine.OpResult, error) {
 	var ms, node string
 	if err := args(req.Args, &ms, &node); err != nil {
 		return engine.OpResult{}, fmt.Errorf("crw.reuseIntegrated(milestone, node): %w", err)
@@ -161,7 +185,7 @@ func (o *reuseIntegratedOp) read(ctx context.Context, req engine.OpRequest, forD
 	} else if !anc {
 		return unproven(fmt.Sprintf("the accepted head %s is not an ancestor of the integration tip %s", state.Head, state.Tip))
 	}
-	if o.l.d.DesignHistory == nil {
+	if !o.l.hasIntegrationHistory() {
 		return unproven("no run history is wired to prove the integration with")
 	}
 	var curIssue DesignIssue
@@ -175,7 +199,7 @@ func (o *reuseIntegratedOp) read(ctx context.Context, req engine.OpRequest, forD
 			return unproven("the current design revision holds no issue of the node")
 		}
 	}
-	sources, err := o.l.d.DesignHistory(ctx, plan)
+	sources, err := history(ctx, plan)
 	if err != nil {
 		return engine.OpResult{}, err
 	}
@@ -211,43 +235,70 @@ func (o *reuseIntegratedOp) read(ctx context.Context, req engine.OpRequest, forD
 		if !ok || batch == "" {
 			continue
 		}
-		// the DESIGN issue the source integrated under - the ledger revision its release names, still standing and still
-		// the digest it released under - is canonically the one this run stands on: a changed DESIGN of integrated work
-		// is not silently ignored
-		sled, ok := ledgerOf(sr, ms, dataStr(srel, "revision"))
-		if !ok || sr.superseded(sled) || dataStr(sled, "digest") != dataStr(srel, "design_digest") {
-			continue
-		}
-		srcIssue, found, err := designIssue(sled, node)
-		if err != nil {
-			return engine.OpResult{}, err
-		}
-		if !found || (!forDesign && !reflect.DeepEqual(canonicalIssue(srcIssue), canonicalIssue(curIssue))) {
-			continue
-		}
-		// the design decisions the issue stands on must be the same ones, not only the same ids: a decision whose content
-		// changed under a kept id makes the earlier landing unproven
-		sourceDesign, err := ledgerDesign(sled)
-		if err != nil {
-			return engine.OpResult{}, err
-		}
-		var currentDesign Design
-		if !forDesign {
-			currentDesign, err = ledgerDesign(led)
+		land := dataStr(srel, "kind") == "land"
+		var sled engine.Event
+		var srcIssue DesignIssue
+		var sourceDesign Design
+		if land {
+			// A land has no source DESIGN to prove with: its release's own recorded head, tree and base stand in for the
+			// ledger. The head must be the relay's accepted head at the recorded tree, descended from the recorded base.
+			if dataStr(srel, "head") != state.Head || dataStr(srel, "tree") == "" || dataStr(srel, "base") == "" {
+				continue
+			}
+			tree, err := TreeOf(ctx, o.l.d.Git, o.l.d.Repo, state.Head)
 			if err != nil {
 				return engine.OpResult{}, err
 			}
-		}
-		decisionsKept := true
-		for _, ref := range srcIssue.DecisionRefs {
-			srcDec := canonicalDecisions(decisionsOf(sourceDesign, ref))
-			if srcDec == "[]" || (!forDesign && srcDec != canonicalDecisions(decisionsOf(currentDesign, ref))) {
-				decisionsKept = false
-				break
+			if tree != dataStr(srel, "tree") {
+				continue
 			}
-		}
-		if !decisionsKept {
-			continue
+			before, err := IsAncestor(ctx, o.l.d.Git, o.l.d.Repo, dataStr(srel, "base"), state.Head)
+			if err != nil {
+				return engine.OpResult{}, err
+			}
+			if !before {
+				continue
+			}
+		} else {
+			// the DESIGN issue the source integrated under - the ledger revision its release names, still standing and still
+			// the digest it released under - is canonically the one this run stands on: a changed DESIGN of integrated work
+			// is not silently ignored
+			var found bool
+			sled, ok = ledgerOf(sr, ms, dataStr(srel, "revision"))
+			if !ok || sr.superseded(sled) || dataStr(sled, "digest") != dataStr(srel, "design_digest") {
+				continue
+			}
+			srcIssue, found, err = designIssue(sled, node)
+			if err != nil {
+				return engine.OpResult{}, err
+			}
+			if !found || (!forDesign && !reflect.DeepEqual(canonicalIssue(srcIssue), canonicalIssue(curIssue))) {
+				continue
+			}
+			// the design decisions the issue stands on must be the same ones, not only the same ids: a decision whose content
+			// changed under a kept id makes the earlier landing unproven
+			sourceDesign, err = ledgerDesign(sled)
+			if err != nil {
+				return engine.OpResult{}, err
+			}
+			var currentDesign Design
+			if !forDesign {
+				currentDesign, err = ledgerDesign(led)
+				if err != nil {
+					return engine.OpResult{}, err
+				}
+			}
+			decisionsKept := true
+			for _, ref := range srcIssue.DecisionRefs {
+				srcDec := canonicalDecisions(decisionsOf(sourceDesign, ref))
+				if srcDec == "[]" || (!forDesign && srcDec != canonicalDecisions(decisionsOf(currentDesign, ref))) {
+					decisionsKept = false
+					break
+				}
+			}
+			if !decisionsKept {
+				continue
+			}
 		}
 		// the original acceptance evidence: a matching audit subject carrying the review the acceptance rests on
 		if _, ok := auditSubjectOf(src.Events, plan, ms, node, state.Head, state.AcceptanceID, n.CriteriaDigest); !ok {
@@ -262,10 +313,15 @@ func (o *reuseIntegratedOp) read(ctx context.Context, req engine.OpRequest, forD
 			continue
 		}
 		// the review base the milestone judged at the time the source landed stays with the landing: a re-planned source
-		// carries its original base, and a rerun must not narrow the range it closes over
-		reviewBase, err := o.l.milestoneReviewBase(ctx, sr, ms, state.Tip)
-		if err != nil {
-			return engine.OpResult{}, err
+		// carries its original base, and a rerun must not narrow the range it closes over. A land's base is its release's.
+		var reviewBase string
+		if land {
+			reviewBase = dataStr(srel, "base")
+		} else {
+			reviewBase, err = o.l.milestoneReviewBase(ctx, sr, ms, state.Tip)
+			if err != nil {
+				return engine.OpResult{}, err
+			}
 		}
 		if reviewBase == "" {
 			continue
@@ -283,9 +339,17 @@ func (o *reuseIntegratedOp) read(ctx context.Context, req engine.OpRequest, forD
 		out.SliceDigest, out.CriteriaDigest = n.SliceDigest, n.CriteriaDigest
 		// the run's own ledger stands behind the reuse: its revision and digest, not the source's
 		out.Revision, out.DesignDigest = dataStr(led, "revision"), dataStr(led, "digest")
-		if forDesign {
+		if land {
+			out.SourceKind, out.SourceReleaseCall = "land", srel.CallID
+		}
+		if forDesign && !land {
 			fixed = &IntegratedDesign{SourceRevision: dataStr(sled, "revision"), Issue: srcIssue, Decisions: []Decision{}}
+			seen := map[string]bool{}
 			for _, ref := range srcIssue.DecisionRefs {
+				if seen[ref] {
+					continue
+				}
+				seen[ref] = true
 				fixed.Decisions = append(fixed.Decisions, decisionsOf(sourceDesign, ref)...)
 			}
 		}
@@ -323,8 +387,8 @@ func (o *designReuseWithIntegratedOp) Run(ctx context.Context, req engine.OpRequ
 	lane := *o.l
 	var sources []DesignRun
 	var historyErr error
-	if o.l.d.DesignHistory != nil {
-		sources, historyErr = o.l.d.DesignHistory(ctx, plan)
+	if o.l.hasIntegrationHistory() {
+		sources, historyErr = o.l.integrationHistory(ctx, plan)
 		if ctx.Err() != nil {
 			return engine.OpResult{}, ctx.Err()
 		}
@@ -346,7 +410,7 @@ func (o *designReuseWithIntegratedOp) Run(ctx context.Context, req engine.OpRequ
 	if d.Reused {
 		return out, nil
 	}
-	if o.l.d.DesignHistory != nil {
+	if o.l.hasIntegrationHistory() {
 		lane.d.DesignHistory = func(context.Context, string) ([]DesignRun, error) { return sources, historyErr }
 	}
 	// Without a reader, only earlier recorded landings are candidates. A fresh
@@ -365,7 +429,7 @@ func (o *designReuseWithIntegratedOp) Run(ctx context.Context, req engine.OpRequ
 	for _, n := range m.Nodes {
 		readReq := req
 		readReq.Args = result([]string{m.ID, n.ID})
-		res, readErr := (&reuseIntegratedOp{&lane}).read(ctx, readReq, true)
+		res, readErr := (&reuseIntegratedOp{&lane}).read(ctx, readReq, true, lane.d.DesignHistory)
 		if ctx.Err() != nil {
 			return engine.OpResult{}, ctx.Err()
 		}
@@ -376,6 +440,10 @@ func (o *designReuseWithIntegratedOp) Run(ctx context.Context, req engine.OpRequ
 			return engine.OpResult{}, err
 		}
 		if item.Reason == ReuseIntegratedNot || (item.Reason == ReuseReaderUnavailable && !hinted[n.ID] && historyErr == nil) {
+			continue
+		}
+		if item.SourceKind == "land" {
+			// a proven land has no source DESIGN to pin: the fresh DESIGN is audited normally and the build reuses the land rows
 			continue
 		}
 		fixed = append(fixed, item)
@@ -558,10 +626,10 @@ func (l *Lane) reusedAudits(ctx context.Context, r rows, ms string, reader audit
 	if len(reused) == 0 {
 		return nil, nil
 	}
-	if l.d.DesignHistory == nil {
+	if !l.hasIntegrationHistory() {
 		return nil, fmt.Errorf("crw.audit: milestone %s rests on an inherited acceptance and no run history is wired to audit it", ms)
 	}
-	sources, err := l.d.DesignHistory(ctx, dataStr(reused[0], "plan"))
+	sources, err := l.integrationHistory(ctx, dataStr(reused[0], "plan"))
 	if err != nil {
 		return nil, err
 	}
@@ -625,11 +693,11 @@ func (l *Lane) reusedReceiptChecks(ctx context.Context, r rows, m Milestone) (ma
 			return missing("the reuse record does not identify its source acceptance and head")
 		}
 		if !loaded {
-			if l.d.DesignHistory == nil {
+			if !l.hasIntegrationHistory() {
 				return missing("no run history is wired")
 			}
 			var err error
-			sources, err = l.d.DesignHistory(ctx, d.Plan)
+			sources, err = l.integrationHistory(ctx, d.Plan)
 			if err != nil {
 				return missing(err.Error())
 			}
