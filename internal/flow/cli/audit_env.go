@@ -71,9 +71,32 @@ func OpenAuditStore(ctx context.Context, req AuditRequest) (AuditSetup, error) {
 			return fresh.Close()
 		}, nil
 	}
-	return AuditSetup{RunID: run, Journal: j, Reader: audit.BusReader{Bus: client.Bus()}, Finished: runEnded(j.Events()), Record: record, Close: func() error {
-		return errors.Join(j.Close(), client.Close(), st.Close())
-	}}, nil
+	return AuditSetup{RunID: run, Journal: j, Reader: audit.BusReader{Bus: client.Bus()}, Finished: runEnded(j.Events()), Record: record,
+		DeliveryTarget: func(plan string) (string, string, error) {
+			spec, err := ReadSpec(selection.Path, run)
+			if err != nil {
+				return "", "", err
+			}
+			ref, ok := HandoffOf(spec.Args)
+			if !ok {
+				return "", "", fmt.Errorf("the run names no pinned handoff")
+			}
+			_, in, err := ReadHandoff(ref)
+			if err != nil {
+				return "", "", err
+			}
+			p, ok := HandoffProject(in, plan)
+			if !ok {
+				return "", "", fmt.Errorf("the handoff names no project %s", plan)
+			}
+			if p.Target == nil || spec.Repo == "" || !sameDirectory(spec.Repo, p.Target.Repository) {
+				return "", "", fmt.Errorf("the run's checkout is not the handoff's target")
+			}
+			return spec.Repo, p.Target.Branch(), nil
+		},
+		Close: func() error {
+			return errors.Join(j.Close(), client.Close(), st.Close())
+		}}, nil
 }
 
 // runEnded says whether the last process of the run ended it: a finished row, or the run/paused row of a run the operator paused

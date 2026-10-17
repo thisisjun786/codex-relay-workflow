@@ -219,6 +219,9 @@ func compileProject(in Input, at int, owner map[string]string, opts Options) (Pl
 		}
 	}
 
+	// delivery criteria are post-publication readback, never a judgment of the build crosscheck (CRW-1609)
+	plan.Warnings = append(plan.Warnings, DeliveryWarnings(p, "")...)
+
 	// --- the issues
 	units := make([]*unit, len(p.Issues))
 	byKey := map[string]*unit{}

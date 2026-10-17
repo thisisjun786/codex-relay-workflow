@@ -19,11 +19,12 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/audit"
+	flowdelivery "github.com/thisisjun786/codex-relay-workflow/internal/flow/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 )
 
 // auditUsage is the usage line of `crw flow audit` (Usage holds it among the other commands).
-const auditUsage = `usage: crw flow audit (--run RUN | --acceptance ID) [--milestone M] [--state DIR] [--socket PATH] [--json] [--no-record]`
+const auditUsage = `usage: crw flow audit (--run RUN [--delivery] | --acceptance ID) [--milestone M] [--state DIR] [--socket PATH] [--json] [--no-record]`
 
 // AuditRequest is what `crw flow audit` asks the environment to open.
 type AuditRequest struct {
@@ -50,6 +51,10 @@ type AuditSetup struct {
 	// outside the lock. Without Record the row goes to Journal when Finished (a test's environment).
 	Record func() (j engine.Journal, ended bool, release func() error, err error)
 	Close  func() error
+	// DeliveryReader is the readback of --delivery (nil: DefaultDeliveryReader); DeliveryTarget resolves the run's pinned
+	// handoff target (checkout and branch). A missing target leaves remote delivery unobserved.
+	DeliveryReader *flowdelivery.Reader
+	DeliveryTarget func(plan string) (checkout, branch string, err error)
 }
 
 // AuditEnv opens the journal of a run and the host it ran on. The binary installs it (OpenAuditStore); a build that installs nothing cannot
@@ -78,6 +83,7 @@ func RunAudit(ctx context.Context, args []string, stdout, stderr io.Writer) (cod
 	socket := fs.String("socket", "", "the App Server control socket the run's host listens on (default: the default control socket)")
 	asJSON := fs.Bool("json", false, "print the results as JSON")
 	noRecord := fs.Bool("no-record", false, "do not append the result to the journal of the run")
+	delivery := fs.Bool("delivery", false, "read back the delivery criteria of the run's last closed milestone (with --run only)")
 	if err := fs.Parse(args[1:]); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -91,6 +97,12 @@ func RunAudit(ctx context.Context, args []string, stdout, stderr io.Writer) (cod
 	case *run == "" && *acceptance == "":
 		fmt.Fprintln(stderr, auditUsage)
 		fmt.Fprintln(stderr, "crw flow audit: error: one of --run and --acceptance is required")
+		return 2
+	case *delivery && *run == "":
+		fmt.Fprintln(stderr, "crw flow audit: error: --delivery requires --run")
+		return 2
+	case *delivery && (*acceptance != "" || *milestone != ""):
+		fmt.Fprintln(stderr, "crw flow audit: error: --delivery audits the run's last closed milestone: no --acceptance or --milestone selector")
 		return 2
 	case AuditEnv == nil:
 		fmt.Fprintln(stderr, "crw flow audit: error: this build installs no journal store and no host, so the run cannot be audited")
@@ -112,6 +124,9 @@ func RunAudit(ctx context.Context, args []string, stdout, stderr io.Writer) (cod
 			code = 2
 		}
 	}()
+	if *delivery {
+		return runDeliveryAudit(ctx, setup, *noRecord, *asJSON, stdout, stderr)
+	}
 	events := setup.Journal.Events()
 	var results []audit.Result
 	for _, s := range audit.Subjects(events) {

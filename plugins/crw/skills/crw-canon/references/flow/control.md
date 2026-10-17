@@ -25,3 +25,32 @@ An issue that [crw-dev](../../../crw-dev/SKILL.md) classifies as C4 runs in the 
 6. The report of the milestone (`crw.reportUp`), with the audit, the close's gate, its crosscheck and the architect's reflection.
 
 The crosscheck does not replace the critic's design check: it rules on a range that is already built, and step 2 exists to stop a flawed design before any executor writes it. Neither does it replace step 3.
+
+### Milestone close and delivery
+
+The close crosscheck judges code and its evidence before publication. Mark criteria about delivery in the handoff's milestone entry
+with `delivery_criteria`, referring to their original ids. For example,
+`"delivery_criteria": [{"id":"c1","checks":[{"kind":"remote_push"},{"kind":"issues_closed"}]}]` assigns all of `c1` to the later delivery
+check. Split a criterion that mixes functional behavior and delivery before marking it. The remaining criteria keep their ids; the
+two crosscheck passes still review the integrated range even if every criterion is deferred.
+
+Compile and start warn and record valid delivery annotations. Suspected delivery wording without an annotation produces a warning
+and stays in the build crosscheck; prose matching never exempts a requirement. Invalid annotations warn and stay in the build
+crosscheck too. These warnings do not refuse the handoff.
+
+A first crosscheck finding gets one close correction. All-evidence findings go to the explorer; findings that include a code or test
+defect go to a close-fix executor. Its `needs_research` follows the existing research route, and the answer returns on the same executor
+handle with its edits preserved. The run commits the completed correction and repeats the gate and crosscheck. The research limit,
+host holds and unresolved-finding escalations still apply.
+
+When delivery criteria exist, the closed run carries `delivery.state: pending` with its head and criterion ids. After the authorized
+publication and tracking updates, the child runs `crw flow audit --run RUN --delivery --json`. This observes all the declared checks
+of the run's closed milestone: `remote_push` requires the origin branch from the pinned handoff to contain the verified head;
+`issues_closed` requires every node's issue to be closed as completed; `milestone_closed` requires the explicit tracker
+`ref` (for example `{"kind":"milestone_closed","ref":"acme/app#6"}`) to be closed. It verifies the completed close and its gate and
+crosscheck before reading delivery state. An unavailable API or unproven remote ancestry is `unobserved`, never passed.
+
+The command records a `delivery_checked` run event with the proof head and observations and exits 0 only when all checks pass
+(`--no-record` prints without recording). Pending or unobserved checks exit 1; an unusable run or invocation exits 2. The command
+performs readback, while publication remains with its existing owner and authority. Report the deferred criteria as fulfilled only
+after the readback passes; the code close alone leaves them pending.
