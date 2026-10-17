@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"github.com/thisisjun786/codex-relay-workflow/internal/tracking"
 )
 
@@ -239,6 +240,29 @@ func (r *Runner) integrate(ctx context.Context, tag string, entries []Entry, pr 
 	}
 	if err != nil || now != base {
 		return finish("dev-moved:"+now, ExitMoved)
+	}
+	settings, err := crwconfig.LoadIntegration(lastValueWins(r.baseEnv()), "")
+	if err != nil {
+		r.logf("%s: the required status setting cannot be read: %v", tag, err)
+		fmt.Fprintf(logf, "required status: %v\n", err)
+		out.prNote = "required status setting: " + err.Error()
+		return finish("required-status-failed:"+err.Error(), ExitMoved)
+	}
+	if settings.RequiredStatus != "" {
+		raw, err := os.ReadFile(record)
+		if err != nil {
+			r.logf("%s: the verification record cannot be read for the required status: %v", tag, err)
+			fmt.Fprintf(logf, "required status: the verification record cannot be read: %v\n", err)
+			out.prNote = "required status: the verification record cannot be read"
+			return finish("required-status-failed:"+err.Error(), ExitMoved)
+		}
+		publisher := RequiredStatusPublisher{Context: settings.RequiredStatus, Git: r.gitOut, GitHub: r.StatusGitHub}
+		if err := publisher.Publish(ctx, wt, c.Remote, c.Branch, head, base, raw); err != nil {
+			r.logf("%s: the required status was not published: %v", tag, err)
+			fmt.Fprintf(logf, "required status: %v\n", err)
+			out.prNote = "required status: " + err.Error()
+			return finish("required-status-failed:"+err.Error(), ExitMoved)
+		}
 	}
 	// The marker first: a push the signal ended after it landed leaves this summary for the recovery to find (finish overwrites it).
 	// Without the marker on disk a push the signal ended after it landed leaves nothing to find, so a marker that cannot be written

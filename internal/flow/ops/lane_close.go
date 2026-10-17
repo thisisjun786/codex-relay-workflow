@@ -110,9 +110,11 @@ func (o *milestoneCloseOp) Run(ctx context.Context, req engine.OpRequest) (engin
 			return bad("the gate of the evidence is not a gate: " + err.Error())
 		}
 		verificationDigest := ""
+		var verificationRecord json.RawMessage
 		for _, e := range passedGate.Evidence {
 			if e.Kind == EvidenceKindTest && e.State == EvidenceFresh && e.Pass && e.Digest != "" {
 				verificationDigest = e.Digest
+				verificationRecord = repairVerification(r, e.Call, rep.Head, e.Digest)
 				break
 			}
 		}
@@ -145,7 +147,7 @@ func (o *milestoneCloseOp) Run(ctx context.Context, req engine.OpRequest) (engin
 		if !ok {
 			return engine.OpResult{}, &Refusal{"close_repair_unavailable", "the relay of this run cannot publish a close repair"}
 		}
-		res, rerr := integrator.IntegrateMilestoneRepair(ctx, MilestoneRepairRequest{Plan: plan, Milestone: ms, Base: rep.Base, Head: rep.Head, VerificationDigest: verificationDigest})
+		res, rerr := integrator.IntegrateMilestoneRepair(ctx, MilestoneRepairRequest{Plan: plan, Milestone: ms, Base: rep.Base, Head: rep.Head, VerificationDigest: verificationDigest, Verification: verificationRecord})
 		if rerr != nil {
 			return engine.OpResult{}, rerr
 		}
@@ -301,4 +303,14 @@ func (o *reportUpOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpRe
 
 func (o *reportUpOp) Proven(ctx context.Context, ev []engine.Event, row engine.Event) (bool, string, error) {
 	return provenAlways(ctx, ev, row)
+}
+
+func repairVerification(r rows, call, head, digest string) json.RawMessage {
+	row, ok := r.opRows(OpVerify).last(func(ev engine.Event) bool {
+		return ev.CallID == call && dataStr(ev, "head") == head && dataStr(ev, "digest") == digest
+	})
+	if !ok {
+		return nil
+	}
+	return json.RawMessage(dataStr(row, "record"))
 }

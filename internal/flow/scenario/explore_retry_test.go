@@ -78,7 +78,9 @@ func (s *bgScript) Threads() []string {
 func nullModelTurns(c *Call) *fakehostPlan {
 	p := Garbage()
 	if c.N == 1 {
-		p = Say(noVerified("the answer without what was verified"))
+		answer := noVerified("the answer without what was verified")
+		delete(answer, "answer")
+		p = Say(answer)
 	}
 	return &p
 }

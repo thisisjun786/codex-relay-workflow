@@ -59,7 +59,9 @@ type Server struct {
 	URL  string
 	// HeadSHA answers the commit a branch of the repository is at, read at every read of a pull request as GitHub reads it; a
 	// test points it at its remote. Nil or "" answers 40 zeros.
-	HeadSHA func(branch string) string
+	HeadSHA      func(branch string) string
+	CommitExists func(head string) bool
+	StatusCode   int
 
 	srv      *httptest.Server
 	mu       sync.Mutex
@@ -87,6 +89,7 @@ var (
 	commentsRoute = regexp.MustCompile(`^/repos/([^/]+/[^/]+)/issues/([0-9]+)/comments$`)
 	prSurfRoute   = regexp.MustCompile(`^/repos/([^/]+/[^/]+)/pulls/([0-9]+)/(comments|reviews)$`)
 	checksRoute   = regexp.MustCompile(`^/repos/([^/]+/[^/]+)/commits/([0-9a-f]{40})/(check-runs|status)$`)
+	statusRoute   = regexp.MustCompile(`^/repos/([^/]+/[^/]+)/statuses/([0-9a-f]{40}|[0-9a-f]{64})$`)
 )
 
 func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
@@ -249,6 +252,36 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	if m := statusRoute.FindStringSubmatch(path); r.Method == http.MethodPost && repoOK(m) {
+		if s.StatusCode != 0 {
+			reply(w, s.StatusCode, map[string]any{"message": "Validation Failed"})
+			return
+		}
+		var in struct {
+			State       string `json:"state"`
+			Context     string `json:"context"`
+			TargetURL   string `json:"target_url"`
+			Description string `json:"description"`
+		}
+		if json.Unmarshal(body, &in) != nil || in.State == "" || in.Context == "" {
+			reply(w, http.StatusUnprocessableEntity, map[string]any{"message": "Validation Failed"})
+			return
+		}
+		if s.CommitExists != nil && !s.CommitExists(m[2]) {
+			reply(w, http.StatusUnprocessableEntity, map[string]any{"message": "No commit found for SHA"})
+			return
+		}
+		s.mu.Lock()
+		if s.checks == nil {
+			s.checks = map[string]fakeChecks{}
+		}
+		set := s.checks[m[2]]
+		set.statuses = append(set.statuses, FakeStatus{Context: in.Context, State: in.State, TargetURL: in.TargetURL})
+		s.checks[m[2]] = set
+		s.mu.Unlock()
+		reply(w, http.StatusCreated, map[string]any{"state": in.State, "context": in.Context, "target_url": in.TargetURL, "description": in.Description})
+		return
+	}
 	reply(w, http.StatusNotFound, map[string]any{"message": "Not Found: " + r.Method + " " + path})
 }
 
@@ -352,6 +385,12 @@ func (s *Server) Requests() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]string(nil), s.requests...)
+}
+
+func (s *Server) Statuses(head string) []FakeStatus {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]FakeStatus(nil), s.checks[head].statuses...)
 }
 
 // SetChecks sets the check runs and commit statuses the fake answers for the commit sha (40 lowercase hex characters, as the
