@@ -18,6 +18,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/crwcmd"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/journal"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
 )
 
 // `crw flow next` and `crw flow dispatched` (CRW-1316 §3.2, CRW-1348): the owner thread's side of a session run's step exchange
@@ -83,6 +84,9 @@ type NextAnswer struct {
 	Warnings []string `json:"warnings,omitempty"`
 	// Resumed is the process next started for a run that had none (0: none was started).
 	Resumed int `json:"resumed_pid,omitempty"`
+	// answerAppliedAfterPause is whether any decision_applied row follows the run's newest paused end by `answer`: an answer is
+	// already applied (the journal does not record which answer a drain was made for).
+	answerAppliedAfterPause bool
 }
 
 // nextPoll is how often next and dispatched look again while they wait.
@@ -199,7 +203,8 @@ func (c *command) next(args []string) int {
 		ans.Ended = &NextEnd{Status: info.Status, State: info.State}
 	}
 	maxThreads := readCodexAgents(c.getenv).MaxThreads
-	agents := openSubagents(c.runEvents(cm, run), steps)
+	events := c.runEvents(cm, run)
+	agents := openSubagents(events, steps)
 	ans.Slots = NextSlots{Limit: maxThreads, Open: len(agents), Agents: agents}
 	var closes []string
 	// the owner runs a then as printed: it names the crw that runs, not the bare crw a PATH without it does not find (CRW-1572)
@@ -231,6 +236,7 @@ func (c *command) next(args []string) int {
 			}
 		}
 	}
+	ans.answerAppliedAfterPause = answerAfterPaused(events, run)
 	ans.Hint = nextHint(ans, info, closes)
 	if *asJSON {
 		_, _ = c.stdout.Write(JSON(ans))
@@ -290,6 +296,29 @@ func draining(info RunInfo) bool {
 // pausedForAnswer is whether the last ask that ends the run paused is an answer's drain.
 func pausedForAnswer(info RunInfo) bool { return strings.HasPrefix(info.Paused, "answer: ") }
 
+// answerAfterPaused is whether a decision_applied row follows the run's newest paused end by `answer`. Any such row counts - the
+// journal does not name the answer a pause was made for - so a later application after a later paused end is a different one.
+func answerAfterPaused(events []engine.Event, run string) bool {
+	paused, applied := false, false
+	for _, ev := range events {
+		if ev.RunID != run {
+			continue
+		}
+		if ev.Kind == engine.KindRun {
+			switch ev.Event {
+			case "started", "finished":
+				paused, applied = false, false
+			case "paused":
+				paused, applied = str(ev.Data, "by") == "answer", false
+			}
+		}
+		if paused && ev.Kind == engine.KindFlow && ev.Event == ops.EvDecisionApplied {
+			applied = true
+		}
+	}
+	return applied
+}
+
 // nextState is the state next reports. A paused run is paused, except while an answer drains it and its process lives: next answers
 // from its waits and steps as for any live run, until the process ends (an operator's pause interrupts the turns: paused at once).
 func nextState(info RunInfo, live bool, steps []engine.Step) string {
@@ -335,7 +364,7 @@ func (c *command) detachResume(cm *common, state string, spec Spec) (int, error)
 	}
 	if c.Ready != nil {
 		if err := c.Ready(c.ctx, state, spec.RunID, pid, spawned); err != nil {
-			return pid, err
+			return 0, err
 		}
 	}
 	return pid, nil
@@ -536,6 +565,10 @@ func nextHint(ans NextAnswer, info RunInfo, closes []string) string {
 		parts = append(parts, fmt.Sprintf("run %s is over (%s, status %s): %s flow show %s", ans.Run, info.State, cell(info.Status), crw, ans.Run))
 	case NextPaused:
 		if pausedForAnswer(info) {
+			if ans.answerAppliedAfterPause {
+				parts = append(parts, fmt.Sprintf("run %s ended paused for an answer; an answer is already applied: %s flow resume %s goes on with it; replaying the same answer starts no process", ans.Run, crw, ans.Run))
+				break
+			}
 			// the run stopped for an answer (its drain): the answer applies and resumes it once no process holds the run
 			parts = append(parts, fmt.Sprintf("run %s ended paused for an answer: run the same %s flow answer again (it applies and resumes the run); %s flow resume %s goes on without it", ans.Run, crw, crw, ans.Run))
 			break

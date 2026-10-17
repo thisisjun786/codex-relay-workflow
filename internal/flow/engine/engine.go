@@ -102,6 +102,9 @@ type Config struct {
 	// the subagents it spawns, instead of starting threads through Backend. The run's started row records the backend
 	// (`backend`), and a resume on the other backend is refused.
 	Session *SessionConfig
+	// Started, when set, is called after this process's started row is durable.
+	// It is an in-process readiness notification and adds no journal data.
+	Started func()
 	// ReplayHold is a test seam, nil in production: a resume hands it every op row it replays, after the row was proven and noted as
 	// replayed. When it answers true the engine does not settle the position itself: the hook keeps settle and calls it later, from
 	// any goroutine, to resolve the op with the recorded result (a test orders replays with it). No row, position or digest changes.
@@ -361,6 +364,15 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 		e.j.Append(Event{RunID: e.runID, Kind: KindRun, Event: EvPolicyRepinned, Data: map[string]any{
 			"old": prior.Digest, "new": cfg.Policy.Digest, "old_source": prior.Source, "new_source": cfg.Policy.Source,
 		}})
+	}
+	if cfg.Started != nil {
+		if err := journalFlush(e.j); err != nil {
+			return nil, fmt.Errorf("record run start: %w", err)
+		}
+		if err := journalErr(e.j); err != nil {
+			return nil, fmt.Errorf("record run start: %w", err)
+		}
+		cfg.Started()
 	}
 	if cfg.Session != nil && cfg.Session.Started != nil {
 		// the run's own record first, then what is made from it: the owner's line with the pairs the started row pinned (CRW-1372)
