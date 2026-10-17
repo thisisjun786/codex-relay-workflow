@@ -193,12 +193,12 @@ func (s *Scheduler) IntegrateBatch(ctx context.Context, in IntegrationBatchInput
 		// a candidate that no stored verification covers (its keys changed, or its criteria set is not the one verified) makes the
 		// head verified again, with no merge; only that PASS covers the candidates (CRW-965, parent decisions D2 and D1)
 		if rowFound && !allNodesCovered(contained, coveredNodes) {
-			_, dig, pass, err := s.verifyHead(ctx, in, deps, batch, start, baseTip)
+			rec, dig, pass, err := s.verifyHead(ctx, in, deps, batch, start, baseTip)
 			if err != nil {
 				return out, err
 			}
 			if pass {
-				if err := s.recordVerifiedHead(ctx, in, batch, start, dig, contained); err != nil {
+				if err := s.recordVerifiedHead(ctx, in, batch, start, dig, rec, contained); err != nil {
 					return out, err
 				}
 				coveredNodes = nodesOf(contained)
@@ -232,7 +232,7 @@ func (s *Scheduler) IntegrateBatch(ctx context.Context, in IntegrationBatchInput
 			return out, err
 		}
 		// the verified head is recorded before the branch moves, so a batch that dies after the move leaves its head known
-		if err := s.recordVerifiedHead(ctx, in, batch, settled.head, settled.digest, mergedCandidates(settled.merged)); err != nil {
+		if err := s.recordVerifiedHead(ctx, in, batch, settled.head, settled.digest, settled.record, mergedCandidates(settled.merged)); err != nil {
 			return out, err
 		}
 		// the compare-and-swap and the moved record share one fenced transaction: the epoch is checked inside it (CRW-965, D6)
@@ -1427,7 +1427,7 @@ func verifiedKeysOf(ctx context.Context, checkout, head string) (map[string]stri
 // recordVerifiedHead writes the batch's intent to move the branch to a verified head, before the branch moves. The row
 // names the tree and the keys the verification stands on, and the criteria set of each candidate it covers (CRW-965,
 // parent decisions D2 and D1), so a later batch compares them without reading old records.
-func (s *Scheduler) recordVerifiedHead(ctx context.Context, in IntegrationBatchInput, batch, head, digest string, covered []Candidate) error {
+func (s *Scheduler) recordVerifiedHead(ctx context.Context, in IntegrationBatchInput, batch, head, digest string, record VerificationRecord, covered []Candidate) error {
 	keys, err := verifiedKeysOf(ctx, in.Checkout, head)
 	if err != nil {
 		return err
@@ -1442,6 +1442,10 @@ func (s *Scheduler) recordVerifiedHead(ctx context.Context, in IntegrationBatchI
 	}
 	keys["criteria"] = string(criteriaJSON)
 	keys["verified_head"], keys["verification_digest"], keys["integration_ref"] = head, digest, in.IntegrationRef
+	if len(record.Raw) > 0 {
+		keys["verification_record"] = string(record.Raw)
+	}
+	keys["verification_base"] = record.BaseCommit
 	detail, err := json.Marshal(keys)
 	if err != nil {
 		return err
