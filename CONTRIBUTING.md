@@ -8,8 +8,9 @@ in [README.md](README.md).
 
 The skills live in `plugins/crw/skills/`, which is the payload of the published
 plugin; `docs/plugin-packaging.md` describes the package and what may sit in its
-root. Start from `dev` on a short-lived branch. Use a separate worktree when another
-task owns the checkout, and preserve its uncommitted work. Read the target skill
+root. Start each issue from `origin/dev` in its own worktree and task branch.
+Preserve uncommitted work, do not edit files another agent owns, and limit shared
+document changes to your own section. Read the target skill
 and linked references before editing. Shared workflow rules belong in
 `plugins/crw/skills/crw-canon/references/` (indexed by `plugins/crw/skills/crw-canon/SKILL.md`);
 operation-specific guidance belongs with that skill.
@@ -34,27 +35,30 @@ copy an entire issue description, not just its URL.
 
 ## Check locally
 
-The repository checks run from the development binary, with the Go toolchain `go.mod`
-names:
+Follow the [development loop](AGENTS.md#development-loop). First add and run a failing
+test, then fix its cause. Run tests for the changed packages and the packages that
+import them with `go test -count=1` and the relevant package paths and build tags.
+Then run `make lint-changed` and `git diff --check`. Do not skip tests or merely
+increase waits to obtain a pass.
 
-```sh
-go run -tags dev ./cmd/crw-dev ci validate
-go run -tags dev ./cmd/crw-dev ci plugin
-go run -tags dev ./cmd/crw-dev ci contracts
-git diff --check
-```
+Use the Go toolchain named by `go.mod`. When skill documentation changes, run
+`go run -tags dev ./cmd/crw-dev ci validate`; for plugin package changes, run
+`go run -tags dev ./cmd/crw-dev ci plugin`, and for contract changes run
+`go run -tags dev ./cmd/crw-dev ci contracts`. Set `TMPDIR` to a host-appropriate
+temporary work directory with no Git repository (`.git`) at or above it.
 
-When using the local verifier, full verification is one command:
+Run one independent review, fix P0/P1 findings without a second review, and commit.
+Before full verification, fetch and merge `origin/dev` into the task branch;
+the branch's author resolves conflicts. On shared development machines, use the
+configured `github-actions` verifier for full verification rather than running full
+`crw-dev ci local` or full `make lint` locally. See
+[Choosing the verifier](docs/CI.md#choosing-the-verifier) for configuration and the
+common verification command.
 
-```sh
-go run -tags dev ./cmd/crw-dev ci local
-```
-
-It runs every job and step of `.github/workflows/ci.yml` in a clean worktree of the
-commit being verified and writes a `verification-record/1`, whose `result` is a pass
-only when every step succeeded. Changes to the runtime (`cmd/`, `internal/`,
-`contract/`) also need `make lint test`; [CI operation](docs/CI.md) lists the parts CI
-splits that into.
+Task branches may be pushed without another approval and remote branches are retained.
+Do not push `dev` directly; the integration queue updates it after verification.
+Its required `dev-gate` status rejects an update whose check is missing or unsuccessful;
+a passing check does not grant direct-push authority.
 
 The CXC v0.2.40 behaviour corpus (`contract/fixtures/cxc`) is recorded, not written by hand:
 edit a spec under `contract/schema/cxc/specs/` and run

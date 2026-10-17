@@ -324,3 +324,65 @@ func TestPushOnlyWording_ScopeGuardCatchesTheParagraphGoing(t *testing.T) {
 		}
 	}
 }
+
+// CRW-1599: this is a structural contract for the repository's agent instructions,
+// not proof that an agent followed them or that a server-side rule is active.
+func TestAgentDevelopmentLoop(t *testing.T) {
+	_, section, found := strings.Cut(readRepoText(t, "AGENTS.md"), "\n## Development loop\n")
+	if !found {
+		t.Fatal("AGENTS.md has no development loop")
+	}
+	section, _, _ = strings.Cut(section, "\n## ")
+	flat := strings.Join(strings.Fields(section), " ")
+	for _, tc := range []struct {
+		name    string
+		phrases []string
+	}{
+		{"work ownership", []string{"one worktree", "one task branch", "`origin/dev`", "another agent's files", "own section"}},
+		{"local feedback", []string{"failing test", "changed packages", "dependent packages", "`-count=1`", "`make lint-changed`", "`crw-dev ci validate`"}},
+		{"one review", []string{"one independent review", "P0/P1", "do not re-review", "commit"}},
+		{"full verification", []string{"configured verifier", "`verifier.kind=github-actions`", "GitHub Actions", "do not run full `crw-dev ci local` or full `make lint`"}},
+		{"merge first", []string{"Before full verification", "fetch and merge `origin/dev`", "author resolves conflicts"}},
+		{"delivery authority", []string{"Push task branches", "retain remote branches", "never push `dev` directly", "integration queue", "`dev-gate`", "missing or unsuccessful"}},
+		{"honest tests and temp root", []string{"never skip tests", "increase waits", "`TMPDIR`", "`.git`", "at or above"}},
+		{"shared instructions", []string{"`CLAUDE.md`", "relative symlink", "`AGENTS.md`", "second copy"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, phrase := range tc.phrases {
+				if !strings.Contains(flat, phrase) {
+					t.Errorf("development loop no longer states %q", phrase)
+				}
+			}
+		})
+	}
+}
+
+// Claude Code must reach the same file, not a second copy that can drift.
+func TestClaudeGuidanceLinksToAgents(t *testing.T) {
+	path := filepath.Join(repoRoot(), "CLAUDE.md")
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatal("CLAUDE.md must be a symlink, not copied guidance")
+	}
+	target, err := os.Readlink(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target != "AGENTS.md" {
+		t.Fatalf("CLAUDE.md target = %q, want the relative AGENTS.md", target)
+	}
+	linked, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agents, err := os.Stat(filepath.Join(repoRoot(), "AGENTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !agents.Mode().IsRegular() || !os.SameFile(linked, agents) {
+		t.Fatal("CLAUDE.md does not resolve to the one AGENTS.md file")
+	}
+}

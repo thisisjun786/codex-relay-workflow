@@ -9,6 +9,27 @@ The repository verification is selected by `verifier.kind`: `local` (the default
 Both produce a `verification-record/1`; a passing record is the integration evidence.
 The node, integration and milestone-close paths use the same configured verifier.
 
+## Development loop
+
+Use the [agent development loop](../AGENTS.md#development-loop) and
+[local contribution checks](../CONTRIBUTING.md#check-locally): a failing test first,
+then the fix, changed and dependent package tests with `-count=1`, and
+`make lint-changed`. Skill documentation changes also need `crw-dev ci validate`.
+Run one independent review, fix P0/P1 findings without re-review, and commit.
+
+Fetch and merge `origin/dev` into the task branch before full verification; the
+branch's author resolves conflicts. On shared development machines, choose
+`verifier.kind=github-actions` and let the configured verifier run the full checks
+on GitHub Actions. Do not run full `crw-dev ci local` or full `make lint` there.
+The `local` verifier remains available; it is not this shared-machine development
+loop. Set `TMPDIR` to a host-appropriate temporary work directory with no Git
+repository (`.git`) at or above it. Do not skip tests or merely increase waits to
+obtain a pass.
+
+Push the task branch and retain remote branches. Only the integration queue updates
+`dev`; its required `dev-gate` status blocks an update when the check is missing or
+unsuccessful, and passing it does not authorize an agent to push `dev` directly.
+
 ## Choosing the verifier
 
 Existing configurations keep the local verifier and its `go_root` and `crw_dev` settings.
@@ -866,19 +887,24 @@ Use `dev` as default. `main` is a release mirror, advanced by the
 owner-authorized [Release workflow](releases.md) to the exact verified dev SHA. There is no
 promotion PR or release-specific CI gate.
 
-[The parent](../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels) (repository session) changes the branch protection when the push-only procedure is switched on:
-the `dev` ruleset stops requiring a pull request and stops requiring a status check, while
-deletion and force-push stay disallowed. Read back the effective rules before claiming the
-protection is active; never loosen a protection merely to land a change.
+[The parent](../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels) (repository session) owns branch protection: the `dev` ruleset requires a successful `dev-gate` status and rejects deletion and force-push; only the integration queue updates `dev`.
+Read back the effective rules before claiming protection is active, and never
+loosen a protection merely to land a change.
 
 | Setting | `dev` | `main` |
 | --- | --- | --- |
 | PR required | No | No; release workflow advances the ref |
-| Required status check | None | None |
+| Required status check | `dev-gate` | None |
 | Deletion | Disallowed | Disallowed |
 | Force push | Disallowed | Disallowed |
 | Required human approvals | 0 | Not a PR workflow |
-| Update method | Non-forced fast-forward by the integrator | Non-forced fast-forward |
+| Update method | Non-forced fast-forward by the integration queue | Non-forced fast-forward |
+
+A passing `verification-record/1` alone does not satisfy the required status check:
+the successful `dev-gate` status must belong to the exact commit being pushed to
+`dev`. Local verification and reuse of a passing tree receipt do not publish that
+status themselves. An integration queue without a step that supplies it must remain
+blocked; do not remove or bypass protection to make such a push succeed.
 
 Protect version tags (`v*`) against update, deletion and non-fast-forward with no bypass actors.
 The main rules protect ancestry, while owner-only workflow checks govern its release route;
