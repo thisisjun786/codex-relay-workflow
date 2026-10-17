@@ -50,7 +50,7 @@ func issueChildPathProblems(text string) []string {
 
 func TestFlowDocsHaveNoIssueChildPath(t *testing.T) {
 	for _, file := range issueChildPathDocs {
-		if problems := issueChildPathProblems(readRepoText(t, file)); len(problems) > 0 {
+		if problems := issueChildPathProblems(readFlowReference(t, file)); len(problems) > 0 {
 			t.Errorf("%s still names the retired `child` session path:\n  %s", file, strings.Join(problems, "\n  "))
 		}
 	}
@@ -177,7 +177,7 @@ func issueChildDispatchProblems(text string) []string {
 
 func TestIssueChildDispatchIsOnlyForAPlanWithNoFlowRun(t *testing.T) {
 	for _, place := range issueChildDispatchPlaces {
-		section := sectionOf(readRepoText(t, place.file), place.heading)
+		section := sectionOf(readFlowReference(t, place.file), place.heading)
 		if strings.TrimSpace(section) == "" {
 			t.Errorf("%s has no section %q", place.file, place.heading)
 			continue

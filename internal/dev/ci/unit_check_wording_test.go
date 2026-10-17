@@ -17,7 +17,7 @@ import (
 
 const (
 	scriptDocPath   = "docs/flow/script.md"
-	projectLaneJS   = "internal/flow/workflows/project-lane.js"
+	projectLaneJS   = "internal/flow/workflows/lib/project-build.js"
 	unitCheckRounds = "UNIT_CHECK_ROUNDS"
 )
 
@@ -170,7 +170,7 @@ func flowPageUnitCheckProblems(section string) []string {
 
 func TestUnitCheckDocsNameTheNodeLaneUnitCheck(t *testing.T) {
 	rounds := unitCheckRoundsOf(t)
-	if p := nodeLaneUnitCheckProblems(readRepoText(t, scriptDocPath), rounds); len(p) > 0 {
+	if p := nodeLaneUnitCheckProblems(readFlowReference(t, scriptDocPath), rounds); len(p) > 0 {
 		t.Errorf("%s:\n  %s", scriptDocPath, strings.Join(p, "\n  "))
 	}
 	if p := runSkillUnitCheckProblems(sectionOf(readRepoText(t, runSkillFile), "How the child works")); len(p) > 0 {
@@ -179,7 +179,7 @@ func TestUnitCheckDocsNameTheNodeLaneUnitCheck(t *testing.T) {
 	if p := spawnPolicyUnitCheckProblems(readRepoText(t, spawnPolicyRef)); len(p) > 0 {
 		t.Errorf("%s:\n  %s", spawnPolicyRef, strings.Join(p, "\n  "))
 	}
-	if p := flowPageUnitCheckProblems(ownershipSection(readRepoText(t, flowRef))); len(p) > 0 {
+	if p := flowPageUnitCheckProblems(ownershipSection(readFlowReference(t, flowRef))); len(p) > 0 {
 		t.Errorf("%s:\n  %s", flowRef, strings.Join(p, "\n  "))
 	}
 
@@ -314,13 +314,13 @@ func TestUnitCheckDocsNameTheLandHeadCommittedCheck(t *testing.T) {
 			})
 		}
 	})
-	if p := landHeadSectionUnitCheckProblems(readRepoText(t, scriptDocPath)); len(p) > 0 {
+	if p := landHeadSectionUnitCheckProblems(readFlowReference(t, scriptDocPath)); len(p) > 0 {
 		t.Errorf("%s:\n  %s", scriptDocPath, strings.Join(p, "\n  "))
 	}
 	if p := landHeadLineUnitCheckProblems(lineContaining(readRepoText(t, runSkillFile), "A change made another way lands", "land-head")); len(p) > 0 {
 		t.Errorf("%s:\n  %s", runSkillFile, strings.Join(p, "\n  "))
 	}
-	if p := landHeadLineUnitCheckProblems(lineContaining(readRepoText(t, flowRef), "| `crw flow start WORKFLOW", "`land-head` lands")); len(p) > 0 {
+	if p := landHeadLineUnitCheckProblems(lineContaining(readFlowReference(t, flowRef), "| `crw flow start WORKFLOW", "`land-head` lands")); len(p) > 0 {
 		t.Errorf("%s:\n  %s", flowRef, strings.Join(p, "\n  "))
 	}
 
@@ -403,9 +403,9 @@ func flowPageCodexDefaultProblems(page string) []string {
 }
 
 func TestUnitCheckDocsNameCodexReviewAsTheDefault(t *testing.T) {
-	script := readRepoText(t, scriptDocPath)
+	script := readFlowReference(t, scriptDocPath)
 	skill := readRepoText(t, runSkillFile)
-	flow := readRepoText(t, flowRef)
+	flow := readFlowReference(t, flowRef)
 	if p := scriptCodexDefaultProblems(script); len(p) > 0 {
 		t.Errorf("%s:\n  %s", scriptDocPath, strings.Join(p, "\n  "))
 	}
