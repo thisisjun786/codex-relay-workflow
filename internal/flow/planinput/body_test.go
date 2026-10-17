@@ -181,3 +181,95 @@ func TestLegacyHeadingInputBytes(t *testing.T) {
 	}
 	t.Logf("legacy input bytes: %s", got)
 }
+
+func TestSetextScopeBoundaries(t *testing.T) {
+	for _, tc := range []struct {
+		name, excluded, boundary string
+		resumes                  bool
+	}{
+		{"peer", "## Out of scope", "In scope\n--------", true},
+		{"shallower", "## Out of scope", "In scope\n========", true},
+		{"level one peer", "# Out of scope", "In scope\n========", true},
+		{"deeper does not resume", "# Out of scope", "In scope\n--------", false},
+		{"setext exclusion", "범위 밖\n--------", "In scope\n--------", true},
+		{"setext level one exclusion", "Out of scope\n========", "In scope\n--------", false},
+		{"decorated and indented", "## Out of scope", "### Notes\n   **In scope**:\n   --------  ", true},
+		{"blank after list", "## Out of scope", "- excluded item\n\nIn scope\n--------", true},
+		{"after rule", "## Out of scope", "- excluded item\n***\nIn scope\n--------", true},
+		{"after fence", "## Out of scope", "```\nexample\n```\nIn scope\n--------", true},
+		{"after tilde fence", "## Out of scope", "~~~\nexample\n~~~\nIn scope\n========", true},
+	} {
+		for _, newline := range []string{"\n", "\r\n"} {
+			t.Run(tc.name+"/"+strings.ReplaceAll(newline, "\n", "LF"), func(t *testing.T) {
+				body := "## Criteria\n- before\n## Edit regions\n- `before.go`\n\n" +
+					tc.excluded + "\n### Criteria\n- hidden\n### Edit regions\n- `hidden.go`\n\n" +
+					tc.boundary + "\n### Criteria\n- after\n### Edit regions\n- `after.go`\n"
+				body = strings.ReplaceAll(body, "\n", newline)
+				res := build(t, milestone(open(1, body)), Options{})
+				is := only(t, res)
+				wantCriteria := []string{"before"}
+				wantRegions := []compile.Region{{Path: "before.go", Kind: "file"}}
+				if tc.resumes {
+					wantCriteria = append(wantCriteria, "after")
+					wantRegions = append(wantRegions, compile.Region{Path: "after.go", Kind: "file"})
+				}
+				if !reflect.DeepEqual(is.Criteria, wantCriteria) || !reflect.DeepEqual(is.Regions, wantRegions) {
+					t.Errorf("scope boundary: criteria=%q regions=%+v; want %q %+v", is.Criteria, is.Regions, wantCriteria, wantRegions)
+				}
+				if len(res.Warnings) != 0 {
+					t.Errorf("warnings = %+v; want none", res.Warnings)
+				}
+			})
+		}
+	}
+}
+
+func TestSetextDoesNotInventScopeBoundaries(t *testing.T) {
+	for _, candidate := range []string{
+		"```\nIn scope\n--------\n```",
+		"~~~\nIn scope\n========\n~~~",
+		"- In scope\n--------",
+		"- item\nIn scope\n--------",
+		"- item\n\n  In scope\n  --------",
+		"1. item\n\n   In scope\n   --------",
+		"    In scope\n--------",
+		"In scope\n    --------",
+		"> In scope\n--------",
+		"| In scope |\n--------",
+		"--------\n--------",
+		"***\n--------",
+		"In scope\n\n--------",
+	} {
+		t.Run(candidate, func(t *testing.T) {
+			body := "## Criteria\n- keep\n## Out of scope\n" + candidate +
+				"\n### Criteria\n- hidden\n### Edit regions\n- `hidden.go`\n"
+			is := only(t, build(t, milestone(open(1, body)), Options{}))
+			if !reflect.DeepEqual(is.Criteria, []string{"keep"}) || len(is.Regions) != 0 {
+				t.Errorf("not a top-level Setext heading: %+v", is)
+			}
+		})
+	}
+}
+
+func TestSetextHeadingsSupplySections(t *testing.T) {
+	body := "Criteria\n========\n- required behavior\n\nEdit regions\n--------\n- `keep.go`\n" +
+		"\nRed tests\n--------\n- regression case\n\nDone when\n--------\n- tests pass\n"
+	res := build(t, milestone(open(1, body)), Options{})
+	is := only(t, res)
+	if !reflect.DeepEqual(is.Criteria, []string{"required behavior", "regression case", "tests pass"}) ||
+		!reflect.DeepEqual(is.Regions, []compile.Region{{Path: "keep.go", Kind: "file"}}) {
+		t.Errorf("Setext sections = %+v", is)
+	}
+	if len(res.Warnings) != 0 {
+		t.Errorf("warnings = %+v; want none", res.Warnings)
+	}
+}
+
+func TestSetextDetectionKeepsATXAndListData(t *testing.T) {
+	body := "## Done when\n- first\n---\n- second\n\n## Edit regions\n- `keep.go`\n"
+	is := only(t, build(t, milestone(open(1, body)), Options{}))
+	if !reflect.DeepEqual(is.Criteria, []string{"first", "second"}) ||
+		!reflect.DeepEqual(is.Regions, []compile.Region{{Path: "keep.go", Kind: "file"}}) {
+		t.Errorf("ATX/list data changed: %+v", is)
+	}
+}

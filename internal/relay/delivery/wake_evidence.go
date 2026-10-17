@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -55,6 +56,7 @@ type WakeAttempt struct {
 	RecipientStatusBefore string          `json:"recipientStatusBefore"`
 	TurnID                string          `json:"turnId"`
 	NewTurn               bool            `json:"newTurn"`
+	DeliveryMethod        string          `json:"delivery_method"`
 	DeliveryState         string          `json:"deliveryState"`
 	SendAttempted         string          `json:"sendAttempted"`
 	Unattended            bool            `json:"unattended"`
@@ -109,6 +111,11 @@ type WakeEvidence struct {
 }
 
 func settingsObject(raw json.RawMessage, policy string) (map[string]any, bool) {
+	decoded, err := registry.DecodeJSON(string(raw))
+	data, ok := decoded.(Obj)
+	if err != nil || !ok || (registry.TaskSettings{Data: data}).RequireUsable() != nil {
+		return nil, false
+	}
 	var obj map[string]any
 	if json.Unmarshal(raw, &obj) != nil || len(obj) == 0 || obj["approvalPolicy"] != policy {
 		return nil, false
@@ -159,7 +166,7 @@ func FindWakeEvidence(ctx context.Context, s *store.Store, want *WakeExpectation
 			record.Schema != wakeSchema || record.StoreID != storeID || record.Identity != want.Identity ||
 			record.RequestID != subject || strings.TrimSpace(subject) == "" ||
 			strings.TrimSpace(record.RecipientTaskID) == "" || strings.TrimSpace(record.TurnID) == "" ||
-			!record.NewTurn || !record.Unattended || record.DeliveryState != Dispatched ||
+			!record.NewTurn || record.DeliveryMethod != "turn/start" || !record.Unattended || record.DeliveryState != Dispatched ||
 			record.SendAttempted != "yes" || record.RecipientStatusBefore != status {
 			continue
 		}

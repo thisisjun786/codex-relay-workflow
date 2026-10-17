@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -65,12 +66,12 @@ func TestNextOpenAgentsWaitForCompletion(t *testing.T) {
 			ans := NextAnswer{Run: "run-0123456789d5", State: NextRunning, observationPath: mode,
 				Slots: NextSlots{Open: 2, Agents: []string{"agent-1", "agent-2"}}}
 			hint := nextHint(ans, RunInfo{}, nil)
-			for _, want := range []string{`wait_agent(targets=["agent-1","agent-2"]`, "longest timeout", "repeat the same wait without calling next", "When wait reports completion", "dispatched", "--wait 120 --json once"} {
+			for _, want := range []string{`wait_agent(targets=["agent-1","agent-2"]`, "longest timeout", "repeat the same wait without calling next", "When wait reports completion", "dispatched", "--wait 120 --json once", "relay reports a new step", "do not wait for the other subagents to finish"} {
 				if !strings.Contains(hint, want) {
 					t.Errorf("open agents lack %q: %s", want, hint)
 				}
 			}
-			for _, forbidden := range []string{"end this turn", "relay", "alternate", "--wait 600"} {
+			for _, forbidden := range []string{"end this turn", "alternate", "--wait 600"} {
 				if strings.Contains(hint, forbidden) {
 					t.Errorf("native wait must not suggest %q: %s", forbidden, hint)
 				}
@@ -133,5 +134,75 @@ func TestRunSkillSeparatesObservationPaths(t *testing.T) {
 		if strings.Contains(steps, forbidden) {
 			t.Errorf("Take the steps still prescribes %q", forbidden)
 		}
+	}
+}
+
+// CRW-1661: a refused restart is recovery work, not an idle hint. The owner
+// resolves the recorded refusal (recover/resume), and only a confirmed live
+// run gets the end-this-turn idle text.
+func TestCRW1661NextResumeRefusalNeedsRecovery(t *testing.T) {
+	for _, mode := range []string{observationActive, observationEventIdle} {
+		for _, tc := range []struct {
+			name    string
+			prepare func(t *testing.T, w *world, run string)
+			reason  string
+			extra   string
+		}{
+			{"budget", func(t *testing.T, w *world, run string) {
+				spentSessionRun(t, w, run, sessOwner, 50, 60)
+			}, engine.ReasonBudgetExhausted, "new decision"},
+			{"tmpdir", func(t *testing.T, w *world, run string) {
+				spec := spentSessionRun(t, w, run, sessOwner, 0, 0)
+				spec.Env = map[string]string{"TMPDIR": filepath.Join(t.TempDir(), "missing")}
+				raw, err := json.Marshal(spec)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(RunDir(w.state, run), "run.json"), raw, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}, "TMPDIR", ""},
+		} {
+			t.Run(mode+"/"+tc.name, func(t *testing.T) {
+				t.Setenv("HOME", t.TempDir())
+				w := newWorld(t)
+				td := w.deps()
+				run := "run-0123456789e1"
+				tc.prepare(t, w, run)
+				code, out, stderr := td.do("next", run, "--wait", "0", "--json", "--observation-path", mode, "--state", w.state)
+				if code != 0 {
+					t.Fatalf("next: %d %s %s", code, out, stderr)
+				}
+				if len(td.spawned) != 0 {
+					t.Fatalf("next spawned %d processes after a refused resume", len(td.spawned))
+				}
+				ans := decodeNext(t, out)
+				if ans.Resumed != 0 || ans.State != NextRunning || len(ans.Warnings) == 0 {
+					t.Fatalf("next %+v, want a refused resume answered as running with warnings", ans)
+				}
+				for _, want := range []string{tc.reason, "flow show", "flow resume", "flow recover"} {
+					if !strings.Contains(ans.Hint, want) {
+						t.Errorf("recovery hint lacks %q: %s", want, ans.Hint)
+					}
+				}
+				if tc.extra != "" && !strings.Contains(ans.Hint, tc.extra) {
+					t.Errorf("recovery hint dropped %q of the refusal: %s", tc.extra, ans.Hint)
+				}
+				for _, forbidden := range []string{"end this turn", "--wait 600", "wait_agent("} {
+					if strings.Contains(ans.Hint, forbidden) {
+						t.Errorf("a refused restart is no idle hint (%q): %s", forbidden, ans.Hint)
+					}
+				}
+			})
+		}
+	}
+}
+
+// The idle text is for a confirmed live run only: a dead owner with no process
+// gets recovery guidance instead.
+func TestCRW1661IdleNeedsLiveProcess(t *testing.T) {
+	hint := nextHint(NextAnswer{Run: "run-0123456789d5", State: NextRunning, observationPath: observationEventIdle}, RunInfo{State: StateRunning, Live: false}, nil)
+	if strings.Contains(hint, "end this turn") || !strings.Contains(hint, "flow show") {
+		t.Fatalf("an unconfirmed live process is no idle hint: %s", hint)
 	}
 }
