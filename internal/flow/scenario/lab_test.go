@@ -908,7 +908,7 @@ func (l *Lab) defaultPlan(c *Call) fakehost.TurnPlan {
 		p.Tokens = 1
 		return p
 	case c.Role == "critic" && strings.HasPrefix(c.Label, "design-audit"):
-		return Say(map[string]any{"verdict": "approved", "findings": []any{}, "summary": "the DESIGN holds"})
+		return Say(map[string]any{"verdict": "approved", "findings": []any{}, "summary": "the DESIGN holds", "root": nil, "first_check": nil})
 	case c.Role == "reviewer":
 		return Say(Verdict(true))
 	case c.Role == "explorer":
