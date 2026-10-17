@@ -938,7 +938,7 @@ var receiptsWrite = func(f *os.File, body []byte) error {
 // against it.
 func receiptsSection(v *CrosscheckVerdictRecord) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "\nEXECUTOR RECEIPTS (the evidence receipts the executors wrote: what each says it ran, such as its red-first and mutation-red lines; "+
+	fmt.Fprintf(&b, "\nEXECUTOR RECEIPTS (the evidence receipts the executors wrote: what each says it ran, such as its red-first lines; "+
 		"they are the executors' reports, not a judgment of the change)\nfile %s (sha256 %s)\n", v.ReceiptsFile, v.ReceiptsSHA256)
 	for _, rc := range v.Receipts {
 		if rc.State == "accepted" {
@@ -947,8 +947,8 @@ func receiptsSection(v *CrosscheckVerdictRecord) string {
 			fmt.Fprintf(&b, "node %s: %s\n", rc.Node, rc.State)
 		}
 	}
-	b.WriteString("Read the file. For each criterion, check its red-first and mutation-red lines against the receipt of the node that claims them; " +
-		"a criterion whose red record is missing or does not match the change is a finding.\n")
+	b.WriteString("Read the file. For each criterion, check its red-first lines against the receipt of the node that claims them; " +
+		"a criterion whose red-first record is missing or does not match the change is a finding.\n")
 	return b.String()
 }
 

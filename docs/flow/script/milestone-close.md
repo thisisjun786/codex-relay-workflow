@@ -104,7 +104,7 @@ accepted head (an `accepted` copy is read and its sha256 checked; `not_assigned`
 check in the run, are listed and block nothing), writes the receipt bytes to
 `<run dir>/crosscheck/<milestone>-r<round>-receipts.md`, outside both checkouts - a reused node's block naming its source run, unit-check
 call and acceptance call - and names that file, its sha256 and each node's state and digest, so the engine checks each criterion's
-red-first and mutation-red lines against the receipts. A receipt that cannot be handed over holds the round before any pass
+red-first lines against the receipts. A receipt that cannot be handed over holds the round before any pass
 (`crosscheck_receipt_missing`, also when a reused node's source journal cannot be read or its unit check or accepted copy is missing;
 `crosscheck_receipt_unverified`; `crosscheck_receipt_not_copied`, also when a reused node's accepted receipt names no copy - the original
 path is never re-read; `crosscheck_receipt_mismatch`, the row naming the node). The prompt carries refs, never diff bytes: one over `CrosscheckPromptLimit`
