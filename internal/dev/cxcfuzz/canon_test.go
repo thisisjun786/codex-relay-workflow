@@ -7,7 +7,6 @@ import (
 	"math/rand"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
@@ -108,28 +107,37 @@ func TestCanonicalWritesWhatThePyjsonWriterWrites(t *testing.T) {
 	}
 }
 
-// A long string costs a pass over its bytes, not a pass over its characters: the two-megabyte traceback of a
-// recursion-limit answer is written several times faster than the writer writes it. The comparison is between the
-// two on the same value in the same process, the best of several runs each, so it holds on a loaded host.
-func TestCanonicalWritesALongStringFasterThanThePyjsonWriter(t *testing.T) {
-	traceback := strings.Repeat("  File \"/usr/lib/python3.14/json/encoder.py\", line 341, in _iterencode_list\n    yield from chunks\nwhen serializing list item 0\n", 20000)
-	value := pyjson.Object{{Key: "exit", Value: json.Number("1")}, {Key: "stderr", Value: traceback}, {Key: "stdout", Value: ""}}
-	best := func(write func(any) string) time.Duration {
-		fastest := time.Hour
-		for i := 0; i < 5; i++ {
-			start := time.Now()
-			if len(write(value)) == 0 {
-				t.Fatal("an empty canonical text")
+// CRW-1066's byte path reserves the long string's output instead of growing a buffer as the character writer
+// does. Keep that resource bound without comparing wall times from different scheduling and GC conditions.
+// Both inputs exceed the fast-path threshold and have the same escape density. canonicalReference is the
+// pre-CRW-1066 implementation: the negative control must violate the same bound, not just produce valid JSON.
+func TestCanonicalLongStringAllocationsStayBounded(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		write      func(any) string
+		wantGrowth bool
+	}{
+		{"canonical", canonical, false},
+		{"character_writer_control", canonicalReference, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var allocs [2]float64
+			for i, repeats := range []int{128, 20000} {
+				traceback := strings.Repeat("  File \"/usr/lib/python3.14/json/encoder.py\", line 341, in _iterencode_list\n    yield from chunks\nwhen serializing list item 0\n", repeats)
+				value := pyjson.Object{{Key: "exit", Value: json.Number("1")}, {Key: "stderr", Value: traceback}, {Key: "stdout", Value: ""}}
+				want := canonicalReference(value)
+				var got string
+				// AllocsPerRun warms the writer and uses one P; input construction and the reference output
+				// are outside the measurement. Retain and check the result so an empty/no-op writer fails.
+				allocs[i] = testing.AllocsPerRun(5, func() { got = tc.write(value) })
+				if got != want {
+					t.Fatalf("canonical differs from the writer for %d input bytes", len(traceback))
+				}
+				t.Logf("%d input bytes: %.0f allocations/write", len(traceback), allocs[i])
 			}
-			if took := time.Since(start); took < fastest {
-				fastest = took
+			if grows := allocs[1] > allocs[0]; grows != tc.wantGrowth {
+				t.Fatalf("allocations/write grew from %.0f to %.0f: want growth=%t", allocs[0], allocs[1], tc.wantGrowth)
 			}
-		}
-		return fastest
-	}
-	reference, quick := best(canonicalReference), best(canonical)
-	t.Logf("%d bytes: the writer %v, canonical %v", len(traceback), reference, quick)
-	if quick*3 > reference {
-		t.Fatalf("canonical took %v for %d bytes, the writer %v: want at least three times faster", quick, len(traceback), reference)
+		})
 	}
 }
