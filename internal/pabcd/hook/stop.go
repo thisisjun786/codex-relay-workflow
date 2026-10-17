@@ -869,7 +869,7 @@ func stopGoalIdleBlock(st state.State, plan *goalplan.Goalplan, arming stopArmin
 	case work != nil:
 		lines = append(lines, work.lines()...)
 	case plan != nil && len(plan.WorkPhases) == 0 && len(plan.Criteria) == 0:
-		lines = append(lines, "The bound goalplan '"+st.Slug+"' is EMPTY: register workPhases[]/criteria[] in "+crwdir.DirName+"/goalplans/"+st.Slug+"/goalplan.json (schema in $crw-loop) so remaining work is durable and the E8 gate can pass.")
+		lines = append(lines, "The bound goalplan '"+st.Slug+"' is EMPTY: register workPhases[]/criteria[] in "+crwdir.DirName+"/goalplans/"+st.Slug+"/goalplan.json (schema in $crw-continue) so remaining work is durable and the E8 gate can pass.")
 	case st.Slug == "":
 		lines = append(lines, "No goalplan is bound to this session: run `crw pabcd loop init --objective \"<the goal objective>\" --session "+sessionID+"` and register workPhases[]/criteria[] before the next work-phase.")
 	}

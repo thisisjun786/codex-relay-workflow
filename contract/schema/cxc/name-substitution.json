@@ -10,6 +10,22 @@
   ],
   "rules": [
     {
+      "id": "CRW1634-work",
+      "kind": "regex",
+      "regex": "(^|[^\\w-])cxc-pabcd($|[^\\w-])",
+      "replace": "${1}cxc-work${2}",
+      "site": "CRW-1526 task skill names",
+      "repeat": true
+    },
+    {
+      "id": "CRW1634-continue",
+      "kind": "regex",
+      "regex": "(^|[^\\w-])cxc-loop($|[^\\w-])",
+      "replace": "${1}cxc-continue${2}",
+      "site": "CRW-1526 task skill names",
+      "repeat": true
+    },
+    {
       "id": "R1",
       "kind": "regex",
       "regex": "\\$codexclaw:cxc-([a-z0-9-]+)",
@@ -87,7 +103,7 @@
     {
       "id": "R11",
       "kind": "regex",
-      "regex": "(^|[^\\w-])cxc-(ast-grep|dev(?:-[a-z-]+)?|interview|kwrite|loop|lunasearch|pabcd|qa|recall|repo-map|search|worktree-guardian)($|[^\\w-])",
+      "regex": "(^|[^\\w-])cxc-(ast-grep|dev(?:-[a-z-]+)?|interview|kwrite|loop|continue|lunasearch|pabcd|work|qa|recall|repo-map|search|worktree-guardian)($|[^\\w-])",
       "replace": "${1}crw-${2}${3}",
       "site": "skill frontmatter name; hook.ts:247,268,287,295,317",
       "note": "PCRE (?<![\\w-])/(?![\\w-]) rewritten for RE2 as captured boundaries; repeat until no change so adjacent names separated by one character are all renamed",
@@ -795,8 +811,8 @@
   "skills": [
     {
       "cxc": "cxc-loop",
-      "crw": "crw-loop",
-      "treatment": "merged into the existing CRW crw-loop (PABCD loop only; the old parent-goal procedure is crw-run goal mode)"
+      "crw": "crw-continue",
+      "treatment": "renamed; installed folder crw-continue (CRW-1526)"
     },
     {
       "cxc": "cxc-ast-grep",
@@ -885,8 +901,8 @@
     },
     {
       "cxc": "cxc-pabcd",
-      "crw": "crw-pabcd",
-      "treatment": "renamed; folder renamed to crw-pabcd"
+      "crw": "crw-work",
+      "treatment": "renamed; installed folder crw-work (CRW-1526)"
     },
     {
       "cxc": "cxc-qa",

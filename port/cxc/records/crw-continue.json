@@ -4,15 +4,15 @@
     "commit": "3c1459acadeb1906d97c00a598e1457327ae372d",
     "skills_listing_sha256": "79d9580f39ca27221cb9c24337080e3fe4a1e71f76338c7329fca63f76a32e89"
   },
-  "table_sha256": "fd84a8db22c3838ba6bb2ae0804ca58f9e81dbbd121b18e62da4b27d4eb70769",
+  "table_sha256": "8a34c4ce12981ae3823355a015b6c9453201b3faa5a282e2b48167f0ef420a9f",
   "from": "loop",
   "as": "continue",
   "files": {
     "SKILL.md": {
-      "original": "a88a738c2af6dab62dfd042c0768fef031a1980efe6dfc0fed7d870e51313f73"
+      "original": "85a46be58d90918a8652b82a34b2b6cf12a6ce6eb3d3f226793a905b65b0db85"
     },
     "agents/openai.yaml": {
-      "original": "fb791326ba91720b13f446f02ccf608e6f7b43b253d11cb20d5db8b6ffd0c6a4"
+      "original": "1ee5128ea7a13851aee99170cd2dc3ab51336a652f8b4f52fd28ebe9946cc502"
     },
     "references/divergence-tiers.md": {
       "original": "11b8c283bd9e94ad4a4decefe670c1909ff4a9b5539ba1629d4e7d7f6c92f0f3"
@@ -21,48 +21,42 @@
       "original": "caa74cd7b79a9b242065d2ea0795616bbf055141652517d69af44779fc0c2b92"
     },
     "references/lane-dispatch.md": {
-      "original": "6ec4aafdd8fa68c214551ff1b21efbc5b9af803bd48a656463ab95ee58388764"
+      "original": "d1a231d02a9dc9320c9aca61b24a09233e7e4cc66b4ba5844f51b00a447efa6f"
     },
     "references/runtime-lifecycle.md": {
       "original": "a40258d0a21479f180dbab044f7cea32e4ce827953d3cb764da3ed992b43999b"
     },
     "references/waiting.md": {
-      "original": "66cffc33e851239e22489f0b9ee0d70e3c10f1c54d398d2dfc9c4610fc42574a"
+      "original": "13e64d3a445257e05fe802efbd41d8acf6640a55791fee29cc4386fac5618ea6"
     }
   },
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "CRW-1526: rename task work skills and references; preserve source provenance and stored hook/state contracts",
+      "reason": "CRW-1634: name table maps cxc-pabcd/cxc-loop to crw-work/crw-continue",
       "hunks": [
         {
-          "line": 2,
+          "line": 3,
           "old": [
-            "name: crw-loop\n",
-            "description: \"Use for scoped PABCD completion loops. Bare crw-loop means HOTL; explicit explanation, interview, plan-only, read-only, or HITL limits win. Triggers: crw-loop, continue until done, HOTL, repeated PABCD, 루프 돌려, 끝까지 해줘, docs-first.\"\n",
+            "description: \"Use for scoped PABCD completion loops. Bare crw-continue means HOTL; explicit explanation, interview, plan-only, read-only, or HITL limits win. Triggers: crw-continue, continue until done, HOTL, repeated PABCD, 루프 돌려, 끝까지 해줘, docs-first.\"\n",
             "metadata:\n",
             "  short-description: \"Agent-led scoped completion with durable plans and evidence.\"\n"
           ],
           "new": [
-            "name: crw-continue\n",
             "description: \"Use to continue one task to its authorized completion condition. Bare crw-continue means HOTL; explicit explanation, interview-only, plan-only, read-only, or HITL limits win. A milestone request goes to crw-run. Triggers: crw-continue, continue until done, HOTL, 끝까지 해줘, docs-first.\"\n"
           ]
         },
         {
-          "line": 8,
-          "old": [
-            "# crw-loop — Scoped completion\n"
-          ],
+          "line": 10,
           "new": [
-            "# crw-continue — Scoped completion\n",
-            "\n",
             "Continue the authorized task using [crw-work](../crw-work/SKILL.md) and the current\n",
             "flow: **수령 → 탐색 → 설계 → 비평 → 구현 → 단위 점검 → 크로스체크 → PR → 머지**.\n",
             "Persistence does not create another workflow or replace the run's journal with\n",
             "a legacy task-state cycle. The legacy letters are stored compatibility values,\n",
             "not names for the current flow's stages.\n",
             "\n",
-            "This skill runs one task's objective. A milestone request goes to [crw-run](../crw-run/SKILL.md); which level owns the work and its goal is defined by [hierarchy](../crw-canon/references/hierarchy.md#scope-of-each-level), whose [level table](../crw-canon/references/hierarchy.md#the-levels) names the layers.\n"
+            "This skill runs one task's objective. A milestone request goes to [crw-run](../crw-run/SKILL.md); which level owns the work and its goal is defined by [hierarchy](../crw-canon/references/hierarchy.md#scope-of-each-level), whose [level table](../crw-canon/references/hierarchy.md#the-levels) names the layers.\n",
+            "\n"
           ]
         },
         {
@@ -119,13 +113,13 @@
         {
           "line": 14,
           "old": [
-            "- An explanation, review, or quoted mention of crw-loop is not an execution request.\n",
+            "- An explanation, review, or quoted mention of crw-continue is not an execution request.\n",
             "  Do not create a goal, mutate the FSM, or start implementation merely to explain it.\n",
             "- Explicit interview-only, plan-only, read-only, no-writes, no-commits, no-goal,\n",
             "  no-FSM, no-tests, and no-delegation limits take precedence when actually stated.\n",
             "  Do only the authorized work. A plan-only\n",
             "  request is not permission for A/B/C/D; an interview is not permission to leave I.\n",
-            "- An operative bare crw-loop request means HOTL completion of all plans within the\n",
+            "- An operative bare crw-continue request means HOTL completion of all plans within the\n",
             "  agreed objective. An explicit HITL request instead preserves human P/A/B pauses.\n",
             "  Ordinary development requests do not become HOTL because this skill was loaded.\n",
             "- HOTL changes persistence, not permissions. It does not authorize unrelated work,\n",
@@ -237,7 +231,7 @@
             "|---|---|\n",
             "| Development or governed review | [crw-dev](../dev/SKILL.md), then its matching surface routers |\n",
             "| Tool composition, response projection, or in-context JS computation | [Native execution](../dev/references/native-execution.md); prefer exposed Code Mode, not a forced runtime |\n",
-            "| Real PABCD work or a PABCD plan | [crw-pabcd](../pabcd/SKILL.md), then only the current phase references it selects |\n",
+            "| Real PABCD work or a PABCD plan | [crw-work](../pabcd/SKILL.md), then only the current phase references it selects |\n",
             "| Start/resume HOTL or diagnose its continuation/completion | [Runtime lifecycle](references/runtime-lifecycle.md) |\n",
             "| Create, register, amend, or inspect durable goalplan schema/CLI | [Durable goalplan](references/durable-goalplan.md) |\n",
             "| Two or more work-phases, including scope discovered later | [Implementation units](../pabcd/references/implementation-units.md) |\n",
@@ -310,7 +304,7 @@
             "  replay hook JSON or borrow a parent's/history ID. Binding does not verify hooks.\n",
             "  If PATH resolves an older development CLI, invoke this installed plugin's\n",
             "  `node \"<pluginRoot>/bin/crw.mjs\"` for these commands; preserve the development checkout.\n",
-            "  Phase-control details belong to crw-pabcd.\n",
+            "  Phase-control details belong to crw-work.\n",
             "- HOTL needs both an ACTIVE host goal and an in-flight PABCD cycle; HITL needs no\n",
             "  host goal. If a required capability or binding is absent, report the preflight\n",
             "  failure rather than claiming Stop-continuation is armed.\n",
@@ -369,7 +363,7 @@
           "line": 145,
           "old": [
             "LOOP-READS-PABCD-01 (STRICT): before multi-cycle execution read the implementation\n",
-            "units reference. crw-loop owns WHEN; crw-pabcd owns DIFFLEVEL-ROADMAP-01,\n",
+            "units reference. crw-continue owns WHEN; crw-work owns DIFFLEVEL-ROADMAP-01,\n",
             "PHASE-SPLIT-01, LEXICO-SPLIT-01, and UNIT-RESIDENCE-01. crw-dev owns the C0/C1\n",
             "fast-path exception. Neither a skeleton nor empty decade docs satisfy the roadmap.\n"
           ],
@@ -414,16 +408,14 @@
     },
     {
       "file": "agents/openai.yaml",
-      "reason": "CRW-1526: rename task work skills and references; preserve source provenance and stored hook/state contracts",
+      "reason": "CRW-1634: name table maps cxc-pabcd/cxc-loop to crw-work/crw-continue",
       "hunks": [
         {
-          "line": 2,
+          "line": 3,
           "old": [
-            "  display_name: \"crw-loop\"\n",
             "  short_description: \"Scoped HOTL completion with explicit scope limits.\"\n"
           ],
           "new": [
-            "  display_name: \"crw-continue\"\n",
             "  short_description: \"Scoped completion with explicit authority boundaries.\"\n",
             "  default_prompt: \"Use $crw-continue to finish this task within its authorized scope and completion condition; a milestone request goes to crw-run.\"\n"
           ]
@@ -663,7 +655,7 @@
     },
     {
       "file": "references/lane-dispatch.md",
-      "reason": "CRW-1526: rename task work skills and references; preserve source provenance and stored hook/state contracts",
+      "reason": "CRW-1634: name table maps cxc-pabcd/cxc-loop to crw-work/crw-continue",
       "hunks": [
         {
           "line": 3,
@@ -760,15 +752,6 @@
             "checks the existing wake readiness\n",
             "([OPS-8.5](../../crw-run/references/operations.md#ops-85-the-goal-free-parents-wake-path)),\n",
             "yields only after that readiness is established, and arms no wake of its own.\n"
-          ]
-        },
-        {
-          "line": 146,
-          "old": [
-            "authorization in [crw-loop](../SKILL.md) is prose, and no test fails when prose is\n"
-          ],
-          "new": [
-            "authorization in [crw-continue](../SKILL.md) is prose, and no test fails when prose is\n"
           ]
         }
       ]
@@ -898,7 +881,7 @@
     },
     {
       "file": "references/waiting.md",
-      "reason": "CRW-1526: rename task work skills and references; preserve source provenance and stored hook/state contracts",
+      "reason": "CRW-1634: name table maps cxc-pabcd/cxc-loop to crw-work/crw-continue",
       "hunks": [
         {
           "line": 8,
@@ -907,24 +890,6 @@
           ],
           "new": [
             "[peer collaboration](../../crw-dev/references/peer-collaboration.md). Do not send\n"
-          ]
-        },
-        {
-          "line": 30,
-          "old": [
-            "  the coordinator — see `crw-pabcd` `references/dispatch-surfaces.md`\n"
-          ],
-          "new": [
-            "  the coordinator — see `crw-work` `references/dispatch-surfaces.md`\n"
-          ]
-        },
-        {
-          "line": 37,
-          "old": [
-            "  See `crw-pabcd` `references/delegation.md`.\n"
-          ],
-          "new": [
-            "  See `crw-work` `references/delegation.md`.\n"
           ]
         },
         {

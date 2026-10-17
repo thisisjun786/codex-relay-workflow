@@ -4,11 +4,11 @@
     "commit": "3c1459acadeb1906d97c00a598e1457327ae372d",
     "skills_listing_sha256": "79d9580f39ca27221cb9c24337080e3fe4a1e71f76338c7329fca63f76a32e89"
   },
-  "table_sha256": "fd84a8db22c3838ba6bb2ae0804ca58f9e81dbbd121b18e62da4b27d4eb70769",
+  "table_sha256": "8a34c4ce12981ae3823355a015b6c9453201b3faa5a282e2b48167f0ef420a9f",
   "from": "dev-code-reviewer",
   "files": {
     "SKILL.md": {
-      "original": "782ff460c2cf8a713ebfa6b1e682e8487b19eca23e12a59f4d3656822817dfa6"
+      "original": "b41afde176a9bc7d0200c36aed4ec0464428b89a4f005505b30445778df00f06"
     },
     "agents/openai.yaml": {
       "original": "4ba6754ad21b4858c602d4486a6d8a6b3dfa1f711351b4f42ea1719eb2dd2216"
@@ -23,7 +23,7 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "CRW-1526: rename task work skills and references; preserve source provenance and stored hook/state contracts",
+      "reason": "CRW-1634: name table maps cxc-pabcd/cxc-loop to crw-work/crw-continue",
       "hunks": [
         {
           "line": 3,
@@ -59,7 +59,7 @@
             "`VERDICT: GO-WITH-FIXES (blockers=N)`, or `VERDICT: FAIL` (mapping:\n",
             "Approve -> PASS; Approve-with-suggestions -> GO-WITH-FIXES; Request-changes /\n",
             "Block -> FAIL). The dispatching agent's exit rule is AUDIT-LOOP-01\n",
-            "(`crw-pabcd` §A): FAIL always triggers another round.\n"
+            "(`crw-work` §A): FAIL always triggers another round.\n"
           ],
           "new": [
             "For dispatched outline-assessment (legacy state A) reviews the verdict is additionally\n",

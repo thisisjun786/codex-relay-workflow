@@ -262,13 +262,25 @@ func TestDetectorsOracle(t *testing.T) {
 	}
 }
 
-func TestOriginalModeSpellingsAreNotAliases(t *testing.T) {
-	for _, p := range []string{"Run cxc-loop", "Use cxc-pabcd to plan", "Run codexclaw:cxc-loop", "Use [$cxc-pabcd](skill://example/pabcd) to plan"} {
+func TestOriginalModeSpellingsKeepOnlyLoopAliases(t *testing.T) {
+	// CRW-1634 retains CXC loop spellings for old installations and packets.
+	// Other CXC phase-skill spellings still do not select a phase or arm a loop.
+	for _, c := range []struct {
+		prompt string
+		loop   bool
+	}{
+		{"Run cxc-loop", true},
+		{"Run CXC Loop", true},
+		{"Run codexclaw:cxc-loop", true},
+		{"Use cxc-pabcd to plan", false},
+		{"Use [$cxc-pabcd](skill://example/pabcd) to plan", false},
+	} {
+		p := c.prompt
 		if phase, ok := DetectTrigger(p); ok || phase != "" {
 			t.Errorf("old spelling %q: phase %q", p, phase)
 		}
-		if DetectLoopArmRequest(p) {
-			t.Errorf("old spelling %q arms loop", p)
+		if got := DetectLoopArmRequest(p); got != c.loop {
+			t.Errorf("old spelling %q: arms loop = %v, want %v", p, got, c.loop)
 		}
 	}
 }

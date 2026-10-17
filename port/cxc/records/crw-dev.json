@@ -4,11 +4,11 @@
     "commit": "3c1459acadeb1906d97c00a598e1457327ae372d",
     "skills_listing_sha256": "79d9580f39ca27221cb9c24337080e3fe4a1e71f76338c7329fca63f76a32e89"
   },
-  "table_sha256": "fd84a8db22c3838ba6bb2ae0804ca58f9e81dbbd121b18e62da4b27d4eb70769",
+  "table_sha256": "8a34c4ce12981ae3823355a015b6c9453201b3faa5a282e2b48167f0ef420a9f",
   "from": "dev",
   "files": {
     "SKILL.md": {
-      "original": "0336240a1d58a21ba2ee88ae22d8b246a79504f095454a9d7f9f335823065eed"
+      "original": "313d19012eaa76233ed2f2585efa744aa94d4382fcb95f2c4ad849b8773c4cb6"
     },
     "agents/openai.yaml": {
       "original": "29e40e9559f5a0654cee58322e739970e953b0f01ac0ecb7159acf0a3964b3ee"
@@ -50,7 +50,7 @@
       "original": "5b44fbeebc2ff8b54103cd36785178b59bbbcd5f2b5bf1141c4f940fb7361782"
     },
     "references/stacked-prs.md": {
-      "original": "4e8bc6364deaabb9948a48cc0435335650d00be1b590974bc248d0806f62b282"
+      "original": "c838984bc173c1fa9420a88323e0ee5b536b646c4cd240424832fa5265c2adbe"
     },
     "references/static-analysis-gate.md": {
       "original": "610ae022c17f2d61f615c9eaa0af13d7e4d29abe09613749db6cd3baf7158d77"
@@ -62,7 +62,7 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "CRW-1526: rename task work skills and references; preserve source provenance and stored hook/state contracts",
+      "reason": "CRW-1634: name table maps cxc-pabcd/cxc-loop to crw-work/crw-continue",
       "hunks": [
         {
           "line": 3,
@@ -127,7 +127,7 @@
           "line": 111,
           "old": [
             "PABCD, goal, divergence, and repeated work-phase mechanics are canonical in\n",
-            "`pabcd` and `crw-loop`. Load those skills when the selected process requires\n"
+            "`pabcd` and `crw-continue`. Load those skills when the selected process requires\n"
           ],
           "new": [
             "task work, goal, divergence, and repeated work-phase mechanics are canonical in\n",
@@ -148,12 +148,10 @@
         {
           "line": 115,
           "old": [
-            "docs-only PABCD that locks the diff-level roadmap before any implementation cycle\n",
-            "(LOOP-DOCS-FIRST-01, `crw-loop`).\n"
+            "docs-only PABCD that locks the diff-level roadmap before any implementation cycle\n"
           ],
           "new": [
-            "docs-only task work that locks the diff-level roadmap before any implementation cycle\n",
-            "(LOOP-DOCS-FIRST-01, `crw-continue`).\n"
+            "docs-only task work that locks the diff-level roadmap before any implementation cycle\n"
           ]
         },
         {
@@ -374,15 +372,11 @@
         {
           "line": 483,
           "old": [
-            "budget and reserve headroom for the workers; the coordinator owns that aggregate.\n",
-            "Rules: `crw-pabcd` `references/dispatch-surfaces.md` (DISPATCH-POLL-BUDGET-01) and\n",
-            "`crw-loop` `references/waiting.md`.\n"
+            "budget and reserve headroom for the workers; the coordinator owns that aggregate.\n"
           ],
           "new": [
             "budget and reserve headroom for the workers; [the child](../crw-canon/references/hierarchy.md#the-levels) (project session) owns that\n",
-            "aggregate ([account for the resources](../crw-run/SKILL.md#account-for-the-resources-this-run-leaves-behind)).\n",
-            "Rules: `crw-work` `references/dispatch-surfaces.md` (DISPATCH-POLL-BUDGET-01) and\n",
-            "`crw-continue` `references/waiting.md`.\n"
+            "aggregate ([account for the resources](../crw-run/SKILL.md#account-for-the-resources-this-run-leaves-behind)).\n"
           ]
         }
       ]
@@ -760,7 +754,7 @@
     },
     {
       "file": "references/stacked-prs.md",
-      "reason": "CRW-1526: rename task work skills and references; preserve source provenance and stored hook/state contracts",
+      "reason": "CRW-1634: name table maps cxc-pabcd/cxc-loop to crw-work/crw-continue",
       "hunks": [
         {
           "line": 7,
@@ -774,50 +768,12 @@
           ]
         },
         {
-          "line": 114,
-          "old": [
-            "tasks rather than one stack, the lane manifest and merge handoff in `crw-pabcd`\n"
-          ],
-          "new": [
-            "tasks rather than one stack, the lane manifest and merge handoff in `crw-work`\n"
-          ]
-        },
-        {
-          "line": 150,
-          "old": [
-            "those tasks need. See `crw-pabcd` `references/dispatch-surfaces.md`.\n"
-          ],
-          "new": [
-            "those tasks need. See `crw-work` `references/dispatch-surfaces.md`.\n"
-          ]
-        },
-        {
           "line": 164,
           "old": [
             "checks, which is fine, because those are what keep PR descriptions honest.\n"
           ],
           "new": [
             "checks, which is fine, because those are what keep the descriptions of pull requests honest.\n"
-          ]
-        },
-        {
-          "line": 262,
-          "old": [
-            "A `crw-pabcd` PHASE-SPLIT-01 map orders implementation dependencies, not GitHub\n",
-            "features. A phase map or `crw-loop` chain alone selects neither a PR stack nor native\n"
-          ],
-          "new": [
-            "A `crw-work` PHASE-SPLIT-01 map orders implementation dependencies, not GitHub\n",
-            "features. A phase map or `crw-continue` chain alone selects neither a PR stack nor native\n"
-          ]
-        },
-        {
-          "line": 289,
-          "old": [
-            "`crw-pabcd` PHASE-SPLIT-01 applied to branches.\n"
-          ],
-          "new": [
-            "`crw-work` PHASE-SPLIT-01 applied to branches.\n"
           ]
         },
         {

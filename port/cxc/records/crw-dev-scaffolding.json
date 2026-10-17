@@ -4,11 +4,11 @@
     "commit": "3c1459acadeb1906d97c00a598e1457327ae372d",
     "skills_listing_sha256": "79d9580f39ca27221cb9c24337080e3fe4a1e71f76338c7329fca63f76a32e89"
   },
-  "table_sha256": "fd84a8db22c3838ba6bb2ae0804ca58f9e81dbbd121b18e62da4b27d4eb70769",
+  "table_sha256": "8a34c4ce12981ae3823355a015b6c9453201b3faa5a282e2b48167f0ef420a9f",
   "from": "dev-scaffolding",
   "files": {
     "SKILL.md": {
-      "original": "de5fe5694312ed6c6621734c5bf11235ec8c60ecb0d96e6360c3708d3d197832"
+      "original": "5513e7e19cc49864ea7d3dd32c077f21e8d34361708f9a9b28b7adb2c3aac51e"
     },
     "agents/openai.yaml": {
       "original": "702104195657930e45915560deafd40ab1f836f63359487e254b7b76477a6c43"
@@ -33,7 +33,7 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "CRW-1526: rename task work skills and references; preserve source provenance and stored hook/state contracts",
+      "reason": "CRW-1634: name table maps cxc-pabcd/cxc-loop to crw-work/crw-continue",
       "hunks": [
         {
           "line": 3,
@@ -78,15 +78,6 @@
           ],
           "new": [
             "**Rule (SCAF-SOT-01):** A product decision is canonical in the tracking repository and the code structure in the repo docs; scaffolding reuses the repository's existing docs placement, local numbering scheme and source-of-truth paths before proposing generic `docs/` + `plans/`, and a scaffold doc links the tracking issue instead of restating the decision.\n"
-          ]
-        },
-        {
-          "line": 65,
-          "old": [
-            "  the docs-only first work-phase (LOOP-DOCS-FIRST-01, `crw-loop`), not scaffolded\n"
-          ],
-          "new": [
-            "  the docs-only first work-phase (LOOP-DOCS-FIRST-01, `crw-continue`), not scaffolded\n"
           ]
         },
         {

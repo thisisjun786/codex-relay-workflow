@@ -4,15 +4,15 @@
     "commit": "3c1459acadeb1906d97c00a598e1457327ae372d",
     "skills_listing_sha256": "79d9580f39ca27221cb9c24337080e3fe4a1e71f76338c7329fca63f76a32e89"
   },
-  "table_sha256": "fd84a8db22c3838ba6bb2ae0804ca58f9e81dbbd121b18e62da4b27d4eb70769",
+  "table_sha256": "8a34c4ce12981ae3823355a015b6c9453201b3faa5a282e2b48167f0ef420a9f",
   "from": "pabcd",
   "as": "work",
   "files": {
     "SKILL.md": {
-      "original": "d080fce03cae65b0bc5e081f409f02be98d771e44bdd4e44d0bb1657427dc640"
+      "original": "16b1ce716eaeac1605f891d4b9de42088fbe79e5e32935791edf36d782c5567a"
     },
     "agents/openai.yaml": {
-      "original": "234470af1ede36e42afab4899cfdaa3c837501ac64467211bc777b348382ce73"
+      "original": "0dc167928a58e2b599d5e580c81e6208f1a0cdd9972eefd925d4c403dc40a3b1"
     },
     "references/catalog-discovery.yaml": {
       "original": "906dd52c37774888fcffb4bbba4cee31d1e055a471e46f315727530ebe0e2820"
@@ -24,10 +24,10 @@
       "original": "0ee25f178da61abca9b56de80b2f1890e55479a44088509c7490cf9345785a3d"
     },
     "references/implementation-units.md": {
-      "original": "3b3ccc9a1f1264ca603a37082a7a70bbc1577924c76d132a4c49c139d7660f32"
+      "original": "bac6a4f2a7868212876693ccc7e0dba18908dd606c7eb36ac325f5539c38449f"
     },
     "references/loop-engineering.md": {
-      "original": "841cab83d5142da14689d7a04eb84b35d62e31d40e4e8afa39e28c432df3ba43"
+      "original": "e3425a27d3cbba7be0860a96f22456f4d37f1207bfed63d28d5279f0aa958fae"
     },
     "references/optimization.md": {
       "original": "23aab46ec630e2365f2c6eccd3aa673876e971298d95e0386269fc5257d6b024"
@@ -39,31 +39,29 @@
       "original": "926a105cdd159c5525089e25d0eaf29ee5337f4efde2aee5415266a34aa03ad1"
     },
     "references/phase-control.md": {
-      "original": "a40317ac1b149c79260e4947cec67c8e910a8e73585f24c538625374ac49074b"
+      "original": "6ff8d649247fad2940c31165e80ee54c4e8d30918ffbc0608d86eab57d21042f"
     },
     "references/phase-plan.md": {
       "original": "84ba35c87e3fc8aa892d212d58a1918a01cc48077047a5cdfb0a5ae9e9d719c8"
     },
     "references/plan-output.md": {
-      "original": "008afe31f5c350909f207d3e99a276adae4bda78fe42b28ae9020d2e13dd6795"
+      "original": "fcbe10beae74f56ef94f5589ce362ae38a1b1b45c18ce04f4784784cdb0dc7cc"
     }
   },
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "CRW-1526: rename task work skills and references; preserve source provenance and stored hook/state contracts",
+      "reason": "CRW-1634: name table maps cxc-pabcd/cxc-loop to crw-work/crw-continue",
       "hunks": [
         {
-          "line": 2,
+          "line": 3,
           "old": [
-            "name: crw-pabcd\n",
             "description: \"Use for class-scaled Plan-Audit-Build-Check-Done work. Explicit explanation, interview, plan-only, and read-only limits win; loading the skill does not activate a loop. Triggers: PABCD, plan this, 기획, 단계별로, 요구사항 정리.\"\n",
             "metadata:\n",
             "  last-verified: \"2026-07-02\"\n",
             "  short-description: \"Codex-native PABCD loop (Interview/Plan/Audit/Build/Check/Done) with class-scaled depth.\"\n"
           ],
           "new": [
-            "name: crw-work\n",
             "description: \"Use for class-scaled work and completion evidence on one task. Explicit explanation, interview-only, plan-only, and read-only limits win; loading the skill does not activate execution or continuation. Triggers: task work, 단계별로.\"\n"
           ]
         },
@@ -116,8 +114,8 @@
           "old": [
             "Loading this skill is not authority to execute phases. Explanation, review,\n",
             "interview-only, plan-only, read-only, no-goal, no-FSM, and no-delegation limits win.\n",
-            "Use the requested method only within that scope. An operative bare crw-loop\n",
-            "request selects scoped HOTL through crw-loop; ordinary PABCD use does not.\n",
+            "Use the requested method only within that scope. An operative bare crw-continue\n",
+            "request selects scoped HOTL through crw-continue; ordinary PABCD use does not.\n",
             "crw-dev is canonical for work class, C0/C1 fast-path, proof, and safety.\n"
           ],
           "new": [
@@ -258,7 +256,7 @@
             "SESSION-IDENTITY-01, ORCH-ARTIFACT-01, ATTEST-SHAPE-01, Windows attest-file usage,\n",
             "and every edge's required keys. Entry edges are not the four gated work edges.\n",
             "Do not claim a phase from narration; do its work and record the real transition.\n",
-            "Goal activation and scoped continuation are owned by [crw-loop](../loop/SKILL.md).\n"
+            "Goal activation and scoped continuation are owned by [crw-continue](../loop/SKILL.md).\n"
           ],
           "new": [
             "## Select supporting guidance\n"
@@ -373,7 +371,7 @@
         {
           "line": 88,
           "old": [
-            "**Terminology**: a *work-phase* is one outcome slice of the goal (e.g. \"Phase 3: Management API\"); a *PABCD-phase* is one letter P/A/B/C/D of a single cycle. They are not the same. Work-phases need not be slices of one feature: successive cycles in the SAME session may target completely different features or plans under the same goal (LOOP-UNIT-CHAIN-01, `crw-loop`).\n"
+            "**Terminology**: a *work-phase* is one outcome slice of the goal (e.g. \"Phase 3: Management API\"); a *PABCD-phase* is one letter P/A/B/C/D of a single cycle. They are not the same. Work-phases need not be slices of one feature: successive cycles in the SAME session may target completely different features or plans under the same goal (LOOP-UNIT-CHAIN-01, `crw-continue`).\n"
           ],
           "new": [
             "The public command namespace is `crw work`: `state` inspects or controls task\n",
@@ -429,7 +427,7 @@
             "[Implementation units](references/implementation-units.md).\n",
             "It owns DIFFLEVEL-ROADMAP-01, PHASE-SPLIT-01 linkage, LEXICO-SPLIT-01,\n",
             "UNIT-RESIDENCE-01, numbering, and docs-first document contents.\n",
-            "crw-dev §0.1 owns C0/C1 record exemptions. crw-loop owns when docs-first begins.\n"
+            "crw-dev §0.1 owns C0/C1 record exemptions. crw-continue owns when docs-first begins.\n"
           ],
           "new": [
             "The following historical hook/storage description retains its original command\n",
@@ -538,16 +536,14 @@
     },
     {
       "file": "agents/openai.yaml",
-      "reason": "CRW-1526: rename task work skills and references; preserve source provenance and stored hook/state contracts",
+      "reason": "CRW-1634: name table maps cxc-pabcd/cxc-loop to crw-work/crw-continue",
       "hunks": [
         {
-          "line": 2,
+          "line": 3,
           "old": [
-            "  display_name: \"crw-pabcd\"\n",
             "  short_description: \"PABCD phases, evidence, and explicit scope boundaries.\"\n"
           ],
           "new": [
-            "  display_name: \"crw-work\"\n",
             "  short_description: \"Scoped task work, verification, and completion evidence.\"\n",
             "  default_prompt: \"Use $crw-work to take this task through the authorized development flow and record its completion evidence.\"\n"
           ]
@@ -994,7 +990,7 @@
     },
     {
       "file": "references/implementation-units.md",
-      "reason": "CRW-1526: rename task work skills and references; preserve source provenance and stored hook/state contracts",
+      "reason": "CRW-1634: name table maps cxc-pabcd/cxc-loop to crw-work/crw-continue",
       "hunks": [
         {
           "line": 3,
@@ -1049,24 +1045,6 @@
           ]
         },
         {
-          "line": 61,
-          "old": [
-            "difflevel roadmap before the first implementation work-phase. Under a `crw-loop`\n"
-          ],
-          "new": [
-            "difflevel roadmap before the first implementation work-phase. Under a `crw-continue`\n"
-          ]
-        },
-        {
-          "line": 63,
-          "old": [
-            "STRICT for HOTL goal loops (LOOP-DOCS-FIRST-01, `crw-loop`) — there the roadmap\n"
-          ],
-          "new": [
-            "STRICT for HOTL goal loops (LOOP-DOCS-FIRST-01, `crw-continue`) — there the roadmap\n"
-          ]
-        },
-        {
           "line": 68,
           "old": [
             "cycle in the same session. \"This needs its own PABCD\" is a plan statement, never a\n"
@@ -1078,7 +1056,7 @@
         {
           "line": 71,
           "old": [
-            "HITL and goal PABCD may both use `crw-loop` divergence/collapse. In HITL, the agent\n"
+            "HITL and goal PABCD may both use `crw-continue` divergence/collapse. In HITL, the agent\n"
           ],
           "new": [
             "HITL and goal task work may both use `crw-continue` divergence/collapse. In HITL, the agent\n"
@@ -1097,7 +1075,7 @@
     },
     {
       "file": "references/loop-engineering.md",
-      "reason": "CRW-1526: rename task work skills and references; preserve source provenance and stored hook/state contracts",
+      "reason": "CRW-1634: name table maps cxc-pabcd/cxc-loop to crw-work/crw-continue",
       "hunks": [
         {
           "line": 1,
@@ -1158,7 +1136,7 @@
         {
           "line": 143,
           "old": [
-            "Continuation belongs to [crw-loop](../../loop/SKILL.md);\n",
+            "Continuation belongs to [crw-continue](../../loop/SKILL.md);\n",
             "divergence operation belongs to [Divergence tiers](../../loop/references/divergence-tiers.md).\n"
           ],
           "new": [
@@ -1261,7 +1239,7 @@
     },
     {
       "file": "references/phase-control.md",
-      "reason": "CRW-1526: rename task work skill and distinguish terminal namespace from preserved chat grammar",
+      "reason": "CRW-1634: name table maps cxc-pabcd/cxc-loop to crw-work/crw-continue",
       "hunks": [
         {
           "line": 3,
@@ -1306,7 +1284,7 @@
         {
           "line": 20,
           "old": [
-            "Accepted prefixes include `$crw:crw-orchestrate`, `$crw-pabcd`,\n",
+            "Accepted prefixes include `$crw:crw-orchestrate`, `$crw-work`,\n",
             "`crw pabcd orchestrate`, `/orchestrate`, and bare `orchestrate`.\n"
           ],
           "new": [
@@ -1423,7 +1401,7 @@
         {
           "line": 115,
           "old": [
-            "Execution intent and HOTL activation belong to [crw-loop](../../loop/SKILL.md).\n"
+            "Execution intent and HOTL activation belong to [crw-continue](../../loop/SKILL.md).\n"
           ],
           "new": [
             "Execution intent and HOTL activation belong to [crw-continue](../../crw-continue/SKILL.md).\n"
@@ -1472,7 +1450,7 @@
     },
     {
       "file": "references/plan-output.md",
-      "reason": "CRW-1526: rename task work skills and references; preserve source provenance and stored hook/state contracts",
+      "reason": "CRW-1634: name table maps cxc-pabcd/cxc-loop to crw-work/crw-continue",
       "hunks": [
         {
           "line": 3,
@@ -1485,15 +1463,6 @@
             "`crw work` namespace and require its supporting runtime. Hook registrations,\n",
             "stored enum values and existing evidence formats are unchanged here.\n",
             "\n"
-          ]
-        },
-        {
-          "line": 20,
-          "old": [
-            "HOTL goal plans also state the crw-loop resource bounds. Follow the live host\n"
-          ],
-          "new": [
-            "HOTL goal plans also state the crw-continue resource bounds. Follow the live host\n"
           ]
         },
         {

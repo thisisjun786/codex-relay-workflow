@@ -127,12 +127,12 @@ func TestSubstitution_rules_rename_what_the_table_says(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, row := range []struct{ in, want string }{
-		{"Load $codexclaw:cxc-pabcd for P", "Load $crw:crw-pabcd for P"},
+		{"Load $codexclaw:cxc-pabcd for P", "Load $crw:crw-work for P"},
 		{"[codexclaw: PLAN]", "[crw: PLAN]"},
 		{"[codexclaw — refused: illegal transition IDLE->C]", "[crw — refused: illegal transition IDLE->C]"},
 		{"read `.codexclaw/sessions/<id>.json`", "read `.crw/sessions/<id>.json`"},
 		{"~/.codexclaw/config.json", "~/.crw/config.json"},
-		{"cxc-loop,cxc-pabcd", "crw-loop,crw-pabcd"},
+		{"cxc-loop,cxc-pabcd", "crw-continue,crw-work"},
 		{"(codexclaw) Guarding goal budget", "(crw) Guarding goal budget"},
 		{"CODEXCLAW_HOME and CODEX_HOME", "CRW_HOME and CODEX_HOME"},
 		{"# CodexClaw wrote this when it created .codexclaw;", "# CRW wrote this when it created .crw;"},

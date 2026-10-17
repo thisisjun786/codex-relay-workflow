@@ -58,9 +58,22 @@ Last line
   default_prompt: "Use $cxc-kwrite to demo."
 `
 	blob = "\x00cxc\xff"
-	// the staged SKILL.md as decided by hand: the names, the verb and the plugin form change, the upstream
-	// address and the text of a rewrite rule keep their spelling
-	wantSkillSHA = "238d45dde7c838743387edf23ea8adaaffe2b4fd1e4759e921d4795133fde7e9"
+	// The expected bytes are independent of the substitution implementation. Keep the
+	// original fixture above intact, including its CXC skill names.
+	wantSkillMD = `---
+name: crw-kwrite
+description: "Demo skill for $crw-work"
+---
+
+# Demo
+
+Run crw pabcd orchestrate P after $crw:crw-continue.
+Upstream: https://github.com/lidge-jun/codexclaw
+Install record: .codexclaw-install.json
+See [reference](references/a.md).
+Last line
+`
+	wantSkillSHA = "ea89cbd172ab7c8b6e75068499b08a4d9d4f45d64716409092a849f502d9bb8f"
 )
 
 type fixture struct {
@@ -140,6 +153,9 @@ func TestStageCleanSkill(t *testing.T) {
 		t.Fatalf("Stage = %v, %v", names, err)
 	}
 	staged := slurp(t, f.path("SKILL.md"))
+	if staged != wantSkillMD {
+		t.Errorf("staged SKILL.md = %q, want %q", staged, wantSkillMD)
+	}
 	if got := sum([]byte(staged)); got != wantSkillSHA {
 		t.Errorf("the staged SKILL.md is not the expected text:\n%s", staged)
 	}
