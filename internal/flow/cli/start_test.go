@@ -174,23 +174,23 @@ func TestStartPreviewListsFivePreflightFacts(t *testing.T) {
 	if got := levels(facts); got != "pass,pass,pass,pass,warn" {
 		t.Errorf("delivered, no wake in the store (an answered wake is deleted): %s %+v", got, facts)
 	}
-	// a wake the relay holds now (woken, not yet answered) is an observed idle wake
+	// A held scheduling wake has no observed new turn or configuration identity.
 	insert(`INSERT INTO delivery_wakes (event_id, woken_at, original_deadline, spent_at) VALUES ('e1', 1.0, 2.0, NULL)`)
 	facts = StoreProber{}.Facts(ctx, PreflightRequest{Reader: r, Thread: "thread-owner", Waits: []string{"crw.decide"}, Now: td.Now()})
-	if got := passes(facts); got != "pass,pass,pass,pass,pass" {
-		t.Errorf("a thread the relay routes to, looks at, reaches and has woken: %s %+v", got, facts)
+	if got := levels(facts); got != "pass,pass,pass,pass,warn" {
+		t.Errorf("a pending wake leaves fact 5 unmeasured: %s %+v", got, facts)
 	}
 	// a lifecycle reading older than a quarter of an hour is no tick
 	stale := td.Now().Add(-time.Hour).Format("2006-01-02T15:04:05.000000000Z07:00")
 	insert(`UPDATE recipient_lifecycle SET observed_at = ? WHERE task_id = 'thread-owner'`, stale)
 	facts = StoreProber{}.Facts(ctx, PreflightRequest{Reader: r, Thread: "thread-owner", Now: td.Now()})
-	if got := passes(facts); got != "pass,fail,pass,pass,pass" {
+	if got := levels(facts); got != "pass,fail,pass,pass,warn" {
 		t.Errorf("a stale lifecycle reading, and a workflow that never waits: %s %+v", got, facts)
 	}
 	// an archived thread is a fail, not a warning: the record says it cannot be reached
 	insert(`UPDATE recipient_lifecycle SET archived = 1, observed_at = ? WHERE task_id = 'thread-owner'`, at)
 	facts = StoreProber{}.Facts(ctx, PreflightRequest{Reader: r, Thread: "thread-owner", Waits: []string{"crw.decide"}, Now: td.Now()})
-	if got := levels(facts); got != "pass,pass,fail,fail,pass" {
+	if got := levels(facts); got != "pass,pass,fail,fail,warn" {
 		t.Errorf("an archived thread: %s %+v", got, facts)
 	}
 }
@@ -289,14 +289,6 @@ func levels(facts []Fact) string {
 	var out []string
 	for _, f := range facts {
 		out = append(out, f.Level)
-	}
-	return strings.Join(out, ",")
-}
-
-func passes(facts []Fact) string {
-	var out []string
-	for _, f := range facts {
-		out = append(out, map[bool]string{true: "pass", false: "fail"}[f.Pass])
 	}
 	return strings.Join(out, ",")
 }
