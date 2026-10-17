@@ -216,7 +216,7 @@ func TestReceive(t *testing.T) {
 	})
 	t.Run("result path escapes", func(t *testing.T) {
 		a, _, spool, _ := newWorld(t)
-		for _, p := range []string{"../result.json", "/tmp/result.json", ".executor.lock", `a\b`} {
+		for _, p := range []string{"../result.json", filepath.Join(t.TempDir(), "result.json"), ".executor.lock", `a\b`} {
 			if _, _, err := Receive(a, spool, p, testPeer(), DefaultLimits); err == nil {
 				t.Errorf("result path %q was read", p)
 			}

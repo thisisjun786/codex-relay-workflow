@@ -3,6 +3,7 @@ package executor
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -201,7 +202,7 @@ func TestPortNoRetryNoRewrite(t *testing.T) {
 	if err != nil || cn.Terminated {
 		t.Errorf("a refused cancel became a termination: %v %+v", err, cn)
 	}
-	for _, path := range []string{"../escape.json", "/tmp/x.json", `a\b.json`, "https://example.invalid/x", ".executor.lock"} {
+	for _, path := range []string{"../escape.json", filepath.Join(t.TempDir(), "x.json"), `a\b.json`, "https://example.invalid/x", ".executor.lock"} {
 		evil := newCountAdapter(Devin, CapCollect)
 		evil.delivery = path
 		if _, err := (Port{Adapter: evil}).Collect(ctx, a); err == nil {

@@ -127,7 +127,7 @@ func (p Port) Fork(ctx context.Context, parent, child Admission, g Grant) (Handl
 		return Handle{}, errInvalid(CodeIdentityMismatch, "executor", "the child is bound to another host or capability")
 	}
 	if child.Task.Identity.ExecutionID == parent.Task.Identity.ExecutionID {
-		return Handle{}, errInvalid(CodeIdentityMismatch, "execution_id", "the fork shares the parent's execution")
+		return Handle{}, errInvalid(CodeIdentityMismatch, "execution_id", "the fork reuses the source execution")
 	}
 	if err := ValidateGrant(child, g, p.now()); err != nil {
 		return Handle{}, err
