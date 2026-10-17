@@ -136,8 +136,15 @@ return [a.status, a.reason, a.handle !== null]`)
 // the host is asked - and the interrupted turn is held engine_paused, never null_model.
 func TestEnginePauseInterruptNotNullModel(t *testing.T) {
 	e := newEnv(t)
+	t.Cleanup(func() {
+		if t.Failed() {
+			t.Logf("pause diagnostics: quota rows=%+v; long rows=%+v; git calls=%+v; thread/start=%d; turn/start=%d",
+				e.rows("quota"), e.rows("long"), e.gitCalls(), len(e.requests("thread/start")), len(e.requests("turn/start")))
+		}
+	})
 	// the quota failure comes only once the other call's turn is in flight
 	gate := make(chan struct{})
+	gateResult := make(chan error, 1)
 	e.plan(func(r fakehost.TurnRequest) fakehost.TurnPlan {
 		if strings.Contains(r.Text, "quota-call") {
 			return fakehost.TurnPlan{Gate: gate, Fail: &fakehost.Failure{Message: "quota", CodexErrorInfo: "usageLimitExceeded"}}
@@ -147,7 +154,7 @@ func TestEnginePauseInterruptNotNullModel(t *testing.T) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		_ = e.host.WaitCount(ctx, "turn/start", 2)
+		gateResult <- e.host.WaitCount(ctx, "turn/start", 2)
 		close(gate)
 	}()
 	res := e.run(`const out = await parallel([
@@ -156,6 +163,9 @@ func TestEnginePauseInterruptNotNullModel(t *testing.T) {
 ])
 return out.map((r) => [r.status, r.reason])`)
 	got := value[[][]string](t, res)
+	if err := <-gateResult; err != nil {
+		t.Errorf("waiting for both turns before the quota failure: %v", err)
+	}
 	if fmt.Sprint(got) != "[[held host_infra_usageLimitExceeded] [held engine_paused]]" {
 		t.Fatalf("%v", got)
 	}

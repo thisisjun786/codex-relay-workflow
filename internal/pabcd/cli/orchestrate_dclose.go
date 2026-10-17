@@ -451,7 +451,7 @@ func orchestrateDcloseContext(ctx context.Context, cwd, sessionID, closePhaseID 
 		receiptCheck := gate.ValidateCheckReceipt(cur, sessionID, receiptPath, cwd)
 		if !receiptCheck.OK {
 			return CliResult{Code: 1, Output: "orchestrate D: " + RenderPhaseContext(cur, sessionID) + "; " +
-				workDiagnostic(receiptCheck.Reason) + " Nothing was written."}, nil
+				workCheckDiagnostic(receiptCheck.Reason) + " Nothing was written."}, nil
 		}
 	}
 
@@ -740,7 +740,7 @@ func orchestrateDcloseContext(ctx context.Context, cwd, sessionID, closePhaseID 
 		if err := ctx.Err(); err != nil {
 			return CliResult{}, err
 		}
-		return CliResult{Code: 1, Output: "orchestrate D: " + workDiagnostic(locked.Reason) + " D-close was not applied. Nothing was written."}, nil
+		return CliResult{Code: 1, Output: "orchestrate D: " + locked.Reason + " D-close was not applied. Nothing was written."}, nil
 	case "unreadable":
 		if err := ctx.Err(); err != nil {
 			return CliResult{}, err
