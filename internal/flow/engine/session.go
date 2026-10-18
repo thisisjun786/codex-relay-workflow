@@ -1096,8 +1096,10 @@ func (c *callRun) sessionVerify(ctx context.Context, agent string, k int, op, ma
 	}
 	c.event(EvTurnStarted, data)
 	// the bind's rows are stored before the bound reply, so a flow next in another process counts the subagent from them (CRW-1684)
+	// a bind whose rows are not stored is no bind: the run ends with the journal's error, and the reply asks for a report again
 	if err := journalFlush(e.j); err != nil {
 		e.journalFailed(err)
+		return DispatchReply{Status: ReplyRetry, Detail: fmt.Sprintf("the bind of %s is not stored: %v", agent, err)}, false
 	}
 	return DispatchReply{Status: ReplyBound}, true
 }
