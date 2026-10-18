@@ -117,7 +117,10 @@ func (p *wakeProbeRun) run(ctx context.Context) error {
 		return fmt.Errorf("unsupported probe role %q", p.want.Identity.Role)
 	}
 	var err error
-	p.host, err = adapter.Open(p.socket, p.state, adapter.Options{Store: p.st})
+	// The service's launch policy, read once: the probe's host and its registry both check against
+	// the policy a daemon launched on this service reads, not against this process's environment.
+	launch := registry.LaunchRolePolicy(p.state)
+	p.host, err = adapter.Open(p.socket, p.state, adapter.Options{Store: p.st, Policy: launch.BridgePolicy()})
 	if err != nil {
 		return err
 	}
@@ -183,7 +186,7 @@ ready:
 	if err != nil {
 		return err
 	}
-	p.registry = &registry.Registry{Store: p.st, Policy: registry.EnvironmentRolePolicy()}
+	p.registry = &registry.Registry{Store: p.st, Policy: launch}
 	endpoint := registry.Endpoint{TaskID: thread, HostID: host, Cwd: sql.NullString{String: settings.CWD, Valid: true}}
 	if _, err := p.registry.BindScope(ctx, p.want.Identity.Role, "wake-probe:"+p.id, endpoint); err != nil {
 		return err

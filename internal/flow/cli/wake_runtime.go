@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/service"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/supervisor"
@@ -15,6 +16,10 @@ import (
 
 // currentWake reads the current worker through the existing service observer,
 // which checks its process incarnation, scope locks, store and policy publication.
+// The caller's policy is the service's launch policy (registry.LaunchRolePolicy for
+// the state directory): the file the service's launch declaration names, else this
+// process's environment. That is the policy a daemon launched on the service reads,
+// so the wake identity and its role gate measure against the worker's own policy.
 func currentWake(ctx context.Context, r *Reader, socket, thread string) (*delivery.WakeExpectation, error) {
 	if socket == "" {
 		var err error
@@ -27,6 +32,7 @@ func currentWake(ctx context.Context, r *Reader, socket, thread string) (*delive
 	if err != nil {
 		return nil, err
 	}
+	launch := registry.LaunchRolePolicy(selection.Path)
 	scope, err := service.ResolveScope()
 	if err != nil {
 		return nil, err
@@ -49,7 +55,7 @@ func currentWake(ctx context.Context, r *Reader, socket, thread string) (*delive
 	if err != nil {
 		return nil, err
 	}
-	want, err := delivery.ObserveWakeConfiguration(ctx, r.St, socket, thread, supervisor.KindSessionStepWaiting, int(n), nil)
+	want, err := delivery.ObserveWakeConfigurationUnder(ctx, r.St, launch, socket, thread, supervisor.KindSessionStepWaiting, int(n), nil)
 	if err != nil {
 		return nil, err
 	}
