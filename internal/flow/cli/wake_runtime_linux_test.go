@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/daemon"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
@@ -190,4 +192,118 @@ func TestStartReadsRealSupervisorWake(t *testing.T) {
 			}
 		})
 	}
+}
+
+// writeRolePolicy writes an execution policy whose parent pair is model at high effort, and returns its path.
+func writeRolePolicy(t *testing.T, model string) string {
+	t.Helper()
+	raw, err := json.Marshal(map[string]any{"roles": map[string]any{
+		"parent":     map[string]any{"model": model, "reasoningEffort": "high"},
+		"supervisor": map[string]any{"expectation": "record"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "roles.json")
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// declareLaunchPolicy writes the launch declaration that service declare --execution-policy keeps for
+// the service of state: the policy file its daemons are launched on.
+func declareLaunchPolicy(t *testing.T, state, path string) {
+	t.Helper()
+	raw, err := json.Marshal(map[string]any{"schemaVersion": 1, "path": path, "declaredAt": "2026-10-18T00:00:00Z", "declaredBy": "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(state, "launch-policy.json"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// launchedWakeWorker is the service and worker of TestStartReadsRealSupervisorWake for a state whose
+// launch declaration names the policy at path. This process's variable is unset, and the worker
+// publishes the declared policy, which is what a daemon launched on the declaration publishes.
+func launchedWakeWorker(t *testing.T, path string) (*fakehost.Server, *Reader) {
+	t.Helper()
+	w := newWorld(t)
+	host := fakehost.Start(t)
+	w.close()
+	var err error
+	w.st, err = store.Open(ctx, w.db, host.SocketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	declareLaunchPolicy(t, w.state, path)
+	t.Setenv(execution.EnvPolicy, "")
+	registry.ResetRolePolicySnapshot()
+	t.Cleanup(registry.ResetRolePolicySnapshot)
+	t.Setenv(service.ScopeEnv, t.TempDir())
+	if err := os.Chmod(os.Getenv(service.ScopeEnv), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	a, _ := wakeFixture()
+	if _, err := w.st.DB.ExecContext(ctx, `INSERT INTO authorized_settings(task_id,settings,source,recorded_at) VALUES ('owner',?,'test','now')`, string(a.RequiredSettings)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.st.DB.ExecContext(ctx, `INSERT INTO scope_bindings(binding_id,role,scope_kind,scope_key,task_id,host_id,status,revision,created_at,updated_at) VALUES ('owner-binding','parent','project','project-1','owner','host','active',1,'now','now')`); err != nil {
+		t.Fatal(err)
+	}
+	selection, err := ResolveState(w.state, host.SocketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc, err := service.New(ctx, selection, host.SocketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lock, err := daemon.Acquire(w.state, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := lock.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	record := svc.NewRecord(os.Getpid(), "test-service-run")
+	if err := svc.WriteRecord(record); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := svc.Scope.Claim(host.SocketPath, record)
+	if err != nil || claimed.Get("ok") != true {
+		t.Fatalf("scope: %v %v", claimed, err)
+	}
+	t.Cleanup(func() { _ = svc.Scope.Release(host.SocketPath) })
+	if err := svc.PublishWorkerPolicy(registry.ResolveRolePolicy(map[string]string{execution.EnvPolicy: path}).Summary()); err != nil {
+		t.Fatal(err)
+	}
+	return host, &Reader{St: w.st, State: w.state}
+}
+
+// A wake is measured under the policy the service declares, so a flow start from a shell that does not
+// export the variable is not refused as unconfigured. A declaration that the variable contradicts is
+// reported with both files, as settings-show reports it.
+func TestCurrentWakeReadsTheLaunchDeclaredPolicy(t *testing.T) {
+	roles := writeRolePolicy(t, "model-a")
+	host, r := launchedWakeWorker(t, roles)
+	want, err := currentWake(ctx, r, host.SocketPath, "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := registry.ResolveRolePolicy(map[string]string{execution.EnvPolicy: roles}).Digest()
+	if want.Identity.RolePolicy != digest || want.Identity.Role != "parent" || want.Identity.PairSource != "role" {
+		t.Fatalf("identity policy %q role %q pair %q, want %q parent role", want.Identity.RolePolicy, want.Identity.Role, want.Identity.PairSource, digest)
+	}
+	t.Run("conflict", func(t *testing.T) {
+		other := writeRolePolicy(t, "model-b")
+		t.Setenv(execution.EnvPolicy, other)
+		registry.ResetRolePolicySnapshot()
+		if _, err := currentWake(ctx, r, host.SocketPath, "owner"); err == nil || !strings.Contains(err.Error(), roles) || !strings.Contains(err.Error(), other) {
+			t.Fatalf("a declaration and a variable naming two files must be reported with both: %v", err)
+		}
+	})
 }

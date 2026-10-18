@@ -23,9 +23,17 @@ type WakeConnectionSource interface {
 }
 
 // ObserveWakeConfiguration independently reads the endpoint now; it does not
-// attribute a previous send to the endpoint currently found at that path.
+// attribute a previous send to the endpoint currently found at that path. The role
+// policy is the one this process's environment names.
 func ObserveWakeConfiguration(ctx context.Context, s *store.Store, socket, task, disposition string, workerPID int, settings *TaskSettings) (*WakeExpectation, error) {
-	return observeWakeConfiguration(ctx, s, task, disposition, settings, func() (WakeIdentity, error) {
+	return ObserveWakeConfigurationUnder(ctx, s, registry.EnvironmentRolePolicy(), socket, task, disposition, workerPID, settings)
+}
+
+// ObserveWakeConfigurationUnder is ObserveWakeConfiguration under rolePolicy. The nil-settings role
+// gate and the identity's RolePolicy digest both come from that one policy value, so a caller that
+// reads the policy its service declares checks and records the wake against the same policy.
+func ObserveWakeConfigurationUnder(ctx context.Context, s *store.Store, rolePolicy registry.RolePolicy, socket, task, disposition string, workerPID int, settings *TaskSettings) (*WakeExpectation, error) {
+	return observeWakeConfiguration(ctx, s, rolePolicy, task, disposition, settings, func() (WakeIdentity, error) {
 		return wakeRuntime(ctx, socket, workerPID)
 	})
 }
@@ -47,15 +55,17 @@ func ObserveWakeConnection(ctx context.Context, s *store.Store, socket, task, di
 	if named != actual {
 		return nil, fmt.Errorf("sending connection belongs to another socket")
 	}
-	return observeWakeConfiguration(ctx, s, task, disposition, settings, func() (WakeIdentity, error) {
+	return observeWakeConfiguration(ctx, s, registry.EnvironmentRolePolicy(), task, disposition, settings, func() (WakeIdentity, error) {
 		return wakeRuntime(ctx, actual, workerPID, connection.Conn)
 	})
 }
 
-func observeWakeConfiguration(ctx context.Context, s *store.Store, task, disposition string, settings *TaskSettings, observe func() (WakeIdentity, error)) (*WakeExpectation, error) {
+// observeWakeConfiguration measures the wake under rolePolicy: the gate used when settings are not given and
+// the identity's RolePolicy digest are both read from that one policy.
+func observeWakeConfiguration(ctx context.Context, s *store.Store, rolePolicy registry.RolePolicy, task, disposition string, settings *TaskSettings, observe func() (WakeIdentity, error)) (*WakeExpectation, error) {
 	if settings == nil {
 		var err error
-		settings, err = AuthorizedSettings(ctx, s, task, nil)
+		settings, err = AuthorizedSettings(ctx, s, task, PolicyRoleGate(rolePolicy))
 		if err != nil {
 			return nil, err
 		}
@@ -70,7 +80,7 @@ func observeWakeConfiguration(ctx context.Context, s *store.Store, task, disposi
 		return nil, err
 	}
 	identity.ApprovalPolicy = policy
-	identity.RolePolicy = registry.EnvironmentRolePolicy().Digest()
+	identity.RolePolicy = rolePolicy.Digest()
 	identity.Role = settings.BoundRole
 	identity.PairSource = "role"
 	if settings.SettingsFreeResume {

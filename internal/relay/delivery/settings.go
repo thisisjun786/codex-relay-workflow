@@ -43,12 +43,21 @@ type RoleGate func(ctx context.Context, s *store.Store, taskID string, settings 
 // derived from its role's pair (a supervisor's recorded pair, an exception) is resumed
 // settings-free, as every other sender resumes it, so a later user selection is never reverted.
 func DefaultRoleGate(ctx context.Context, s *store.Store, taskID string, settings *TaskSettings) error {
-	role, settingsFree, err := registry.CheckBoundRole(ctx, s, taskID, settings.Data, registry.EnvironmentRolePolicy())
-	if err == nil {
-		settings.SettingsFreeResume = settingsFree
-		settings.BoundRole = role
+	return PolicyRoleGate(registry.EnvironmentRolePolicy())(ctx, s, taskID, settings)
+}
+
+// PolicyRoleGate is DefaultRoleGate against rolePolicy rather than this process's environment. The
+// flow CLI passes the policy its service declares, so the gate checks the recorded settings against the
+// same policy a daemon launched on that service reads.
+func PolicyRoleGate(rolePolicy registry.RolePolicy) RoleGate {
+	return func(ctx context.Context, s *store.Store, taskID string, settings *TaskSettings) error {
+		role, settingsFree, err := registry.CheckBoundRole(ctx, s, taskID, settings.Data, rolePolicy)
+		if err == nil {
+			settings.SettingsFreeResume = settingsFree
+			settings.BoundRole = role
+		}
+		return err
 	}
-	return err
 }
 
 // AuthorizedSettings is delivery.authorized_settings.
