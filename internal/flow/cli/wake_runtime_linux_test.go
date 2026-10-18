@@ -290,14 +290,16 @@ func launchedWakeWorker(t *testing.T, path string) (*fakehost.Server, *Reader) {
 func TestCurrentWakeReadsTheLaunchDeclaredPolicy(t *testing.T) {
 	roles := writeRolePolicy(t, "model-a")
 	host, r := launchedWakeWorker(t, roles)
-	want, err := currentWake(ctx, r, host.SocketPath, "owner")
-	if err != nil {
-		t.Fatal(err)
-	}
-	digest := registry.ResolveRolePolicy(map[string]string{execution.EnvPolicy: roles}).Digest()
-	if want.Identity.RolePolicy != digest || want.Identity.Role != "parent" || want.Identity.PairSource != "role" {
-		t.Fatalf("identity policy %q role %q pair %q, want %q parent role", want.Identity.RolePolicy, want.Identity.Role, want.Identity.PairSource, digest)
-	}
+	t.Run("declared", func(t *testing.T) {
+		want, err := currentWake(ctx, r, host.SocketPath, "owner")
+		if err != nil {
+			t.Fatal(err)
+		}
+		digest := registry.ResolveRolePolicy(map[string]string{execution.EnvPolicy: roles}).Digest()
+		if want.Identity.RolePolicy != digest || want.Identity.Role != "parent" || want.Identity.PairSource != "role" {
+			t.Fatalf("identity policy %q role %q pair %q, want %q parent role", want.Identity.RolePolicy, want.Identity.Role, want.Identity.PairSource, digest)
+		}
+	})
 	t.Run("conflict", func(t *testing.T) {
 		other := writeRolePolicy(t, "model-b")
 		t.Setenv(execution.EnvPolicy, other)
