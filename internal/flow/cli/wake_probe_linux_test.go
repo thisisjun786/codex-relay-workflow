@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/adapter"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/daemon"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
@@ -154,17 +155,37 @@ func newProbeHost(t *testing.T, dir, scene string) *probeHostState {
 // goroutine as the only wake sender.
 func configureProbeWorker(t *testing.T, w *world, h *probeHostState) {
 	t.Helper()
+	configureProbeWorkerUnder(t, w, h, false)
+}
+
+// configureProbeWorkerUnder is configureProbeWorker with the policy read from this process's environment
+// (declared false), or declared by the service's launch declaration with the variable unset (declared true),
+// which is what a daemon launched on the declaration runs under. A declared worker starts no in-process
+// sender: the probe is observed up to its staged message, and no daemon send happens. It returns the digest
+// of the policy the worker published.
+func configureProbeWorkerUnder(t *testing.T, w *world, h *probeHostState, declared bool) string {
+	t.Helper()
 	policy := filepath.Join(t.TempDir(), "roles.json")
 	if err := os.WriteFile(policy, []byte(`{"roles":{"parent":{"model":"model-a","reasoningEffort":"high"},"supervisor":{"expectation":"record"}}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("CODEX_THREAD_BRIDGE_EXECUTION_POLICY", policy)
+	var published registry.RolePolicy
+	if declared {
+		declareLaunchPolicy(t, w.state, policy)
+		t.Setenv(execution.EnvPolicy, "")
+		published = registry.ResolveRolePolicy(map[string]string{execution.EnvPolicy: policy})
+	} else {
+		t.Setenv("CODEX_THREAD_BRIDGE_EXECUTION_POLICY", policy)
+	}
 	t.Setenv(service.ScopeEnv, t.TempDir())
 	if err := os.Chmod(os.Getenv(service.ScopeEnv), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	registry.ResetRolePolicySnapshot()
 	t.Cleanup(registry.ResetRolePolicySnapshot)
+	if !declared {
+		published = registry.EnvironmentRolePolicy()
+	}
 	settings, err := json.Marshal(map[string]any{"approvalPolicy": "never", "sandbox": map[string]any{"type": "readOnly", "networkAccess": false}, "cwd": h.dir, "runtimeWorkspaceRoots": []string{h.dir}, "model": "model-a", "reasoningEffort": "high", "environments": []any{}})
 	if err != nil {
 		t.Fatal(err)
@@ -207,8 +228,19 @@ func configureProbeWorker(t *testing.T, w *world, h *probeHostState) {
 	if err != nil || claimed.Get("ok") != true {
 		t.Fatalf("scope: %v %v", claimed, err)
 	}
-	if err := svc.PublishWorkerPolicy(registry.EnvironmentRolePolicy().Summary()); err != nil {
+	if err := svc.PublishWorkerPolicy(published.Summary()); err != nil {
 		t.Fatal(err)
+	}
+	if declared {
+		t.Cleanup(func() {
+			if err := svc.Scope.Release(h.host.SocketPath); err != nil {
+				t.Error(err)
+			}
+			if err := lock.Close(); err != nil {
+				t.Error(err)
+			}
+		})
+		return published.Digest()
 	}
 	worker, err := adapter.Open(h.host.SocketPath, w.state, adapter.Options{Store: w.st})
 	if err != nil {
@@ -258,6 +290,7 @@ func configureProbeWorker(t *testing.T, w *world, h *probeHostState) {
 			t.Error(err)
 		}
 	})
+	return published.Digest()
 }
 
 func TestWakeProbeFinishRetiresBindingAfterHostTimeout(t *testing.T) {
@@ -374,5 +407,98 @@ func TestStartWakeProbeEmptyJournal(t *testing.T) {
 				t.Fatalf("live probe bindings=%d %v", activeProbes, err)
 			}
 		})
+	}
+}
+
+// Under a launch declaration the probe creates its recipient, binds it and records its settings with the
+// declared policy, the same policy the wake identity and the probe's own answer use.
+func TestStartWakeProbeUnderLaunchDeclaration(t *testing.T) {
+	w := newWorld(t)
+	h := newProbeHost(t, t.TempDir(), "create-unsupported")
+	configureProbeWorkerUnder(t, w, h, true)
+	td := w.deps()
+	td.Probe, td.Now = StoreProber{}, time.Now
+	code, out, errOut := td.doKeep("start", "project-lane", "--preview", "--json", "--backend", "app-server", "--thread", "owner", "--state", w.state, "--socket", h.host.SocketPath, "--args", `{"plan":"plan-1","milestone":"M1"}`, "--handoff", defaultHandoff(t))
+	var answer StartAnswer
+	if code != 0 || json.Unmarshal([]byte(out), &answer) != nil {
+		t.Fatalf("start: %d %s %s", code, out, errOut)
+	}
+	var fact Fact
+	for _, f := range answer.Plan.Facts {
+		if f.Name == FactIdleWake {
+			fact = f
+		}
+	}
+	h.mu.Lock()
+	creates := h.creates
+	h.mu.Unlock()
+	if creates != 1 {
+		t.Fatalf("want one probe recipient under the declaration, created=%d fact=%+v", creates, fact)
+	}
+	// The host refuses creation, so the probe reports its own creation failure; the policy refusals must not appear.
+	if fact.Level != LevelWarn || !strings.Contains(fact.Reason, "creation did not prove a separate probe recipient") || strings.Contains(fact.Reason, "role_policy_unconfigured") || strings.Contains(fact.Reason, "execution_role_unknown") {
+		t.Fatalf("the probe must reach creation and fail there, not on the policy: %+v", fact)
+	}
+}
+
+// A declared worker has no in-process sender, so the run stops at its staged message and the test checks what
+// the probe recorded up to that point, all under the declared policy.
+func TestWakeProbeBindsAndRecordsUnderLaunchDeclaration(t *testing.T) {
+	w := newWorld(t)
+	h := newProbeHost(t, t.TempDir(), "success")
+	published := configureProbeWorkerUnder(t, w, h, true)
+	want, err := currentWake(ctx, &Reader{St: w.st, State: w.state}, h.host.SocketPath, "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const id = "probe-declared"
+	p := &wakeProbeRun{
+		c: &command{Deps: &Deps{Now: time.Now}, ctx: ctx}, st: w.st, state: w.state, socket: h.host.SocketPath,
+		owner: "owner", want: want, id: id,
+	}
+	runCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	go func() {
+		ticker := time.NewTicker(20 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-runCtx.Done():
+				return
+			case <-ticker.C:
+				var staged int
+				if err := w.st.DB.QueryRowContext(runCtx, "SELECT COUNT(*) FROM supervisor_messages WHERE relationship_id = ?", "run:"+id).Scan(&staged); err == nil && staged == 1 {
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+	runErr := p.run(runCtx)
+	if !errors.Is(runErr, context.Canceled) {
+		t.Fatalf("the run must stop at its post-staging wait: %v", runErr)
+	}
+	h.mu.Lock()
+	creates, wakes := h.creates, h.wakes
+	h.mu.Unlock()
+	if creates != 1 || wakes != 0 {
+		t.Fatalf("probe creations=%d wakes=%d, want 1 and 0", creates, wakes)
+	}
+	if !p.bound || p.journal == nil || p.message == "" {
+		t.Fatalf("bound=%v journal=%v message=%q: the binding, journal and staged message must all exist", p.bound, p.journal != nil, p.message)
+	}
+	var recorded int
+	if err := w.st.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM authorized_settings WHERE task_id=? AND source='wake_probe'", p.thread).Scan(&recorded); err != nil || recorded != 1 {
+		t.Fatalf("probe settings records=%d: %v", recorded, err)
+	}
+	if digest := p.registry.Policy.Digest(); digest == "" || digest != want.Identity.RolePolicy || digest != published {
+		t.Fatalf("probe registry policy %q, wake identity %q, published %q: one declared policy must answer all three", digest, want.Identity.RolePolicy, published)
+	}
+	if err := p.finish(runErr); err != nil {
+		t.Logf("finish: %v", err)
+	}
+	var active int
+	if err := w.st.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM scope_bindings WHERE scope_key=? AND status='active'", "wake-probe:"+id).Scan(&active); err != nil || active != 0 {
+		t.Fatalf("probe binding stayed active=%d: %v", active, err)
 	}
 }

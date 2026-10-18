@@ -171,9 +171,9 @@ func (e *Engine) routeReports(done chan struct{}) {
 	}
 }
 
-// route hands a report to the call that waits for its step, or answers it from the journal: a report for an attempt that is
-// bound already is answered bound (or close, for a second subagent), one for an attempt that ended is answered close, and so is
-// one that names no published step (an early report; refused when it names no subagent). A report for a step that is published and that no call waits for now stays in the inbox
+// route hands a report to the call that waits for its step, or answers it from the journal: a report for a step that is bound
+// already is answered bound once its rows are stored (or close, for a second subagent), one for an attempt that ended is answered
+// close, and so is one that names no published step (an early report; refused when it names no subagent). A report for a step that is published and that no call waits for now stays in the inbox
 // until its call reaches it (a resumed run that has not reached the position yet).
 func (e *Engine) route(rep DispatchReport) {
 	r, bus := e.sessR, e.cfg.Session.Bus
@@ -201,7 +201,8 @@ func (e *Engine) route(rep DispatchReport) {
 	}
 }
 
-// judgeReport answers a report no call waits for, from the call's rows of its newest prepared attempt.
+// judgeReport answers a report no call waits for, from the call's rows of its newest prepared attempt. A bound answer needs the
+// step's own turn_started in those rows and is given after the rows are stored (CRW-1684).
 func (e *Engine) judgeReport(rep DispatchReport) (DispatchReply, bool) {
 	var rows []Event
 	for _, ev := range CallEvents(e.j, rep.Call) {
@@ -213,7 +214,7 @@ func (e *Engine) judgeReport(rep DispatchReport) (DispatchReply, bool) {
 		}
 		rows = append(rows, ev)
 	}
-	published, ended := false, false
+	published, ended, turned := false, false, false
 	bound := ""
 	for _, ev := range rows {
 		d := ev.Data
@@ -226,6 +227,8 @@ func (e *Engine) judgeReport(rep DispatchReport) (DispatchReply, bool) {
 			ended = true
 		case ev.Event == EvThreadStarted && rowInt(d, "attempt") == rep.Attempt && rowStr(d, "via") == "session":
 			bound = rowStr(d, "thread_id")
+		case ev.Event == EvTurnStarted && rowInt(d, "k") == rep.K && rowInt(d, "attempt") == rep.Attempt && rowStr(d, "via") == "session":
+			turned = true
 		case isTerminal(ev.Event) && published && ev.Event != EvHeld:
 			ended = true
 		}
@@ -238,7 +241,23 @@ func (e *Engine) judgeReport(rep DispatchReport) (DispatchReply, bool) {
 		return DispatchReply{Status: ReplyRefused, Detail: fmt.Sprintf("run %s published no step %s/t%d-a%d", e.runID, rep.Call, rep.K, rep.Attempt)}, false
 	case ended:
 		return DispatchReply{Status: ReplyClose, Close: rep.Agent, Detail: fmt.Sprintf("close %s: attempt %d of %s has ended", rep.Agent, rep.Attempt, rep.Call)}, false
+	case bound != "" && bound == rep.Agent && !turned:
+		// the attempt's subagent has no turn of this step in the rows yet (a send_input step the resumed call has not reached, or a
+		// spawn whose turn_started was never stored and that sessionAdopt has not written yet), so the report waits in the inbox for
+		// the step's bind, as a report for a published step no call waits for does
+		return DispatchReply{}, true
 	case bound != "" && bound == rep.Agent:
+		// a bound reply names stored rows (CRW-1684). The rows read above were appended before this flush, so its success stores them,
+		// whether a bind that flushed, sessionAdopt or a bind still in flight wrote them; a commit that fails ends the run and asks for
+		// the report again
+		err := journalFlush(e.j)
+		if err == nil {
+			err = journalErr(e.j)
+		}
+		if err != nil {
+			e.journalFailed(err)
+			return DispatchReply{Status: ReplyRetry, Detail: fmt.Sprintf("the bind of %s is not stored: %v", rep.Agent, err)}, false
+		}
 		return DispatchReply{Status: ReplyBound, Detail: "the run bound this agent already"}, false
 	case bound != "":
 		return DispatchReply{Status: ReplyClose, Close: rep.Agent, Detail: fmt.Sprintf("close %s: the attempt is bound to %s", rep.Agent, bound)}, false
@@ -1010,7 +1029,8 @@ func (c *callRun) spawnMessage(marker, packet string) string {
 }
 
 // sessionVerify checks the subagent a report (or a marker search) names against the step and, when it holds, binds it: the rows
-// of the bind, thread_started (a spawn) and turn_started, are written together. The reply says what the command is to do.
+// of the bind, thread_started (a spawn) and turn_started, are written together and stored before the reply, which says what the
+// command is to do.
 func (c *callRun) sessionVerify(ctx context.Context, agent string, k int, op, marker, action string) (DispatchReply, bool) {
 	e, s, p := c.e, c.sess, c.plan
 	sc := e.cfg.Session
@@ -1094,6 +1114,12 @@ func (c *callRun) sessionVerify(ctx context.Context, agent string, k int, op, ma
 		data["replaces_turn"] = s.replaces
 	}
 	c.event(EvTurnStarted, data)
+	// the bind's rows are stored before the bound reply, so a flow next in another process counts the subagent from them (CRW-1684)
+	// a bind whose rows are not stored is no bind: the run ends with the journal's error, and the reply asks for a report again
+	if err := journalFlush(e.j); err != nil {
+		e.journalFailed(err)
+		return DispatchReply{Status: ReplyRetry, Detail: fmt.Sprintf("the bind of %s is not stored: %v", agent, err)}, false
+	}
 	return DispatchReply{Status: ReplyBound}, true
 }
 
