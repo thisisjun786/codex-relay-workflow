@@ -1010,7 +1010,8 @@ func (c *callRun) spawnMessage(marker, packet string) string {
 }
 
 // sessionVerify checks the subagent a report (or a marker search) names against the step and, when it holds, binds it: the rows
-// of the bind, thread_started (a spawn) and turn_started, are written together. The reply says what the command is to do.
+// of the bind, thread_started (a spawn) and turn_started, are written together and stored before the reply, which says what the
+// command is to do.
 func (c *callRun) sessionVerify(ctx context.Context, agent string, k int, op, marker, action string) (DispatchReply, bool) {
 	e, s, p := c.e, c.sess, c.plan
 	sc := e.cfg.Session
@@ -1094,6 +1095,10 @@ func (c *callRun) sessionVerify(ctx context.Context, agent string, k int, op, ma
 		data["replaces_turn"] = s.replaces
 	}
 	c.event(EvTurnStarted, data)
+	// the bind's rows are stored before the bound reply, so a flow next in another process counts the subagent from them (CRW-1684)
+	if err := journalFlush(e.j); err != nil {
+		e.journalFailed(err)
+	}
 	return DispatchReply{Status: ReplyBound}, true
 }
 
