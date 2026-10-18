@@ -1,7 +1,9 @@
 package scenario
 
 import (
+	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"reflect"
@@ -119,6 +121,175 @@ func TestDesignAuditNeedsChangesReturnsToArchitect(t *testing.T) {
 	if first < approved {
 		t.Errorf("an executor started (row %d) before the audit approved (row %d)", first, approved)
 	}
+}
+
+// integratedReuse makes the design phase of the lab find node A as an integrated node (CRW-1681): the lab's designReuse op runs as it
+// does, and its result also carries the integrated_design entry of a proven landing of A, as integration_reuse.go records it. The
+// entry pins the issue of A and the decision D1 of src, the DESIGN the source run approved.
+func integratedReuse(l *Lab, src ops.Design) {
+	entry := ops.IntegratedDesign{
+		ReuseIntegratedResult: ops.ReuseIntegratedResult{Reused: true, Reason: ops.ReuseIntegratedReused, Plan: "plan-1", Milestone: "M1", Node: "A", SourceRun: "run-source"},
+		SourceRevision:        "r0",
+		Issue:                 issueOf(l.t, src, "A"),
+		Decisions:             []ops.Decision{decisionOf(l.t, src, "D1")},
+	}
+	l.OldOps = map[string]engine.Op{ops.NameDesignReuse: integratedReuseOp{Op: l.lane.Ops()[ops.NameDesignReuse], entry: entry}}
+}
+
+// integratedReuseOp is the lab's designReuse op with the integrated_design of entry in its result and its data, as
+// designReuseWithIntegratedOp adds it for a proven landing. Its proof is the inner op's.
+type integratedReuseOp struct {
+	engine.Op
+	entry ops.IntegratedDesign
+}
+
+func (o integratedReuseOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResult, error) {
+	out, err := o.Op.Run(ctx, req)
+	if err != nil {
+		return out, err
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(out.Result, &payload); err != nil {
+		return engine.OpResult{}, err
+	}
+	fixed := []ops.IntegratedDesign{o.entry}
+	payload["integrated_design"] = fixed
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return engine.OpResult{}, err
+	}
+	out.Result = raw
+	if out.Data == nil {
+		out.Data = map[string]any{}
+	}
+	out.Data["integrated_design"] = fixed
+	return out, nil
+}
+
+// issueOf is the issue of node in d.
+func issueOf(t *testing.T, d ops.Design, node string) ops.DesignIssue {
+	t.Helper()
+	for _, is := range d.Issues {
+		if is.Node == node {
+			return is
+		}
+	}
+	t.Fatalf("no issue of node %s", node)
+	return ops.DesignIssue{}
+}
+
+// decisionOf is the decision with the id in d.
+func decisionOf(t *testing.T, d ops.Design, id string) ops.Decision {
+	t.Helper()
+	for _, dec := range d.Decisions {
+		if dec.ID == id {
+			return dec
+		}
+	}
+	t.Fatalf("no decision %s", id)
+	return ops.Decision{}
+}
+
+// setApproach sets the approach of the issue of node in d.
+func setApproach(d *ops.Design, node, approach string) {
+	for i := range d.Issues {
+		if d.Issues[i].Node == node {
+			d.Issues[i].Approach = approach
+		}
+	}
+}
+
+// checkLedgerKeepsIntegrated checks that the first design ledger row of the lab keeps the approach of node A and the change of D1
+// from the source run's DESIGN.
+func checkLedgerKeepsIntegrated(t *testing.T, l *Lab, src ops.Design) {
+	t.Helper()
+	ledger := l.Rows(ops.OpDesignLedger)
+	if len(ledger) == 0 {
+		t.Fatal("no design ledger row")
+	}
+	raw, err := json.Marshal(ledger[0].Data["design"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got ops.Design
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	if a, want := issueOf(t, got, "A").Approach, issueOf(t, src, "A").Approach; a != want {
+		t.Errorf("the ledger's approach of A is %q, want the source run's %q", a, want)
+	}
+	if c, want := decisionOf(t, got, "D1").Change, decisionOf(t, src, "D1").Change; c != want {
+		t.Errorf("the ledger's change of D1 is %q, want the source run's %q", c, want)
+	}
+}
+
+// A reused integrated node survives a design-fix round (CRW-1681): the architect is resumed on the call agent.call returned, its
+// rewritten DESIGN is pinned back to the source run's issue and decision before the next audit and the ledger, and the lane runs
+// to its end. Before the fix the resume got the pinned copy, and the run ended with a script error at the design-fix call.
+func TestReusedNodeDesignFixResumesTheArchitectCall(t *testing.T) {
+	l := NewLab(t, twoNodes()...)
+	src := l.designFor()
+	integratedReuse(l, src)
+	d, fix := l.designFor(), l.designFor()
+	setApproach(&d, "A", "the architect's rewrite of A")
+	d.Decisions[0].Change = "the architect's rewrite of D1"
+	setApproach(&fix, "A", "the fix's rewrite of A")
+	l.Design = &d
+	l.Sequence("^design-fix:r1$", func(*Call) fakehostPlan { return Say(fix) })
+	l.Sequence("^design-audit:r\\d+$",
+		func(*Call) fakehostPlan {
+			return Say(map[string]any{"verdict": "needs_changes", "findings": []any{map[string]any{"ref": "CRW-B", "severity": "P1", "finding": "the order of issue B is not stated", "evidence": []string{}}}, "summary": "one thing to fix", "root": nil, "first_check": nil})
+		},
+		func(*Call) fakehostPlan {
+			return Say(map[string]any{"verdict": "approved", "findings": []any{}, "summary": "the DESIGN holds", "root": nil, "first_check": nil})
+		})
+	res := l.Run()
+	if res.Status != engine.RunCompleted {
+		t.Fatalf("run %s: %s: %s\ncalls: %v", res.Status, res.ErrorKind, res.Error, l.Labels())
+	}
+	want := []string{"architect", "design-audit:r1", "design-fix:r1", "design-audit:r2"}
+	if labels := l.Labels(); len(labels) < len(want) || !slices.Equal(labels[:len(want)], want) {
+		t.Fatalf("calls %v, want them to start with %v", labels, want)
+	}
+	arch, fixCall := callNamed(t, l, "architect"), callNamed(t, l, "design-fix:r1")
+	if fixCall.Resume != arch.ID || fixCall.Role != "architect" {
+		t.Errorf("the revision continues %q (%s), want the architect's call %s", fixCall.Resume, fixCall.Role, arch.ID)
+	}
+	for _, label := range []string{"design-audit:r1", "design-audit:r2"} {
+		if text := textOfCall(l, callNamed(t, l, label).ID); strings.Contains(text, "rewrite of") {
+			t.Errorf("%s was given the architect's rewrite of the reused node:\n%s", label, text)
+		}
+	}
+	checkLedgerKeepsIntegrated(t, l, src)
+}
+
+// A reused integrated node survives a design-answers round (CRW-1681): the answer to the architect's open question goes back on the
+// architect's own call, the DESIGN it answers with is pinned before the critic reads it, and the lane runs to its end.
+func TestReusedNodeDesignAnswersResumesTheArchitectCall(t *testing.T) {
+	l := NewLab(t, twoNodes()...)
+	src := l.designFor()
+	integratedReuse(l, src)
+	d := l.designFor()
+	setApproach(&d, "A", "the architect's rewrite of A")
+	d.Decisions[0].Change = "the architect's rewrite of D1"
+	d.OpenQuestions = []ops.OpenQuestion{{ID: "small", Question: "is the flag documented?", Scope: "docs", FilesNeeded: []string{"README.md"}}}
+	l.Design = &d
+	res := l.Run()
+	if res.Status != engine.RunCompleted {
+		t.Fatalf("run %s: %s: %s\ncalls: %v", res.Status, res.ErrorKind, res.Error, l.Labels())
+	}
+	labels := l.Labels()
+	if answers, audit := index(labels, "design-answers:r1"), index(labels, "design-audit:r1"); answers < 0 || audit < answers {
+		t.Fatalf("calls %v, want design-answers:r1 before design-audit:r1", labels)
+	}
+	arch, answered := callNamed(t, l, "architect"), callNamed(t, l, "design-answers:r1")
+	if answered.Resume != arch.ID || answered.Role != "architect" {
+		t.Errorf("the answers continue %q (%s), want the architect's call %s", answered.Resume, answered.Role, arch.ID)
+	}
+	if text := textOfCall(l, callNamed(t, l, "design-audit:r1").ID); strings.Contains(text, "rewrite of") {
+		t.Errorf("the critic was given the architect's rewrite of the reused node:\n%s", text)
+	}
+	checkLedgerKeepsIntegrated(t, l, src)
 }
 
 // The release of a lane is recorded with the DESIGN revision and digest it was made under; the executor's call carries them in its

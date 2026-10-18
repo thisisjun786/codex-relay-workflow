@@ -965,10 +965,13 @@ func TestCrosscheckCarriesTheReceiptsAndRedRecords(t *testing.T) {
 	for _, c := range calls {
 		p := c.Request.Prompt
 		for _, s := range []string{"EXECUTOR RECEIPTS", file, v.ReceiptsSHA256, "node n1: accepted, sha256 " + sum, "node n2: " + ReceiptNotAssigned, "node n3: " + ReceiptNoExecutor,
-			"red-first", "mutation-red"} {
+			"red-first"} {
 			if !strings.Contains(p, s) {
 				t.Errorf("pass %s's prompt lacks %q:\n%s", c.Pass, s, p)
 			}
+		}
+		if sec := receiptsSection(v); !strings.Contains(p, sec) || strings.Contains(sec, "mutation-red") || strings.Contains(p, "mutation-red") {
+			t.Errorf("pass %s's prompt does not ask for the red-first lines only:\n%s", c.Pass, p)
 		}
 		if !strings.HasPrefix(p, "pass "+c.Pass) {
 			t.Errorf("pass %s's prompt does not start with the script's text:\n%s", c.Pass, p)
@@ -994,6 +997,67 @@ func TestCrosscheckCarriesTheReceiptsAndRedRecords(t *testing.T) {
 		s := sha256.Sum256(b)
 		if err != nil || hex.EncodeToString(s[:]) != rv.ReceiptsSHA256 {
 			t.Errorf("the receipts file %s of a V no longer hashes to its receipts_sha256: %v", rv.ReceiptsFile, err)
+		}
+	}
+}
+
+// TestCrosscheckReceiptsAskForRedFirstOnly: the receipts section of a crosscheck pass asks each criterion's red-first lines only, not
+// mutation-red lines, which no executor is asked to write; the receipts file still carries what an executor wrote.
+func TestCrosscheckReceiptsAskForRedFirstOnly(t *testing.T) {
+	w := newCCWorld(t, "n1")
+	cp, sum := receiptCopy(t, "go test -run TestThing ./x: FAIL before the change, ok after\n")
+	w.receiptRow("n1", map[string]any{"state": "accepted", "sha256": sum, "copy": cp})
+	out, _ := w.crosscheck(ccHead, nil)
+	if out.State != CrosscheckStateVerdict || out.Verdict == nil {
+		t.Fatalf("outcome %+v", out)
+	}
+	sec := receiptsSection(out.Verdict)
+	if !strings.Contains(sec, "red-first") || strings.Contains(sec, "mutation-red") {
+		t.Errorf("the receipts section:\n%s", sec)
+	}
+	calls := w.checker.requests()
+	if len(calls) != 2 {
+		t.Fatalf("%d checks", len(calls))
+	}
+	for _, c := range calls {
+		p := c.Request.Prompt
+		if !strings.Contains(p, sec) || !strings.Contains(p, "red-first") || strings.Contains(p, "mutation-red") {
+			t.Errorf("pass %s's prompt:\n%s", c.Pass, p)
+		}
+	}
+}
+
+// TestCrosscheckKeepsAQuotedMutationRedRecord: a prior finding that quotes a mutation-red line is carried as the record it is, and the
+// receipts instruction still asks for red-first lines only.
+func TestCrosscheckKeepsAQuotedMutationRedRecord(t *testing.T) {
+	w := newCCWorld(t)
+	v := priorVerdict1649("run-0", "M1", "plan-1", "head-old", 1)
+	quoted := "the receipt of n1 has no mutation-red line for criterion 1"
+	v.Findings[0].Text = quoted
+	w.lane.d.Relay = &ccHistory{Relay: w.relay, runs: []DesignRun{pendingRun1649("run-0", v)}}
+	body := "red-first: TestThing FAIL before the change\nmutation-red: TestThing FAIL with the guard removed\n"
+	cp, sum := receiptCopy(t, body)
+	w.receiptRow("n1", map[string]any{"state": "accepted", "sha256": sum, "copy": cp})
+	out, _ := w.crosscheck(ccHead, nil)
+	if out.State != CrosscheckStateVerdict || out.Verdict == nil {
+		t.Fatalf("outcome %+v", out)
+	}
+	if out.Prior == nil || len(out.Prior.Findings) != 1 || out.Prior.Findings[0].Text != quoted {
+		t.Errorf("prior %+v", out.Prior)
+	}
+	got, err := os.ReadFile(out.Verdict.ReceiptsFile)
+	if err != nil || !strings.Contains(string(got), body) {
+		t.Errorf("the receipts file (%v):\n%s", err, got)
+	}
+	sec := receiptsSection(out.Verdict)
+	calls := w.checker.requests()
+	if len(calls) != 2 {
+		t.Fatalf("%d checks", len(calls))
+	}
+	for _, c := range calls {
+		p := c.Request.Prompt
+		if !strings.Contains(p, "PRIOR FINDINGS") || !strings.Contains(p, quoted) || !strings.Contains(p, sec) || strings.Contains(sec, "mutation-red") || strings.Count(p, "mutation-red") != 1 {
+			t.Errorf("pass %s's prompt:\n%s", c.Pass, p)
 		}
 	}
 }

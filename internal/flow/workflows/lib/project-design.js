@@ -47,6 +47,9 @@ export function designPhase(ms, END_CONDITIONS, DESIGN, integrated) {
   // the design could not be approved.
   async function auditedDesign(first, tag, context, designHead) {
     let arch = pinIntegrated(first)
+    // CRW-1681: thread is the CallResult agent.call returned last, the only value a resume takes. arch is that call with the reused
+    // nodes' issues and decisions pinned, which the audit, the ledger and the answer read.
+    let thread = first
     // the head every call of the loop reads: a re-plan's pinned head, or the design head the first DESIGN's phase sampled
     // (crw.designHead), so the open questions' explorers, the critic and the architect's turns judge the code the DESIGN was written for
     const at = (context && context.head) || designHead || undefined
@@ -73,7 +76,7 @@ export function designPhase(ms, END_CONDITIONS, DESIGN, integrated) {
       await crw.escalate(null, { reason: 'design_loop_tokens', detail })
     }
     const tokensOf = (call) => (call && call.meta && call.meta.tokens) || {}
-    await tokenCap(tokensOf(first), 0)
+    await tokenCap(tokensOf(arch), 0)
     for (let round = 1; round <= AUDIT_ROUNDS; round++) {
       // the end condition commands of the issues are run once, by the first explorer of the first DESIGN's first round (CRW-1382)
       const ends = round === 1 && tag === '' ? END_CONDITIONS : []
@@ -90,9 +93,9 @@ export function designPhase(ms, END_CONDITIONS, DESIGN, integrated) {
       // round got an answer, design-answers resumes the architect with them, and the DESIGN it answers with is the one audited (and the
       // handle a design-fix and the ledger resume); a question it raises there is routed in the next round
       if (answeredQuestions(answers).length) {
-        arch = await agent.call(designAnswersPacket(answers, context), { resume: arch, schema: DESIGN, head: at, label: 'design-answers:' + tag + 'r' + round })
-        if (arch.status !== 'completed') return { ok: false, result: await crw.milestoneHalt(ms, 'architect', arch.status, arch.reason, arch.callId) }
-        arch = pinIntegrated(arch)
+        thread = await agent.call(designAnswersPacket(answers, context), { resume: thread, schema: DESIGN, head: at, label: 'design-answers:' + tag + 'r' + round })
+        if (thread.status !== 'completed') return { ok: false, result: await crw.milestoneHalt(ms, 'architect', thread.status, thread.reason, thread.callId) }
+        arch = pinIntegrated(thread)
         await tokenCap(tokensOf(arch), round)
       }
       const cand = { design: arch.output, answers }
@@ -109,9 +112,9 @@ export function designPhase(ms, END_CONDITIONS, DESIGN, integrated) {
       if (audit.state === 'approved') return { ok: true, arch, answers, carried: asked.carried }
       if (audit.state !== 'needs_changes') return { ok: false, result: await crw.milestoneHalt(ms, 'design_audit', audit.state, audit.reason, call.callId) }
       // back to the architect, on its own thread: the DESIGN it revises is the one it wrote, and it disposes of each finding by its id
-      arch = await agent.call(designFixPacket(audit, context, round), { resume: arch, schema: DESIGN, head: at, label: 'design-fix:' + tag + 'r' + round })
-      if (arch.status !== 'completed') return { ok: false, result: await crw.milestoneHalt(ms, 'architect', arch.status, arch.reason, arch.callId) }
-      arch = pinIntegrated(arch)
+      thread = await agent.call(designFixPacket(audit, context, round), { resume: thread, schema: DESIGN, head: at, label: 'design-fix:' + tag + 'r' + round })
+      if (thread.status !== 'completed') return { ok: false, result: await crw.milestoneHalt(ms, 'architect', thread.status, thread.reason, thread.callId) }
+      arch = pinIntegrated(thread)
       const dispositions = arch.output.dispositions
       prior.push({ round, findings: auditFindings(round, audit.findings), dispositions: dispositions === undefined ? null : dispositions })
       await tokenCap(tokensOf(arch), round)

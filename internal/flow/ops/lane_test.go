@@ -2768,6 +2768,47 @@ func decodeCheck(t *testing.T, raw json.RawMessage) UnitCheckOutcome {
 	return out
 }
 
+// TestUnitCheckReceiptAsksForRedFirstOnly: the EXECUTOR RECEIPT of a unit check asks for the red-first lines only; a receipt that writes
+// a mutation-red line is still carried in the prompt as the executor's record.
+func TestUnitCheckReceiptAsksForRedFirstOnly(t *testing.T) {
+	prompt := func(t *testing.T, body string) string {
+		t.Helper()
+		u := newUCWorld(t)
+		cp, digest := receiptCopy(t, body)
+		ex := u.buildWithReceipt("c_ex1", "built\n", map[string]any{"assignment": "as1", "state": "accepted", "sha256": digest, "copy": cp})
+		u.checkOnTree(u.snapshot())
+		if out := decodeCheck(t, u.must("unitCheck", "A", ex, map[string]any{"round": 1})); out.Hold != "" || out.State != reviewadapter.StateOK || len(u.checker.got) != 1 {
+			t.Fatalf("answer %+v, %d checker calls", out, len(u.checker.got))
+		}
+		return u.checker.got[0].Prompt
+	}
+	headers := func(p string) []string {
+		var out []string
+		for _, l := range strings.Split(p, "\n") {
+			if strings.HasPrefix(l, "EXECUTOR RECEIPT (") {
+				out = append(out, l)
+			}
+		}
+		return out
+	}
+	t.Run("plain receipt", func(t *testing.T) {
+		body := "go test -run TestA ./a: FAIL before the change, ok after\n"
+		p := prompt(t, body)
+		h := headers(p)
+		if !strings.Contains(p, "EXECUTOR RECEIPT") || !strings.Contains(p, body) || len(h) != 1 || !strings.Contains(h[0], "red-first") || strings.Contains(h[0], "mutation-red") || strings.Contains(p, "mutation-red") {
+			t.Errorf("the prompt:\n%s", p)
+		}
+	})
+	t.Run("receipt that writes mutation-red", func(t *testing.T) {
+		body := "red-first: go test -run TestA ./a: FAIL TestA\nmutation-red: go test -run TestA ./a: FAIL with the guard removed\n"
+		p := prompt(t, body)
+		h := headers(p)
+		if !strings.Contains(p, body) || len(h) != 1 || !strings.Contains(h[0], "red-first") || strings.Contains(h[0], "mutation-red") || strings.Count(p, "mutation-red") != 1 {
+			t.Errorf("the prompt:\n%s", p)
+		}
+	})
+}
+
 // TestUnitCheckRecordsTheAdapterResult (CRW-1463): crw.unitCheck runs the adapter on the node's worktree and writes one completed row
 // in the shape crw.accept and the relay read: role unit-check, the node, the execution and criteria digest of its release, the tree the
 // check saw (in a real git worktree: the pending tree, which crw.commit commits), the judged call and the round, and the adapter's
