@@ -76,7 +76,7 @@ export function designPhase(ms, END_CONDITIONS, DESIGN, integrated) {
       await crw.escalate(null, { reason: 'design_loop_tokens', detail })
     }
     const tokensOf = (call) => (call && call.meta && call.meta.tokens) || {}
-    await tokenCap(tokensOf(first), 0)
+    await tokenCap(tokensOf(arch), 0)
     for (let round = 1; round <= AUDIT_ROUNDS; round++) {
       // the end condition commands of the issues are run once, by the first explorer of the first DESIGN's first round (CRW-1382)
       const ends = round === 1 && tag === '' ? END_CONDITIONS : []
@@ -96,7 +96,7 @@ export function designPhase(ms, END_CONDITIONS, DESIGN, integrated) {
         thread = await agent.call(designAnswersPacket(answers, context), { resume: thread, schema: DESIGN, head: at, label: 'design-answers:' + tag + 'r' + round })
         if (thread.status !== 'completed') return { ok: false, result: await crw.milestoneHalt(ms, 'architect', thread.status, thread.reason, thread.callId) }
         arch = pinIntegrated(thread)
-        await tokenCap(tokensOf(thread), round)
+        await tokenCap(tokensOf(arch), round)
       }
       const cand = { design: arch.output, answers }
       await crw.spawnDecision('AUDIT', 'spawn', { role: 'critic', inputs: { milestone: ms.id, round, tag } })
@@ -117,7 +117,7 @@ export function designPhase(ms, END_CONDITIONS, DESIGN, integrated) {
       arch = pinIntegrated(thread)
       const dispositions = arch.output.dispositions
       prior.push({ round, findings: auditFindings(round, audit.findings), dispositions: dispositions === undefined ? null : dispositions })
-      await tokenCap(tokensOf(thread), round)
+      await tokenCap(tokensOf(arch), round)
     }
     log('warn design_loop_cap rounds: the DESIGN ' + (tag ? tag + ' ' : 'of the milestone ') + 'was not approved in AUDIT_ROUNDS ' + AUDIT_ROUNDS + ' audit rounds')
     const esc = await crw.escalate(null, { reason: 'design_audit_rounds', detail: 'the DESIGN was not approved in ' + AUDIT_ROUNDS + ' audit rounds' })
