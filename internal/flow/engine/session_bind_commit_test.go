@@ -36,10 +36,11 @@ func (b *bindReplies) Reply(rep DispatchReport, reply DispatchReply) error {
 	return b.FileStepBus.Reply(rep, reply)
 }
 
-// openSubagentsOf are the subagents that hold the owner's slots in events, sorted. It copies the events half of the rule cli/next.go
-// applies (openSubagents, pinned through `flow next` by TestNextHintNamesTheOpenSubagents and session_test.go's one-call rows): the
-// subagent a session thread_started opens for its call, a session_attempt_lost releases the subagent it names, and a terminal row of
-// the call releases the subagents the call opened. The close steps of that rule do not apply: no close step exists before a bind's reply.
+// openSubagentsOf are the subagents that hold the owner's slots in events, sorted. It copies the events half of the rule
+// internal/flow/cli/next.go:391-416 (openSubagents) applies, which TestNextHintNamesTheOpenSubagents
+// (internal/flow/cli/session_pinned_test.go) and internal/flow/cli/session_test.go:76 pin through `flow next`: the subagent a session
+// thread_started opens for its call, a session_attempt_lost releases the subagent it names, and a terminal row of the call releases
+// the subagents the call opened. The close steps of that rule do not apply: no close step exists before a bind's reply.
 func openSubagentsOf(events []Event) []string {
 	open := map[string]bool{}
 	agentOf := map[string][]string{}
